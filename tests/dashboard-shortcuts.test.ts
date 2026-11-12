@@ -70,6 +70,8 @@ test('floor navigation follows saved order and wraps without switching a lone or
 test('Command shortcuts cover workspace actions without Option or Control', () => {
   for (const [i, mode] of ['single', 'split', 'triple', 'grid', 'five', 'six', 'seven', 'eight'].entries()) assert.deepEqual(workspaceCommand(key(String(i + 1))), { action: 'layout', mode });
   for (const [value, action] of [
+    ['k', 'floors'],
+    ['K', 'floors'],
     ['Enter', 'maximize'],
     ['n', 'hire'],
     ['N', 'hire'],
@@ -87,16 +89,36 @@ test('Command shortcuts cover workspace actions without Option or Control', () =
     ['ArrowDown', 'worker', 1],
   ] as const)
     assert.deepEqual(workspaceCommand(key(value)), { action, direction });
-  assert.ok(WORKSPACE_KEY_HINTS.every(([chord]) => chord.startsWith('⌘ ')));
+  assert.ok(WORKSPACE_KEY_HINTS.every(([chord]) => chord.startsWith('⌘ ') || chord.startsWith('⇧ ⌘ ')));
+  assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'floors')?.[0], '⌘ K');
+  assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'jump to floor')?.[0], '⇧ ⌘ 1–0');
   assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'panes')?.[0], '⌘ ← →');
   assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'workers')?.[0], '⌘ ↑ ↓');
   assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'layout')?.[0], '⌘ 1–8');
   assert.equal(WORKSPACE_KEY_HINTS.find(([, label]) => label === 'Orchestrator')?.[0], '⌘ O');
 });
 
+test('Shift+Command+1..0 jumps directly to floors 1..10 across US shifted symbols, Digit codes and Numpad codes', () => {
+  const shiftedSymbols = ['!', '@', '#', '$', '%', '^', '&', '*', '(', ')'];
+  for (let index = 0; index < 10; index++) {
+    const digit = index === 9 ? '0' : String(index + 1);
+    assert.deepEqual(workspaceCommand(key(shiftedSymbols[index]!, { shiftKey: true, code: `Digit${digit}` })), { action: 'floorIndex', index });
+    assert.deepEqual(workspaceCommand(key(digit, { shiftKey: true, code: `Numpad${digit}` })), { action: 'floorIndex', index });
+    assert.deepEqual(workspaceCommand(key(digit, { shiftKey: true })), { action: 'floorIndex', index });
+    assert.deepEqual(workspaceCommand(key(shiftedSymbols[index]!, { shiftKey: true })), { action: 'floorIndex', index });
+  }
+  assert.equal(workspaceCommand(key('?', { shiftKey: true, code: 'Slash' })), undefined);
+  assert.equal(workspaceCommand(key('!', { shiftKey: true, code: 'Slash' })), undefined);
+  assert.equal(workspaceCommand(key('*', { shiftKey: true, code: 'BracketRight' })), undefined);
+});
+
 test('CLI keys, editing shortcuts, IME composition and extra modifiers pass through', () => {
-  for (const value of ['1', '5', '8', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'n', 'b', '\\', ']', 'Escape']) {
+  for (const value of ['Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'n', 'b', 'k', '\\', ']', 'Escape']) {
     for (const mods of [{ metaKey: false }, { metaKey: false, ctrlKey: true }, { metaKey: false, altKey: true }, { ctrlKey: true }, { altKey: true }, { shiftKey: true }, { isComposing: true }, { defaultPrevented: true }])
+      assert.equal(workspaceCommand(key(value, mods)), undefined, JSON.stringify([value, mods]));
+  }
+  for (const value of ['1', '5', '8']) {
+    for (const mods of [{ metaKey: false }, { metaKey: false, ctrlKey: true }, { metaKey: false, altKey: true }, { ctrlKey: true }, { altKey: true }, { isComposing: true }, { defaultPrevented: true }])
       assert.equal(workspaceCommand(key(value, mods)), undefined, JSON.stringify([value, mods]));
   }
   for (const value of ['c', 'v', 'x', 'a', 'z', 'q', 'w', 'r', '9', '0', 'Escape', 'Tab', ']']) assert.equal(workspaceCommand(key(value)), undefined);
@@ -156,16 +178,19 @@ test('directory search keeps Command caret movement and cannot change hidden wor
   }
 });
 
-test('directory mode keeps global Settings, hire, Whiteboard, Orchestrator and native floor shortcuts', () => {
-  for (const [value, action] of [
-    ['n', 'hire'],
-    ['b', 'board'],
-    [',', 'settings'],
-    ['o', 'orchestrator'],
-    ['=', 'floor'],
-  ]) {
+test('directory mode keeps global Settings, hire, Whiteboard, Orchestrator and floor shortcuts', () => {
+  for (const [value, action, shiftKey] of [
+    ['k', 'floors', false],
+    ['1', 'floorIndex', true],
+    ['0', 'floorIndex', true],
+    ['n', 'hire', false],
+    ['b', 'board', false],
+    [',', 'settings', false],
+    ['o', 'orchestrator', false],
+    ['=', 'floor', false],
+  ] as const) {
     const calls: string[] = [];
-    const e = key(value!, { preventDefault: () => calls.push('prevent'), stopImmediatePropagation: () => calls.push('stop') });
+    const e = key(value, { shiftKey, preventDefault: () => calls.push('prevent'), stopImmediatePropagation: () => calls.push('stop') });
     assert.equal(
       workspaceShortcut(e, (command) => calls.push(command.action), true, 'directory'),
       true,

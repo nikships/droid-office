@@ -1,10 +1,18 @@
 import { LAYOUT_ORDER, type LayoutMode } from './dashboard-workspace';
 
-export type WorkspaceCommand = { action: 'layout'; mode: LayoutMode } | { action: 'maximize' | 'hire' | 'board' | 'sidebar' | 'settings' | 'orchestrator' } | { action: 'pane' | 'worker' | 'floor'; direction: -1 | 1 };
+export type WorkspaceCommand =
+  | { action: 'layout'; mode: LayoutMode }
+  | { action: 'maximize' | 'hire' | 'board' | 'sidebar' | 'settings' | 'orchestrator' | 'floors' }
+  | { action: 'pane' | 'worker' | 'floor'; direction: -1 | 1 }
+  | { action: 'floorIndex'; index: number };
 
-type ShortcutEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'isComposing' | 'defaultPrevented' | 'repeat' | 'preventDefault' | 'stopImmediatePropagation'>;
+type ShortcutEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'isComposing' | 'defaultPrevented' | 'repeat' | 'preventDefault' | 'stopImmediatePropagation'> & {
+  code?: string;
+};
 
 export const WORKSPACE_KEY_HINTS: [string, string][] = [
+  ['⌘ K', 'floors'],
+  ['⇧ ⌘ 1–0', 'jump to floor'],
   ['⌘ 1–8', 'layout'],
   ['⌘ ↵', 'maximize / restore'],
   ['⌘ ← →', 'panes'],
@@ -16,6 +24,19 @@ export const WORKSPACE_KEY_HINTS: [string, string][] = [
   ['⌘ O', 'Orchestrator'],
 ];
 
+function shiftedFloorIndex(e: ShortcutEvent): number | undefined {
+  if (e.code) {
+    const match = /^(?:Digit|Numpad)([0-9])$/.exec(e.code);
+    if (!match) return undefined;
+    const digit = Number(match[1]);
+    return digit === 0 ? 9 : digit - 1;
+  }
+  if (/^[1-9]$/.test(e.key)) return Number(e.key) - 1;
+  if (e.key === '0') return 9;
+  const shifted = '!@#$%^&*()'.indexOf(e.key);
+  return shifted >= 0 ? shifted : undefined;
+}
+
 /** Only Command chords belong to the workspace. All CLI and editing keys pass through. */
 export function workspaceCommand(e: ShortcutEvent, nativeCompanion = false): WorkspaceCommand | undefined {
   if (e.defaultPrevented || !e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
@@ -25,10 +46,15 @@ export function workspaceCommand(e: ShortcutEvent, nativeCompanion = false): Wor
     if (e.key === '+' || (e.key === '=' && !e.shiftKey)) return { action: 'floor', direction: 1 };
     if (e.key === '-' && !e.shiftKey) return { action: 'floor', direction: -1 };
   }
-  if (e.shiftKey) return;
+  if (e.shiftKey) {
+    const index = shiftedFloorIndex(e);
+    return index === undefined ? undefined : { action: 'floorIndex', index };
+  }
   const mode = LAYOUT_ORDER[Number(e.key) - 1];
   if (/^[1-8]$/.test(e.key) && mode) return { action: 'layout', mode };
   switch (e.key.toLowerCase()) {
+    case 'k':
+      return { action: 'floors' };
     case 'enter':
       return { action: 'maximize' };
     case 'arrowleft':

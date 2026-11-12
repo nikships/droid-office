@@ -8,7 +8,7 @@ import { DESK_BY_ID } from '../shared/layout';
 import { originKind, type OriginKind } from '../shared/devices';
 import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
 import { Net } from './net';
-import { connectWhiteboard, store } from './state';
+import { connectWhiteboard, store, words } from './state';
 import { setBrowserAuth, withToken } from './token';
 import { $, closeAllModals, closeTopModal, h, modalOpen, onModalChange, openModal, toast } from './ui/dom';
 import { windowHeader } from './ui/kit';
@@ -56,8 +56,9 @@ import {
 } from './dashboard-workspace';
 import { createPane, type Pane, type PaneHost, VIEW_KEY } from './dashboard-pane';
 import { createWorkerRoster } from './dashboard-roster';
-import { buildingRoster } from './dashboard-building';
+import { buildingCounts, buildingRoster, type BuildingWorkerRow } from './dashboard-building';
 import { createBuildingView } from './dashboard-building-view';
+import { buildTriageFloors, filterSwitcherFloors, maxSurfacedBays, nextUrgentTarget, partitionTriageFloors, type TriageFloor, type TriagePartition, unackedDoneBuildingCount } from './dashboard-triage';
 import { createWorkerMenu } from './dashboard-worker-menu';
 import { openForkWorker } from './ui/fork-worker';
 import { copy } from './ui/clipboard';
@@ -143,20 +144,100 @@ function defaultBrowserName() {
 const live$ = h('span.dash-sr', { role: 'status', 'aria-live': 'polite' });
 const title = h('h1.dash-office', {}, officeName);
 const linkDot = h('span.dash-link', { role: 'img', 'aria-label': 'Connecting' });
-const brand = h('div.dash-brand', {}, h('img', { src: '/factory-glyph.svg', alt: '', width: 18, height: 18 }), h('span.dash-brand-text', {}, h('span.eyebrow', {}, 'Web companion'), h('span.dash-brand-name', {}, title, linkDot)));
-const floors = h('nav.dash-floor-strip', { 'aria-label': 'Floors' });
+const brand = h('div.dash-brand', {}, h('img.dash-brand-mark', { src: '/factory-glyph.svg', alt: '', width: 15, height: 15 }), title, linkDot);
+const gitPill = h('span.dash-git-pill', { hidden: true });
+const dragSpacer = h('div.dash-drag-spacer', { 'aria-hidden': 'true' });
+const pulseNeedsCount = h('span');
+const pulseNeedsBtn = h('button.dash-pulse-needs', { type: 'button', hidden: true, title: 'Jump to floor needing input', onclick: () => jumpToUrgent() }, h('span.dash-pulse-dot', { 'aria-hidden': 'true' }), pulseNeedsCount);
+const pulseCalm = h('span.dash-pulse-calm', {}, '● 0 blocked');
+const pulseWork = h('span.dash-pulse-work', { hidden: true });
+const pulseDone = h('span.dash-pulse-done', { hidden: true });
+const pulse = h('div.dash-pulse', { hidden: true }, pulseNeedsBtn, pulseCalm, pulseWork, pulseDone);
+const topSep = h('span.dash-top-sep', { 'aria-hidden': 'true', hidden: true });
+
+const floors = h('nav.dash-floor-bays', { 'aria-label': 'Floors' });
+const quietLabel = h('span.dash-quiet-label');
+const quietBadges = h('span.dash-quiet-badges');
+let quietOpen = false;
+let quietCursor = 0;
+let quietReturnFocus: HTMLElement | undefined;
+const quietTrigger = h(
+  'button.dash-quiet-bay',
+  {
+    type: 'button',
+    'aria-haspopup': 'dialog',
+    'aria-expanded': 'false',
+    'aria-controls': 'dash-quiet-pop',
+    hidden: true,
+    onclick: () => showQuiet(!quietOpen, quietOpen),
+  },
+  quietLabel,
+  quietBadges,
+  h('span.key.dash-quiet-key', { 'aria-hidden': 'true' }, '⌘K'),
+  h('span.dash-quiet-caret', { 'aria-hidden': 'true' }, icon('chevron', 11)),
+);
+const floorTrackText = h('span');
+const floorTrack = h('div.dash-floor-track', {}, floorTrackText);
+const reorderFloors = h('button.dash-end-bay', { type: 'button', 'aria-label': 'Reorder floors', title: 'Reorder floors', onclick: () => openFloorOrder(net) }, icon('grip', 13));
 const addFloorLabel = h('span.dash-floor-add-label', { hidden: true }, 'Add floor');
-const addFloorBtn = h('button.btn.icon.sm.ghost.dash-floor-add', { type: 'button', 'aria-label': 'Add floor', title: 'Add floor', onclick: () => addFloor() }, icon('plus', 14), addFloorLabel);
-const reorderFloors = h('button.btn.icon.sm.ghost', { type: 'button', 'aria-label': 'Reorder floors', title: 'Reorder floors', onclick: () => openFloorOrder(net) }, icon('grip', 14));
-const floorPicker = h('div.dash-floor', {}, floors, addFloorBtn, reorderFloors);
+const addFloorBtn = h('button.dash-end-bay.dash-floor-add', { type: 'button', 'aria-label': 'Add floor', title: 'Add floor', onclick: () => addFloor() }, icon('plus', 13), addFloorLabel);
+const quietInput = h('input.dash-quiet-input', {
+  type: 'search',
+  placeholder: 'Jump to quiet floor or search all…',
+  'aria-label': 'Search floors',
+  autocomplete: 'off',
+  spellcheck: 'false',
+}) as HTMLInputElement;
+const quietSectionTitle = h('span');
+const quietList = h('div.dash-quiet-list', { role: 'listbox', 'aria-label': 'Switch floor' });
+const quietReorderBtn = h(
+  'button.dash-quiet-act',
+  {
+    type: 'button',
+    onclick: () => {
+      showQuiet(false);
+      openFloorOrder(net);
+    },
+  },
+  icon('grip', 11),
+  'Reorder',
+);
+const quietAddBtn = h(
+  'button.dash-quiet-act',
+  {
+    type: 'button',
+    onclick: () => {
+      showQuiet(false);
+      addFloor();
+    },
+  },
+  icon('plus', 11),
+  'Add floor',
+);
+const quietPop = h(
+  'div.dash-quiet-pop',
+  { id: 'dash-quiet-pop', role: 'dialog', 'aria-label': 'Switch floor', hidden: true },
+  h('div.dash-quiet-search', {}, icon('search', 13), quietInput, h('span.key', { 'aria-hidden': 'true' }, 'ESC')),
+  h('div.dash-quiet-section', {}, quietSectionTitle, h('span', {}, 'Chord')),
+  quietList,
+  h('div.dash-quiet-foot', {}, h('span', {}, nativeCompanion ? '⌘ − / ⌘ + step adjacent floors' : '⇧ ⌘ 1–0 jump directly'), h('span.dash-quiet-actions', {}, quietReorderBtn, quietAddBtn)),
+);
+const lowerDeck = h('div.dash-top-lower', { hidden: true }, floors, quietTrigger, floorTrack, reorderFloors, addFloorBtn, quietPop);
+
 const boardCount = h('span.dash-count.hidden');
 let showingWorkers = false;
+const sideToggle = h('button.btn.icon.sm.ghost.dash-top-btn', { type: 'button', onclick: () => toggleSide() }, icon('panel', 14));
 const allWorkersCount = h('span.dash-building-nav-count');
-const allWorkersBtn = h('button.btn.ghost.dash-all-workers', { type: 'button', 'aria-controls': 'all-workers', 'aria-pressed': 'false', onclick: () => showWorkers(!showingWorkers) }, icon('bot', 14), 'All workers', allWorkersCount);
-const board = h('button.btn.ghost.dash-top-btn.dash-board', { type: 'button', title: 'The floor’s Whiteboard (⌘ B)', onclick: () => void openBoard() }, icon('board', 14), h('span.dash-top-label', {}, 'Whiteboard'), boardCount);
-const subscriptions = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key', 14), h('span.dash-top-label', {}, 'Subscriptions'));
-const settingsBtn = h('button.btn.ghost.dash-top-btn', { type: 'button', title: 'Settings (⌘ ,)', onclick: () => void showSettings() }, icon('settings', 14), h('span.dash-top-label', {}, 'Settings'));
-const top = h('header.dash-top', {}, brand, allWorkersBtn, floorPicker, h('div.dash-top-end', {}, settingsBtn, subscriptions, board));
+const allWorkersBtn = h(
+  'button.btn.sm.ghost.dash-top-btn.dash-all-workers',
+  { type: 'button', title: 'All building workers', 'aria-controls': 'all-workers', 'aria-pressed': 'false', onclick: () => showWorkers(!showingWorkers) },
+  icon('bot', 14),
+  h('span.dash-all-label', {}, 'All'),
+  allWorkersCount,
+);
+const board = h('button.btn.sm.ghost.dash-top-btn.dash-board', { type: 'button', title: 'The floor’s Whiteboard (⌘ B)', onclick: () => void openBoard() }, icon('board', 14), boardCount);
+const subscriptions = h('button.btn.icon.sm.ghost.dash-top-btn', { type: 'button', 'aria-label': 'Subscriptions', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key', 14));
+const settingsBtn = h('button.btn.icon.sm.ghost.dash-top-btn', { type: 'button', 'aria-label': 'Settings', title: 'Settings (⌘ ,)', onclick: () => void showSettings() }, icon('settings', 14));
 
 const bannerIcon = h('span.dash-banner-icon');
 const bannerText = h('p.dash-banner-text');
@@ -228,7 +309,11 @@ const roster = createWorkerRoster(
   },
 );
 onModalChange((open) => {
-  if (open) workerMenu.close();
+  if (open) {
+    workerMenu.close();
+    showLayouts(false);
+    showQuiet(false);
+  }
 });
 const side = h('aside.dash-side', { 'aria-label': 'Floor' }, missionList, h('div.dash-side-head', {}, sideTitle, sideSub), workerList, h('footer.dash-side-foot', {}, h('div.dash-side-hire', {}, agentBtn, shellBtn), keyLegend()));
 
@@ -239,7 +324,7 @@ function keyLegend() {
     'details.dash-keys-fold',
     { open: read(KEYS_KEY) === 'open' },
     h('summary', {}, 'Keyboard shortcuts', h('span.wt-chevron', { 'aria-hidden': 'true' }, icon('chevron', 12))),
-    h('div.dash-keys', { 'aria-hidden': 'true' }, ...keyHints(nativeCompanion ? [...WORKSPACE_KEY_HINTS, ['⌘ − +', 'floors'], ['⌘ W', 'close pane'], ['⇧ ⌘ W', 'send home']] : WORKSPACE_KEY_HINTS)),
+    h('div.dash-keys', { 'aria-hidden': 'true' }, ...keyHints(nativeCompanion ? [...WORKSPACE_KEY_HINTS, ['⌘ − +', 'step floor'], ['⌘ W', 'close pane'], ['⇧ ⌘ W', 'send home']] : WORKSPACE_KEY_HINTS)),
   ) as HTMLDetailsElement;
   fold.addEventListener('toggle', () => remember(KEYS_KEY, fold.open ? 'open' : ''));
   return fold;
@@ -269,8 +354,6 @@ function layoutGlyph(mode: LayoutMode) {
   return svg;
 }
 
-const sideToggle = h('button.btn.icon.sm.ghost', { type: 'button', onclick: () => toggleSide() }, icon('panel', 15));
-const wsSummary = h('span.dash-crumb-text');
 const autoButton = h(
   'button.dash-layout.dash-layout-auto',
   {
@@ -301,11 +384,11 @@ const zoomSeg = h('div.seg.dash-zoom', { role: 'group', 'aria-label': 'Terminal 
 const layoutNow = h('span.dash-layout-now');
 const layoutName = h('span.dash-layout-name');
 const layoutTrigger = h(
-  'button.btn.sm.ghost.dash-layout-trigger',
+  'button.btn.sm.ghost.dash-layout-trigger.dash-top-btn',
   { type: 'button', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', 'aria-controls': 'dash-layout-pop', title: 'Pane layout (⌘ 1–8)', onclick: () => showLayouts(!!layoutPop.hidden) },
   layoutNow,
   layoutName,
-  h('span.dash-layout-caret', { 'aria-hidden': 'true' }, icon('chevron', 12)),
+  h('span.dash-layout-caret', { 'aria-hidden': 'true' }, icon('chevron', 11)),
 );
 const layoutPop = h(
   'div.dash-layout-pop',
@@ -315,15 +398,50 @@ const layoutPop = h(
   h('div.dash-layout-pop-row', {}, h('span', {}, 'Terminal text'), zoomSeg),
 );
 const layoutMenu = h('div.dash-layout-menu', {}, layoutTrigger, layoutPop);
+const upperDeck = h('div.dash-top-upper', {}, brand, gitPill, dragSpacer, pulse, topSep, h('div.dash-top-end', {}, sideToggle, allWorkersBtn, layoutMenu, board, subscriptions, settingsBtn));
+const top = h('header.dash-top', {}, upperDeck, lowerDeck);
+
 function showLayouts(open: boolean, refocus = false) {
+  if (open && quietOpen) showQuiet(false);
   layoutPop.hidden = !open;
   layoutTrigger.setAttribute('aria-expanded', String(open));
   layoutTrigger.classList.toggle('on', open);
   if (open) (layouts.querySelector<HTMLElement>('[aria-checked=true]') ?? autoButton).focus({ preventScroll: true });
   else if (refocus) layoutTrigger.focus({ preventScroll: true });
 }
+function positionQuietPop() {
+  if (!quietOpen) return;
+  const lowerRect = lowerDeck.getBoundingClientRect();
+  const rawLeft = !quietTrigger.hidden ? quietTrigger.getBoundingClientRect().left - lowerRect.left : 12;
+  const maxLeft = Math.max(0, lowerDeck.clientWidth - 360);
+  quietPop.style.left = `${Math.round(Math.max(0, Math.min(rawLeft, maxLeft)))}px`;
+}
+function showQuiet(open: boolean, refocus = false) {
+  if (open === quietOpen) return;
+  if (open) {
+    showLayouts(false);
+    workerMenu.close();
+    quietReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
+    quietInput.value = '';
+    quietCursor = 0;
+  }
+  quietOpen = open;
+  quietPop.hidden = !open;
+  quietTrigger.setAttribute('aria-expanded', String(open));
+  quietTrigger.classList.toggle('open', open);
+  if (open) {
+    paintQuietPop(live());
+    positionQuietPop();
+    quietInput.focus({ preventScroll: true });
+  } else if (refocus) {
+    const target = !quietTrigger.hidden ? quietTrigger : quietReturnFocus;
+    target?.focus({ preventScroll: true });
+  }
+}
 document.addEventListener('pointerdown', (e) => {
-  if (!layoutPop.hidden && !layoutMenu.contains(e.target as Node)) showLayouts(false);
+  const target = e.target as Node;
+  if (!layoutPop.hidden && !layoutMenu.contains(target)) showLayouts(false);
+  if (quietOpen && !quietPop.contains(target) && !quietTrigger.contains(target)) showQuiet(false);
 });
 layoutMenu.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || layoutPop.hidden) return;
@@ -337,11 +455,47 @@ layoutMenu.addEventListener('focusout', (e) => {
 layouts.addEventListener('click', (e) => {
   if ((e.target as Element).closest('.dash-layout')) showLayouts(false, true);
 });
-const toolbar = h('div.dash-toolbar', {}, sideToggle, h('div.dash-crumb', {}, h('span.eyebrow', {}, 'Workspace'), h('span.dash-crumb-sep', { 'aria-hidden': 'true' }, '/'), wsSummary), h('div.dash-toolbar-end', {}, layoutMenu));
+quietPop.addEventListener('focusout', (e) => {
+  if (e.relatedTarget instanceof Node && !quietPop.contains(e.relatedTarget) && !quietTrigger.contains(e.relatedTarget)) showQuiet(false);
+});
+quietInput.addEventListener('input', () => {
+  quietCursor = 0;
+  paintQuietPop(live());
+});
+quietPop.addEventListener('keydown', (e) => {
+  if (!quietOpen) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation();
+    if (quietInput.value) {
+      quietInput.value = '';
+      quietCursor = 0;
+      paintQuietPop(live());
+    } else {
+      showQuiet(false, true);
+    }
+    return;
+  }
+  if (e.altKey || e.ctrlKey || e.metaKey || e.isComposing) return;
+  const rows = [...quietList.querySelectorAll<HTMLButtonElement>('.dash-quiet-row:not(:disabled)')];
+  if (!rows.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    quietCursor = (quietCursor + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length;
+    rows.forEach((row, i) => {
+      row.setAttribute('aria-selected', String(i === quietCursor));
+      row.classList.toggle('cursor', i === quietCursor);
+    });
+    rows[quietCursor]?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter' && e.target === quietInput) {
+    e.preventDefault();
+    rows[quietCursor]?.click();
+  }
+});
 const colHandle = h('div.dash-handle.col', { role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize columns', tabindex: 0, title: 'Drag to resize · double-click to even out' });
 const rowHandle = h('div.dash-handle.row', { role: 'separator', 'aria-orientation': 'horizontal', 'aria-label': 'Resize rows', tabindex: 0, title: 'Drag to resize · double-click to even out' });
 const workspaceEl = h('div.dash-workspace', {}, colHandle, rowHandle);
-const mainEl = h('main.dash-main', { id: 'worker-detail', tabindex: '-1', 'aria-label': 'Workspace' }, toolbar, workspaceEl);
+const mainEl = h('main.dash-main', { id: 'worker-detail', tabindex: '-1', 'aria-label': 'Workspace' }, workspaceEl);
 const content = h('div.dash-body', { hidden: true }, side, mainEl);
 const buildingView = createBuildingView({
   open: (row) => {
@@ -358,6 +512,7 @@ $('dashboard').replaceChildren(h('a.dash-skip', { href: '#worker-detail' }, 'Ski
 function showWorkers(show: boolean) {
   showingWorkers = show;
   showLayouts(false);
+  showQuiet(false);
   workerMenu.close();
   paint();
   if (show) buildingView.focus();
@@ -684,7 +839,7 @@ net.onMessage((msg) => {
   }
   if (entering || msg.t === 'floors' || msg.t === 'worker.update') followWorkerLink();
 });
-for (const topic of ['floors', 'workers', 'building', 'whiteboard', 'project', 'missionControl'] as const) store.on(topic, paint);
+for (const topic of ['floors', 'workers', 'building', 'pulls', 'whiteboard', 'project', 'missionControl'] as const) store.on(topic, paint);
 store.on('screens', () => {
   for (const p of panes) p?.paintQuestion();
   schedulePreviews();
@@ -695,6 +850,8 @@ function addFloor() {
 }
 function goFloor(id: string) {
   if (!live()) return;
+  showQuiet(false);
+  showLayouts(false);
   if (showingWorkers) showWorkers(false);
   if (id === store.floor) return;
   closeAllModals();
@@ -705,8 +862,9 @@ function goFloor(id: string) {
   }
   paint();
 }
-floors.addEventListener('keydown', (event) => {
-  const buttons = [...floors.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+lowerDeck.addEventListener('keydown', (event) => {
+  if (quietOpen && quietPop.contains(event.target as Node)) return;
+  const buttons = [...lowerDeck.querySelectorAll<HTMLButtonElement>(':scope > nav > button:not(:disabled), :scope > button:not(:disabled):not([hidden])')];
   const at = buttons.indexOf(event.target as HTMLButtonElement);
   if (at < 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   const targets: Record<string, number> = { ArrowLeft: at - 1, ArrowRight: at + 1, Home: 0, End: buttons.length - 1 };
@@ -738,7 +896,18 @@ if (typeof ResizeObserver === 'function')
   new ResizeObserver(() => {
     floors.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     markFloorOverflow();
+    if (quietOpen) positionQuietPop();
   }).observe(floors);
+let lastBayCap = maxSurfacedBays(window.innerWidth);
+window.addEventListener('resize', () => {
+  const nextCap = maxSurfacedBays(window.innerWidth);
+  if (nextCap !== lastBayCap) {
+    lastBayCap = nextCap;
+    paint();
+  } else if (quietOpen) {
+    positionQuietPop();
+  }
+});
 
 function live() {
   return authorized && net.up && fresh && !switching;
@@ -801,28 +970,161 @@ function say(text: string) {
 const ordered = () => workersByTeam(store.workers.values());
 
 let floorListKey = '';
+let gitPillKey = '';
+let quietBadgesKey = '';
 let shownFloor: string | null | undefined;
-function paintFloors(up: boolean) {
-  const key = JSON.stringify([store.floor === ROOF, store.floor, store.floors.map((f) => [f.id, f.name, f.repo, f.waiting])]);
+let latestTriageItems: TriageFloor[] = [];
+let latestTriagePart: TriagePartition = { surfaced: [], quiet: [], quietBusy: 0, quietNeeds: 0, quietDone: 0 };
+let latestBuildingRows: BuildingWorkerRow[] = [];
+
+function jumpToUrgent() {
+  if (!live()) return;
+  const target = nextUrgentTarget(latestBuildingRows, latestTriageItems, store.floor, focusedWorker(ws) ?? undefined);
+  if (!target) return;
+  if (target.kind === 'worker') {
+    if (target.row.kind === 'desk' || target.row.navigationFloor) openAcross(target.row.worker.id, target.row.navigationFloor ?? target.row.floorId);
+    else openHere(target.row.worker.id, true);
+  } else {
+    goFloor(target.floorId);
+  }
+}
+
+function quietRowStatus(item: TriageFloor): HTMLElement {
+  if (item.needsInput > 0) return h('span.dash-quiet-stat.needs', {}, `${item.needsInput} needs you`);
+  if (item.unackedDone > 0) return h('span.dash-quiet-stat.done', {}, `${item.unackedDone} done`);
+  if (item.busy > 0) return h('span.dash-quiet-stat.work', {}, `${item.busy} working`);
+  return h('span.dash-quiet-stat.idle', {}, item.totalWorkers ? item.idleState : 'empty');
+}
+
+function paintQuietPop(up: boolean) {
+  if (!quietOpen) return;
+  const query = quietInput.value;
+  const filtered = filterSwitcherFloors(latestTriageItems, latestTriagePart.quiet, query);
+  if (query.trim()) quietSectionTitle.textContent = `Matching floors (${filtered.length})`;
+  else if (latestTriagePart.quiet.length > 0) quietSectionTitle.textContent = `Quiet & background floors (${latestTriagePart.quiet.length} of ${latestTriageItems.length})`;
+  else quietSectionTitle.textContent = `All floors (${latestTriageItems.length})`;
+  quietReorderBtn.disabled = !up || store.floors.length < 2;
+  quietAddBtn.disabled = !up;
+  if (!filtered.length) {
+    quietCursor = 0;
+    quietList.replaceChildren(h('div.dash-quiet-empty', {}, latestTriageItems.length ? 'No matching floors.' : 'No floors yet.'));
+    return;
+  }
+  quietCursor = Math.max(0, Math.min(quietCursor, filtered.length - 1));
+  quietList.replaceChildren(
+    ...filtered.map((item, i) => {
+      const badge = h('span.dash-quiet-badge', { 'aria-hidden': 'true' }, item.number);
+      badge.style.setProperty('--trim', item.trim);
+      const status = quietRowStatus(item);
+      return h(
+        'button.dash-quiet-row',
+        {
+          type: 'button',
+          role: 'option',
+          'data-floor': item.floor.id,
+          'aria-selected': String(i === quietCursor),
+          disabled: !up,
+          onclick: () => {
+            showQuiet(false);
+            goFloor(item.floor.id);
+          },
+        },
+        badge,
+        h('span.dash-quiet-main', {}, h('span.dash-quiet-repo', {}, item.floor.name), item.metaLabel ? h('span.dash-quiet-branch', {}, item.metaLabel) : null),
+        h('span.dash-quiet-right', {}, status, item.chord ? h('span.key.dash-quiet-chord', { 'aria-hidden': 'true' }, item.chord.replace(/\s+/g, '')) : null),
+      );
+    }),
+  );
+  quietList.querySelectorAll<HTMLElement>('.dash-quiet-row')[quietCursor]?.classList.add('cursor');
+}
+
+function bayStats(item: TriageFloor): HTMLElement {
+  const parts: HTMLElement[] = [];
+  if (item.needsInput > 0) parts.push(h('span.dash-stat-needs', { 'aria-label': `${item.needsInput} needs you` }, `${item.needsInput}!`));
+  if (item.unackedDone > 0) parts.push(h('span.dash-stat-done', { 'aria-label': `${item.unackedDone} done` }, `${item.unackedDone}✓`));
+  if (item.busy > 0) parts.push(h('span.dash-stat-work', {}, `${item.busy}w`));
+  else if (!item.needsInput && !item.unackedDone) parts.push(h('span.dash-stat-idle', {}, item.totalWorkers ? item.idleState : 'empty'));
+  return h('span.dash-floor-stat', {}, ...parts);
+}
+
+function paintConsole(up: boolean, buildingRows: readonly BuildingWorkerRow[]) {
+  latestTriageItems = buildTriageFloors({
+    floors: store.floors,
+    building: store.building,
+    currentFloor: store.floor,
+    workers: store.workers.values(),
+    pulls: store.pulls.loading ? undefined : store.pulls.items,
+  });
+  latestTriagePart = partitionTriageFloors(latestTriageItems, store.floor, maxSurfacedBays(window.innerWidth));
+
+  // Upper active git context pill
+  const activeItem = latestTriageItems.find((item) => item.floor.id === store.floor);
+  const prWord = words().pr;
+  const nextGitKey = store.floor === ROOF ? 'roof' : activeItem ? JSON.stringify([activeItem.floor.id, activeItem.floor.name, activeItem.floor.repo, activeItem.branch, activeItem.floor.plain, activeItem.openPrs, prWord]) : '';
+  gitPill.hidden = !nextGitKey;
+  if (nextGitKey !== gitPillKey) {
+    gitPillKey = nextGitKey;
+    if (store.floor === ROOF) {
+      gitPill.title = 'Rooftop';
+      gitPill.replaceChildren(icon('branch', 11), h('b.dash-git-name', {}, 'Rooftop'));
+    } else if (activeItem) {
+      const prText = activeItem.openPrs > 0 ? `· ${activeItem.openPrs} ${activeItem.openPrs === 1 ? prWord : `${prWord}s`}` : '';
+      gitPill.title = [activeItem.floor.repo ?? activeItem.floor.name, activeItem.branch, activeItem.openPrs > 0 ? `${activeItem.openPrs} open ${prWord}` : ''].filter(Boolean).join(' · ');
+      gitPill.replaceChildren(
+        icon('branch', 11),
+        h('b.dash-git-name', {}, activeItem.floor.name),
+        ...(activeItem.branch ? [h('span.dash-git-branch', {}, `/${activeItem.branch}`)] : activeItem.floor.plain ? [h('span.dash-git-branch', {}, '· plain')] : []),
+        ...(prText ? [h('span.dash-git-prs', {}, prText)] : []),
+      );
+    } else {
+      gitPill.replaceChildren();
+    }
+  }
+
+  // Upper building pulse
+  const counts = buildingCounts(buildingRows);
+  const unackedDone = unackedDoneBuildingCount(buildingRows);
+  pulse.hidden = false;
+  pulseNeedsBtn.hidden = counts.needs_input === 0;
+  pulseNeedsBtn.disabled = !up;
+  pulseNeedsCount.textContent = `${counts.needs_input} needs you`;
+  pulseCalm.hidden = counts.needs_input > 0;
+  pulseWork.hidden = counts.working === 0;
+  pulseWork.textContent = `${counts.working} working`;
+  pulseDone.hidden = unackedDone === 0;
+  pulseDone.textContent = `${unackedDone} done`;
+
+  // Lower surfaced triage floor bays
+  const key = JSON.stringify([
+    store.floor === ROOF,
+    store.floor,
+    latestTriagePart.surfaced.map((item) => [item.floor.id, item.number, item.floor.name, item.floor.repo, item.branch, item.chord, item.triage, item.needsInput, item.unackedDone, item.busy, item.totalWorkers, item.idleState]),
+  ]);
   const changedList = key !== floorListKey;
   if (changedList) {
     const focused = document.activeElement instanceof HTMLElement && floors.contains(document.activeElement) ? document.activeElement.dataset.floor : undefined;
     floors.replaceChildren(
-      ...(store.floor === ROOF ? [h('span.dash-floor-roof', {}, 'Rooftop')] : []),
-      ...store.floors.map((f, i) =>
-        h(
+      ...(store.floor === ROOF ? [h('span.dash-floor-chip.on.dash-floor-roof', {}, 'Rooftop')] : []),
+      ...latestTriagePart.surfaced.map((item) => {
+        const on = item.floor.id === store.floor;
+        let waitingSummary = '';
+        if (item.needsInput > 0) waitingSummary = `${item.needsInput} needs you`;
+        else if (item.unackedDone > 0) waitingSummary = `${item.unackedDone} done`;
+        return h(
           'button.dash-floor-chip',
           {
             type: 'button',
-            'data-floor': f.id,
-            title: `${f.name} — ${f.repo ?? 'no git'}${f.waiting ? ` · ${f.waiting} waiting` : ''}`,
-            onclick: () => goFloor(f.id),
+            'data-floor': item.floor.id,
+            'data-triage': item.triage,
+            title: [`F${item.number} ${item.floor.name}`, item.floor.repo ?? (item.floor.plain ? 'plain folder' : 'git'), waitingSummary, item.chord ? `(${item.chord})` : ''].filter(Boolean).join(' · '),
+            onclick: () => goFloor(item.floor.id),
           },
-          h('span.dash-floor-number', { 'aria-hidden': 'true' }, String(i + 1)),
-          h('span.dash-floor-name', {}, f.name),
-          f.waiting && f.id !== store.floor ? h('span.dash-floor-attn', { role: 'img', 'aria-label': `${f.waiting} waiting` }) : null,
-        ),
-      ),
+          h('span.dash-floor-number', { 'aria-hidden': 'true' }, item.number),
+          h('span.dash-floor-name', {}, item.floor.name),
+          on && item.branch ? h('span.dash-floor-branch', {}, `/${item.branch}`) : null,
+          bayStats(item),
+        );
+      }),
     );
     floorListKey = key;
     if (focused) [...floors.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.dataset.floor === focused)?.focus({ preventScroll: true });
@@ -835,7 +1137,40 @@ function paintFloors(up: boolean) {
   }
   if (changedList || shownFloor !== store.floor) floors.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   shownFloor = store.floor;
+
+  // Lower +N QUIET bay & track
+  const quietCount = latestTriagePart.quiet.length;
+  quietTrigger.hidden = quietCount === 0;
+  quietTrigger.disabled = !up;
+  quietTrigger.classList.toggle('has-bg-work', latestTriagePart.quietBusy > 0);
+  quietTrigger.classList.toggle('has-overflow-needs', latestTriagePart.quietNeeds > 0);
+  quietLabel.textContent = `+${quietCount} quiet`;
+  const nextQuietBadgesKey = `${latestTriagePart.quietNeeds}:${latestTriagePart.quietDone}:${latestTriagePart.quietBusy}`;
+  if (nextQuietBadgesKey !== quietBadgesKey) {
+    quietBadgesKey = nextQuietBadgesKey;
+    quietBadges.replaceChildren(
+      ...(latestTriagePart.quietNeeds > 0 ? [h('span.dash-stat-needs', {}, `${latestTriagePart.quietNeeds}!`)] : []),
+      ...(latestTriagePart.quietDone > 0 ? [h('span.dash-stat-done', {}, `${latestTriagePart.quietDone}✓`)] : []),
+      ...(latestTriagePart.quietBusy > 0 ? [h('span.dash-quiet-work', {}, `· ${latestTriagePart.quietBusy}W`)] : []),
+    );
+  }
+  quietTrigger.title = quietCount ? `Show ${quietCount} quiet ${quietCount === 1 ? 'floor' : 'floors'} or search all (⌘ K)` : 'Search floors (⌘ K)';
+
+  if (!store.floors.length) {
+    floorTrackText.textContent = 'No floors yet — add a project or folder';
+  } else if (quietCount > 0 && counts.needs_input === 0 && latestTriagePart.surfaced.length <= 1) {
+    floorTrackText.textContent = `All ${quietCount} other ${quietCount === 1 ? 'floor' : 'floors'} quiet · zero blockers`;
+  } else if (quietCount > 0) {
+    floorTrackText.textContent = `${quietCount} ${quietCount === 1 ? 'floor' : 'floors'} tucked in quiet menu`;
+  } else {
+    floorTrackText.textContent = '';
+  }
+
   markFloorOverflow();
+  if (quietOpen) {
+    paintQuietPop(up);
+    positionQuietPop();
+  }
 }
 
 function paint() {
@@ -845,7 +1180,7 @@ function paint() {
   const here = store.currentFloor();
   const hasFloors = store.floors.length > 0;
   addFloorBtn.disabled = !up;
-  addFloorBtn.classList.toggle('icon', hasFloors);
+  addFloorBtn.classList.toggle('with-label', !hasFloors);
   addFloorLabel.hidden = hasFloors;
   reorderFloors.disabled = !up || store.floors.length < 2;
   agentBtn.disabled = shellBtn.disabled = !up || !here || busy.has('hire');
@@ -853,6 +1188,9 @@ function paint() {
   agentBtn.classList.toggle('accent', !here || store.workers.size > 0);
   board.disabled = !up || !here;
   subscriptions.disabled = settingsBtn.disabled = !up;
+  sideToggle.disabled = !authorized;
+  sideToggle.hidden = !authorized || showingWorkers;
+  layoutMenu.hidden = !authorized || showingWorkers;
   const link = up ? 'Connected' : authorized && !net.up ? 'Disconnected' : 'Connecting';
   linkDot.dataset.state = up ? 'up' : authorized && !net.up ? 'down' : 'wait';
   linkDot.setAttribute('aria-label', link);
@@ -868,15 +1206,21 @@ function paint() {
     .querySelector('.dash-skip')
     ?.setAttribute('href', showingWorkers ? '#all-workers-heading' : '#worker-detail');
   authPanel.hidden = authorized;
-  floorPicker.hidden = !authorized;
-  board.hidden = settingsBtn.hidden = !authorized;
+  lowerDeck.hidden = !authorized;
+  topSep.hidden = !authorized;
+  board.hidden = subscriptions.hidden = settingsBtn.hidden = !authorized;
   paintBanner();
   if (!authorized) {
+    gitPill.hidden = true;
+    pulse.hidden = true;
+    showQuiet(false);
+    showLayouts(false);
     disposePanes();
     return paintGate();
   }
-  paintFloors(up);
   const buildingRows = buildingRoster({ floors: store.floors, building: store.building, currentFloor: store.floor, workers: store.workers.values(), mission: store.missionControl });
+  latestBuildingRows = buildingRows;
+  paintConsole(up, buildingRows);
   allWorkersCount.textContent = String(buildingRows.length);
   allWorkersBtn.setAttribute('aria-label', `All workers, ${buildingRows.length}`);
   if (showingWorkers) buildingView.update({ rows: buildingRows, floors: store.floors, live: up, canHire: !!here, mission: store.missionControl });
@@ -1068,7 +1412,7 @@ function paintWorkspace() {
   rowHandle.setAttribute('aria-valuenow', String(Math.round(ws.row * 100)));
   const open = shown.filter(Boolean).length;
   const fw = workerOf(focusedWorker(ws) ?? '');
-  wsSummary.replaceChildren(`${open} of ${count} open`, ...(fw && count > 1 ? [h('span.dash-crumb-sep', {}, ' · '), 'focused on ', h('b', {}, fw.name)] : []));
+  layoutTrigger.title = `Pane layout (⌘ 1–8) · ${open} of ${count} open${fw && count > 1 ? ` · focused on ${fw.name}` : ''}`;
   layoutButtons.forEach((b, i) => {
     b.setAttribute('aria-checked', String(!ws.auto && LAYOUT_ORDER[i] === ws.layout));
   });
@@ -1300,12 +1644,14 @@ function accessDialog() {
 
 if (nativeCompanion) {
   window.addEventListener('droid-office:close-pane', () => {
+    if (quietOpen) return showQuiet(false, true);
+    if (!layoutPop.hidden) return showLayouts(false, true);
     if (workerMenu.close(true) || closeTopModal()) return;
     if (showingWorkers) return showWorkers(false);
     if (live() && (focusedWorker(ws) || SLOT_COUNT[ws.layout] > 1)) paneHost.close(ws.focused);
   });
   window.addEventListener('droid-office:send-home', () => {
-    if (!live() || showingWorkers || modalOpen() || workerMenu.isOpen()) return;
+    if (!live() || showingWorkers || quietOpen || modalOpen() || workerMenu.isOpen()) return;
     const w = store.workers.get(focusedWorker(ws) ?? '');
     if (w && !busy.has(w.id)) sendHome(w);
   });
@@ -1320,6 +1666,17 @@ window.addEventListener(
       e,
       (command) => {
         switch (command.action) {
+          case 'floors':
+            showQuiet(!quietOpen, quietOpen);
+            break;
+          case 'floorIndex': {
+            const target = store.floors[command.index];
+            if (target) {
+              showQuiet(false);
+              goFloor(target.id);
+            }
+            break;
+          }
           case 'floor': {
             const next = adjacentFloor(store.floors, store.floor, command.direction);
             if (next) goFloor(next);
@@ -1348,15 +1705,19 @@ window.addEventListener(
             break;
           }
           case 'hire':
+            showQuiet(false);
             hire('auto', ws.focused);
             break;
           case 'board':
+            showQuiet(false);
             void openBoard();
             break;
           case 'settings':
+            showQuiet(false);
             void showSettings();
             break;
           case 'orchestrator':
+            showQuiet(false);
             if (workerOf(ORCHESTRATOR_ID)) openHere(ORCHESTRATOR_ID, true);
             else void showSettings('orchestrator');
             break;
@@ -1371,7 +1732,7 @@ window.addEventListener(
         }
       },
       nativeCompanion,
-      showingWorkers ? 'directory' : 'workspace',
+      showingWorkers || quietOpen ? 'directory' : 'workspace',
     );
   },
   true,

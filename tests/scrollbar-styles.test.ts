@@ -46,7 +46,7 @@ test('standard scrollbar styling cannot override WebKit styling outside the fall
 });
 
 test('compact navigation strips hide scrollbars without disabling scrolling', () => {
-  for (const selector of ['.mp-chips', '.dash-floor-strip', '.dash-team-nav-members']) {
+  for (const selector of ['.mp-chips', '.dash-floor-bays', '.dash-team-nav-members']) {
     assert.match(rule(selector), /overflow-x:\s*auto;/);
     assert.match(rule(selector), /scrollbar-width:\s*none;/);
     assert.match(rule(`${selector}::-webkit-scrollbar`), /display:\s*none;/);
