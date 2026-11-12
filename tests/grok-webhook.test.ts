@@ -479,10 +479,35 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
 
   const rmcp = new RemoteMcp({ dataDir: dir, office, mcp: mcpDeps, backendPort: 0, log() {} });
   rig.after(() => rmcp.stop());
+  const testStartedAt = Date.now();
   const tested = await rmcp.testWebhook(grok.worker.id);
+  const testFinishedAt = Date.now();
   assert.equal(tested.result.ok, true);
   assert.equal(receiver.received.length, 8);
   assert.equal(receiver.received[7].body.test, true);
+  const settingsPing = receiver.received[7].body;
+  assert.equal(settingsPing.event, 'test');
+  assert.equal(settingsPing.source, 'droid-office');
+  assert.equal(settingsPing.version, 1);
+  assert.deepEqual(settingsPing.lead, { id: grok.worker.id, name: 'grokbot' });
+  assert.ok(Date.parse(settingsPing.sentAt) >= testStartedAt && Date.parse(settingsPing.sentAt) <= testFinishedAt);
+  const pingItem = settingsPing.items[0];
+  assert.match(pingItem.id, /^test-[0-9a-f]{16}$/);
+  assert.equal(pingItem.kind, 'test');
+  assert.equal(pingItem.at, settingsPing.sentAt);
+  assert.equal(pingItem.ackId, undefined);
+  assert.match(pingItem.text ?? '', /Connectivity test from Droid Office Settings/);
+  assert.match(pingItem.text ?? '', /reply to the owner confirming you received this test ping/i);
+  assert.match(pingItem.text ?? '', /all non-secret details/);
+  assert.match(pingItem.actionHint, /Reply to the owner to acknowledge/);
+  for (const field of ['event', 'test flag', 'source', 'version', 'summary', 'lead id and name', 'sentAt', 'every item field', 'id, kind, at, text and actionHint', 'request id']) {
+    assert.ok(pingItem.actionHint.includes(field), `test acknowledgment requests ${field}`);
+  }
+  assert.match(pingItem.actionHint, /absent rather than inventing/);
+  assert.match(pingItem.actionHint, /Never include Authorization headers, webhook keys, tokens or other secrets/);
+  assert.match(pingItem.actionHint, /do not acknowledge it via office_inbox/);
+  assert.doesNotMatch(pingItem.actionHint, /no action|no acknowledgment/i);
+  assert.equal(JSON.stringify(settingsPing).includes(DUMMY_TOKEN), false, 'test payload never contains the webhook token');
   const stateJson = JSON.stringify(tested.state);
   assert.equal(stateJson.includes(DUMMY_TOKEN), false, 'RemoteMcp.state() never exposes webhookToken');
   const grokState = tested.state.bots.find((b) => b.id === grok.worker.id)!;
