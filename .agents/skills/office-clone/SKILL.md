@@ -24,7 +24,7 @@ Source resolution order: `--office DIR`, `$DROID_OFFICE_HOME`, `officeDir` in `~
 | Per-floor state (decor, jukebox, Whiteboard, team) and Home floor state | `<floor>/.droid-office/`, `~/.droid-office/` |
 | Mac app browser settings (profile, graphics, per-desk models, active floor) | `localStorage` LevelDB (`uv`) |
 
-**Excluded so starting the clone cannot resume live sessions:** `workers.json`, `cloud-workers.json`, `guests.json`, the entire `/orchestrator/` session directory, `remote-workers.json`, `remote-mcp.json`, PTY/hook sockets (`pty.sock`, `pty-host.*`, `hook-port`, `shell.*`), `scrollback/`, `worktrees/`, `drops/` and `wiki-run*`.
+**Excluded so starting the clone cannot resume live sessions:** `workers.json`, `cloud-workers.json`, `guests.json`, the entire `/orchestrator/` session directory, `remote-workers.json`, `remote-mcp.json`, PTY/hook sockets (`pty.sock`, `pty-host.*`, `hook-port`, `shell.*`), `scrollback/`, `worktrees/`, `drops/`, `images/` and `wiki-run*`.
 
 **No installed office (`--fresh`):** mutually exclusive with `--office`; creates a local clone of this checkout plus a test `Verifier` profile (`DROID_OFFICE_BROWSERS_PATH` overrides the browser cache). Prefer a real owner clone whenever one exists.
 

@@ -4,8 +4,12 @@ import path from 'node:path';
 import { z } from 'zod';
 import { FACTORY_ARTIFACT_CSS, FACTORY_HTML_STARTER, FACTORY_LOGOS, FACTORY_TOKENS, GUIDE_TOPICS, formatWhiteboardGuide } from '../../shared/whiteboard-design.js';
 import { extractMarkdownTitle } from '../../shared/whiteboard-markdown.js';
-import { readerOf, stateAt, type Anchor, type Op } from '../../shared/whiteboard.js';
+import { findCard, readerOf, stateAt, type Anchor, type Op } from '../../shared/whiteboard.js';
+import { formatImageLines, OfficeImageStore, type OfficeImageRef } from '../office-images.js';
+import { floorNamed } from '../remote-office.js';
+import type { WhiteboardStore } from '../whiteboard.js';
 import { readBoard, workerAuthor } from '../whiteboard-agent.js';
+import { floorArg } from './team-events.js';
 import { formatRead, printable } from './whiteboard-format.js';
 import { officeAccess, officeError, officeResult, ownFloor, record, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
@@ -76,12 +80,36 @@ function resolvePaths(ops: Record<string, unknown>[], cwd: string): Op[] {
   });
 }
 
-function apply(caller: OfficeMcpCaller, ops: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
-  const floor = ownFloor(caller);
+function applyOnFloor(floor: { dir: string; whiteboard: WhiteboardStore }, caller: OfficeMcpCaller, ops: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
   const store = floor.whiteboard;
   const out = store.apply({ epoch: store.issueEpoch(), seq: 1, ops: resolvePaths(ops, caller.cwd ?? floor.dir) }, workerAuthor(caller.worker), 'agent');
   if (out.kind !== 'ack') return officeError(out.reason === 'invalid' ? printable(out.error.message) : 'The batch expired. Read the board before retrying.');
   return officeResult(`Done at revision ${out.rev}.${extra.card ? ` Card: ${extra.card}.` : ''}${extra.id ? ` Mark: ${extra.id}.` : ''}`, { ok: true, rev: out.rev, ...extra });
+}
+
+function apply(caller: OfficeMcpCaller, ops: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
+  return applyOnFloor(ownFloor(caller), caller, ops, extra);
+}
+
+function resolveReadFloor(caller: OfficeMcpCaller, deps: OfficeMcpDeps, floorRef?: string): { id: string; name: string; dir: string; whiteboard: WhiteboardStore } | string {
+  if (!caller.building) {
+    const own = ownFloor(caller);
+    if (floorRef !== undefined) {
+      const want = floorRef.trim();
+      const matchesOwn = want === own.id || want.toLowerCase() === own.name.toLowerCase() || (path.isAbsolute(want) && path.resolve(want) === path.resolve(own.dir));
+      if (!matchesOwn) return 'Floor workers read only their own floor’s Whiteboard';
+    }
+    return own;
+  }
+  const all = deps.remote?.floors() ?? [];
+  if (!all.length) return 'No floor is open.';
+  if (floorRef === undefined) {
+    if (all.length === 1) return { id: all[0].id, name: all[0].def.name, dir: all[0].dir, whiteboard: all[0].whiteboard };
+    return 'Name the floor whose Whiteboard to read: pass floor with an open floor’s id, name or path from office_floors.';
+  }
+  const named = floorNamed(all, floorRef);
+  if (typeof named === 'string') return named;
+  return { id: named.id, name: named.def.name, dir: named.dir, whiteboard: named.whiteboard };
 }
 
 /** The one kind of content a source names, and the load it becomes, or what is wrong with it. */
@@ -180,7 +208,19 @@ function anchorOf(value?: z.infer<typeof anchor>): Anchor {
   return { kind: 'point', point: fallback };
 }
 
-export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
+export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
+  const imageStoreFor = (floorDir: string) => deps.images ?? deps.remote?.images ?? new OfficeImageStore(path.join(floorDir, '.droid-office'));
+  const attachCardImages = (result: ReturnType<typeof officeResult>, floor: { dir: string; whiteboard: WhiteboardStore }, cardId: string, caller: OfficeMcpCaller) => {
+    if (result.isError) return result;
+    const found = findCard(floor.whiteboard.board, cardId);
+    if (!found) return result;
+    const store = imageStoreFor(floor.dir);
+    const refs = store.withUrls(store.collectCardImages(floor.whiteboard, found), caller.remoteOrigin);
+    if (!refs?.length) return result;
+    result.structuredContent = { ...(result.structuredContent as Record<string, unknown>), images: refs };
+    result.content.push({ type: 'text', text: printable(formatImageLines(refs).join('\n')) });
+    return result;
+  };
   server.tool(
     {
       name: 'whiteboard_guide',
@@ -216,8 +256,9 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
     {
       name: 'whiteboard_read',
       description:
-        'Read board/cards (Markdown/HTML, state, marks, CHANGED pieces). Returned cards advance read points unless peek: true; failed reads do not. Use onlyChanged: true for unread updates only. With png: true, current-snapshot tiles advance reads, cards without images stay unread; older images carry their actual revision and age.',
+        'Read board/cards (Markdown/HTML, state, marks, CHANGED pieces, and downloadable image ids/URLs). Building agents pass floor when more than one floor is open; floor workers omit floor. Returned cards advance read points unless peek: true; failed reads do not. Use onlyChanged: true for unread updates only. With png: true, current-snapshot tiles advance reads, cards without images stay unread; older images carry their actual revision and age.',
       inputSchema: z.object({
+        floor: floorArg,
         cards: z.array(z.string()).optional().describe('Card ids; omit for whole board.'),
         onlyChanged: z.boolean().optional().describe('Return only cards and removals with unread changes since your last read.'),
         peek: z.boolean().optional().describe('Inspect without advancing your read points.'),
@@ -228,12 +269,18 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
     },
     officeAccess.worker,
     async (args, caller, signal) => {
-      const floor = ownFloor(caller);
+      const floor = resolveReadFloor(caller, deps, args.floor);
+      if (typeof floor === 'string') return officeError(floor);
       const out = await readBoard(floor.whiteboard, readerOf(workerAuthor(caller.worker)), { id: floor.id, name: floor.name }, { cards: args.cards, onlyChanged: args.onlyChanged, png: args.png, signal });
       const result = officeResult('');
       result.content = [];
       const pngs = new Map<string, string>();
+      const cardImages = new Map<string, OfficeImageRef[]>();
+      const store = imageStoreFor(floor.dir);
       for (const card of out.cards) {
+        const collected = store.collectCardImages(floor.whiteboard, card, card.png?.ok ? { pngTiles: card.png.tiles, pngRev: card.png.rev } : undefined);
+        const refs = store.withUrls(collected, caller.remoteOrigin);
+        if (refs?.length) cardImages.set(card.id, refs);
         if (!card.png?.ok) continue;
         const { tiles, ...metadata } = card.png;
         pngs.set(
@@ -245,9 +292,20 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
           result.content.push(label, { type: 'image', data, mimeType: 'image/png' });
         });
       }
-      // Do not duplicate base64 tiles in JSON text or structuredContent.
-      const structured = { ...out, cards: out.cards.map((card) => (card.png?.ok ? { ...card, png: { ...card.png, tiles: undefined, tileCount: card.png.tiles.length } } : card)) };
-      const text = args.json ? JSON.stringify(structured, null, 2) : printable(formatRead(out, { now: Date.now(), full: !!args.cards, onlyChanged: args.onlyChanged, peek: args.peek, pngs }));
+      // Do not duplicate base64 tiles in JSON text or structuredContent; expose clean {id, url} image references instead.
+      const structured = {
+        ...out,
+        cards: out.cards.map((card) => {
+          const imgs = cardImages.get(card.id);
+          const pngField = card.png?.ok ? { ...card.png, tiles: undefined, tileCount: card.png.tiles.length } : card.png;
+          return {
+            ...card,
+            ...(pngField ? { png: pngField } : {}),
+            ...(imgs?.length ? { images: imgs } : {}),
+          };
+        }),
+      };
+      const text = args.json ? JSON.stringify(structured, null, 2) : printable(formatRead(out, { now: Date.now(), full: !!args.cards, onlyChanged: args.onlyChanged, peek: args.peek, pngs, images: cardImages }));
       result.content.unshift({ type: 'text', text });
       result.structuredContent = structured;
       // Build the complete response before recording a read. Rendering failures stay unread.
@@ -255,7 +313,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
       if (!args.peek) {
         const returned = out.returned.filter((id) => !args.png || !out.cards.some((card) => card.id === id && !card.png?.ok));
         if (returned.length) {
-          const moved = apply(caller, [{ op: 'read', cards: returned, rev: out.rev }]);
+          const moved = applyOnFloor(floor, caller, [{ op: 'read', cards: returned, rev: out.rev }]);
           if (moved.isError) return moved;
         }
       }
@@ -302,7 +360,7 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
           const warnings = [...(details?.content?.missing ?? []).map((missing) => `Not collected: ${missing.ref} (${missing.reason})`), ...(details?.link?.status === 'broken' ? [`The link is broken: ${details.link.reason}`] : [])];
           if (warnings.length) result.content.push({ type: 'text', text: printable(warnings.join('\n')) });
         }
-        return result;
+        return attachCardImages(result, floor, card, caller);
       }
       if (args.action === 'update') {
         if (picked?.kind === 'canvas' || picked?.kind === 'link') {
@@ -313,13 +371,13 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
         if (content) ops.push({ op: 'card.content', card, content });
         if (!ops.length) return officeError('Update needs a title or source.');
         if (args.show) ops.push({ op: 'show', selection: { kind: 'card', id: card } });
-        return apply(caller, ops, { card, ...(args.show ? { shown: true } : {}) });
+        return attachCardImages(apply(caller, ops, { card, ...(args.show ? { shown: true } : {}) }), floor, card, caller);
       }
       if (args.action === 'link') {
         if (picked?.kind !== 'link') return officeError('Link needs source: {link: "file-or-folder", entry?: "index.html"}.');
         const ops: Record<string, unknown>[] = [{ op: 'card.linkTo', card, path: picked.load.link, ...(picked.load.entry === undefined ? {} : { entry: picked.load.entry }) }];
         if (args.show) ops.push({ op: 'show', selection: { kind: 'card', id: card } });
-        return apply(caller, ops, { card, ...(args.show ? { shown: true } : {}) });
+        return attachCardImages(apply(caller, ops, { card, ...(args.show ? { shown: true } : {}) }), floor, card, caller);
       }
       return apply(caller, [{ op: args.action === 'remove' ? 'card.rm' : 'card.unlink', card }], { card });
     },
@@ -389,7 +447,8 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
         if (args.op === 'add' || args.op === 'reply') op.message = newId('m');
         else if (args.message !== undefined) op.message = args.message;
       }
-      return apply(caller, [op], { card: args.card, id, ...(typeof op.message === 'string' ? { message: op.message } : {}) });
+      const out = apply(caller, [op], { card: args.card, id, ...(typeof op.message === 'string' ? { message: op.message } : {}) });
+      return args.kind === 'picture' && (args.op === 'add' || args.op === 'file') ? attachCardImages(out, ownFloor(caller), args.card, caller) : out;
     },
   );
   server.tool(

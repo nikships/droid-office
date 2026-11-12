@@ -519,14 +519,17 @@ export async function startServer(cfg: Config) {
     inspect: (...a) => ownerOffice.inspect?.(...a),
     labelsOn: () => ownerOffice.labelsOn?.() ?? true,
     workerMeta: (id) => ownerOffice.workerMeta?.(id),
+    threadImages: (...a) => (ownerOffice.threadImages ? ownerOffice.threadImages(...a) : Promise.resolve([])),
     act: (...a) => ownerOffice.act(...a),
   };
+  orchestrator.workers.setSharedImages(remoteOffice.images);
   officeMcp = createOfficeMcp({
     hookUrl,
     answers,
     settings: () => subagents.settings,
     floor: officeMcpFloor,
     remote: remoteOffice,
+    images: remoteOffice.images,
     owner: ownerBridge,
     linear,
     orchestrator: { authenticate: (id, token) => orchestrator.authenticate(id, token), cwd: orchestrator.cwd },
@@ -803,6 +806,7 @@ export async function startServer(cfg: Config) {
     },
     lent: (floor) => [...floors.values()].some((f) => f !== floor && worksIn(f, floor)),
     renderer,
+    sharedImages: remoteOffice.images,
   };
   /** Whether a worker on `from` works in `on`'s project too (see WorkerInfo.repos). */
   const worksIn = (from: Floor, on: Floor) => from.workers.list().some((w) => w.repos?.some((r) => r.floor === on.id));
@@ -845,6 +849,7 @@ export async function startServer(cfg: Config) {
       office: remoteOffice,
       mcp: {
         answers,
+        images: remoteOffice.images,
         owner: ownerBridge,
         settings: () => subagents.settings,
         floor: officeMcpFloor,
@@ -3207,6 +3212,19 @@ export async function startServer(cfg: Config) {
         ...(queue?.count ? { queuedMessages: queue } : {}),
         ...(blocking ? { blockingTool: blocking } : {}),
       };
+    },
+    threadImages: async (workerId, entries, floorId) => {
+      const targetWorkers = workerId === ORCHESTRATOR_ID ? orchestrator.workers : ((floorId ? floors.get(floorId) : undefined)?.workers ?? workerFloor(workerId)?.workers);
+      const source = targetWorkers?.threadSession(workerId);
+      if (!source || !targetWorkers) return [];
+      try {
+        return await remoteOffice.images.collectThreadImages(entries, {
+          dropPicture: (name) => targetWorkers.dropPicture(workerId, name),
+          sessionPicture: (imageId) => workerThreads.image(source, imageId),
+        });
+      } catch {
+        return [];
+      }
     },
     act: async (by: WorkerInfo, msg, opts = {}) => {
       // A building agent's hire gets the model list its team_hire gets: here is the one way in for its owner-level actions.

@@ -16,7 +16,7 @@
 #   workers.json, cloud-workers.json, guests.json  a started office resumes every saved worker, so a
 #                                                  copy would run the owner's real sessions twice
 #   pty.sock, pty-host.*, hook-port, shell.*       the running office's terminals and hooks
-#   scrollback/, worktrees/, drops/, wiki-run*     other workers' terminals, checkouts and runs
+#   scrollback/, worktrees/, drops/, images/, wiki-run*  other workers' terminals, checkouts, media and runs
 set -euo pipefail
 
 REAL_HOME=$HOME
@@ -84,7 +84,7 @@ EXCLUDES=(--exclude workers.json --exclude cloud-workers.json --exclude guests.j
   --exclude /orchestrator/
   --exclude remote-workers.json --exclude remote-mcp.json
   --exclude pty.sock --exclude 'pty-host.*' --exclude hook-port --exclude 'shell.*'
-  --exclude scrollback/ --exclude worktrees/ --exclude drops/ --exclude 'wiki-run*'
+  --exclude scrollback/ --exclude worktrees/ --exclude drops/ --exclude images/ --exclude 'wiki-run*'
   --exclude bin/ --exclude 'droid-*.json' --exclude 'system-*.md' --exclude grok-home/ --exclude muse-home/)
 
 copy_state() { # <from dir> <to dir>: a .droid-office folder, minus what a started office would act on

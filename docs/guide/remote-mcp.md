@@ -8,6 +8,8 @@ The local workers' MCP (the `droid-office` entry the office writes to Droid's pr
 
 ```text
 POST https://<office Mac's MagicDNS name>:<port>/office/mcp
+POST https://<office Mac's MagicDNS name>:<port>/office/images
+GET  https://<office Mac's MagicDNS name>:<port>/office/images/<id>
 ```
 
 Settings → **Phone & web** → **Tailscale MCP** shows the exact URL. The port is 8443 unless something else already serves it. It stays the same across restarts.
@@ -84,6 +86,27 @@ curl -sS "$URL" \
 
 The first answer's `result.instructions` names the bot's worker id, and `curl -i` shows it in the `x-droid-office-worker-id` response header. A tool's result has `content` (text for the model) and, for most tools, `structuredContent` (the same data as JSON). `isError: true` marks a refused or failed call.
 
+## Image exchange
+
+External leads exchange images over the same Tailscale Serve port and `Authorization: Bearer <key>` credential (never put bearer tokens in URLs):
+
+1. **Upload an image (`POST /office/images`)** — send raw image bytes (`--data-binary @mockup.png`, optional `?name=mockup.png` or `x-file-name` header), `multipart/form-data` (`-F file=@mockup.png`), or JSON (`{"data":"<base64>","name":"mockup.png"}`). Magic bytes are validated (`PNG`, `JPEG`, `GIF`, `WebP`, up to 25 MB), returning `{ id, url, name, mimeType, bytes, width, height }`.
+2. **Send to workers** — pass `images: [id]` in `team_message`, `team_hire`, `office_worker_prompt`, or `office_worker_spawn`. Each recipient receives a local copy in its drops folder.
+3. **Fetch worker & Whiteboard images (`GET /office/images/<id>`)** — images workers attach in `team_report` / `lead_notify`, put on a floor's Whiteboard (`whiteboard_read`, including `png: true` rendered card tiles), or view in `office_worker_thread` return `{ id, url, name, mimeType, bytes, width, height }` in tool results, `office_inbox`, and Grok Bot webhook payloads. Fetch `url` with `Authorization: Bearer $KEY`:
+
+```bash
+IMAGES_URL='https://office-mac.tailXXXX.ts.net:8443/office/images'
+
+# Upload an image and capture its 16-hex id
+UPLOAD=$(curl -sS -X POST "$IMAGES_URL?name=mockup.png" \
+  -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: image/png' \
+  --data-binary @mockup.png)
+
+# Download an image returned in a report, webhook, or whiteboard_read
+curl -sS -H "Authorization: Bearer $KEY" "$IMAGES_URL/<16-hex-id>" -o out.png
+```
+
 ## MCP client configuration
 
 Most MCP clients take an `mcpServers` entry. **Copy config** in Settings gives exactly this, with the URL, key and worker id filled in:
@@ -115,7 +138,7 @@ The office never turns on [Tailscale Funnel](https://tailscale.com/kb/1223/funne
 
 - The relay is now the security boundary. Require its own credential (mutual TLS, an allowlist of the bot's IP addresses, or a separate secret) before forwarding anything. Never forward unauthenticated traffic and rely on the office key alone.
 - Give the relay's bot a **named key** of its own, so revoking it in Settings cuts off the relay without touching the bot's other clients. Watch its **last used** time.
-- Forward only `POST /office/mcp`. Do not forward `Origin`, and never forward `Tailscale-*` headers from the public side: Tailscale Serve sets these, and the office trusts them only on its own loopback listener.
+- Forward only `POST /office/mcp`, `POST /office/images` and `GET /office/images/<id>`. Do not forward `Origin`, and never forward `Tailscale-*` headers from the public side: Tailscale Serve sets these, and the office trusts them only on its own loopback listener.
 - Keep TLS end to end, log requests on the relay, and rate limit it.
 - A key on a public path can still do everything the bot can, including hiring agents that run commands on the owner's machine. Turn the relay off when the bot doesn't need it.
 
@@ -134,7 +157,7 @@ Owner action results contain `status: done | pending | unconfirmed`, notes, and 
 
 A bot's key still conveys owner-level worker control, including hiring agents that execute commands and answering terminal menus. Floor workers do not see these owner tools. All paths and `cwd` values refer to the **office machine**, not the bot's host.
 
-Remote bots have no Whiteboard, visits, raw terminal input, floor-management, forge, pipeline, settings, connection, picture or jukebox tools. These app features are unchanged. Internal workers retain `team`, `models_list`, `team_report`, `visit_roster`, `visit_look`, `whiteboard_guide`, `whiteboard_read`, `whiteboard_card`, `whiteboard_state`, `whiteboard_marks` and `whiteboard_apply`, subject to their existing permissions.
+Remote bots can read floor Whiteboards with `whiteboard_read` (including downloadable image URLs and ids), while Whiteboard mutation, visits, raw terminal input, floor-management, forge, pipeline, settings, connection, picture and jukebox tools stay internal. Internal workers retain `team`, `models_list`, `team_report`, `visit_roster`, `visit_look`, `whiteboard_guide`, `whiteboard_read`, `whiteboard_card`, `whiteboard_state`, `whiteboard_marks` and `whiteboard_apply`, subject to their existing permissions.
 
 `tests/remote-mcp.test.ts` asserts exact set equality for an external-bot session and checks this reference against the live tool arguments.
 
@@ -311,6 +334,7 @@ Hire one fresh subagent at the nearest free desk for an independent task. It get
 | `model` | string | no | Id from team_models. Omit for the Subagents setting, else the office default, else Droid default. Pick by owner notes, task difficulty and credit multiplier. |
 | `effort` | "low" \| "medium" \| "high" \| "xhigh" \| "max" | no | Reasoning effort; choose a value this model supports according to team_models. Omit to inherit its configured effort. |
 | `from` | string | no | Branch/tag/commit, worker:<name or id>, or a registered worktree's absolute path for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true. |
+| `images` | string[] | no | Uploaded image ids from POST /office/images to attach to the initial brief. |
 | `worktree` | boolean | no | Omit to default to a fresh worktree for structured tasks on Git floors (false on non-Git floors) or follow the owner's Subagents setting. True: isolated git worktree. False: shared checkout without switching its branch (omit baseBranch/branch/from). |
 
 ### `team_watch`
@@ -350,6 +374,7 @@ Steer one subagent, a subset or all your teams. By default (`queue: false`), gui
 | `workers` | string[] | one selector | Subset of subagent names or ids (1–100). |
 | `all` | true | one selector | Broadcast to all your subagents on the selected floor, or across all floors. |
 | `text` | string | yes | Guidance or follow-up for the selected subagents. |
+| `images` | string[] | no | Uploaded image ids from POST /office/images to attach for the subagent. |
 | `queue` | boolean | no, default `false` | Default `false` steers during the running turn; `true` queues behind the current turn using Ctrl+Enter. |
 | `urgent` | boolean | no | Interrupt a running turn or blocking command via Escape and deliver immediately (not with `queue: true`). |
 | `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
@@ -479,6 +504,19 @@ Answer one question from questions_list by its id: optionId picks a numbered opt
 | `optionId` | string | no | One option id. |
 | `optionIds` | string[] | no | Multi-select only: every option to have selected. |
 | `text` | string | no | A typed answer. |
+
+### `whiteboard_read`
+
+Read a floor's Whiteboard cards (Markdown/HTML, state, marks, CHANGED pieces, and downloadable image ids/URLs). Building agents pass `floor` when more than one floor is open; floor workers omit `floor`. Each returned card's raster content images, picture marks, and `png: true` rendered PNG tiles include `{ id, url, name, mimeType, bytes, width, height }` downloadable via `GET /office/images/<id>` with your bearer key.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `floor` | string | no | Building agents only (floor workers omit): floor id, name, or path. |
+| `cards` | string[] | no | Card ids; omit for whole board. |
+| `onlyChanged` | boolean | no | Return only cards and removals with unread changes since your last read. |
+| `peek` | boolean | no | Inspect without advancing your read points. |
+| `json` | boolean | no | Format text output as JSON. |
+| `png` | boolean | no | Include rendered PNG tiles with marks. |
 
 ## Grok Bot webhook push
 

@@ -10,6 +10,7 @@ import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { OfficeShell } from './office-shell.js';
 import { COLORS, NAMES, WorkerManager, type HookEnv } from './workers.js';
 import { CloudWorkers } from './cloud-workers.js';
+import type { SharedDropImages } from './drops.js';
 import { GitHub, MergeWatch } from './github.js';
 import { GitLab } from './gitlab.js';
 import { NoBoard, type Board } from './forge.js';
@@ -115,6 +116,8 @@ export interface FloorContext {
   lent(floor: Floor): boolean;
   /** What renders Whiteboard cards to images, shared by every floor (each gets its own view); none is the office without one. */
   renderer?: WhiteboardRenderers;
+  /** Office-wide image store so Tailnet-uploaded image ids work on any floor's local or cloud workers. */
+  sharedImages?: SharedDropImages;
 }
 
 /** The open pull request on a floor's board whose head is `branch`. */
@@ -350,6 +353,10 @@ export class Floor {
       liveNamesElsewhere: () => ctx.liveNamesElsewhere?.(this) ?? [],
       allNamesElsewhere: () => ctx.allNamesElsewhere?.(this) ?? [],
     };
+    if (ctx.sharedImages) {
+      this.workers.setSharedImages(ctx.sharedImages);
+      this.cloud.drops.setShared(ctx.sharedImages);
+    }
     this.workers.freshMain = () => ctx.freshMain();
     this.workers.visitsOn = () => ctx.subagents().visits;
     this.workers.pullList = () => this.board.pulls.items;
@@ -391,13 +398,14 @@ export class Floor {
         get officeDefault() {
           return workers.officeDefault;
         },
-        hire: (deskId, by, prompt, worktree, c, lead, from, branch) => workers.spawn(deskId, by, prompt, worktree, 'agent', c.model, c.effort, [], lead, undefined, from, branch),
-        prompt: (id, text, queue) => (queue === undefined ? workers.tell(id, text) : workers.prompt(id, text, [], queue)),
-        urgentPrompt: (id, text) => workers.urgentPrompt(id, text),
-        notice: (id, text) => workers.notice(id, text),
+        hire: (deskId, by, prompt, worktree, c, lead, from, branch, images) => workers.spawn(deskId, by, prompt, worktree, 'agent', c.model, c.effort, [], lead, images, from, branch),
+        prompt: (id, text, queue, images) => (queue === undefined && !images?.length ? workers.tell(id, text) : workers.prompt(id, text, images ?? [], queue ?? false)),
+        urgentPrompt: (id, text, images) => workers.urgentPrompt(id, text, images),
+        notice: (id, text, images) => workers.notice(id, text, images),
+        hasImage: (id) => workers.hasImage(id),
         queueState: (id, now) => workers.queueState(id, now),
         blockingTool: (id, now) => workers.blockingTool(id, now),
-        resume: (id, text) => workers.resume(id, text),
+        resume: (id, text, images) => workers.resume(id, text, images),
         kill: (id) => workers.kill(id),
         dismiss: (id, pruneWorktree, keepBranch) => workers.dismissTeam(id, pruneWorktree, keepBranch),
         tail: (id, lines) => workers.tail(id, lines),

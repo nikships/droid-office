@@ -7,12 +7,14 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { PROMPT_IMAGE_ID, PROMPT_IMAGES_MAX } from '../shared/drops.js';
 import { DESK_BY_ID, nearestFreeSeat, type DeskDef } from '../shared/layout.js';
 import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type GhPull, type SubagentModel, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../shared/protocol.js';
 import type { PipelinesState } from '../shared/pipelines.js';
 import { isAsleep } from '../shared/status.js';
 import type { DroidModelCatalogue, DroidModelOption } from './droid-models.js';
 import { availabilityWords, cannotRun, durationWords, isSubscriptionModel, type ModelAvailability, type ModelUsage, type SubscriptionProviderKey } from '../shared/subscriptions.js';
+import { restoreStoredImages, type StoredImageMeta } from './office-images.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { workerMessageVars } from '../shared/prompts.js';
 import { hireRefusal } from './subscriptions/map.js';
@@ -51,14 +53,15 @@ export interface TeamWorkers {
    * Hires `lead`'s subagent at `deskId`; returns it, or why not. Its worktree starts from `from` (a
    * branch, tag or commit), else where its lead is.
    */
-  hire(deskId: string, by: string, prompt: string, worktree: boolean, choice: Partial<AgentChoice>, lead: string, from?: string, branch?: string): WorkerInfo | string;
-  prompt(id: string, text: string, queue?: boolean): string | undefined;
-  urgentPrompt?(id: string, text: string): Promise<{ error?: string; interrupted?: boolean }>;
+  hire(deskId: string, by: string, prompt: string, worktree: boolean, choice: Partial<AgentChoice>, lead: string, from?: string, branch?: string, images?: string[]): WorkerInfo | string;
+  prompt(id: string, text: string, queue?: boolean, images?: readonly string[]): string | undefined;
+  urgentPrompt?(id: string, text: string, images?: readonly string[]): Promise<{ error?: string; interrupted?: boolean }>;
   cancelTurn?(id: string): boolean;
-  notice?(id: string, text: string): boolean;
+  notice?(id: string, text: string, images?: readonly string[]): boolean;
+  hasImage?(id: string): boolean;
   queueState?(id: string, now?: number): WorkerQueueState | undefined;
   blockingTool?(id: string, now?: number): BlockingToolState | undefined;
-  resume(id: string, prompt?: string): string | undefined;
+  resume(id: string, prompt?: string, images?: readonly string[]): string | undefined;
   kill(id: string): Promise<{ note?: string; error?: string }>;
   dismiss?(id: string, pruneWorktree: boolean, keepBranch: boolean): Promise<{ note?: string; error?: string }>;
   tail(id: string, lines: number): string | undefined;
@@ -154,6 +157,7 @@ export interface TeamEvent {
   progress?: true;
   /** Emitted because `lead` watches this worker on the floor rather than having hired it as a subagent. */
   watched?: true;
+  images?: StoredImageMeta[];
   result?: WorkerResult;
   review?: WorkerReview;
 }
@@ -198,7 +202,7 @@ export interface TeamMember {
   /** It has been given its task and isn't in the middle of a turn now. */
   settled: boolean;
   /** What it last reported or asked. */
-  report?: { text: string; question: boolean; at: number; seq: number; pushedSha?: string; prUrl?: string; progress?: true; result?: WorkerResult; review?: WorkerReview };
+  report?: { text: string; question: boolean; at: number; seq: number; pushedSha?: string; prUrl?: string; progress?: true; images?: StoredImageMeta[]; result?: WorkerResult; review?: WorkerReview };
   /** The event seq of a team_report question nobody has answered yet. */
   openQuestion?: number;
   /** At rest after a progress report, with nothing since: not finished, waiting on its own background work to wake it. */
@@ -1151,6 +1155,7 @@ export class Team {
               ...(last.pushedSha ? { pushedSha: last.pushedSha } : {}),
               ...(last.prUrl ? { prUrl: last.prUrl } : {}),
               ...(last.progress ? { progress: true as const } : {}),
+              ...(last.images?.length ? { images: last.images.map((img) => ({ ...img })) } : {}),
               ...(last.result ? { result: cloneWorkerResult(last.result) } : {}),
               ...(last.review ? { review: { ...last.review } } : {}),
             },
@@ -1275,6 +1280,7 @@ export class Team {
               ...(last.pushedSha ? { pushedSha: last.pushedSha } : {}),
               ...(last.prUrl ? { prUrl: last.prUrl } : {}),
               ...(last.progress ? { progress: true as const } : {}),
+              ...(last.images?.length ? { images: last.images.map((img) => ({ ...img })) } : {}),
               ...(last.result ? { result: cloneWorkerResult(last.result) } : {}),
               ...(last.review ? { review: { ...last.review } } : {}),
             },
@@ -1419,11 +1425,31 @@ export class Team {
     return { ...(pickedModel ? { model: pickedModel } : {}), ...(pickedEffort ? { effort: pickedEffort } : {}) };
   }
 
+  private parseAttachImages(raw: unknown): string[] | TeamReply | undefined {
+    if (raw === undefined) return undefined;
+    if (!Array.isArray(raw)) return no(400, 'images takes an array of uploaded 16-hex image ids.');
+    if (raw.length > PROMPT_IMAGES_MAX) return no(400, `At most ${PROMPT_IMAGES_MAX} images can be attached at once.`);
+    const ids: string[] = [];
+    for (const item of raw) {
+      if (typeof item !== 'string' || !PROMPT_IMAGE_ID.test(item.trim())) {
+        return no(400, `Invalid image id ${String(item)}: upload images to POST /office/images first.`);
+      }
+      const id = item.trim();
+      if (this.workers.hasImage && !this.workers.hasImage(id)) {
+        return no(404, `Unknown image id ${id}: upload the image to POST /office/images first.`);
+      }
+      if (!ids.includes(id)) ids.push(id);
+    }
+    return ids.length ? ids : undefined;
+  }
+
   private async hire(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const why = this.cannotHire(lead);
     if (why) return no(403, why);
     const task = str(b.task, TASK_MAX).trim();
     if (!task) return no(400, 'The subagent needs a task: provide its brief in team_hire');
+    const images = this.parseAttachImages(b.images);
+    if (images && !Array.isArray(images)) return images;
     const s = this.opts.settings();
     const asked = typeof b.model === 'string' ? b.model.trim() : '';
     const list = modelList(s);
@@ -1477,7 +1503,10 @@ export class Team {
     const brief = handoff
       ? `${task}\n\nHandoff: continue from ${handoff.name}'s branch ${handoff.branch} at ${handoff.commit}. Your fresh worktree includes committed work only; the original worker and its uncommitted files stay where they are.`
       : task;
-    const info = branch === undefined ? this.workers.hire(seat.id, still.name, brief, worktree, choice, still.id, from) : this.workers.hire(seat.id, still.name, brief, worktree, choice, still.id, from, branch);
+    let info: WorkerInfo | string;
+    if (images?.length) info = this.workers.hire(seat.id, still.name, brief, worktree, choice, still.id, from, branch, images);
+    else if (branch === undefined) info = this.workers.hire(seat.id, still.name, brief, worktree, choice, still.id, from);
+    else info = this.workers.hire(seat.id, still.name, brief, worktree, choice, still.id, from, branch);
     if (typeof info === 'string') return no(409, info);
     const title = str(b.title, TITLE_MAX).trim();
     if (title) this.workers.setTask(info.id, { name: title, summary: clip(task, 120) });
@@ -1627,6 +1656,8 @@ export class Team {
     const text = str(b.text, TASK_MAX).trim();
     if (!text) return no(400, 'Provide text for team with action message');
     if (b.queue === true && b.urgent === true) return no(400, 'Choose either queue: true (after turn) or urgent: true (interrupt and steer now), not both.');
+    const images = this.parseAttachImages(b.images);
+    if (images && !Array.isArray(images)) return images;
     if (b.workers !== undefined || b.all === true) {
       const refs = b.all === true ? this.teamOf(lead.id).map((w) => w.id) : b.workers;
       if (!Array.isArray(refs) || !refs.length) return no(400, 'No subagents selected for this broadcast.');
@@ -1640,7 +1671,7 @@ export class Team {
         }
         if (seen.has(w.id)) continue;
         seen.add(w.id);
-        const result = await this.send(lead, { worker: w.id, text, queue: b.queue, urgent: b.urgent });
+        const result = await this.send(lead, { worker: w.id, text, ...(images ? { images } : {}), queue: b.queue, urgent: b.urgent });
         results.push({ id: w.id, name: w.name, ...result.body });
       }
       return teamDeliveryReply(results);
@@ -1663,35 +1694,35 @@ export class Team {
     if (urgent) {
       if (w.status === 'working') {
         if (this.workers.urgentPrompt) {
-          const res = await this.workers.urgentPrompt(w.id, message);
+          const res = await this.workers.urgentPrompt(w.id, message, images);
           err = res.error;
           delivery = res.interrupted ? 'interrupted' : 'sent';
         } else {
           const cancelled = Boolean(this.workers.cancelTurn?.(w.id));
-          err = this.workers.prompt(w.id, message, false);
+          err = this.workers.prompt(w.id, message, false, images);
           delivery = cancelled ? 'interrupted' : 'sent';
         }
       } else if (asleep) {
-        err = this.workers.resume(w.id, message);
+        err = this.workers.resume(w.id, message, images);
         delivery = 'resumed';
       } else {
-        err = this.workers.prompt(w.id, message, false);
+        err = this.workers.prompt(w.id, message, false, images);
         delivery = 'sent';
       }
     } else if (queueBehindTurn) {
-      err = this.workers.prompt(w.id, message, true);
+      err = this.workers.prompt(w.id, message, true, images);
       delivery = 'queued_turn';
     } else {
       blockingTool = w.status === 'working' ? this.workers.blockingTool?.(w.id, this.now()) : undefined;
       if (blockingTool) warning = formatBlockingSteerWarning(w.name, blockingTool);
-      const noticed = w.status === 'working' && this.workers.notice?.(w.id, message);
+      const noticed = w.status === 'working' && this.workers.notice?.(w.id, message, images);
       if (noticed) {
         delivery = 'next_step';
       } else if (asleep) {
-        err = this.workers.resume(w.id, message);
+        err = this.workers.resume(w.id, message, images);
         delivery = 'resumed';
       } else {
-        err = this.workers.prompt(w.id, message, false);
+        err = this.workers.prompt(w.id, message, false, images);
         delivery = 'sent';
       }
     }
@@ -1702,6 +1733,7 @@ export class Team {
     return ok({
       worker: this.member(this.workers.get(w.id) ?? w, lead.id),
       delivery,
+      ...(images?.length ? { attachedImages: images } : {}),
       ...(blockingTool ? { blockingTool, warning } : {}),
     });
   }
@@ -1761,8 +1793,19 @@ export class Team {
     const resultPrUrl = parsedResult?.artifacts?.prUrl ?? prUrl;
     const prNumber = parsedResult?.artifacts?.prNumber ?? prNumberFromUrl(resultPrUrl) ?? (!resultPrUrl || resultPrUrl === w.pr?.url ? w.pr?.number : undefined);
     const result = buildWorkerResult(parsedResult, { status: question ? 'blocked' : progress ? 'partial' : 'ok', summary: clip(text, 240), prUrl: resultPrUrl, prNumber, sha });
-    const provenance = { ...(sha ? { pushedSha: sha } : {}), ...(prUrl ? { prUrl } : {}) };
-    this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text, ...(options.length ? { options } : {}), ...provenance, ...(progress ? { progress: true as const } : {}), result });
+    const images = restoreStoredImages(b.images);
+    const provenance = { ...(sha ? { pushedSha: sha } : {}), ...(prUrl ? { prUrl } : {}), ...(images ? { images } : {}) };
+    this.push({
+      lead: lead.id,
+      worker: w.id,
+      name: w.name,
+      kind: question ? 'question' : 'report',
+      text,
+      ...(options.length ? { options } : {}),
+      ...provenance,
+      ...(progress ? { progress: true as const } : {}),
+      result,
+    });
     for (const watcherId of this.watchersOf(w.id)) {
       if (watcherId !== lead.id) {
         this.push({
@@ -1772,7 +1815,9 @@ export class Team {
           kind: question ? 'question' : 'report',
           text,
           ...(options.length ? { options: [...options] } : {}),
-          ...provenance,
+          ...(sha ? { pushedSha: sha } : {}),
+          ...(prUrl ? { prUrl } : {}),
+          ...(images ? { images: images.map((i) => ({ ...i })) } : {}),
           ...(progress ? { progress: true as const } : {}),
           watched: true,
           result: cloneWorkerResult(result),
@@ -1966,6 +2011,7 @@ export class Team {
         if (!e || typeof e !== 'object') continue;
         const x = e as Record<string, unknown>;
         if (typeof x.lead !== 'string' || typeof x.worker !== 'string' || typeof x.name !== 'string' || !kinds.has(String(x.kind)) || typeof x.seq !== 'number' || typeof x.at !== 'number') continue;
+        const restoredImages = restoreStoredImages(x.images);
         this.log.push({
           seq: x.seq,
           lead: x.lead,
@@ -1988,6 +2034,7 @@ export class Team {
           ...(typeof x.prUrl === 'string' ? { prUrl: x.prUrl.slice(0, 2000) } : {}),
           ...(x.progress === true ? { progress: true as const } : {}),
           ...(x.watched === true ? { watched: true as const } : {}),
+          ...(restoredImages ? { images: restoredImages } : {}),
           ...(restoreWorkerResult(x.result) ? { result: restoreWorkerResult(x.result) } : {}),
           ...(restoreWorkerReview(x.review) ? { review: restoreWorkerReview(x.review) } : {}),
         });

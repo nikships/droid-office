@@ -1,4 +1,5 @@
 import type { Anchor, Author, PieceRef, Tombstone } from '../../shared/whiteboard.js';
+import { formatImageLines, type OfficeImageRef } from '../office-images.js';
 import type { CardOut, ReadOut } from '../whiteboard-agent.js';
 
 /** Board authors must not be able to inject terminal control characters into readable output. */
@@ -74,9 +75,10 @@ interface FormatOptions {
   onlyChanged?: boolean;
   peek?: boolean;
   pngs?: Map<string, string>;
+  images?: Map<string, OfficeImageRef[]>;
 }
 
-function formatCard(card: CardOut, { now, full, pngs }: FormatOptions): string {
+function formatCard(card: CardOut, { now, full, pngs, images }: FormatOptions): string {
   const lines: string[] = [];
   const mark = (changed: boolean) => (changed ? '  ← CHANGED' : '');
   const changes = card.changes;
@@ -120,6 +122,8 @@ function formatCard(card: CardOut, { now, full, pngs }: FormatOptions): string {
   const shot = pngs?.get(card.id);
   if (shot) lines.push(`  PNG: ${shot}`);
   else if (card.png && !card.png.ok) lines.push(`  PNG: none — ${card.png.error}${card.png.last ? ` The last image is of revision ${card.png.last.rev}, ${ago(card.png.last.at, now)}.` : ''} Your read point for this card wasn't moved.`);
+  const cardImgs = images?.get(card.id);
+  if (cardImgs?.length) lines.push(...formatImageLines(cardImgs, '  '));
   return lines.join('\n');
 }
 

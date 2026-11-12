@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { PROMPT_IMAGE_ID } from '../shared/drops.js';
+import { DROP_MAX_BYTES, PROMPT_IMAGE_ID } from '../shared/drops.js';
 import type { ThreadImage } from '../shared/worker-thread.js';
 
 /** The folder in drops/ for pictures waiting on a prompt: not a worker's, so pruning leaves it be. */
@@ -13,15 +13,29 @@ const PICTURE_EXT: Record<string, string> = { 'image/png': '.png', 'image/jpeg':
 export const DROP_NAME = '[0-9a-f]{8}-[\\w.-]{1,120}';
 const DROP_NAME_ONLY = new RegExp(`^${DROP_NAME}$`);
 
+export interface SharedDropImages {
+  get(id: string): { body: Buffer; name: string; mimeType: string; ext: string } | undefined;
+}
+
 /**
  * Files dropped or pasted into a worker's terminal from a browser (see shared/drops.ts), kept in
  * .droid-office/drops/<worker id>/ so the program there can open them by path. They go with the worker.
  */
 export class DropStore {
   private dir: string;
+  private shared?: SharedDropImages;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, shared?: SharedDropImages) {
     this.dir = path.join(dataDir, 'drops');
+    this.shared = shared;
+  }
+
+  setShared(shared: SharedDropImages | undefined) {
+    this.shared = shared;
+  }
+
+  hasImage(id: string): boolean {
+    return Boolean(this.staged(id) || this.shared?.get(id));
   }
 
   /** Keeps a file dropped into a worker's terminal; where it is now, or undefined if it couldn't be. */
@@ -96,14 +110,20 @@ export class DropStore {
     const paths: string[] = [];
     for (const id of ids) {
       const file = this.staged(id);
-      if (!file) continue;
-      let body: Buffer;
-      try {
-        body = readFileSync(file);
-      } catch {
+      if (file) {
+        let body: Buffer;
+        try {
+          body = readFileSync(file);
+        } catch {
+          continue;
+        }
+        const kept = this.save(workerId, path.basename(file), '', body);
+        if (kept) paths.push(kept);
         continue;
       }
-      const kept = this.save(workerId, path.basename(file), '', body);
+      const shared = this.shared?.get(id);
+      if (!shared) continue;
+      const kept = this.save(workerId, shared.name, shared.mimeType, shared.body);
       if (kept) paths.push(kept);
     }
     return paths;
@@ -112,14 +132,19 @@ export class DropStore {
   /** A staged picture's bytes, for a prompt that carries pictures inline rather than by path (a cloud worker's). */
   stagedPicture(id: string): { body: Buffer; ext: string } | undefined {
     const file = this.staged(id);
-    if (!file) return undefined;
-    try {
-      const body = readFileSync(file);
-      const ext = pictureExt(body);
-      return ext ? { body, ext } : undefined;
-    } catch {
-      return undefined;
+    if (file) {
+      try {
+        const body = readFileSync(file);
+        const ext = pictureExt(body);
+        return ext ? { body, ext } : undefined;
+      } catch {
+        return undefined;
+      }
     }
+    const shared = this.shared?.get(id);
+    if (!shared?.body.length || shared.body.length > DROP_MAX_BYTES) return undefined;
+    const ext = pictureExt(shared.body);
+    return ext ? { body: shared.body, ext } : undefined;
   }
 
   /** A picture kept for a worker's prompt, by its name in the worker's drops (as `save` named it); undefined for anything else. */
