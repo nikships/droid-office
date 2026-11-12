@@ -483,7 +483,7 @@ export class RemoteOffice {
         const { f, w } = matches[0];
         if (seen.has(w.id)) continue;
         seen.add(w.id);
-        const result = await f.team.handle(worker, { action: 'send', worker: w.id, text: args.text, queue: args.queue });
+        const result = await f.team.handle(worker, { action: 'send', worker: w.id, text: args.text, queue: args.queue, urgent: args.urgent });
         results.push({ id: w.id, name: w.name, floor: f.id, ...result.body });
       }
       return teamDeliveryReply(results);

@@ -228,7 +228,7 @@ Hire an independent worker, shell or cloud worker on a floor. For a subagent tha
 
 ### `office_worker_prompt`
 
-Prompt any floor worker as the owner, as a message in its session. Your own subagents take team_message.
+Prompt or steer any floor worker as the owner, as a message in its session. Your own subagents take team_message. When `queue` is `false` (default), Droid steers during a running turn; `queue: true` queues behind the turn via Ctrl+Enter; `urgent: true` interrupts a running turn or blocking command via Escape and delivers immediately.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -240,7 +240,8 @@ Prompt any floor worker as the owner, as a message in its session. Your own suba
 | `text` | string | alias | Alias for `prompt`. |
 | `issue` | integer | no |  |
 | `images` | string[] | no | Existing office-upload image ids, not paths or image bytes. |
-| `queue` | boolean | no, default `false` | Queue behind the current turn using Ctrl+Enter instead of sending immediately. |
+| `queue` | boolean | no, default `false` | Queue behind the current turn using Ctrl+Enter instead of steering during the turn. |
+| `urgent` | boolean | no | Interrupt a running turn or blocking command via Escape and deliver immediately (not with `queue: true`). |
 
 ### `office_worker_answer`
 
@@ -329,7 +330,7 @@ For an external worker, status news follows a cursor kept for that bot across re
 
 ### `team_message`
 
-Steer one subagent, a subset or all your teams without interrupting a running turn. Guidance arrives at the next tool step through existing hooks, or queues behind the turn on older sessions. Select exactly one of `worker`, `workers` or `all: true`. Responses give canonical worker ids, readable names, floors and per-recipient delivery (`next_step`, `queued_turn`, `sent`, `resumed`) or errors. Names and ids resolving to the same worker deliver once. Empty teams and entirely failed broadcasts return tool errors; partial delivery keeps all recipient outcomes. A permission prompt still needs the person at its desk.
+Steer one subagent, a subset or all your teams. By default (`queue: false`), guidance steers during a running turn (at the next tool step through hooks, or via plain Enter in Droid's TUI). Set `queue: true` to queue behind the current turn via Ctrl+Enter, or `urgent: true` to cancel a running turn or blocking command via Escape and deliver immediately. Select exactly one of `worker`, `workers` or `all: true`. Responses give canonical worker ids, readable names, floors, blocking-command warnings, and per-recipient delivery (`next_step`, `queued_turn`, `interrupted`, `sent`, `resumed`) or errors. Names and ids resolving to the same worker deliver once. Empty teams and entirely failed broadcasts return tool errors; partial delivery keeps all recipient outcomes. A permission prompt still needs the person at its desk.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -337,7 +338,8 @@ Steer one subagent, a subset or all your teams without interrupting a running tu
 | `workers` | string[] | one selector | Subset of subagent names or ids (1–100). |
 | `all` | true | one selector | Broadcast to all your subagents on the selected floor, or across all floors. |
 | `text` | string | yes | Guidance or follow-up for the selected subagents. |
-| `queue` | boolean | no, default `true` | Next-step hook delivery with Ctrl+Enter fallback. False uses normal session submission. |
+| `queue` | boolean | no, default `false` | Default `false` steers during the running turn; `true` queues behind the current turn using Ctrl+Enter. |
+| `urgent` | boolean | no | Interrupt a running turn or blocking command via Escape and deliver immediately (not with `queue: true`). |
 | `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 
 ### `team_review`
@@ -407,6 +409,19 @@ Read your subagent's structured runtime state (plan steps, current/last tool, ho
 | `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
 | `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 | `tail` | integer | no, default `80` | Latest terminal lines to read, 0 to 400 (`0` returns structured worker state only). |
+
+### `worker_queue`
+
+Inspect, clear or promote pending messages on a worker (both office hook outbox notices and Droid's TUI queue), and see any active blocking command. Building agents with owner access may target any local floor worker; floor leads target their own subagents.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | yes | Worker name or id, case-insensitive. |
+| `floor` | string | no | Building agents only: open floor id, name, elevator number or checkout path. |
+| `action` | "list" \| "clear" \| "promote" | no, default `"list"` | `list` inspects pending items; `clear` cancels one item or all; `promote` pulls queued item(s) forward to steer now. |
+| `index` | integer | no | 1-based queued message index from `list` (omit to clear all or promote the top queued item). |
+| `all` | boolean | no | Apply `clear` or `promote` to all pending items (not with `index`). |
+| `urgent` | boolean | no | For `promote` only: interrupt a running turn or blocking command via Escape and deliver immediately. |
 
 ### `team_wait`
 

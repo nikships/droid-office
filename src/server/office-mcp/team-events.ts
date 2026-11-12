@@ -7,6 +7,7 @@ import type { WorkerInfo } from '../../shared/protocol.js';
 import { settled, TEAM_EVENT_KINDS, type Team, type TeamEvent, type TeamEventKind, type TeamMember, type TeamViews, type WorkerResult, type WorkerReview } from '../team.js';
 import { briefAge, formatForgeLines, formatTaskTag } from '../worker-status.js';
 import type { WorkerManager } from '../workers.js';
+import { formatBlockingSummary, formatQueueBrief } from '../worker-queue.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer, type OfficeProgress } from './index.js';
 import { floorNamed } from '../remote-office.js';
 
@@ -117,6 +118,8 @@ export function compactWorker(m: TeamMember, floor: string) {
       : {}),
     ...(m.openQuestion !== undefined ? { openQuestionId: eventId(floor, m.openQuestion) } : {}),
     ...(m.awaitingJob ? { awaitingJob: true as const } : {}),
+    ...(m.queuedMessages?.count ? { queuedMessages: m.queuedMessages } : {}),
+    ...(m.blockingTool ? { blockingTool: m.blockingTool } : {}),
   };
 }
 
@@ -160,6 +163,7 @@ export function resultDetailLines(result: WorkerResult | undefined, review?: Wor
 
 export function compactWorkerText(w: CompactWorker): string {
   const forgeLines = formatForgeLines({ pr: w.prStatus, ci: w.ci, releaseRun: w.releaseRun });
+  const queueBrief = w.queuedMessages ? formatQueueBrief(w.queuedMessages) : undefined;
   return [
     `${w.name} (${w.id}) ${w.state}${w.awaitingJob ? ' (not finished: its progress report says it waits on its own background work)' : ''}, ${w.desk}${w.task ? `: ${w.task}${formatTaskTag(w.taskLabel)}` : ''}.`,
     ...(w.modelStatus && w.modelStatus.state !== 'ok' ? [`${w.modelStatus.state === 'cooldown' ? 'Model cooldown' : 'Model alert'}: ${w.modelStatus.summary}.`] : []),
@@ -168,8 +172,9 @@ export function compactWorkerText(w: CompactWorker): string {
     ...(w.plan ? [`Plan ${w.plan.done}/${w.plan.total}${w.plan.current ? ` (${w.plan.current})` : ''}.`] : []),
     ...(w.currentTool ? [`Tool: ${w.currentTool.summary} (${briefAge(w.currentTool.runningForMs)}).`] : []),
     ...(w.doing && !w.currentTool ? [`Doing: ${w.doing}.`] : []),
+    ...(w.blockingTool ? [`Blocking: ${formatBlockingSummary(w.blockingTool)}.`] : []),
     ...(w.silentForMs !== undefined && w.silentForMs >= 30_000 ? [`Last hook ${briefAge(w.silentForMs)} ago.`] : []),
-    ...(w.queued ? [`Queued: ${w.queued.terminal} terminal message${w.queued.terminal === 1 ? '' : 's'}, ${w.queued.notices} next-step notice${w.queued.notices === 1 ? '' : 's'}.`] : []),
+    ...(queueBrief ? [`${queueBrief}.`] : w.queued ? [`Queued: ${w.queued.terminal} terminal message${w.queued.terminal === 1 ? '' : 's'}, ${w.queued.notices} next-step notice${w.queued.notices === 1 ? '' : 's'}.`] : []),
     ...(w.areas?.length ? [`Areas: ${w.areas.join(', ')}.`] : []),
     ...(w.note ? [`Note: ${w.note.text}`] : []),
     ...(w.branch ? [`Branch ${w.branch}.`] : []),

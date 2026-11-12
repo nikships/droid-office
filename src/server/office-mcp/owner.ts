@@ -4,6 +4,7 @@ import { ORCHESTRATOR_ID, type MissionAgent } from '../../shared/mission-control
 import { OFFICE_SHELL_ID } from '../../shared/office-shell.js';
 import type { ClientMsg, ServerMsg, WorkerInfo, WorktreeState } from '../../shared/protocol.js';
 import { buildWorkerInspection, describeTaskLabel, formatTaskTag, formatWorkerInspection, type WorkerInspection, type WorkerTaskLabel } from '../worker-status.js';
+import { formatBlockingSummary, formatQueueBrief, type BlockingToolState, type WorkerQueueState } from '../worker-queue.js';
 import { officeError, officeResult, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { floorRef, resolveWorkerTarget, WORKER_TARGET_ERROR, workerTarget } from './owner-schemas.js';
 import { registerOwnerTools } from './owner-tools.js';
@@ -50,6 +51,8 @@ export interface OwnerOffice {
   inspect?(workerId: string, floor?: string): Promise<WorkerInspection | undefined> | WorkerInspection | undefined;
   /** Whether background worker labels are currently enabled in Settings. */
   labelsOn?(): boolean;
+  /** Live pending-message queue and active blocking command on a local floor worker, when present. */
+  workerMeta?(workerId: string): { queuedMessages?: WorkerQueueState; blockingTool?: BlockingToolState } | undefined;
   /** `owner`: the owner's own choice (a Settings pick), so the model list for building agents doesn't apply. */
   act(by: WorkerInfo, msg: { t: OwnerAction } & Record<string, unknown>, opts?: { floor?: string; signal?: AbortSignal; owner?: boolean }): Promise<OwnerReply>;
 }
@@ -95,9 +98,11 @@ export interface RosterWorker {
   cloud?: true;
   worktree?: { branch: string };
   pr?: { number: number; url: string };
+  queuedMessages?: WorkerQueueState;
+  blockingTool?: BlockingToolState;
 }
 
-export const ownerInstructions = `You have owner-level access across floors via office_* tools. Act only within the owner's request. Use team_hire and team_* for delegated work; use office_worker_spawn only when explicitly asked for a standalone, shell, or cloud worker. Inspect workers with office_roster, office_look and office_worker_thread before steering with office_worker_prompt; interrupt or answer AskUser menus with office_worker_interrupt and office_worker_answer (leave terminal permission prompts untouched and tell the owner). Keep worktrees, branches and cloud sessions unless asked to delete them, and check state before retrying pending/unconfirmed actions.`;
+export const ownerInstructions = `You have owner-level access across floors via office_* tools. Act only within the owner's request. Use team_hire and team_* for delegated work; use office_worker_spawn only when explicitly asked for a standalone, shell, or cloud worker. Inspect workers with office_roster, office_look and office_worker_thread before steering with office_worker_prompt (default queue: false steers now; queue: true queues behind the turn; urgent: true interrupts blocking commands; worker_queue lists/clears/promotes queued items); interrupt or answer AskUser menus with office_worker_interrupt and office_worker_answer (leave terminal permission prompts untouched and tell the owner). Keep worktrees, branches and cloud sessions unless asked to delete them, and check state before retrying pending/unconfirmed actions.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 /** Building agents have the owner's access whenever the office provides its owner bridge. */
@@ -125,7 +130,7 @@ export function pickFloor(floors: OwnerFloor[], ref: string): { floor: OwnerFloo
   return { floor: floors[at], number: at + 1 };
 }
 
-export function roster(floors: OwnerFloor[], caller: string, only?: string, labelsOn = true): RosterWorker[] {
+export function roster(floors: OwnerFloor[], caller: string, only?: string, labelsOn = true, metaFor?: (workerId: string) => { queuedMessages?: WorkerQueueState; blockingTool?: BlockingToolState } | undefined): RosterWorker[] {
   const names = new Map(floors.flatMap((f) => f.workers.map((w) => [w.id, w.name] as const)));
   return floors.flatMap((f, i) =>
     f.id !== only && only !== undefined
@@ -136,6 +141,7 @@ export function roster(floors: OwnerFloor[], caller: string, only?: string, labe
             const model = w.activeModel ?? w.model;
             const effort = w.activeEffort ?? w.effort;
             const taskLabel = describeTaskLabel(w, labelsOn);
+            const meta = metaFor?.(w.id);
             return {
               id: w.id,
               name: w.name,
@@ -158,6 +164,8 @@ export function roster(floors: OwnerFloor[], caller: string, only?: string, labe
               ...(w.cloud ? { cloud: true as const } : {}),
               ...(w.worktree ? { worktree: { branch: w.worktree.branch } } : {}),
               ...(w.pr ? { pr: w.pr } : {}),
+              ...(meta?.queuedMessages?.count ? { queuedMessages: meta.queuedMessages } : {}),
+              ...(meta?.blockingTool ? { blockingTool: meta.blockingTool } : {}),
             };
           }),
   );
@@ -181,10 +189,13 @@ export function findWorker(floors: OwnerFloor[], ref: string, floor?: string): {
 
 function rosterLine(w: RosterWorker): string {
   const tags = [w.you ? 'you' : '', w.yours ? 'your subagent' : '', w.lead && !w.yours ? `subagent of ${w.lead.name}` : '', w.remote ? 'external' : '', w.cloud ? 'cloud' : '', w.kind === 'shell' ? 'shell' : ''].filter(Boolean);
+  const queueBrief = w.queuedMessages ? formatQueueBrief(w.queuedMessages) : undefined;
   return [
     `  ${w.name} (${w.id})${tags.length ? ` [${tags.join(', ')}]` : ''}, ${w.desk}, ${w.status}${w.model ? `, ${w.model}${w.effort ? ` ${w.effort}` : ''}` : ''}`,
     ...(w.task || w.title ? [`    Task: ${w.task ?? w.title}${formatTaskTag(w.taskLabel)}`] : []),
     ...(w.activity ? [`    Doing: ${w.activity}`] : []),
+    ...(w.blockingTool ? [`    Blocking command: ${formatBlockingSummary(w.blockingTool)}`] : []),
+    ...(queueBrief ? [`    ${queueBrief}`] : []),
     ...(w.worktree ? [`    Branch: ${w.worktree.branch}${w.pr ? `, PR ${w.pr.url}` : ''}`] : []),
   ].join('\n');
 }
@@ -259,10 +270,20 @@ function renderLookWithTerminal(title: string, shown: { text: string; truncated?
 export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   const owner = deps.owner;
   if (!owner) return;
+  const metaFor = (workerId: string) => {
+    const direct = owner.workerMeta?.(workerId);
+    if (direct) return direct;
+    const f = deps.floor(workerId);
+    if (!f) return undefined;
+    const queue = f.workers.queueState?.(workerId);
+    const blocking = f.workers.blockingTool?.(workerId);
+    if (!queue?.count && !blocking) return undefined;
+    return { ...(queue?.count ? { queuedMessages: queue } : {}), ...(blocking ? { blockingTool: blocking } : {}) };
+  };
   server.tool(
     {
       name: 'office_roster',
-      description: 'List workers across the building (or one floor) with id, desk, status, task, branch/PR, model, and lead, plus Mission Control agents (read-only).',
+      description: 'List workers across the building (or one floor) with id, desk, status, task, queued messages, blocking commands, branch/PR, model, and lead, plus Mission Control agents (read-only).',
       inputSchema: z.strictObject({ floor: floorRef.optional() }),
       annotations: readOnly,
     },
@@ -276,7 +297,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         if (typeof picked === 'string') return officeError(picked);
         only = picked.floor.id;
       }
-      const workers = roster(floors, caller.worker.id, only, labelsOn);
+      const workers = roster(floors, caller.worker.id, only, labelsOn, metaFor);
       const shown = floors.map((f, i) => ({ id: f.id, name: f.name, number: i + 1 })).filter((f) => !only || f.id === only);
       const mission = only ? [] : owner.mission();
       const floorText =

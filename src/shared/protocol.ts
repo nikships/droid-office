@@ -847,7 +847,7 @@ type ClientMessage =
    * With `queue`, an agent's prompt is submitted with Ctrl+Enter instead of Enter, so Droid queues it
    * behind what it is doing rather than sending it now (a shell gets Enter either way).
    */
-  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; linear?: string; images?: string[]; queue?: boolean }
+  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; linear?: string; images?: string[]; queue?: boolean; urgent?: boolean }
   /** Rechecks the current worker and screen on the server before answering the menu shown to the owner.
    * Send exactly one of `choice` or `text`. The server rejects neither and both. */
   | { t: 'worker.answer'; workerId: string; menu: Menu; choice?: number; choices?: number[]; text?: string }

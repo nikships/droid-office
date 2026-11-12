@@ -6,13 +6,14 @@ import { teamBoardText, type TeamBoardMember } from '../team.js';
 import { isSubscriptionModel, modelUsageWords } from '../../shared/subscriptions.js';
 import { briefAge, formatForgeLines, formatProviderQuotas, formatTaskTag, formatWorkerInspection, type ProviderQuotaSummary, type WorkerInspection } from '../worker-status.js';
 import { hasOwnerAccess } from './owner.js';
+import { formatBlockingSummary, formatQueueBrief } from '../worker-queue.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor, resultDetailLines } from './team-events.js';
 
 export const instructions = `Subagents are real workers with their own terminals and (by default) git worktrees reporting to you, their lead. Subagents cannot hire.
 Have task-authored prerequisites committed BEFORE hiring (worktrees see committed state only; leave unrelated changes untouched). Read team_models once per hiring batch, then hire one fresh subagent per task, only as many as independent scopes need. Independent scopes touch separate files: assign single-writer edit ownership in each brief, plus goal, dependency context, boundaries, checks and delivery; sibling files can be referenced as read-only context. Subagents share areas/findings via team_board and team_note. Continue a subagent's committed work via from / task.baseBranch set to worker:<name/id> or its absolute worktree path; floor leads omit from for their own current HEAD.
 Owner notes take priority when picking an exact model id from team_models. Multipliers show relative cost (custom/subscription models use no Factory credits; prefer subscriptions with ample quota and keep a nearly spent one off long tasks). Pick <=x0.5 for mechanical work, ~x1 for standard tasks, and top models for hard design, security, or concurrency; never give visual tasks to a no-images model.
-Hiring and waiting is not enough: run the team as its connective tissue. On wakes/check-ins read team_status and questions_list, inspect relevant worker_diff/worker_log and full reports with team_report_get. Steer drift and relay contract changes via team_message (queue: true steers at the next step; workers/all: true broadcasts; inspect per-recipient errors). Answer technical questions within the owner's intent; escalate unclear decisions and leave workers at permission prompts untouched for the owner. Record team_review approve before merging (a lead workflow gate, not a server-enforced lock; request_changes routes fixes back). Integrate via team_merge (building agents name target), land foundations first, then have dependent siblings rebase/align and re-verify. Resolve returned conflict hunks in the reported worktree and run combined target checks after review and integration, before team_dismiss. team_pr requires authorization and a pushed branch. With Wake the lead on, end your turn when nothing else remains; otherwise use team_wait. When your lead is a Grok Bot (office_whoami shows leadPush: true), team_report pushes straight to its webhook on turn end and lead_notify sends immediate mid-turn updates, questions, blockers, or test pings without ending your turn.`;
+Hiring and waiting is not enough: run the team as its connective tissue. On wakes/check-ins read team_status and questions_list, inspect relevant worker_diff/worker_log and full reports with team_report_get. Steer drift and relay contract changes via team_message (default queue: false steers at the next step; queue: true queues behind the turn; urgent: true interrupts blocking commands; worker_queue lists/clears/promotes queued items; workers/all: true broadcasts; inspect per-recipient errors). Answer technical questions within the owner's intent; escalate unclear decisions and leave workers at permission prompts untouched for the owner. Record team_review approve before merging (a lead workflow gate, not a server-enforced lock; request_changes routes fixes back). Integrate via team_merge (building agents name target), land foundations first, then have dependent siblings rebase/align and re-verify. Resolve returned conflict hunks in the reported worktree and run combined target checks after review and integration, before team_dismiss. team_pr requires authorization and a pushed branch. With Wake the lead on, end your turn when nothing else remains; otherwise use team_wait. When your lead is a Grok Bot (office_whoami shows leadPush: true), team_report pushes straight to its webhook on turn end and lead_notify sends immediate mid-turn updates, questions, blockers, or test pings without ending your turn.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const changesState = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
@@ -45,6 +46,7 @@ const PROGRESS_REST = 'Not finished: its turn ended after a progress report, and
 
 function memberText(member: TeamMember & { terminal?: string; terminalUnavailable?: string }): string {
   const forgeLines = formatForgeLines({ pr: member.prStatus, ci: member.ci, releaseRun: member.releaseRun });
+  const queueBrief = member.queuedMessages ? formatQueueBrief(member.queuedMessages) : undefined;
   return [
     `${member.name} (${member.id}), ${member.status}, ${member.desk}${member.model ? `, ${member.model}${member.effort ? ` ${member.effort}` : ''}` : ''}.`,
     ...(member.idleForMs !== undefined ? [`Idle for ${Math.floor(member.idleForMs / 60_000)} minutes.`] : []),
@@ -59,7 +61,9 @@ function memberText(member: TeamMember & { terminal?: string; terminalUnavailabl
     ...(member.silentForMs !== undefined
       ? [`Last hook: ${briefAge(member.silentForMs)} ago (${member.lastActivityAt})${member.lastTool && !member.currentTool ? `; last tool ${member.lastTool.summary} (${briefAge(member.lastTool.agoMs)} ago)` : ''}`]
       : []),
+    ...(member.blockingTool ? [`Blocking command: ${formatBlockingSummary(member.blockingTool)} (steers wait until this finishes; pass urgent: true to interrupt).`] : []),
     ...(member.queued ? [`Queued: ${member.queued.terminal} terminal message${member.queued.terminal === 1 ? '' : 's'}, ${member.queued.notices} next-step notice${member.queued.notices === 1 ? '' : 's'}`] : []),
+    ...(queueBrief ? [queueBrief] : []),
     ...(member.areas?.length ? [`Areas: ${member.areas.join(', ')}`] : []),
     ...(member.note ? [`Note: ${member.note.text}`] : []),
     member.worktree ? `Worktree: ${member.worktree.path} on ${member.worktree.branch}${member.worktree.from ? ` from ${member.worktree.from}` : ''}.` : 'Working in the main checkout.',
@@ -219,15 +223,18 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_message',
       description:
-        'Choose exactly one target: worker, workers, or all: true. Send course corrections, contract updates or rebase instructions. queue: true (default) delivers at the next step without interrupting (or resumes idle workers). Inspect per-recipient errors, even on partial success. Never message workers at permission prompts.',
-      inputSchema: z.strictObject({
-        worker: worker.optional(),
-        workers: z.array(worker).min(1).max(100).optional(),
-        all: z.literal(true).optional(),
-        text,
-        floor: floorArg,
-        queue: z.boolean().default(true).describe('Default true: steer at next step without interrupting; false submits normally.'),
-      }),
+        'Choose exactly one target: worker, workers, or all: true. Send course corrections, contract updates or rebase instructions. Default queue: false steers during the running turn (next step via hook or Enter); queue: true queues via Ctrl+Enter for after the turn ends; urgent: true interrupts a running turn or blocking command via Escape and delivers immediately. Inspect per-recipient errors and blocking warnings. Never message workers at permission prompts.',
+      inputSchema: z
+        .strictObject({
+          worker: worker.optional(),
+          workers: z.array(worker).min(1).max(100).optional(),
+          all: z.literal(true).optional(),
+          text,
+          floor: floorArg,
+          queue: z.boolean().default(false).describe('Default false: steer now during the running turn; true queues via Ctrl+Enter for after the turn ends.'),
+          urgent: z.boolean().optional().describe('True: interrupt a running turn or blocking command via Escape and deliver immediately (not with queue: true).'),
+        })
+        .refine((a) => !(a.queue && a.urgent), 'Choose either queue: true (after turn) or urgent: true (interrupt and steer now), not both.'),
       annotations: changesState,
     },
     officeAccess.team,
@@ -235,7 +242,9 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       if ([args.worker !== undefined, args.workers !== undefined, args.all === true].filter(Boolean).length !== 1) return officeError('Choose exactly one of worker, workers, or all: true.');
       return reply(await command(caller, { action: 'send', ...args }), (body) =>
-        body.results ? (body.results as Record<string, unknown>[]).map((r) => `${r.name ?? r.id}${r.floor ? ` (${r.floor})` : ''}: ${r.error ?? r.delivery}`).join('\n') : `${(body.worker as TeamMember).name}: ${body.delivery}`,
+        body.results
+          ? (body.results as Record<string, unknown>[]).map((r) => `${r.name ?? r.id}${r.floor ? ` (${r.floor})` : ''}: ${r.error ?? r.delivery}${r.warning ? ` — Warning: ${r.warning}` : ''}`).join('\n')
+          : `${(body.worker as TeamMember).name}: ${body.delivery}${body.warning ? `\nWarning: ${body.warning}` : ''}`,
       );
     },
   );

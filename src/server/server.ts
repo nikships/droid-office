@@ -40,6 +40,7 @@ import { FreshMain } from './saved-switch.js';
 import { Subagents, removeBundledSkills } from './subagents.js';
 import { createOfficeMcp, OFFICE_MCP_PATH, syncOfficeMcpConnection, type OfficeMcpServer } from './office-mcp/index.js';
 import { OWNER_REPLIES, type OwnerOffice, type OwnerReply } from './office-mcp/owner.js';
+import { formatBlockingSteerWarning } from './worker-queue.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
 import { readGpuStats } from './gpu-stats.js';
@@ -515,6 +516,7 @@ export async function startServer(cfg: Config) {
     tail: (...a) => ownerOffice.tail(...a),
     inspect: (...a) => ownerOffice.inspect?.(...a),
     labelsOn: () => ownerOffice.labelsOn?.() ?? true,
+    workerMeta: (id) => ownerOffice.workerMeta?.(id),
     act: (...a) => ownerOffice.act(...a),
   };
   officeMcp = createOfficeMcp({
@@ -2417,17 +2419,46 @@ export async function startServer(cfg: Config) {
       case 'worker.prompt': {
         const w = worker(msg.workerId);
         const images = imageIds(msg.images);
-        const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000), images, msg.queue === true) : 'No such worker';
-        w?.floor.workers.unstage(images);
-        warn(c, err);
-        done(err, w?.wid);
-        const issue = w?.info.kind === 'agent' ? issueNumber(msg.issue) : undefined;
-        if (w && !err && issue) {
-          toastFloor(w.floor, `${who} handed issue #${issue} to ${w.info.name}`);
-          takeIssue(c, w.floor, issue);
+        if (msg.queue === true && msg.urgent === true) {
+          w?.floor.workers.unstage(images);
+          const err = 'Choose either queue: true (after turn) or urgent: true (interrupt and steer now), not both.';
+          warn(c, err);
+          return done(err, w?.wid);
         }
-        const ticket = w?.info.kind === 'agent' ? linearIssueRef(msg.linear) : undefined;
-        if (w && !err && ticket) takeLinear(c, w.floor, ticket, w.info, false);
+        const finishPrompt = (target: typeof w, err: string | undefined, infoText?: string, fallbackFloor = w?.floor) => {
+          (target?.floor ?? fallbackFloor)?.workers.unstage(images);
+          warn(c, err);
+          if (!err && infoText) sendTo(c, { t: 'toast', text: infoText, level: 'info' });
+          done(err, target?.wid ?? w?.wid);
+          const issue = target?.info.kind === 'agent' ? issueNumber(msg.issue) : undefined;
+          if (target && !err && issue) {
+            toastFloor(target.floor, `${who} handed issue #${issue} to ${target.info.name}`);
+            takeIssue(c, target.floor, issue);
+          }
+          const ticket = target?.info.kind === 'agent' ? linearIssueRef(msg.linear) : undefined;
+          if (target && !err && ticket) takeLinear(c, target.floor, ticket, target.info, false);
+        };
+        if (msg.urgent === true) {
+          if (!w) {
+            finishPrompt(undefined, 'No such worker');
+            break;
+          }
+          const wid = w.wid;
+          const origFloor = w.floor;
+          defer();
+          void origFloor.workers.urgentPrompt(wid, str(msg.prompt, 20000), images).then(
+            (res) => {
+              const fresh = worker(wid);
+              if (!fresh) return finishPrompt(undefined, res.error ?? 'That worker is no longer on this floor', undefined, origFloor);
+              finishPrompt(fresh, res.error, res.interrupted ? `Interrupted ${fresh.info.name}'s running turn and delivered the urgent prompt` : undefined, origFloor);
+            },
+            () => finishPrompt(worker(wid), 'The urgent prompt could not be delivered.', undefined, origFloor),
+          );
+          break;
+        }
+        const blocking = w && msg.queue !== true && w.info.status === 'working' ? w.floor.workers.blockingTool(w.wid) : undefined;
+        const err = w ? w.floor.workers.prompt(w.wid, str(msg.prompt, 20000), images, msg.queue === true) : 'No such worker';
+        finishPrompt(w, err, blocking && w ? formatBlockingSteerWarning(w.info.name, blocking) : undefined);
         break;
       }
       case 'worker.answer': {
@@ -3120,6 +3151,17 @@ export async function startServer(cfg: Config) {
       if (!floor || !w) return undefined;
       await floor.team.recheckIfRetrying([w]);
       return floor.team.inspectWorker(w);
+    },
+    workerMeta: (id) => {
+      const f = workerFloor(id);
+      if (!f) return undefined;
+      const queue = f.workers.queueState(id);
+      const blocking = f.workers.blockingTool(id);
+      if (!queue?.count && !blocking) return undefined;
+      return {
+        ...(queue?.count ? { queuedMessages: queue } : {}),
+        ...(blocking ? { blockingTool: blocking } : {}),
+      };
     },
     act: async (by: WorkerInfo, msg, opts = {}) => {
       // A building agent's hire gets the model list its team_hire gets: here is the one way in for its owner-level actions.

@@ -17,6 +17,18 @@ import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { withImages } from '../shared/drops.js';
 import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
 import { readDroidQueue } from '../shared/droid-queue.js';
+import {
+  clearDroidPendingAll,
+  detectBlockingTool,
+  driveDroidQueueItem,
+  resolveWorkerQueue,
+  type ActiveToolCall,
+  type BlockingToolState,
+  type QueuedMessageItem,
+  type ResolvedQueueItem,
+  type SentPendingMessage,
+  type WorkerQueueState,
+} from './worker-queue.js';
 import { countCtrlEnterInputs, isCancelInput, isClearQueueInput, stripKittyPlaceholders } from '../shared/kitty.js';
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
 import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
@@ -224,6 +236,8 @@ interface Worker {
   /** Currently executing PreToolUse span, and the latest completed tool span. */
   currentTool?: WorkerToolSpan;
   completedTool?: WorkerToolSpan;
+  /** Currently running tool calls per session (set on PreToolUse, cleared on PostToolUse/Stop). */
+  activeTool: Map<string, ActiveToolCall>;
   /** Who raised its needs_input from a hook: the session asking, and the tool it asks about. */
   asking?: { session: string; tool?: string };
   /** When its last hook came in, and its terminal last printed something (see reconcile). */
@@ -243,6 +257,11 @@ interface Worker {
   outboxTimer?: NodeJS.Timeout;
   /** Messages queued with Ctrl+Enter during this turn: each runs after the turn's Stop, as a turn with no UserPromptSubmit. */
   queued: number;
+  /** Full texts of messages queued with Ctrl+Enter through the office during this turn. */
+  sentQueue: SentPendingMessage[];
+  sentQueueSeq: number;
+  /** Bracketed-paste prompts whose 120ms submit keystroke has not fired yet. */
+  inFlight: Set<{ timer: NodeJS.Timeout; text: string; submit: string; queued: boolean }>;
   /** What its screen has shown since when (see droid-screen.ts). */
   screenSeen?: { state: DroidScreen; since: number };
   /** Test runs and builds that have failed in a row (see FAILS_TO_DESPAIR). */
@@ -1125,6 +1144,11 @@ export class WorkerManager {
     if (!w || !proc) return false;
     w.pty = undefined;
     w.launchPrompt = undefined;
+    for (const entry of w.inFlight) clearTimeout(entry.timer);
+    w.inFlight.clear();
+    w.activeTool.clear();
+    w.sentQueue = [];
+    w.queued = 0;
     try {
       proc.kill();
     } catch {
@@ -1149,6 +1173,9 @@ export class WorkerManager {
     this.subscribers.delete(id);
     const proc = w.pty;
     w.pty = undefined;
+    for (const entry of w.inFlight) clearTimeout(entry.timer);
+    w.inFlight.clear();
+    clearTimeout(w.outboxTimer);
     try {
       proc?.kill();
     } catch {
@@ -1303,6 +1330,9 @@ export class WorkerManager {
     this.subscribers.delete(id);
     const proc = w.pty;
     w.pty = undefined; // so the exit handler knows this worker is gone and stays quiet
+    for (const entry of w.inFlight) clearTimeout(entry.timer);
+    w.inFlight.clear();
+    clearTimeout(w.outboxTimer);
     try {
       proc?.kill();
     } catch {
@@ -1647,7 +1677,10 @@ export class WorkerManager {
     if (!w?.pty) return false;
     w.pty.write(data);
     if (w.info.kind === 'agent' && w.info.status === 'working') w.queued += countCtrlEnterInputs(data);
-    if (isClearQueueInput(data)) w.queued = 0;
+    if (isClearQueueInput(data)) {
+      w.queued = 0;
+      w.sentQueue = [];
+    }
     if (isCancelInput(data)) w.cancelAt = Date.now();
     let changed = this.typed(w);
     if (w.info.status === 'needs_input' && w.info.acked === false) {
@@ -1687,8 +1720,9 @@ export class WorkerManager {
     const clean = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
     if (!clean) return 'Empty prompt';
     const ctrlEnter = queue && wantsCsiEnter(w.info.kind);
-    if (ctrlEnter && w.info.status === 'working') w.queued++;
-    this.typeIn(w, clean, ctrlEnter ? CTRL_ENTER : '\r');
+    const queuedTurn = ctrlEnter && w.info.status === 'working';
+    if (queuedTurn) w.queued++;
+    this.typeIn(w, clean, ctrlEnter ? CTRL_ENTER : '\r', queuedTurn);
     const shown = withoutReminders(typed) || 'See the attached images';
     w.info.activity = truncate(shown, 80);
     this.notePrompt(w, shown);
@@ -1698,10 +1732,311 @@ export class WorkerManager {
   }
 
   /** Types a message into the agent's input box and submits it with `submit`. */
-  private typeIn(w: Worker, text: string, submit = '\r') {
+  private typeIn(w: Worker, text: string, submit = '\r', queued = false) {
     // Bracketed paste keeps multi-line prompts in one message, then Enter submits.
     w.pty?.write(`\x1b[200~${text}\x1b[201~`);
-    setTimeout(() => w.pty?.write(submit), 120);
+    const entry = {
+      text,
+      submit,
+      queued,
+      timer: setTimeout(() => {
+        w.inFlight.delete(entry);
+        if (entry.queued && w.info.status === 'working') {
+          w.sentQueue.push({ id: ++w.sentQueueSeq, text: entry.text, group: 'queued', at: Date.now() });
+          if (w.sentQueue.length > 32) w.sentQueue.splice(0, w.sentQueue.length - 32);
+        }
+        w.pty?.write(entry.submit);
+      }, 120),
+    };
+    w.inFlight.add(entry);
+  }
+
+  private cancelInFlightQueued(w: Worker): boolean {
+    let any = false;
+    for (const entry of [...w.inFlight]) {
+      if (!entry.queued) continue;
+      clearTimeout(entry.timer);
+      w.inFlight.delete(entry);
+      if (w.queued > 0) w.queued--;
+      any = true;
+    }
+    if (any) w.pty?.write('\x15');
+    return any;
+  }
+
+  /** Active blocking tool call on `id` (watch command or tool running >= BLOCKING_TOOL_MS), if any. */
+  blockingTool(id: string, now = Date.now()): BlockingToolState | undefined {
+    const w = this.workers.get(id);
+    return w ? detectBlockingTool(w.info.status, w.activeTool, now) : undefined;
+  }
+
+  private resolvedQueue(w: Worker, now = Date.now()) {
+    const res = resolveWorkerQueue({
+      outbox: w.outbox,
+      sent: w.sentQueue,
+      inFlight: [...w.inFlight].filter((f) => f.queued).map((f) => ({ text: f.text, queued: true })),
+      rows: w.term ? screenRows(w.term) : undefined,
+      now,
+    });
+    w.sentQueue = res.keptSent;
+    return res;
+  }
+
+  /** Pending messages waiting on `id` across the office hook outbox and Droid's TUI queue. */
+  queueState(id: string, now = Date.now()): WorkerQueueState | undefined {
+    const w = this.workers.get(id);
+    if (w?.info.kind !== 'agent' || w.info.cloud || w.info.remote) return undefined;
+    const { count, items, moreSteering, moreQueued } = this.resolvedQueue(w, now);
+    return { count, items, moreSteering, moreQueued };
+  }
+
+  /**
+   * Interrupts a running turn or blocking command via Escape (never answering a permission/question
+   * prompt) and delivers `text` immediately once Droid stops or settles.
+   */
+  async urgentPrompt(id: string, text: string, images?: readonly string[]): Promise<{ error?: string; interrupted?: boolean }> {
+    if (this.building && this.buildingIdentity(id)) return { error: this.prompt(id, text, images, false) };
+    const w = this.workers.get(id);
+    if (!w) return { error: 'No such worker' };
+    if (w.info.status === 'starting') return { error: `${w.info.name} is still starting up: try again in a few seconds` };
+    if (w.info.status === 'needs_input') {
+      return { error: `${w.info.name} is waiting on an answer in its own terminal (${w.info.activity ?? 'a prompt'}): someone has to answer it there` };
+    }
+    if (!w.pty) {
+      const typed = text.replace(/\r\n?/g, '\n').trim();
+      const clean = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
+      if (!clean) return { error: 'Empty prompt' };
+      return { error: this.resume(id, clean) };
+    }
+    let interrupted = false;
+    if (w.info.kind === 'agent' && w.info.status === 'working') {
+      this.cancelInFlightQueued(w);
+      interrupted = this.cancelTurn(id);
+      if (!interrupted && w.activeTool.size > 0 && this.workers.get(id)?.info.status !== 'needs_input') {
+        const screen = w.term ? readDroidScreen(screenRows(w.term)) : undefined;
+        if (screen !== 'idle' && screen !== 'asking' && this.turnScreen(id) !== 'asking') {
+          w.pty.write('\x1b');
+          w.cancelAt = Date.now();
+          interrupted = true;
+        }
+      }
+      if (interrupted) {
+        const deadline = Date.now() + 1200;
+        while (Date.now() < deadline) {
+          if (!w.pty || w.info.status !== 'working') break;
+          const screen = this.turnScreen(id);
+          if (screen === 'idle' || screen === 'asking') break;
+          await new Promise<void>((resolve) => setTimeout(resolve, 40));
+        }
+      }
+      if (this.turnScreen(id) === 'asking' || this.workers.get(id)?.info.status === 'needs_input') {
+        return { error: `${w.info.name} opened an interactive prompt while stopping; check its terminal before sending` };
+      }
+    }
+    const error = this.prompt(id, text, images, false);
+    return { ...(error ? { error } : {}), ...(interrupted ? { interrupted: true } : {}) };
+  }
+
+  /** Clears all pending messages on `id`, or the single 1-based item `index`. */
+  async clearQueue(id: string, index?: number): Promise<{ error?: string; cleared: QueuedMessageItem[]; remaining: WorkerQueueState }> {
+    const empty: WorkerQueueState = { count: 0, items: [], moreSteering: 0, moreQueued: 0 };
+    const w = this.workers.get(id);
+    if (!w) return { error: 'No such worker', cleared: [], remaining: empty };
+    if (w.info.kind === 'shell') return { error: `${w.info.name} is a shell: shells have no Droid message queue`, cleared: [], remaining: empty };
+    if (w.info.cloud || w.info.remote) return { error: `${w.info.name} runs remotely and has no local message queue`, cleared: [], remaining: empty };
+    const current = this.resolvedQueue(w);
+    if (index !== undefined) {
+      if (!current.resolved.length) return { error: `${w.info.name} has no queued messages to clear`, cleared: [], remaining: this.queueState(id) ?? empty };
+      const target = current.resolved[index - 1];
+      if (!target) return { error: `No queued message #${index} on ${w.info.name} (queue has ${current.resolved.length})`, cleared: [], remaining: this.queueState(id) ?? empty };
+      const delErr = await this.deleteSingleQueueItem(w, target, current.droid?.items.length ?? 0);
+      if (delErr) return { error: delErr, cleared: [], remaining: this.queueState(id) ?? empty };
+      const { index: i, text, preview, moreLines, source, delivery } = target;
+      return { cleared: [{ index: i, text, preview, moreLines, source, delivery }], remaining: this.queueState(id) ?? empty };
+    }
+    const cleared = [...current.items];
+    this.cancelInFlightQueued(w);
+    if (w.outbox.length) {
+      w.outbox = [];
+      clearTimeout(w.outboxTimer);
+      w.outboxTimer = undefined;
+      this.persist();
+    }
+    if (w.pty && w.term) {
+      await clearDroidPendingAll({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) });
+    }
+    w.queued = 0;
+    w.sentQueue = [];
+    return { cleared, remaining: this.queueState(id) ?? empty };
+  }
+
+  private async deleteSingleQueueItem(w: Worker, item: ResolvedQueueItem, droidTotal: number): Promise<string | undefined> {
+    if (item.outboxIndex !== undefined) {
+      w.outbox.splice(item.outboxIndex, 1);
+      if (!w.outbox.length) {
+        clearTimeout(w.outboxTimer);
+        w.outboxTimer = undefined;
+      }
+      this.persist();
+      return undefined;
+    }
+    if (item.inFlightIndex !== undefined) {
+      const queuedEntries = [...w.inFlight].filter((f) => f.queued);
+      const entry = queuedEntries[item.inFlightIndex];
+      if (entry) {
+        clearTimeout(entry.timer);
+        w.inFlight.delete(entry);
+        if (w.queued > 0) w.queued--;
+        w.pty?.write('\x15');
+      }
+      return undefined;
+    }
+    if (item.droidIndex !== undefined && w.pty && w.term) {
+      const ok = await driveDroidQueueItem({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) }, item.droidIndex, droidTotal, 'delete');
+      if (!ok) return `Droid queue review did not open on ${w.info.name}; check its terminal before retrying`;
+    }
+    if (item.delivery === 'after_turn' && w.queued > 0) w.queued--;
+    if (item.sentId !== undefined) {
+      const pos = w.sentQueue.findIndex((s) => s.id === item.sentId);
+      if (pos >= 0) w.sentQueue.splice(pos, 1);
+      if (item.droidIndex === undefined && !w.sentQueue.length && !droidTotal && w.pty && w.term) {
+        await clearDroidPendingAll({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) });
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Promotes queued message(s) on `id` forward to steer now (or with `urgent: true`, interrupts the
+   * running turn/blocking command via Escape and delivers immediately).
+   */
+  async promoteQueue(
+    id: string,
+    opts: { index?: number; all?: boolean; urgent?: boolean } = {},
+  ): Promise<{ error?: string; promoted: QueuedMessageItem[]; delivery?: 'steering' | 'next_step' | 'interrupted' | 'sent'; remaining: WorkerQueueState }> {
+    const empty: WorkerQueueState = { count: 0, items: [], moreSteering: 0, moreQueued: 0 };
+    const w = this.workers.get(id);
+    if (!w) return { error: 'No such worker', promoted: [], remaining: empty };
+    if (w.info.kind === 'shell') return { error: `${w.info.name} is a shell: shells have no Droid message queue`, promoted: [], remaining: empty };
+    if (w.info.cloud || w.info.remote) return { error: `${w.info.name} runs remotely and has no local message queue`, promoted: [], remaining: empty };
+    if (w.info.status === 'starting') {
+      return { error: `${w.info.name} is still starting up: try again in a few seconds`, promoted: [], remaining: this.queueState(id) ?? empty };
+    }
+    if (w.info.status === 'needs_input') {
+      return { error: `${w.info.name} is waiting on an answer in its own terminal (${w.info.activity ?? 'a prompt'}): someone has to answer it there`, promoted: [], remaining: this.queueState(id) ?? empty };
+    }
+    const current = this.resolvedQueue(w);
+    if (!current.resolved.length) return { error: `${w.info.name} has no queued messages to promote`, promoted: [], remaining: this.queueState(id) ?? empty };
+
+    let targets: ResolvedQueueItem[];
+    if (opts.index !== undefined) {
+      const picked = current.resolved[opts.index - 1];
+      if (!picked) return { error: `No queued message #${opts.index} on ${w.info.name} (queue has ${current.resolved.length})`, promoted: [], remaining: this.queueState(id) ?? empty };
+      targets = [picked];
+    } else if (opts.all) {
+      targets = opts.urgent ? [...current.resolved] : current.resolved.filter((it) => it.delivery === 'after_turn' || (it.source === 'outbox' && w.info.status !== 'working'));
+      if (!targets.length) targets = [...current.resolved];
+    } else {
+      const firstAfterTurn = current.resolved.find((it) => it.delivery === 'after_turn');
+      targets = [firstAfterTurn ?? current.resolved[0]];
+    }
+
+    const plainItems = targets.map(({ index: i, text, preview, moreLines, source, delivery }) => ({ index: i, text, preview, moreLines, source, delivery }));
+
+    if (opts.urgent) {
+      if (targets.some((t) => t.preview)) {
+        return {
+          error: `Queued message #${targets.find((t) => t.preview)!.index} was typed directly in the terminal and only its truncated preview is visible; promote without urgent first or re-send full text with urgent: true`,
+          promoted: [],
+          remaining: this.queueState(id) ?? empty,
+        };
+      }
+      const joined = targets.map((t) => t.text).join('\n\n');
+      if (!joined.trim()) return { error: 'Empty prompt', promoted: [], remaining: this.queueState(id) ?? empty };
+      // Delete in reverse order before Escape so Droid does not auto-fire queued items on turn stop;
+      // if urgent delivery fails afterwards, restore removed texts to the worker's outbox.
+      let droidCount = current.droid?.items.length ?? 0;
+      const removedTexts: string[] = [];
+      for (const item of [...targets].reverse()) {
+        const delErr = await this.deleteSingleQueueItem(w, item, droidCount);
+        if (delErr) {
+          if (removedTexts.length) {
+            w.outbox.push(...removedTexts.reverse());
+            this.persist();
+          }
+          return { error: delErr, promoted: [], remaining: this.queueState(id) ?? empty };
+        }
+        removedTexts.push(item.text);
+        if (item.droidIndex !== undefined) droidCount = Math.max(0, droidCount - 1);
+      }
+      const sent = await this.urgentPrompt(id, joined);
+      if (sent.error) {
+        w.outbox.push(...targets.map((t) => t.text));
+        this.persist();
+        return { error: sent.error, promoted: [], remaining: this.queueState(id) ?? empty };
+      }
+      return { promoted: plainItems, delivery: sent.interrupted ? 'interrupted' : 'sent', remaining: this.queueState(id) ?? empty };
+    }
+
+    const initialInFlight = [...w.inFlight].filter((f) => f.queued);
+    let delivery: 'steering' | 'next_step' | 'sent' = 'steering';
+    for (const item of targets) {
+      if (item.source === 'outbox') {
+        if (w.info.status === 'done' || w.info.status === 'idle') {
+          const outIdx = w.outbox.indexOf(item.text);
+          if (outIdx >= 0) w.outbox.splice(outIdx, 1);
+          if (!w.outbox.length) {
+            clearTimeout(w.outboxTimer);
+            w.outboxTimer = undefined;
+          }
+          this.persist();
+          const err = this.prompt(id, item.text, undefined, false);
+          if (err) return { error: err, promoted: [], remaining: this.queueState(id) ?? empty };
+          delivery = 'sent';
+        } else {
+          delivery = 'next_step';
+        }
+        continue;
+      }
+      if (item.inFlightIndex !== undefined) {
+        const entry = initialInFlight[item.inFlightIndex];
+        if (entry && w.inFlight.has(entry)) {
+          clearTimeout(entry.timer);
+          w.inFlight.delete(entry);
+          if (w.queued > 0) w.queued--;
+          w.pty?.write('\r');
+        }
+        delivery = 'steering';
+        continue;
+      }
+      if (item.delivery === 'after_turn') {
+        if (item.droidIndex !== undefined && w.pty && w.term) {
+          const ok = await driveDroidQueueItem({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) }, item.droidIndex, current.droid?.items.length ?? 1, 'promote');
+          if (!ok) return { error: `Droid queue review did not open on ${w.info.name}; check its terminal before retrying`, promoted: [], remaining: this.queueState(id) ?? empty };
+          if (w.queued > 0) w.queued--;
+          if (item.sentId !== undefined) {
+            const sentEntry = w.sentQueue.find((s) => s.id === item.sentId);
+            if (sentEntry) sentEntry.group = 'steering';
+          }
+        } else {
+          if (w.queued > 0) w.queued--;
+          if (item.sentId !== undefined) {
+            const pos = w.sentQueue.findIndex((s) => s.id === item.sentId);
+            if (pos >= 0) w.sentQueue.splice(pos, 1);
+            if (!w.sentQueue.length && !(current.droid?.items.length ?? 0) && w.pty && w.term) {
+              await clearDroidPendingAll({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) });
+            }
+          }
+          if (this.notice(id, item.text)) delivery = 'next_step';
+          else {
+            const err = this.prompt(id, item.text, undefined, false);
+            if (err) return { error: err, promoted: [], remaining: this.queueState(id) ?? empty };
+            delivery = w.info.status === 'working' ? 'steering' : 'sent';
+          }
+        }
+      }
+    }
+    return { promoted: plainItems, delivery, remaining: this.queueState(id) ?? empty };
   }
 
   /** Types in the message this run of its droid was started for, if it hasn't been yet. */
@@ -2082,9 +2417,11 @@ export class WorkerManager {
       w.lastTool.clear();
       w.currentTool = undefined;
       w.completedTool = undefined;
+      w.activeTool.clear();
       w.bootBlocked = false;
       w.settingUp = false;
       w.queued = 0;
+      w.sentQueue = [];
       w.info.activity = undefined;
       this.setStatus(w, 'idle');
       this.sendLaunchPrompt(w);
@@ -2105,6 +2442,7 @@ export class WorkerManager {
         w.completedTool = { ...w.currentTool, at: w.hookAt || Date.now() };
         w.currentTool = undefined;
       }
+      w.activeTool.delete(session);
       // The structured list (PreToolUse has it as typed text).
       if (report.tool_name === 'TodoWrite') this.noteTodos(w, report.tool_input);
       this.noteOutcome(w, report, false);
@@ -2120,8 +2458,11 @@ export class WorkerManager {
       // The hooks reference says a cancelled turn sends idle_prompt instead of Stop; Droid 1.1.0 sends Stop.
       if (report.notification_type === 'idle_prompt' && (w.info.status === 'working' || (w.info.status === 'needs_input' && !w.bootBlocked))) this.setStatus(w, 'done');
       else this.notified(w, session, report);
-    } else if (event === 'Stop') reply = this.stopped(w, report, replies);
-    else if (event === 'SubagentStop') {
+    } else if (event === 'Stop') {
+      w.activeTool.delete(session);
+      reply = this.stopped(w, report, replies);
+    } else if (event === 'SubagentStop') {
+      w.activeTool.delete(session);
       // A Task subagent finished: a question it was asking in this terminal is over.
       if (w.info.status === 'needs_input' && w.asking && w.asking.session !== session) this.setStatus(w, 'working');
       const name = typeof report.task_name === 'string' && report.task_name ? report.task_name : 'A subagent';
@@ -2141,10 +2482,14 @@ export class WorkerManager {
    */
   private stopped(w: Worker, report: Record<string, unknown>, replies: boolean): string | undefined {
     // Droid's queue was emptied some other way (Ctrl+R in its terminal): nothing runs next.
-    if (w.queued > 0 && w.term && readDroidQueue(screenRows(w.term))?.length === 0) w.queued = 0;
+    if (w.queued > 0 && w.term && readDroidQueue(screenRows(w.term))?.length === 0) {
+      w.queued = 0;
+      w.sentQueue = w.sentQueue.filter((s) => s.group !== 'queued');
+    }
     // A message queued with Ctrl+Enter runs next, without a UserPromptSubmit of its own.
     if (w.queued > 0) {
       w.queued--;
+      w.sentQueue.shift();
       this.nextTurn?.(w.info);
       return undefined;
     }
@@ -2196,10 +2541,12 @@ export class WorkerManager {
     const session = report.session_id as string;
     if (event === 'PreToolUse') this.toolStarted(w, session, report, true);
     else if (event === 'PostToolUse') {
+      w.activeTool.delete(session);
       this.noteOutcome(w, report, false);
       if (live) this.refreshAfter(w, report);
       this.toolFinished(w, session, report);
-    } else if (event === 'Notification') this.notified(w, session, report, true);
+    } else if (event === 'Stop') w.activeTool.delete(session);
+    else if (event === 'Notification') this.notified(w, session, report, true);
     else if ((event === 'SessionStart' || event === 'UserPromptSubmit') && (w.info.status === 'done' || w.info.status === 'idle')) this.setStatus(w, 'working');
     return undefined;
   }
@@ -2208,6 +2555,7 @@ export class WorkerManager {
     const tool = report.tool_name;
     if (typeof tool === 'string') w.lastTool.set(session, { tool, input: report.tool_input });
     if (ASK_TOOLS.has(tool)) {
+      w.activeTool.delete(session);
       this.setStatus(w, 'needs_input');
       w.asking = { session, tool: tool as string };
       const input = report.tool_input && typeof report.tool_input === 'object' ? (report.tool_input as Record<string, unknown>) : {};
@@ -2222,6 +2570,7 @@ export class WorkerManager {
     const summary = describeTool(report);
     w.info.activity = summary;
     if (!sub) w.currentTool = { name: String(tool ?? 'tool'), summary, at: w.hookAt || Date.now() };
+    if (typeof tool === 'string') w.activeTool.set(session, { tool, input: report.tool_input, startedAt: w.hookAt || Date.now() });
     w.info.action = toolAction(tool, report.tool_input);
     // Moving on means its question was answered, unless another session is the one asking.
     if (w.info.status !== 'needs_input' || !w.asking || w.asking.session === session) this.setStatus(w, 'working');
@@ -2353,6 +2702,9 @@ export class WorkerManager {
     clearInterval(this.saveTimer);
     clearTimeout(this.spoolTimer);
     for (const w of this.workers.values()) {
+      for (const entry of w.inFlight) clearTimeout(entry.timer);
+      w.inFlight.clear();
+      clearTimeout(w.outboxTimer);
       // Before the process goes, so the next office shows what it was doing, not how it was stopped.
       if (w.unsaved) this.saveScrollback(w);
       if (keep && w.pty?.id) continue;
@@ -2415,10 +2767,14 @@ export class WorkerManager {
     w.lastTool.clear();
     w.currentTool = undefined;
     w.completedTool = undefined;
+    w.activeTool.clear();
+    for (const entry of w.inFlight) clearTimeout(entry.timer);
+    w.inFlight.clear();
     w.asking = undefined;
     w.hookVersion = 0;
     w.outbox = [];
     w.queued = 0;
+    w.sentQueue = [];
     delete info.ask;
     const env = childEnv();
     // Shells keep these for worktree setup reporting; the Office MCP refuses any caller that isn't an agent.
@@ -2639,7 +2995,12 @@ export class WorkerManager {
       delete w.info.ask;
     }
     // Done, idle or asleep: it's not acting anything out any more.
-    if (status !== 'working' && status !== 'needs_input') w.info.action = undefined;
+    if (status !== 'working' && status !== 'needs_input') {
+      w.info.action = undefined;
+      w.activeTool.clear();
+      w.queued = 0;
+      w.sentQueue = [];
+    }
     // A finished list stays up for the turn that finished it, not after.
     if ((status === 'done' || status === 'idle') && w.info.todos && todosFinished(w.info.todos)) {
       delete w.info.todos;
@@ -3008,11 +3369,15 @@ function newWorker(info: WorkerInfo, hookToken = randomBytes(16).toString('hex')
     taskEpoch: 0,
     subSessions: new Set(),
     lastTool: new Map(),
+    activeTool: new Map(),
     hookAt: 0,
     outputAt: 0,
     hookVersion: 0,
     outbox: [],
     queued: 0,
+    sentQueue: [],
+    sentQueueSeq: 0,
+    inFlight: new Set(),
   };
 }
 

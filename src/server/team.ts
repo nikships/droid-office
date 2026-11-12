@@ -34,6 +34,7 @@ import {
   type WorkerRuntimeSnapshot,
   type WorkerTaskLabel,
 } from './worker-status.js';
+import { formatBlockingSteerWarning, type BlockingToolState, type WorkerQueueState } from './worker-queue.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
 export interface TeamWorkers {
@@ -49,7 +50,11 @@ export interface TeamWorkers {
    */
   hire(deskId: string, by: string, prompt: string, worktree: boolean, choice: Partial<AgentChoice>, lead: string, from?: string, branch?: string): WorkerInfo | string;
   prompt(id: string, text: string, queue?: boolean): string | undefined;
+  urgentPrompt?(id: string, text: string): Promise<{ error?: string; interrupted?: boolean }>;
+  cancelTurn?(id: string): boolean;
   notice?(id: string, text: string): boolean;
+  queueState?(id: string, now?: number): WorkerQueueState | undefined;
+  blockingTool?(id: string, now?: number): BlockingToolState | undefined;
   resume(id: string, prompt?: string): string | undefined;
   kill(id: string): Promise<{ note?: string; error?: string }>;
   dismiss?(id: string, pruneWorktree: boolean, keepBranch: boolean): Promise<{ note?: string; error?: string }>;
@@ -184,6 +189,8 @@ export interface TeamMember {
   awaitingJob?: true;
   idleSince?: number;
   idleForMs?: number;
+  queuedMessages?: WorkerQueueState;
+  blockingTool?: BlockingToolState;
 }
 
 export interface TeamReply {
@@ -197,6 +204,8 @@ export interface TeamDelivery {
   floor?: string;
   worker?: TeamMember;
   delivery?: string;
+  blockingTool?: BlockingToolState;
+  warning?: string;
   error?: string;
 }
 
@@ -597,11 +606,16 @@ export class Team {
         const tail = Number.isInteger(b.tail) ? Math.min(READ_MAX, Math.max(0, b.tail as number)) : 100;
         const terminal = tail > 0 ? this.workers.tail(w.id, tail) : undefined;
         const inspection = this.inspectWorker(w);
+        const now = this.now();
+        const queue = this.workers.queueState?.(w.id, now);
+        const blocking = this.workers.blockingTool?.(w.id, now);
         return ok({
           worker: w.id,
           tail,
           activity: w.activity ?? null,
           action: w.action ?? null,
+          ...(queue?.count ? { queuedMessages: queue } : {}),
+          ...(blocking ? { blockingTool: blocking } : {}),
           terminal: terminal?.slice(-48_000) ?? null,
           truncated: (terminal?.length ?? 0) > 48_000,
           inspection,
@@ -978,6 +992,15 @@ export class Team {
       ...(open ? { openQuestion: open.seq } : {}),
       ...(awaitingJob ? { awaitingJob: true as const } : {}),
       ...((w.status === 'idle' || w.status === 'done') && this.idleSince.has(w.id) ? { idleSince: this.idleSince.get(w.id), idleForMs: Math.max(0, this.now() - this.idleSince.get(w.id)!) } : {}),
+      ...(() => {
+        const now = this.now();
+        const queue = this.workers.queueState?.(w.id, now);
+        const blocking = this.workers.blockingTool?.(w.id, now);
+        return {
+          ...(queue?.count ? { queuedMessages: queue } : {}),
+          ...(blocking ? { blockingTool: blocking } : {}),
+        };
+      })(),
     };
   }
 
@@ -1314,9 +1337,10 @@ export class Team {
     }));
   }
 
-  private send(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
+  private async send(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const text = str(b.text, TASK_MAX).trim();
     if (!text) return no(400, 'Provide text for team with action message');
+    if (b.queue === true && b.urgent === true) return no(400, 'Choose either queue: true (after turn) or urgent: true (interrupt and steer now), not both.');
     if (b.workers !== undefined || b.all === true) {
       const refs = b.all === true ? this.teamOf(lead.id).map((w) => w.id) : b.workers;
       if (!Array.isArray(refs) || !refs.length) return no(400, 'No subagents selected for this broadcast.');
@@ -1330,7 +1354,7 @@ export class Team {
         }
         if (seen.has(w.id)) continue;
         seen.add(w.id);
-        const result = this.send(lead, { worker: w.id, text, queue: b.queue });
+        const result = await this.send(lead, { worker: w.id, text, queue: b.queue, urgent: b.urgent });
         results.push({ id: w.id, name: w.name, ...result.body });
       }
       return teamDeliveryReply(results);
@@ -1341,14 +1365,56 @@ export class Team {
     if (w.status === 'needs_input') return no(409, `${w.name} is waiting on an answer in its own terminal (${w.activity ?? 'a prompt'}): someone has to answer it there, so tell the person`);
     const message = officePrompt(this.opts.prompts, 'subagent.message', { from: lead.name, ...workerMessageVars(text) });
     const asleep = isAsleep(w.status);
-    const busy = w.status === 'working' && b.queue !== false;
-    const noticed = busy && this.workers.notice?.(w.id, message);
-    const err = noticed ? undefined : asleep ? this.workers.resume(w.id, message) : this.workers.prompt(w.id, message, busy);
+    const urgent = b.urgent === true;
+    const queueBehindTurn = w.status === 'working' && b.queue === true;
+    let err: string | undefined;
+    let delivery: string;
+    let blockingTool: BlockingToolState | undefined;
+    let warning: string | undefined;
+    if (urgent) {
+      if (w.status === 'working') {
+        if (this.workers.urgentPrompt) {
+          const res = await this.workers.urgentPrompt(w.id, message);
+          err = res.error;
+          delivery = res.interrupted ? 'interrupted' : 'sent';
+        } else {
+          const cancelled = Boolean(this.workers.cancelTurn?.(w.id));
+          err = this.workers.prompt(w.id, message, false);
+          delivery = cancelled ? 'interrupted' : 'sent';
+        }
+      } else if (asleep) {
+        err = this.workers.resume(w.id, message);
+        delivery = 'resumed';
+      } else {
+        err = this.workers.prompt(w.id, message, false);
+        delivery = 'sent';
+      }
+    } else if (queueBehindTurn) {
+      err = this.workers.prompt(w.id, message, true);
+      delivery = 'queued_turn';
+    } else {
+      blockingTool = w.status === 'working' ? this.workers.blockingTool?.(w.id, this.now()) : undefined;
+      if (blockingTool) warning = formatBlockingSteerWarning(w.name, blockingTool);
+      const noticed = w.status === 'working' && this.workers.notice?.(w.id, message);
+      if (noticed) {
+        delivery = 'next_step';
+      } else if (asleep) {
+        err = this.workers.resume(w.id, message);
+        delivery = 'resumed';
+      } else {
+        err = this.workers.prompt(w.id, message, false);
+        delivery = 'sent';
+      }
+    }
     if (err) return no(409, `${w.name}: ${err}`);
     this.reported.delete(w.id);
     this.spoke.delete(w.id);
     this.settleQuestions(w.id);
-    return ok({ worker: this.member(this.workers.get(w.id) ?? w), delivery: noticed ? 'next_step' : busy ? 'queued_turn' : asleep ? 'resumed' : 'sent' });
+    return ok({
+      worker: this.member(this.workers.get(w.id) ?? w),
+      delivery,
+      ...(blockingTool ? { blockingTool, warning } : {}),
+    });
   }
 
   private async dismiss(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {

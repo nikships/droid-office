@@ -215,7 +215,9 @@ test('subagents read sibling context and publish areas, while leads can steer a 
   assert.match(waited.output, /Note: Shared API changed/);
   const subset = await r.call(r.lead, 'team_message', { workers: ['Pixel'], text: 'Use options.' });
   assert.equal(subset.body.results.length, 1);
-  assert.equal(subset.body.results[0].delivery, 'queued_turn');
+  assert.equal(subset.body.results[0].delivery, 'sent');
+  const queuedSubset = await r.call(r.lead, 'team_message', { workers: ['Pixel'], text: 'Run checks after turn.', queue: true });
+  assert.equal(queuedSubset.body.results[0].delivery, 'queued_turn');
   const broadcast = await r.call(r.lead, 'team_message', { all: true, text: 'Rebase before delivery.' });
   assert.equal(broadcast.body.results.length, 2);
   const ambiguous = await r.call(r.lead, 'team_message', { worker: 'Pixel', all: true, text: 'No.' });

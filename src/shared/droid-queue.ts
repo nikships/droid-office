@@ -21,24 +21,41 @@ export interface DroidQueued {
   more: number;
 }
 
-/** The keys that clear Droid's queue while it shows one. */
+export type DroidPendingGroup = 'steering' | 'queued';
+
+export interface DroidPendingItem extends DroidQueued {
+  group: DroidPendingGroup;
+}
+
+export interface DroidPendingSnapshot {
+  /** Pending items in Droid's review order: steering first, then queued. */
+  items: DroidPendingItem[];
+  moreSteering: number;
+  moreQueued: number;
+  reviewActive: boolean;
+}
+
+/** The keys that clear, pull or review Droid's queue while it shows one. */
 export const CLEAR_DROID_QUEUE = '\x18';
+export const PULL_TOP_DROID_QUEUE = '\x07';
+export const REVIEW_DROID_QUEUE = '\x12';
+export const DELETE_DROID_QUEUE_ITEM = '\x04';
+export const DROID_QUEUE_DOWN = '\x1b[B';
 
 const BOX_BOTTOM = /^\s*╰─+╯\s*$/;
 const BOX_TOP = /^\s*╭─+╮\s*$/;
 const INPUT_ROW = /^\s*│\s?[>!]/;
+const STEERING_HEADING = /^\s*Steering messages:\s*$/;
 const HEADING = /^\s*Queued messages:\s*$/;
 const HINT = /Ctrl\+X to clear queue/;
+const REVIEW_HINT = /Enter send now\s*·\s*Ctrl\+D delete/;
 const MORE = /^(.*?)\s*\((\d+) more lines?\)$/;
+const MORE_STEERING = /^\+(\d+) more steering items?$/;
+const MORE_QUEUED = /^\+(\d+) more queued items?$/;
 /** How far above the input box the queue can start: the mode line, a spinner, and the queue itself. */
 const REACH = 48;
 
-/**
- * What Droid has queued, oldest first: an empty list when its input box shows and nothing is queued,
- * or undefined when the bottom of the screen isn't Droid at its input box (a dialog, another program,
- * no screen yet), so nothing can be said either way.
- */
-export function readDroidQueue(rows: readonly string[]): DroidQueued[] | undefined {
+function findInputBox(rows: readonly string[]): { top: number; bottom: number } | undefined {
   let bottom = -1;
   for (let i = rows.length - 1; i >= 0; i--) {
     if (BOX_BOTTOM.test(rows[i])) {
@@ -56,6 +73,18 @@ export function readDroidQueue(rows: readonly string[]): DroidQueued[] | undefin
   }
   // Droid's input row, not a dialog's box: "│ > …", or "│ ! …" in bash mode.
   if (top < 0 || !rows.slice(top + 1, bottom).some((row) => INPUT_ROW.test(row))) return undefined;
+  return { top, bottom };
+}
+
+/**
+ * What Droid has queued, oldest first: an empty list when its input box shows and nothing is queued,
+ * or undefined when the bottom of the screen isn't Droid at its input box (a dialog, another program,
+ * no screen yet), so nothing can be said either way.
+ */
+export function readDroidQueue(rows: readonly string[]): DroidQueued[] | undefined {
+  const box = findInputBox(rows);
+  if (!box) return undefined;
+  const { top, bottom } = box;
   let heading = -1;
   for (let i = top - 1; i >= 0 && i >= top - REACH; i--) {
     if (HEADING.test(rows[i])) {
@@ -78,7 +107,7 @@ export function readDroidQueue(rows: readonly string[]): DroidQueued[] | undefin
   const items: DroidQueued[] = [];
   for (let i = heading + 1; i < hint; i++) {
     let text = rows[i].trim();
-    if (!text) continue;
+    if (!text || MORE_QUEUED.test(text)) continue;
     let more = 0;
     const m = MORE.exec(text);
     if (m) {
@@ -90,6 +119,74 @@ export function readDroidQueue(rows: readonly string[]): DroidQueued[] | undefin
     items.push({ text, cut, more });
   }
   return items;
+}
+
+/**
+ * Reads both Steering messages (Enter mid-turn) and Queued messages (Ctrl+Enter behind the turn)
+ * off Droid's terminal in Droid's review order (steering first, then queued), or undefined when
+ * Droid's input box isn't showing.
+ */
+export function readDroidPending(rows: readonly string[]): DroidPendingSnapshot | undefined {
+  const box = findInputBox(rows);
+  if (!box) return undefined;
+  const { top, bottom } = box;
+  let hint = -1;
+  let reviewActive = false;
+  for (let i = top - 1; i >= 0 && i >= top - REACH; i--) {
+    if (HINT.test(rows[i])) {
+      hint = i;
+      break;
+    }
+    if (REVIEW_HINT.test(rows[i])) {
+      hint = i;
+      reviewActive = true;
+      break;
+    }
+  }
+  if (hint < 0) return { items: [], moreSteering: 0, moreQueued: 0, reviewActive: false };
+  const busy = rows.slice(hint + 1, bottom).some((row) => /Press ESC to stop|Ctrl\+Enter to queue/.test(row));
+  if (!busy) return { items: [], moreSteering: 0, moreQueued: 0, reviewActive: false };
+  let start = -1;
+  for (let i = hint - 1; i >= 0 && i >= top - REACH; i--) {
+    if (STEERING_HEADING.test(rows[i]) || HEADING.test(rows[i])) start = i;
+  }
+  if (start < 0) return { items: [], moreSteering: 0, moreQueued: 0, reviewActive: false };
+  const items: DroidPendingItem[] = [];
+  let group: DroidPendingGroup = STEERING_HEADING.test(rows[start]) ? 'steering' : 'queued';
+  let moreSteering = 0;
+  let moreQueued = 0;
+  for (let i = start; i < hint; i++) {
+    if (STEERING_HEADING.test(rows[i])) {
+      group = 'steering';
+      continue;
+    }
+    if (HEADING.test(rows[i])) {
+      group = 'queued';
+      continue;
+    }
+    let text = rows[i].trim();
+    if (!text) continue;
+    const ms = MORE_STEERING.exec(text);
+    if (ms) {
+      moreSteering = Number(ms[1]);
+      continue;
+    }
+    const mq = MORE_QUEUED.exec(text);
+    if (mq) {
+      moreQueued = Number(mq[1]);
+      continue;
+    }
+    let more = 0;
+    const m = MORE.exec(text);
+    if (m) {
+      text = m[1];
+      more = Number(m[2]);
+    }
+    const cut = text.endsWith('…');
+    if (cut) text = text.slice(0, -1).trimEnd();
+    items.push({ group, text, cut, more });
+  }
+  return { items, moreSteering, moreQueued, reviewActive };
 }
 
 const words = (s: string) => s.replace(/\s+/g, ' ').trim();
