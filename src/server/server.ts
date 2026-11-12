@@ -3210,10 +3210,15 @@ export async function startServer(cfg: Config) {
     },
     act: async (by: WorkerInfo, msg, opts = {}) => {
       // A building agent's hire gets the model list its team_hire gets: here is the one way in for its owner-level actions.
-      const model = msg.t === 'worker.spawn' && msg.kind !== 'shell' && typeof msg.model === 'string' && msg.model.trim() ? msg.model.trim() : undefined;
-      const at = floors.get(opts.floor ?? (typeof msg.floor === 'string' ? msg.floor : ''));
-      const refused = model && at && !opts.owner ? await at.team.refuseSpawnModel(by, model) : undefined;
-      if (refused) return { error: refused, notes: [] };
+      if (msg.t === 'worker.spawn' && msg.kind !== 'shell' && !opts.owner) {
+        const model = typeof msg.model === 'string' && msg.model.trim() ? msg.model.trim() : undefined;
+        const cloudSpawn = msg.kind === 'cloud' || Boolean(msg.cloud && typeof msg.cloud === 'object');
+        const at = floors.get(opts.floor ?? (typeof msg.floor === 'string' ? msg.floor : ''));
+        const refused = at ? await at.team.refuseSpawnModel(by, model, cloudSpawn) : undefined;
+        if (refused) return { error: refused, notes: [] };
+        const fallback = !model && cloudSpawn && subagents.settings.models?.length ? at?.workers.officeDefault?.model : undefined;
+        if (fallback && !fallback.startsWith('custom:')) msg = { ...msg, model: fallback };
+      }
       return new Promise<OwnerReply>((resolve) => {
         const notes: string[] = [];
         const expects = OWNER_REPLIES[msg.t];

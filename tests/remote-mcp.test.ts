@@ -236,12 +236,21 @@ test('a building lead leads teams on every floor from no desk, with the owner’
   assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'More work' })).status, 200);
   assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'Past the per-lead limit' })).status, 200, 'the owner hires past maxPerLead, and so does an external worker');
   r.settings.on = false;
-  r.settings.models = [{ id: 'cheap-model' }];
+  r.settings.models = [{ id: 'cheap-model', note: 'fast mechanical tasks' }];
   assert.equal(r.teams[1].cannotHire(worker), undefined, 'Subagents off does not stop an external worker');
-  assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'Any model', model: 'strong-model' })).status, 200, 'the Subagents model list does not limit it');
-  assert.equal(((await r.teams[1].handle(worker, { action: 'models' })).body as { restricted: boolean }).restricted, false);
+  const disallowed = await r.teams[1].handle(worker, { action: 'hire', task: 'Unallowed model', model: 'claude-sonnet-4-6' });
+  assert.equal(disallowed.status, 400, 'the Subagents model list limits external bots too');
+  assert.match(String(disallowed.body.error), /claude-sonnet-4-6 isn't one of the models[\s\S]*cheap-model/);
+  const disallowedDefault = await r.teams[1].handle(worker, { action: 'hire', task: 'Omitted model with no allowed default' });
+  assert.equal(disallowedDefault.status, 400);
+  assert.match(String(disallowedDefault.body.error), /allowed models \(cheap-model\)/);
+  assert.equal((await r.teams[1].handle(worker, { action: 'hire', task: 'Allowed model', model: 'cheap-model' })).status, 200);
+  const modelsBody = (await r.teams[1].handle(worker, { action: 'models' })).body as { restricted: boolean; models: { id: string; note?: string }[] };
+  assert.equal(modelsBody.restricted, true);
+  assert.deepEqual(modelsBody.models, [{ id: 'cheap-model', name: 'cheap-model', note: 'fast mechanical tasks' }]);
   const me = (await r.teams[1].handle(worker, { action: 'whoami' })).body;
-  assert.equal('max' in me || 'models' in me, false, 'whoami reports no team size or model list to an external worker');
+  assert.equal('max' in me, false, 'whoami reports no team size limit to an external worker');
+  assert.equal(me.models, 1, 'whoami reports the active model allowlist count');
   const local = { ...worker, id: 'local', remote: undefined, deskId: 'desk-9' } as WorkerInfo;
   assert.match(r.teams[1].cannotHire(local)!, /turned off/, 'a local worker keeps the owner’s Subagents setting');
   r.settings.on = true;
@@ -342,6 +351,22 @@ test('a building agent hires through MCP by naming a floor, and a structured tas
   const structured = await call({ task: { title: 'Inspect alpha', brief: 'Read the checkout and report what it is.', repo: 'alpha' }, worktree: false });
   assert.equal(structured.isError, undefined, structured.text);
   assert.equal(r.maps[0].has(structured.body.worker.id), true);
+
+  r.settings.models = [
+    { id: 'custom:GPT-5.4-Pro-0', note: 'architecture' },
+    { id: 'custom:GLM-5.1-3', note: 'mechanical' },
+  ];
+  const modelsRes = await client.callTool({ name: 'team_models', arguments: {} });
+  const modelsText = (modelsRes.content as { type: string; text?: string }[]).map((c) => c.text ?? '').join('\n');
+  assert.equal((modelsRes.structuredContent as Record<string, any>).restricted, true);
+  assert.match(modelsText, /Settings restrict subagent models to the listed picks\./);
+  assert.match(modelsText, /custom:GPT-5\.4-Pro-0[\s\S]*architecture/);
+  assert.match(modelsText, /Default: none on the allowed list \(pass model explicitly\)\./);
+  const disallowed = await call({ title: 'Disallowed model', brief: 'Try sonnet.', floor: 'beta', model: 'claude-sonnet-4-6', worktree: false });
+  assert.equal(disallowed.isError, true);
+  assert.match(disallowed.text, /claude-sonnet-4-6 isn't one of the models[\s\S]*\(custom:GPT-5\.4-Pro-0, custom:GLM-5\.1-3\)/);
+  const allowed = await call({ title: 'Allowed model', brief: 'Use GLM.', floor: 'beta', model: 'custom:GLM-5.1-3', worktree: false });
+  assert.equal(allowed.isError, undefined, allowed.text);
 });
 
 test('a building agent’s team tools take a floor by id, name or path, and refuse a shared name, two floors at once and a bare seq', async (t) => {

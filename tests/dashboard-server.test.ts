@@ -348,7 +348,16 @@ test('office_worker_spawn gives the Orchestrator the model list team_hire gives 
   await models([{ id: 'glm-5.3-flash', note: 'tests and docs' }], { model: 'default-model' });
   const refused = await spawn('other-model');
   assert.equal(refused.error, true);
-  assert.match(refused.text, /other-model isn't one of the models this office lets subagents use[\s\S]*team_models/);
+  assert.match(refused.text, /other-model isn't one of the models this office lets subagents use[\s\S]*team_models \(glm-5\.3-flash\)/);
+  const refusedDefault = await spawn('default-model');
+  assert.equal(refusedDefault.error, true, 'a configured subagent default outside the allowlist is rejected too');
+  assert.match(refusedDefault.text, /default-model isn't one of the models[\s\S]*\(glm-5\.3-flash\)/);
+  const refusedOmitted = await spawn();
+  assert.equal(refusedOmitted.error, true, 'omitting model when the resolved default is outside the allowlist is rejected');
+  assert.match(refusedOmitted.text, /allowed models \(glm-5\.3-flash\) from team_models/);
+  const cloudOmitted = await lead('office_worker_spawn', { floor, kind: 'cloud', cloud: { computerId: 'c-1' } });
+  assert.equal(cloudOmitted.error, true, 'omitting model on cloud spawn without an allowed default is rejected');
+  assert.match(cloudOmitted.text, /allowed models \(glm-5\.3-flash\) from team_models/);
   const hires = () =>
     o.server
       .floors()[0]
@@ -356,15 +365,17 @@ test('office_worker_spawn gives the Orchestrator the model list team_hire gives 
       .filter((w) => w.createdBy !== 'owner').length;
   const before = hires();
   assert.equal((await spawn('glm-5.3-flash')).error, false, 'a listed model');
-  assert.equal((await spawn('default-model')).error, false, 'the default model, as for team_hire');
-  assert.equal((await spawn()).error, false, 'no model runs the default');
-  assert.equal(hires(), before + 3, 'the refused hire started nobody');
+  owner.send({ t: 'prompts.agent', choice: { model: 'glm-5.3-flash' } });
+  await owner.wait('prompts', (m) => m.state.agent?.model === 'glm-5.3-flash');
+  assert.equal((await spawn()).error, false, 'omitting model succeeds when the configured office default is on the allowlist');
+  assert.equal(hires(), before + 2, 'the refused hires started nobody');
   const cloud = await lead('office_worker_spawn', { floor, kind: 'cloud', model: 'other-model', cloud: { computerId: 'c-1' } });
   assert.equal(cloud.error, true);
-  assert.match(cloud.text, /isn't one of the models/, 'a cloud worker is held to the list too');
+  assert.match(cloud.text, /isn't one of the models[\s\S]*\(glm-5\.3-flash\)/, 'a cloud worker is held to the list too');
   const shown = await lead('team_models');
   assert.match(shown.text, /glm-5\.3-flash/);
   assert.doesNotMatch(shown.text, /other-model/);
+  assert.doesNotMatch(shown.text, /default-model/);
 
   // The owner's own hire from a window is never limited.
   owner.send({ t: 'worker.spawn', deskId: 'auto', model: 'other-model', requestFloor: floor, requestId: 'mine' });

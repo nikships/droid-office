@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { DroidModelCatalogue } from '../src/server/droid-models.js';
 import { emptySubscriptionsState, modelUsage, type ModelAvailability } from '../src/shared/subscriptions.js';
-import { modelList, outsideModelList } from '../src/server/model-policy.js';
+import { modelList, outsideModelList, outsideModelListMessage } from '../src/server/model-policy.js';
 import { Team, settled, type TeamOptions, type TeamWorkers } from '../src/server/team.js';
 import { teamOf, teamSummary, workersByTeam } from '../src/shared/team.js';
 import { SUBAGENT_DEFAULTS, type AgentChoice, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../src/shared/protocol.js';
@@ -483,9 +483,12 @@ test('models_list includes Droid-disabled, disabled subscription and disallowed 
   assert.equal(all.find((m: { id: string }) => m.id === 'custom:mine').enabled, false);
   assert.match(all.find((m: { id: string }) => m.id === 'custom:mine').cannotRun, /off/i);
   assert.equal(all.find((m: { id: string }) => m.id === 'glm-5.3-flash').enabled, false);
-  assert.equal(all.find((m: { id: string }) => m.id === 'claude-opus-5-5').enabled, true);
+  assert.equal(all.find((m: { id: string }) => m.id === 'claude-opus-5-5').enabled, false, 'a default model outside the allowlist is also disallowed');
   assert.equal(all.find((m: { id: string }) => m.id === 'off-model').enabled, false);
   assert.match(all.find((m: { id: string }) => m.id === 'off-model').cannotRun, /Switched off in Droid/);
+  r.settings.models = [{ id: 'custom:mine' }, { id: 'claude-opus-5-5' }];
+  const withAllowedDefault = (await r.call('lead', { action: 'models_list' })).body.models;
+  assert.equal(withAllowedDefault.find((m: { id: string }) => m.id === 'claude-opus-5-5').enabled, true);
 });
 
 test('team status measures idle time from state transitions and preserves it across restore', async (t) => {
@@ -599,98 +602,120 @@ test('models lists what a lead may pick, with credit multipliers and notes, and 
   ]);
   assert.equal((await r.call('lead', { action: 'hire', task: 'a', model: 'old' })).status, 200, 'any model goes when Settings picks none');
 
-  // A list in Settings: only those, with the owner's notes, plus the default a hire without --model runs.
+  // A list in Settings: only those picks, with the owner's notes; a default outside the list is not added.
   r.settings.models = [{ id: 'glm-5.3-flash', note: 'tests and docs' }, { id: 'gone' }];
   res = (await r.call('lead', { action: 'models' })).body;
   assert.equal(res.restricted, true);
+  assert.equal(res.defaultModel, undefined);
   assert.deepEqual(
     res.models.map((m: Record<string, unknown>) => [m.id, m.note, m.default, m.unlisted]),
     [
-      ['claude-opus-5-5', undefined, true, undefined],
       ['glm-5.3-flash', 'tests and docs', undefined, undefined],
       ['gone', undefined, undefined, true],
     ],
   );
   assert.equal((await r.call('lead', { action: 'whoami' })).body.models, 2);
   assert.equal((await r.call('lead', { action: 'hire', task: 'b', model: 'glm-5.3-flash' })).status, 200);
-  assert.equal((await r.call('lead', { action: 'hire', task: 'c', model: 'claude-opus-5-5' })).status, 200, "droid's default is always allowed");
+  const unallowedDefault = await r.call('lead', { action: 'hire', task: 'c', model: 'claude-opus-5-5' });
+  assert.equal(unallowedDefault.status, 400, "droid's default is rejected when not on the allowlist");
+  assert.match(unallowedDefault.body.error, /claude-opus-5-5 isn't one of the models[\s\S]*\(glm-5\.3-flash, gone\)/);
   const refused = await r.call('lead', { action: 'hire', task: 'd', model: 'old' });
   assert.equal(refused.status, 400);
-  assert.match(refused.body.error, /old isn't one of the models this office lets subagents use[\s\S]*team_models/);
-  assert.equal((await r.call('lead', { action: 'hire', task: 'e', effort: 'low' })).status, 200, 'leaving --model out is never refused');
+  assert.match(refused.body.error, /old isn't one of the models this office lets subagents use[\s\S]*team_models \(glm-5\.3-flash, gone\)/);
+  const omittedOutside = await r.call('lead', { action: 'hire', task: 'e', effort: 'low' });
+  assert.equal(omittedOutside.status, 400, 'leaving --model out is refused when the resolved default is outside the allowlist');
+  assert.match(omittedOutside.body.error, /default model \(claude-opus-5-5\) isn't on this office's allowed list[\s\S]*allowed models \(glm-5\.3-flash, gone\)/);
+  r.settings.agent = { model: 'glm-5.3-flash' };
+  assert.equal((await r.call('lead', { action: 'hire', task: 'e2', effort: 'low' })).status, 200, 'leaving --model out succeeds when the configured default is on the allowlist');
   assert.deepEqual(
     r.fake.hired.map((h) => h.choice.model),
-    ['old', 'glm-5.3-flash', 'claude-opus-5-5', undefined],
+    ['old', 'glm-5.3-flash', 'glm-5.3-flash'],
   );
+  // Existing workers on models outside the allowlist can still be messaged.
+  r.fake.get('sub1')!.model = 'old';
+  r.set('sub1', 'idle');
+  assert.equal((await r.call('lead', { action: 'send', worker: 'sub1', text: 'carry on' })).status, 200);
   // Only someone who may hire sees the list.
   const sub = await r.call('sub1', { action: 'models' });
   assert.equal(sub.status, 403);
   assert.match(sub.body.error, /subagents can't hire their own/);
 });
 
-test('the Orchestrator keeps to the models leads can pick, as any lead does, and an external bot does not', async (t) => {
+test('the Orchestrator, external bots and floor leads all keep to the models leads can pick', async (t) => {
   const r = rig(t, { models: () => Promise.resolve(CATALOGUE) });
   r.fake.add(worker({ id: 'orchestrator', deskId: '', name: 'Orchestrator' }));
   r.fake.add(worker({ id: 'remote-bot', deskId: '', name: 'Bot', remote: true }));
   const models = async (caller: string) => (await r.call(caller, { action: 'models' })).body;
-  // Nothing picked: it may hire any model, with no list to name.
-  assert.equal((await models('orchestrator')).restricted, false);
+  // Nothing picked: all callers may hire any model, with no list to name.
+  for (const caller of ['orchestrator', 'remote-bot', 'lead']) {
+    assert.equal((await models(caller)).restricted, false, caller);
+  }
   assert.equal((await r.call('orchestrator', { action: 'hire', task: 'a', model: 'old' })).status, 200, 'an empty list lets it hire any model');
+  assert.equal((await r.call('remote-bot', { action: 'hire', task: 'a2', model: 'old' })).status, 200, 'an empty list lets an external bot hire any model');
 
   r.settings.models = [{ id: 'glm-5.3-flash', note: 'tests and docs' }];
-  for (const caller of ['orchestrator', 'lead']) {
+  for (const caller of ['orchestrator', 'remote-bot', 'lead']) {
     const res = await models(caller);
     assert.equal(res.restricted, true, caller);
+    assert.equal(res.defaultModel, undefined, caller);
     assert.deepEqual(
       res.models.map((m: Record<string, unknown>) => [m.id, m.note]),
-      [
-        ['claude-opus-5-5', undefined],
-        ['glm-5.3-flash', 'tests and docs'],
-      ],
-      `${caller} sees the picks with their notes, and the default`,
+      [['glm-5.3-flash', 'tests and docs']],
+      `${caller} sees only the allowed picks with their notes`,
     );
+    assert.equal((await r.call(caller, { action: 'whoami' })).body.models, 1, caller);
   }
-  assert.equal((await r.call('orchestrator', { action: 'whoami' })).body.models, 1);
-  assert.equal((await r.call('orchestrator', { action: 'hire', task: 'b', model: 'glm-5.3-flash' })).status, 200);
-  assert.equal((await r.call('orchestrator', { action: 'hire', task: 'c', model: 'claude-opus-5-5' })).status, 200, 'the default model is allowed, as for a lead');
-  const refused = await r.call('orchestrator', { action: 'hire', task: 'd', model: 'old' });
-  assert.equal(refused.status, 400);
-  assert.match(refused.body.error, /old isn't one of the models this office lets subagents use[\s\S]*team_models/);
-  assert.equal((await r.call('orchestrator', { action: 'hire', task: 'e', effort: 'low' })).status, 200, 'leaving the model out is never refused');
-  assert.equal((await r.call('orchestrator', { action: 'hire', task: 'f', model: 'old' })).status, 400);
+  for (const caller of ['orchestrator', 'remote-bot']) {
+    assert.equal((await r.call(caller, { action: 'hire', task: `b-${caller}`, model: 'glm-5.3-flash' })).status, 200, caller);
+    const refusedDefault = await r.call(caller, { action: 'hire', task: `c-${caller}`, model: 'claude-opus-5-5' });
+    assert.equal(refusedDefault.status, 400, caller);
+    assert.match(refusedDefault.body.error, /claude-opus-5-5 isn't one of the models[\s\S]*\(glm-5\.3-flash\)/);
+    const refused = await r.call(caller, { action: 'hire', task: `d-${caller}`, model: 'claude-sonnet-4-6' });
+    assert.equal(refused.status, 400, caller);
+    assert.match(refused.body.error, /claude-sonnet-4-6 isn't one of the models this office lets subagents use[\s\S]*team_models \(glm-5\.3-flash\)/);
+    const omitted = await r.call(caller, { action: 'hire', task: `e-${caller}`, effort: 'low' });
+    assert.equal(omitted.status, 400, caller);
+    assert.match(omitted.body.error, /default model \(claude-opus-5-5\) isn't on this office's allowed list[\s\S]*\(glm-5\.3-flash\)/);
+  }
+  r.settings.agent = { model: 'glm-5.3-flash' };
+  assert.equal((await r.call('remote-bot', { action: 'hire', task: 'f', effort: 'low' })).status, 200, 'omitting model works once the configured default is on the allowlist');
 
-  // An external bot is not limited, as before.
-  const bot = await models('remote-bot');
-  assert.equal(bot.restricted, false);
-  assert.ok(bot.models.some((m: Record<string, unknown>) => m.id === 'custom:mine'));
-  assert.equal('models' in (await r.call('remote-bot', { action: 'whoami' })).body, false);
-  assert.equal((await r.call('remote-bot', { action: 'hire', task: 'g', model: 'old' })).status, 200);
-  // The Orchestrator still has no team size limit.
+  // Neither the Orchestrator nor an external bot has a team size limit.
   r.settings.maxPerLead = 1;
   assert.equal((await r.call('orchestrator', { action: 'hire', task: 'h', model: 'glm-5.3-flash' })).status, 200);
+  assert.equal((await r.call('remote-bot', { action: 'hire', task: 'i', model: 'glm-5.3-flash' })).status, 200);
 });
 
-test('a spawn through office_worker_spawn is held to the same list as a hire: the Orchestrator is, an external bot is not', async (t) => {
+test('a spawn through office_worker_spawn is held to the same list for leads, the Orchestrator and external bots', async (t) => {
   const OPUS = 'custom:droidproxy:opus-5-5';
   const availability: Record<string, ModelAvailability> = { [OPUS]: { state: 'signed-out', provider: 'claude' } };
   const r = rig(t, { models: () => Promise.resolve(CATALOGUE), availability: (m) => availability[m] });
   const orchestrator = r.fake.add(worker({ id: 'orchestrator', deskId: '', name: 'Orchestrator' }));
   const bot = r.fake.add(worker({ id: 'remote-bot', deskId: '', name: 'Bot', remote: true }));
-  const spawn = (caller: WorkerInfo, model: string) => r.team.refuseSpawnModel(caller, model);
+  const spawn = (caller: WorkerInfo, model?: string, cloud = false) => r.team.refuseSpawnModel(caller, model, cloud);
 
   assert.equal(await spawn(orchestrator, 'old'), undefined, 'an empty list allows any model');
+  assert.equal(await spawn(bot, 'old'), undefined, 'an empty list allows any model for an external bot');
+  assert.equal(await spawn(bot), undefined, 'an empty list allows omitting model');
   r.settings.models = [{ id: 'glm-5.3-flash' }, { id: OPUS }];
-  assert.equal(await spawn(orchestrator, 'glm-5.3-flash'), undefined, 'a listed model');
-  assert.equal(await spawn(orchestrator, 'claude-opus-5-5'), undefined, 'droid’s default, as for a hire');
-  assert.match((await spawn(orchestrator, 'old'))!, /old isn't one of the models this office lets subagents use[\s\S]*team_models/);
-  assert.match((await spawn(orchestrator, OPUS))!, /Can't hire on .*no Claude account is connected\. Pick one that can: glm-5\.3-flash\./, 'availability is checked, and it is pointed to the list');
+  for (const caller of [orchestrator, bot]) {
+    assert.equal(await spawn(caller, 'glm-5.3-flash'), undefined, `a listed model (${caller.id})`);
+    assert.match((await spawn(caller, 'claude-opus-5-5'))!, /claude-opus-5-5 isn't one of the models[\s\S]*\(glm-5\.3-flash, custom:droidproxy:opus-5-5\)/);
+    assert.match((await spawn(caller, 'old'))!, /old isn't one of the models this office lets subagents use[\s\S]*team_models \(glm-5\.3-flash, custom:droidproxy:opus-5-5\)/);
+    assert.match((await spawn(caller))!, /default model \(claude-opus-5-5\) isn't on this office's allowed list[\s\S]*\(glm-5\.3-flash, custom:droidproxy:opus-5-5\)/);
+    assert.match((await spawn(caller, '   '))!, /default model \(claude-opus-5-5\) isn't on this office's allowed list/, 'blank model is treated as omitted');
+    assert.match((await spawn(caller, undefined, true))!, /No default model is on this office's allowed list[\s\S]*\(glm-5\.3-flash, custom:droidproxy:opus-5-5\)/);
+    assert.match((await spawn(caller, OPUS))!, /Can't hire on .*no Claude account is connected\. Pick one that can: glm-5\.3-flash\./, 'availability is checked, and it is pointed to the list');
+  }
   r.fake.officeDefault = { model: 'glm-5.3-flash' };
-  assert.match((await spawn(orchestrator, 'claude-opus-5-5'))!, /isn't one of the models/, 'with an office default, droid’s own is no exception');
-  assert.equal(await spawn(bot, 'old'), undefined, 'an external bot is not limited');
-  assert.match((await spawn(bot, OPUS))!, /no Claude account is connected/, 'but a model that cannot run is refused for it too');
+  assert.equal(await spawn(bot), undefined, 'omitting model succeeds when officeDefault is on the allowlist');
+  assert.equal(await spawn(bot, undefined, true), undefined, 'cloud spawn omitting model succeeds when non-custom officeDefault is on the allowlist');
+  r.fake.officeDefault = { model: OPUS };
+  assert.match((await spawn(bot, undefined, true))!, /No default model is on this office's allowed list/, 'cloud spawn ignores custom: officeDefault');
+  assert.match((await spawn(bot))!, /no Claude account is connected/, 'local spawn checks availability of the resolved default');
 });
 
-test("hire checks droid's own default against a fresh model list, not one a lead had to ask for first", async (t) => {
+test("hire checks droid's own default against a fresh model list when model is omitted", async (t) => {
   let asks = 0;
   const r = rig(
     t,
@@ -703,12 +728,18 @@ test("hire checks droid's own default against a fresh model list, not one a lead
     { models: [{ id: 'glm-5.3-flash' }] },
   );
   assert.equal((await r.call('lead', { action: 'hire', task: 'a', model: 'glm-5.3-flash' })).status, 200);
-  assert.equal(asks, 0, 'a model on the list needs no lookup');
-  assert.equal((await r.call('lead', { action: 'hire', task: 'b', model: 'claude-opus-5-5' })).status, 200, 'droid’s default, with no models call before it');
+  assert.equal(asks, 0, 'an explicit model needs no catalogue lookup');
+  assert.equal((await r.call('lead', { action: 'hire', task: 'a2', model: 'claude-opus-5-5' })).status, 400, 'an explicit unallowed model needs no catalogue lookup');
+  assert.equal(asks, 0);
+  const omittedRejected = await r.call('lead', { action: 'hire', task: 'b' });
+  assert.equal(omittedRejected.status, 400, "droid's default is checked and rejected when outside the allowlist");
   assert.equal(asks, 1);
+  r.settings.models = [{ id: 'glm-5.3-flash' }, { id: 'claude-opus-5-5' }];
+  assert.equal((await r.call('lead', { action: 'hire', task: 'b2' })).status, 200, "droid's default is accepted when on the allowlist");
+  assert.equal(asks, 2);
   r.fake.officeDefault = { model: 'glm-5.3' };
-  assert.equal((await r.call('lead', { action: 'hire', task: 'c', model: 'claude-opus-5-5' })).status, 400, 'with an office default, droid’s own is not the one subagents run');
-  assert.equal(asks, 1, 'and droid is not asked');
+  assert.equal((await r.call('lead', { action: 'hire', task: 'c' })).status, 400, 'with an office default, that default is checked without asking droid');
+  assert.equal(asks, 2, 'and droid is not asked');
 });
 
 test("models says which subscription models can't run and why, and hire refuses them before a desk is taken", async (t) => {
@@ -833,14 +864,16 @@ test('team models carries the usage of a subscription model next to its refusal,
   assert.deepEqual(all.models.find((m: { id: string }) => m.id === SOL).usage, by[SOL].usage, 'models_list shares it');
 });
 
-test('models without a model list still names the default and the picks', async (t) => {
-  const r = rig(t, { models: () => Promise.reject(new Error('no droid')) }, { agent: { model: 'glm-5.3' }, models: [{ id: 'glm-5.3-flash' }] });
-  const res = (await r.call('lead', { action: 'models' })).body;
+test('models without a catalogue still names allowed picks and only marks an allowed default', async (t) => {
+  const unallowedDefault = rig(t, { models: () => Promise.reject(new Error('no droid')) }, { agent: { model: 'glm-5.3' }, models: [{ id: 'glm-5.3-flash' }] });
+  const res = (await unallowedDefault.call('lead', { action: 'models' })).body;
   assert.equal(res.unavailable, true);
-  assert.deepEqual(res.models, [
-    { id: 'glm-5.3', name: 'glm-5.3', default: true },
-    { id: 'glm-5.3-flash', name: 'glm-5.3-flash' },
-  ]);
+  assert.equal(res.defaultModel, undefined);
+  assert.deepEqual(res.models, [{ id: 'glm-5.3-flash', name: 'glm-5.3-flash' }]);
+  const allowedDefault = rig(t, { models: () => Promise.reject(new Error('no droid')) }, { agent: { model: 'glm-5.3-flash' }, models: [{ id: 'glm-5.3-flash' }] });
+  const resAllowed = (await allowedDefault.call('lead', { action: 'models' })).body;
+  assert.equal(resAllowed.defaultModel, 'glm-5.3-flash');
+  assert.deepEqual(resAllowed.models, [{ id: 'glm-5.3-flash', name: 'glm-5.3-flash', default: true }]);
   const bare = rig(t);
   assert.deepEqual((await bare.call('lead', { action: 'models' })).body, { restricted: false, models: [], unavailable: true });
 });
@@ -1214,17 +1247,19 @@ test("a turn about to end hears what it's missing: a subagent that hasn't report
   assert.equal(r.team.beforeStop(lead()), undefined, 'with waking off, the lead checks for itself');
 });
 
-test('the model list limits the Orchestrator and leads, and not an external bot, an empty list or a listed or default model', () => {
+test('the model list limits all Office MCP callers, including external bots, unless empty', () => {
   const list = [{ id: 'a' }, { id: 'b', note: 'cheap' }];
-  assert.deepEqual(modelList({ id: 'orchestrator' }, { models: list }), list);
-  assert.deepEqual(modelList({ id: 'lead' }, { models: list }), list);
-  assert.equal(modelList({ id: 'remote-bot', remote: true }, { models: list }), undefined);
-  assert.equal(modelList({ id: 'orchestrator' }, { models: [] }), undefined);
-  assert.equal(modelList({ id: 'orchestrator' }, {}), undefined);
-  assert.equal(outsideModelList(list, 'b', 'd'), false);
-  assert.equal(outsideModelList(list, 'd', 'd'), false, 'the default model is always allowed');
-  assert.equal(outsideModelList(list, 'c', 'd'), true);
-  assert.equal(outsideModelList(undefined, 'c', 'd'), false);
+  assert.deepEqual(modelList({ models: list }), list);
+  assert.equal(modelList({ models: [] }), undefined);
+  assert.equal(modelList({}), undefined);
+  assert.equal(outsideModelList(list, 'b'), false);
+  assert.equal(outsideModelList(list, 'd'), true, 'an unlisted model is rejected even if it was a default');
+  assert.equal(outsideModelList(list, undefined), true, 'an unresolved default is outside a non-empty allowlist');
+  assert.equal(outsideModelList(undefined, 'c'), false);
+  assert.equal(outsideModelList(undefined, undefined), false);
+  assert.match(outsideModelListMessage('claude-sonnet-4-6', list), /claude-sonnet-4-6 isn't one of the models[\s\S]*\(a, b\)/);
+  assert.match(outsideModelListMessage('claude-opus-5-5', list, false), /The default model \(claude-opus-5-5\) isn't on this office's allowed list[\s\S]*\(a, b\)/);
+  assert.match(outsideModelListMessage(undefined, list, false), /No default model is on this office's allowed list[\s\S]*\(a, b\)/);
 });
 
 test('structured WorkerResult inference, explicit fields, persistence and team_review round-trip cleanly', async (t) => {

@@ -736,8 +736,9 @@ export interface SubagentSettings {
   agent?: AgentChoice;
   /**
    * The models a lead may give a subagent with --model, each with the owner's note on what it's
-   * good for. Unset: any model droid lists. The subagent worker above is always allowed. It limits the
-   * Orchestrator like any lead (team_hire and office_worker_spawn), but not external bots or the owner's own hires.
+   * good for. Unset: any model droid lists. Limits floor leads, the Orchestrator and external bots
+   * alike (team_hire and office_worker_spawn, including the resolved default when model is omitted),
+   * while leaving the owner's own hires and existing workers' saved models untouched.
    */
   models?: SubagentModel[];
   /** Each subagent gets its own git worktree unless its lead asks for none. */
