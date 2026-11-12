@@ -49,7 +49,7 @@ import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg
 import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
 import { ORCHESTRATOR_ID, orchestratorNeedsOwner, type MissionControlState, type OrchestratorSettings } from '../shared/mission-control.js';
 import { AIRGAPPED_REASON, droidReady } from '../shared/setup.js';
-import { cannotRun } from '../shared/subscriptions.js';
+import { cannotRun, isSubscriptionModel } from '../shared/subscriptions.js';
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { STREAM } from '../shared/jukebox.js';
 import { Jukebox } from './jukebox.js';
@@ -79,6 +79,7 @@ import { RemoteMcp } from './remote-mcp-http.js';
 import type { RemoteMcpState } from '../shared/remote-mcp.js';
 import { Orchestrator } from './orchestrator.js';
 import { missionTeam, type BuildingAgents } from './building-agent.js';
+import { buildWorkerInspection, inspectTerminalRetry } from './worker-status.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -508,7 +509,14 @@ export async function startServer(cfg: Config) {
     return floor ? { id: floor.id, name: floor.def.name, dir: floor.dir, workers: floor.workers, team: floor.team, visits: floor.visits, whiteboard: floor.whiteboard, linear: floor.linear } : undefined;
   };
   // ownerOffice is declared with the message handler below; nothing calls it before the office is serving.
-  const ownerBridge: OwnerOffice = { floors: () => ownerOffice.floors(), mission: () => ownerOffice.mission(), tail: (...a) => ownerOffice.tail(...a), act: (...a) => ownerOffice.act(...a) };
+  const ownerBridge: OwnerOffice = {
+    floors: () => ownerOffice.floors(),
+    mission: () => ownerOffice.mission(),
+    tail: (...a) => ownerOffice.tail(...a),
+    inspect: (...a) => ownerOffice.inspect?.(...a),
+    labelsOn: () => ownerOffice.labelsOn?.() ?? true,
+    act: (...a) => ownerOffice.act(...a),
+  };
   officeMcp = createOfficeMcp({
     hookUrl,
     answers,
@@ -752,6 +760,8 @@ export async function startServer(cfg: Config) {
     modelGate,
     modelAvailability: (model) => subscriptions.availability(model),
     modelUsage: (model, now) => subscriptions.usage(model, now),
+    recheckModels: () => subscriptions.recheck(),
+    workerLabelsOn: () => labelPreferences.get().on,
     floor: (id) => floors.get(id),
     pullsChanged: (floor) => {
       if (floors.get(floor.id) === floor) broadcast({ t: 'building.pulls', floor: floor.id, pulls: floor.board.pulls.items });
@@ -3080,6 +3090,37 @@ export async function startServer(cfg: Config) {
       return [...(agent ? [agent] : []), ...state.bots];
     },
     tail: (id, lines, floorId) => (id === OFFICE_SHELL_ID ? floors.get(floorId ?? '')?.shell.tail(lines) : workersOf(id)?.tail(id, lines)),
+    labelsOn: () => labelPreferences.get().on,
+    inspect: async (id, floorId) => {
+      if (id === OFFICE_SHELL_ID) return undefined;
+      if (id === ORCHESTRATOR_ID) {
+        const w = orchestrator.workers.get(ORCHESTRATOR_ID);
+        if (!w) return undefined;
+        const runtime = orchestrator.workers.runtime(ORCHESTRATOR_ID);
+        const model = w.activeModel ?? w.model;
+        if (w.status === 'working' && model && isSubscriptionModel(model) && subscriptions.availability(model)?.state !== 'exhausted' && inspectTerminalRetry(runtime?.screenRows, w.status, Boolean(runtime?.currentTool))?.retrying) {
+          try {
+            await subscriptions.recheck();
+          } catch {
+            // Fall back to cached availability.
+          }
+        }
+        const now = Date.now();
+        return buildWorkerInspection({
+          worker: w,
+          runtime,
+          availability: model ? subscriptions.availability(model) : undefined,
+          usage: model ? subscriptions.usage(model, now) : undefined,
+          labelsOn: labelPreferences.get().on,
+          now,
+        });
+      }
+      const floor = floorId ? floors.get(floorId) : workerFloor(id);
+      const w = floor?.everyone().find((x) => x.id === id);
+      if (!floor || !w) return undefined;
+      await floor.team.recheckIfRetrying([w]);
+      return floor.team.inspectWorker(w);
+    },
     act: async (by: WorkerInfo, msg, opts = {}) => {
       // A building agent's hire gets the model list its team_hire gets: here is the one way in for its owner-level actions.
       const model = msg.t === 'worker.spawn' && msg.kind !== 'shell' && typeof msg.model === 'string' && msg.model.trim() ? msg.model.trim() : undefined;

@@ -96,6 +96,10 @@ export interface FloorContext {
   modelAvailability?(model: string): ModelAvailability | undefined;
   /** Subscriptions: what the plan behind a subscription model has left at `now`; undefined when it isn't one or nobody can tell. */
   modelUsage?(model: string, now: number): ModelUsage | undefined;
+  /** Subscriptions: throttled DroidProxy `/models` recheck when a worker retries or a lead reads `team_models`. */
+  recheckModels?(): Promise<void>;
+  /** ⚙️ Settings → Worker labels: whether background worker labels are enabled. */
+  workerLabelsOn?(): boolean;
   /** Another floor of the building: a worker across repositories works in its project too (see WorkerInfo.repos). */
   floor(id: string): Floor | undefined;
   /** This floor's pull requests came back: a worker on another floor with a repository here may have landed. */
@@ -373,6 +377,7 @@ export class Floor {
         kill: (id) => workers.kill(id),
         dismiss: (id, pruneWorktree, keepBranch) => workers.dismissTeam(id, pruneWorktree, keepBranch),
         tail: (id, lines) => workers.tail(id, lines),
+        runtime: (id) => workers.runtime(id),
         setTask: (id, task) => workers.setTask(id, task),
         fetchStart: (lead, from) => workers.fetchStart(lead, from),
       },
@@ -381,6 +386,9 @@ export class Floor {
         dir: def.dir,
         git: !this.plain && !!this.project.branch,
         pulls: this.board,
+        pullItems: () => this.board.pulls.items,
+        pipelineState: () => this.pipelines.state,
+        labelsOn: () => ctx.workerLabelsOn?.() ?? true,
         baseBranch: () => workers.selectedBranch ?? workers.baseBranch ?? this.project.branch,
         onPull: (id, pr) => {
           workers.recordPull(id, pr);
@@ -390,6 +398,7 @@ export class Floor {
         ...(ctx.droidModels ? { models: ctx.droidModels.bind(ctx) } : {}),
         availability: (model) => ctx.modelAvailability?.(model),
         usage: (model, now) => ctx.modelUsage?.(model, now),
+        ...(ctx.recheckModels ? { recheckModels: ctx.recheckModels.bind(ctx) } : {}),
         prompts: ctx.prompts,
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
       },

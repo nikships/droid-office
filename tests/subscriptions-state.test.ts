@@ -466,3 +466,30 @@ test('install downloads, checks and installs DroidProxy, then starts it', async 
   );
   assert.deepEqual(r.toasts[0], ['DroidProxy 1.8.179 is installed', 'info']);
 });
+
+test('recheck refreshes /models after 15 seconds while preserving the five-minute /usage floor', async (t) => {
+  const r = await rig(t);
+  await r.advance(0);
+  assert.equal(r.subs.availability(GROK)?.state, 'ok');
+  r.world.gets.length = 0;
+
+  // Flip GROK to exhausted upstream in DroidProxy's shared quota cache.
+  r.world.models = {
+    models: MODELS.models.map((m) => (m.id === GROK ? { ...m, availability: { state: 'exhausted', until: new Date(r.clock.now + 3600_000).toISOString(), window: 'Weekly', account: 'grok-user@example.com' } } : m)),
+  };
+
+  // Within 15s of the last check, recheck is throttled so bursts from team_models/team_status do not hammer DroidProxy.
+  await r.advance(5_000);
+  await r.subs.recheck();
+  await settle(() => false);
+  assert.deepEqual(r.world.gets, []);
+  assert.equal(r.subs.availability(GROK)?.state, 'ok');
+
+  // After 15s, recheck re-reads /status and /models immediately without touching /droidproxy/usage.
+  await r.advance(11_000);
+  await r.subs.recheck();
+  await settle(() => false);
+  assert.deepEqual([...r.world.gets].sort(), ['/droidproxy/control/models', '/droidproxy/control/status']);
+  const avail = r.subs.availability(GROK);
+  assert.equal(avail?.state, 'exhausted');
+});

@@ -4,11 +4,18 @@ import type { TodoProgress } from './protocol.js';
 // items are done, of how many, and the one in progress. Every client words it the same way from here.
 
 const CURRENT_CHARS = 120;
+const STEP_CHARS = 200;
+const STEP_LIMIT = 50;
 const LINE = /^\s*\d+[.)]\s*\[\s*([a-z _-]+?)\s*\]\s*(.*)$/i;
 
-type ItemStatus = 'completed' | 'in_progress' | 'pending';
+export type TodoItemStatus = 'completed' | 'in_progress' | 'pending';
 
-function itemStatus(value: unknown): ItemStatus {
+export interface TodoItem {
+  status: TodoItemStatus;
+  content: string;
+}
+
+function itemStatus(value: unknown): TodoItemStatus {
   const s = String(value ?? '')
     .trim()
     .toLowerCase()
@@ -16,7 +23,7 @@ function itemStatus(value: unknown): ItemStatus {
   return s === 'completed' ? 'completed' : s === 'in_progress' ? 'in_progress' : 'pending';
 }
 
-function items(input: unknown): { status: ItemStatus; content: string }[] {
+function items(input: unknown): TodoItem[] {
   const todos = input && typeof input === 'object' ? (input as Record<string, unknown>).todos : undefined;
   if (Array.isArray(todos))
     return todos.flatMap((todo) => {
@@ -34,7 +41,15 @@ function items(input: unknown): { status: ItemStatus; content: string }[] {
   return [];
 }
 
-const clip = (text: string) => (text.length > CURRENT_CHARS ? `${text.slice(0, CURRENT_CHARS - 1).trimEnd()}…` : text);
+const clipTo = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
+const clip = (text: string) => clipTo(text, CURRENT_CHARS);
+
+/** Bounded plan steps from a TodoWrite call's `tool_input`, in either shape Droid sends. */
+export function todoItems(input: unknown): TodoItem[] {
+  return items(input)
+    .slice(0, STEP_LIMIT)
+    .map((item) => ({ status: item.status, content: clipTo(item.content, STEP_CHARS) }));
+}
 
 /** A TodoWrite call's `tool_input`, in either shape Droid sends, as progress; nothing for an empty list. */
 export function todoProgress(input: unknown): TodoProgress | undefined {

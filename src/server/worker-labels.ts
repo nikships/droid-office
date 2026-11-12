@@ -161,13 +161,14 @@ export class WorkerLabels {
       if (this.stopped || controller.signal.aborted || revision !== this.revision) return;
       const current = this.options.workers().find((w) => w.id === job.worker.id);
       if (!current || identity(current) !== job.tracked.identity) return;
-      current.apply({ ...task, generated: true, textHash: job.hash });
+      const now = this.now();
+      current.apply({ ...task, generated: true, textHash: job.hash, updatedAt: now });
       // New text during inference waits for the next refresh. Discarding every such result
       // would starve a chatty worker of labels while still charging for every call.
       job.tracked.hash = job.hash;
       job.tracked.failures = 0;
       job.tracked.retryAt = 0;
-      this.updatedAt = this.now();
+      this.updatedAt = now;
       this.error = undefined;
     } catch (error) {
       if (this.stopped || controller.signal.aborted || revision !== this.revision) return;

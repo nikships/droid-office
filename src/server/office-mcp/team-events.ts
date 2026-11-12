@@ -5,6 +5,7 @@ import { permissionLine, questionPresentation } from '../../shared/ask-question.
 import { DESK_BY_ID } from '../../shared/layout.js';
 import type { WorkerInfo } from '../../shared/protocol.js';
 import { settled, TEAM_EVENT_KINDS, type Team, type TeamEvent, type TeamEventKind, type TeamMember, type TeamViews, type WorkerResult, type WorkerReview } from '../team.js';
+import { briefAge, formatForgeLines, formatTaskTag } from '../worker-status.js';
 import type { WorkerManager } from '../workers.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer, type OfficeProgress } from './index.js';
 import { floorNamed } from '../remote-office.js';
@@ -85,13 +86,25 @@ export function compactWorker(m: TeamMember, floor: string) {
     state: m.state,
     status: m.status,
     ...(m.task ? { task: m.task } : {}),
+    ...(m.taskLabel ? { taskLabel: m.taskLabel } : {}),
     ...(m.activity ? { doing: m.activity } : {}),
+    ...(m.plan ? { plan: { done: m.plan.done, total: m.plan.total, ...(m.plan.current ? { current: m.plan.current } : {}) } } : {}),
+    ...(m.currentTool ? { currentTool: m.currentTool } : {}),
+    ...(m.lastTool ? { lastTool: m.lastTool } : {}),
+    ...(m.lastActivityAt ? { lastActivityAt: m.lastActivityAt, silentForMs: m.silentForMs } : {}),
+    ...(m.queued ? { queued: m.queued } : {}),
+    ...(m.retryingModel ? { retryingModel: m.retryingModel } : {}),
+    ...(m.modelError ? { modelError: m.modelError } : {}),
+    ...(m.modelStatus ? { modelStatus: m.modelStatus } : {}),
     ...(m.areas?.length ? { areas: [...m.areas] } : {}),
     ...(m.note ? { note: { text: summary(m.note.text), at: m.note.at } } : {}),
     ...(m.model ? { model: m.model } : {}),
     ...(m.effort ? { effort: m.effort } : {}),
     ...(m.worktree ? { branch: m.worktree.branch, worktree: m.worktree.path, ...(m.worktree.from ? { from: m.worktree.from } : {}) } : {}),
     ...(m.pr ? { pr: m.pr } : {}),
+    ...(m.prStatus ? { prStatus: m.prStatus } : {}),
+    ...(m.ci ? { ci: m.ci } : {}),
+    ...(m.releaseRun ? { releaseRun: m.releaseRun } : {}),
     ...(m.report
       ? {
           lastReportId: eventId(floor, m.report.seq),
@@ -146,13 +159,21 @@ export function resultDetailLines(result: WorkerResult | undefined, review?: Wor
 }
 
 export function compactWorkerText(w: CompactWorker): string {
+  const forgeLines = formatForgeLines({ pr: w.prStatus, ci: w.ci, releaseRun: w.releaseRun });
   return [
-    `${w.name} (${w.id}) ${w.state}${w.awaitingJob ? ' (not finished: its progress report says it waits on its own background work)' : ''}, ${w.desk}${w.task ? `: ${w.task}` : ''}.`,
-    ...(w.doing ? [`Doing: ${w.doing}.`] : []),
+    `${w.name} (${w.id}) ${w.state}${w.awaitingJob ? ' (not finished: its progress report says it waits on its own background work)' : ''}, ${w.desk}${w.task ? `: ${w.task}${formatTaskTag(w.taskLabel)}` : ''}.`,
+    ...(w.modelStatus && w.modelStatus.state !== 'ok' ? [`${w.modelStatus.state === 'cooldown' ? 'Model cooldown' : 'Model alert'}: ${w.modelStatus.summary}.`] : []),
+    ...(w.retryingModel && w.modelStatus?.state !== 'retrying' ? [`Retrying: ${w.retryingModel.detail}.`] : []),
+    ...(w.modelError && w.modelStatus?.state !== 'rate_limited' ? [`Model error: ${w.modelError}.`] : []),
+    ...(w.plan ? [`Plan ${w.plan.done}/${w.plan.total}${w.plan.current ? ` (${w.plan.current})` : ''}.`] : []),
+    ...(w.currentTool ? [`Tool: ${w.currentTool.summary} (${briefAge(w.currentTool.runningForMs)}).`] : []),
+    ...(w.doing && !w.currentTool ? [`Doing: ${w.doing}.`] : []),
+    ...(w.silentForMs !== undefined && w.silentForMs >= 30_000 ? [`Last hook ${briefAge(w.silentForMs)} ago.`] : []),
+    ...(w.queued ? [`Queued: ${w.queued.terminal} terminal message${w.queued.terminal === 1 ? '' : 's'}, ${w.queued.notices} next-step notice${w.queued.notices === 1 ? '' : 's'}.`] : []),
     ...(w.areas?.length ? [`Areas: ${w.areas.join(', ')}.`] : []),
     ...(w.note ? [`Note: ${w.note.text}`] : []),
     ...(w.branch ? [`Branch ${w.branch}.`] : []),
-    ...(w.pr ? [`PR ${w.pr.url}.`] : []),
+    ...(forgeLines.length ? forgeLines.map((l) => `${l}.`) : w.pr ? [`PR ${w.pr.url}.`] : []),
     ...(w.lastReportId ? [`Last ${w.lastReportKind}${w.result ? ` (${w.result.status})` : ''} ${w.lastReportAt} [${w.lastReportId}]: ${w.lastReportSummary}`] : []),
     ...(w.review ? [`Review: ${w.review.verdict} by ${w.review.by} (${summary(w.review.notes)}).`] : []),
   ].join(' ');

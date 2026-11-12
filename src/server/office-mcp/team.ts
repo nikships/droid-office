@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { floorNamed } from '../remote-office.js';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply, WorkerReview } from '../team.js';
 import { teamBoardText, type TeamBoardMember } from '../team.js';
-import { modelUsageWords } from '../../shared/subscriptions.js';
+import { isSubscriptionModel, modelUsageWords } from '../../shared/subscriptions.js';
+import { briefAge, formatForgeLines, formatProviderQuotas, formatTaskTag, formatWorkerInspection, type ProviderQuotaSummary, type WorkerInspection } from '../worker-status.js';
 import { hasOwnerAccess } from './owner.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor, resultDetailLines } from './team-events.js';
@@ -43,16 +44,26 @@ function integrationReply(result: TeamReply) {
 const PROGRESS_REST = 'Not finished: its turn ended after a progress report, and it waits on its own background work (such as a long job) to wake it. If that has run far longer than the report expects, check it with worker_log.';
 
 function memberText(member: TeamMember & { terminal?: string; terminalUnavailable?: string }): string {
+  const forgeLines = formatForgeLines({ pr: member.prStatus, ci: member.ci, releaseRun: member.releaseRun });
   return [
     `${member.name} (${member.id}), ${member.status}, ${member.desk}${member.model ? `, ${member.model}${member.effort ? ` ${member.effort}` : ''}` : ''}.`,
     ...(member.idleForMs !== undefined ? [`Idle for ${Math.floor(member.idleForMs / 60_000)} minutes.`] : []),
     ...(member.awaitingJob ? [PROGRESS_REST] : []),
-    ...(member.task ? [`Task: ${member.task}`] : []),
+    ...(member.task ? [`Task: ${member.task}${formatTaskTag(member.taskLabel)}`] : []),
+    ...(member.modelStatus && member.modelStatus.state !== 'ok' ? [`${member.modelStatus.state === 'cooldown' ? 'Model cooldown' : 'Model alert'}: ${member.modelStatus.summary}`] : []),
+    ...(member.retryingModel && member.modelStatus?.state !== 'retrying' ? [`Retrying model: ${member.retryingModel.detail}`] : []),
+    ...(member.modelError && member.modelStatus?.state !== 'rate_limited' ? [`Model error: ${member.modelError}`] : []),
+    ...(member.plan ? [`Plan: ${member.plan.done}/${member.plan.total} completed${member.plan.current ? ` — current: ${member.plan.current}` : ''}`] : []),
+    ...(member.currentTool ? [`Current tool: ${member.currentTool.summary} (running ${briefAge(member.currentTool.runningForMs)})`] : []),
     ...(member.activity ? [`Doing: ${member.activity}`] : []),
+    ...(member.silentForMs !== undefined
+      ? [`Last hook: ${briefAge(member.silentForMs)} ago (${member.lastActivityAt})${member.lastTool && !member.currentTool ? `; last tool ${member.lastTool.summary} (${briefAge(member.lastTool.agoMs)} ago)` : ''}`]
+      : []),
+    ...(member.queued ? [`Queued: ${member.queued.terminal} terminal message${member.queued.terminal === 1 ? '' : 's'}, ${member.queued.notices} next-step notice${member.queued.notices === 1 ? '' : 's'}`] : []),
     ...(member.areas?.length ? [`Areas: ${member.areas.join(', ')}`] : []),
     ...(member.note ? [`Note: ${member.note.text}`] : []),
     member.worktree ? `Worktree: ${member.worktree.path} on ${member.worktree.branch}${member.worktree.from ? ` from ${member.worktree.from}` : ''}.` : 'Working in the main checkout.',
-    ...(member.pr ? [`Pull request: ${member.pr.url}`] : []),
+    ...(forgeLines.length ? forgeLines : member.pr ? [`Pull request: ${member.pr.url}`] : []),
     ...(member.report ? [`Last ${member.report.question ? 'question' : member.report.progress ? 'progress report' : 'report'}:\n${member.report.text}`, ...resultDetailLines(member.report.result, member.report.review)] : []),
     ...(member.terminal !== undefined ? [`Terminal:\n${member.terminal || '(empty)'}`] : []),
     ...(member.terminalUnavailable ? [member.terminalUnavailable] : []),
@@ -84,6 +95,7 @@ function modelText(model: TeamModel): string {
     ...(model.usage ? [`Subscription usage: ${modelUsageWords(model.usage)}`] : []),
     ...(model.note ? [`Owner's note: ${model.note}`] : []),
     ...(model.cannotRun ? [`Cannot run: ${model.cannotRun}`] : []),
+    ...(model.cooldown?.until ? [`Cooldown resets at: ${model.cooldown.until} (${model.cooldown.window})`] : []),
   ].join('\n');
 }
 
@@ -252,9 +264,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     async (_args, caller) => {
       const team = modelsTeam(caller);
       if (!team) return officeError('No floor is open, so the office cannot list models yet.');
-      return reply(await team.handle(caller.worker, { action: 'models_list' }), (body) =>
-        (body.models as TeamModel[]).map((model) => `${model.enabled === false ? (model.cannotRun ? 'Unavailable: ' : 'Not allowed: ') : ''}${modelText(model)}`).join('\n\n'),
-      );
+      return reply(await team.handle(caller.worker, { action: 'models_list' }), (body) => {
+        const quotas = body.quotas as ProviderQuotaSummary[] | undefined;
+        return [...(quotas?.length ? [formatProviderQuotas(quotas)] : []), ...(body.models as TeamModel[]).map((model) => `${model.enabled === false ? (model.cannotRun ? 'Unavailable: ' : 'Not allowed: ') : ''}${modelText(model)}`)].join(
+          '\n\n',
+        );
+      });
     },
   );
   server.tool(
@@ -275,14 +290,23 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'worker_log',
-      description: 'Read your subagent’s recent terminal output (1–400 lines, capped at 48 KB) and current tool activity, read-only.',
-      inputSchema: z.strictObject({ worker, floor: floorArg, tail: z.number().int().min(1).max(400) }),
+      description: 'Read your subagent’s structured state (plan, tool, model cooldown, PR/CI) and recent terminal output (0–400 lines, capped at 48 KB; pass tail: 0 for structured state only), read-only.',
+      inputSchema: z.strictObject({
+        worker,
+        floor: floorArg,
+        tail: z.number().int().min(0).max(400).default(80).describe('Recent terminal lines (default 80, max 400; 0 for structured worker state only).'),
+      }),
       annotations: readOnly,
     },
     officeAccess.team,
     async (args, caller) => {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
-      return reply(await command(caller, { action: 'log', ...args }), (body) => `${body.activity ? `Doing: ${body.activity}\n` : ''}${body.terminal ?? 'Terminal unavailable.'}${body.truncated ? '\n[Truncated]' : ''}`);
+      return reply(await command(caller, { action: 'log', ...args }), (body) => {
+        const state = body.inspection as WorkerInspection | undefined;
+        if (body.tail === 0 && state) return formatWorkerInspection(state, { includeSteps: true });
+        if (state) return `${formatWorkerInspection(state)}\n\nTerminal:\n${body.terminal ?? 'Terminal unavailable.'}${body.truncated ? '\n[Truncated]' : ''}`;
+        return `${body.activity ? `Doing: ${body.activity}\n` : ''}${body.terminal ?? 'Terminal unavailable.'}${body.truncated ? '\n[Truncated]' : ''}`;
+      });
     },
   );
   server.tool(
@@ -364,21 +388,46 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'team_models',
-      description: 'List runnable subagent models: exact ids, multipliers, efforts, image support, owner notes, quota left, and blocked reasons. Call once per hiring batch.',
-      inputSchema: z.object({}),
+      description: 'List runnable subagent models and compact subscription provider quotas (5-hour/weekly remaining, reset time, cooldowns). Pass only: "quotas" | "subscriptions" | "available" to filter. Call once per hiring batch.',
+      inputSchema: z.strictObject({
+        only: z
+          .enum(['all', 'subscriptions', 'available', 'quotas'])
+          .optional()
+          .describe('Filter output: quotas (compact provider summary only), subscriptions (subscription models only), available (runnable models only), or all (default).'),
+      }),
       annotations: readOnly,
     },
     officeAccess.mayHire,
-    async (_args, caller) => {
+    async ({ only }, caller) => {
       const team = modelsTeam(caller);
       if (!team) return officeError('No floor is open, so the office cannot list models yet.');
-      return reply(await team.handle(caller.worker, { action: 'models' }), (body) =>
+      const res = await team.handle(caller.worker, { action: 'models' });
+      if (res.status >= 400) return reply(res, () => '');
+      const allModels = res.body.models as TeamModel[];
+      const quotas = res.body.quotas as ProviderQuotaSummary[] | undefined;
+      const mode = only ?? 'all';
+      if (mode === 'quotas') {
+        const text = [quotas?.length ? formatProviderQuotas(quotas) : 'Subscription quotas: no subscription providers configured.', `Default: ${res.body.defaultModel ?? "Droid's own default"}.`].join('\n\n');
+        return officeResult(text, {
+          restricted: res.body.restricted,
+          models: [],
+          quotas: quotas ?? [],
+          only: mode,
+          ...(res.body.defaultModel ? { defaultModel: res.body.defaultModel } : {}),
+          ...(res.body.unavailable ? { unavailable: true } : {}),
+        });
+      }
+      const filtered = mode === 'subscriptions' ? allModels.filter((m) => Boolean(m.subscriptionProvider || m.usage || isSubscriptionModel(m.id))) : mode === 'available' ? allModels.filter((m) => !m.cannotRun) : allModels;
+      const body = mode === 'all' ? res.body : { ...res.body, models: filtered, only: mode };
+      return officeResult(
         [
+          ...(quotas?.length ? [formatProviderQuotas(quotas)] : []),
           body.restricted ? 'Settings restrict subagent models to the listed picks and the default.' : 'Subagents may use any current Droid model.',
           ...(body.unavailable ? ['Droid could not list its models; costs and providers may be missing.'] : []),
-          ...(body.models as TeamModel[]).map(modelText),
+          ...filtered.map(modelText),
           `Default: ${body.defaultModel ?? "Droid's own default"}.`,
         ].join('\n\n'),
+        body,
       );
     },
   );
