@@ -580,9 +580,21 @@ test('real multi-floor office assigns globally unique names and desks across liv
     }
   });
 
-  // Stub agent command that stays alive so spawned workers remain live across floors.
+  // Stub agent script: answers setup/label probes immediately and stays alive for interactive PTY workers.
   const fakeAgent = path.join(root, 'fake-droid.js');
-  writeFileSync(fakeAgent, '#!/usr/bin/env node\nsetInterval(() => {}, 10_000);\n', { mode: 0o755 });
+  writeFileSync(
+    fakeAgent,
+    [
+      '#!/usr/bin/env node',
+      'const args = process.argv.slice(2);',
+      "if (args[0] === '--version') { console.log('0.249.0'); process.exit(0); }",
+      'if (args[0] === \'doctor\') { console.log(\'{"ok":true,"results":[{"id":"auth.verify","status":"pass","detail":"ok"}]}\'); process.exit(0); }',
+      "if (args.includes('--output-format')) process.exit(0);",
+      'setInterval(() => {}, 10_000);',
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
 
   const alphaDir = path.join(root, 'alpha');
   const betaDir = path.join(root, 'beta');
@@ -598,7 +610,7 @@ test('real multi-floor office assigns globally unique names and desks across liv
     execFileSync('git', ['commit', '-qm', 'init'], { cwd: repoDir });
   }
 
-  const cfg = loadConfig([alphaDir, '--home', homeDir, '--projects', root, '--agent', process.execPath, '--agent-args', fakeAgent, '--weather', 'clear', '--host', '127.0.0.1']);
+  const cfg = loadConfig([alphaDir, '--home', homeDir, '--projects', root, '--agent', fakeAgent, '--weather', 'clear', '--host', '127.0.0.1']);
   cfg.port = 0;
   cfg.remoteMcp = false;
   office = await startServer(cfg);
@@ -627,6 +639,7 @@ test('real multi-floor office assigns globally unique names and desks across liv
   assert.equal(spawnAlpha.error, undefined, JSON.stringify(spawnAlpha));
   const spawnBeta = await office.owner.act(grok, { t: 'worker.spawn', deskId: 'auto', kind: 'agent' }, { floor: betaFloor.id, owner: true });
   assert.equal(spawnBeta.error, undefined, JSON.stringify(spawnBeta));
+  await delay(150);
 
   const wAlpha = office.owner
     .floors()
