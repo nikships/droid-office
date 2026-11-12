@@ -4,9 +4,11 @@
 // sha256, ready for the store to write; nothing here writes.
 
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { MAX_ASSET_BYTES, MAX_CARD_BYTES, MAX_FILES_PER_CARD, MAX_HTML_BYTES, type PICTURE_MIMES, isContentPath, type CardContent, type FileRef } from '../shared/whiteboard.js';
+import { MAX_ASSET_BYTES, MAX_CARD_BYTES, MAX_FILES_PER_CARD, MAX_HTML_BYTES, type IMAGE_CARD_MIMES, type PICTURE_MIMES, type VIDEO_MIMES, isContentPath, type CardContent, type FileRef } from '../shared/whiteboard.js';
+import type { DesignTheme } from '../shared/whiteboard-design.js';
+import { extractMarkdownTitle, markdownReferences, renderImageArtifact, renderMarkdownArtifact, renderVideoArtifact, type ArtifactAction } from '../shared/whiteboard-markdown.js';
 
 /** Content types by extension, for card files. Anything else is served as bytes. */
 const MIMES: Record<string, string> = {
@@ -20,6 +22,7 @@ const MIMES: Record<string, string> = {
   '.map': 'application/json',
   '.txt': 'text/plain; charset=utf-8',
   '.md': 'text/markdown; charset=utf-8',
+  '.markdown': 'text/markdown; charset=utf-8',
   '.csv': 'text/csv; charset=utf-8',
   '.xml': 'application/xml',
   '.svg': 'image/svg+xml',
@@ -40,6 +43,8 @@ const MIMES: Record<string, string> = {
   '.ogg': 'audio/ogg',
   '.wav': 'audio/wav',
   '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
   '.webm': 'video/webm',
   '.pdf': 'application/pdf',
   '.glb': 'model/gltf-binary',
@@ -244,8 +249,8 @@ class Collector {
     if (this.missing.size < 500 && !this.missing.has(ref)) this.missing.set(ref.slice(0, 2000), reason);
   }
 
-  done(entry: string): Loaded {
-    const content: CardContent = { entry, files: this.files };
+  done(entry: string, format?: CardContent['format']): Loaded {
+    const content: CardContent = { entry, files: this.files, ...(format ? { format } : {}) };
     if (this.missing.size) content.missing = [...this.missing].map(([ref, reason]) => ({ ref, reason }));
     return { content, blobs: this.blobs, root: this.root, files: this.read };
   }
@@ -346,6 +351,53 @@ export function pictureMime(b: Buffer): (typeof PICTURE_MIMES)[number] | undefin
   return undefined;
 }
 
+/** Image formats an image artifact card supports: raster pictures plus SVG. */
+export function cardImageMime(b: Buffer, file = ''): (typeof IMAGE_CARD_MIMES)[number] | undefined {
+  const raster = pictureMime(b);
+  if (raster) return raster;
+  const head = b.subarray(0, Math.min(b.length, 4096)).toString('utf8');
+  if ((file.toLowerCase().endsWith('.svg') || /^\s*(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg\b/i.test(head)) && /<svg\b/i.test(head)) {
+    return 'image/svg+xml';
+  }
+  return undefined;
+}
+
+/** Video formats a video artifact card supports, detected from container magic bytes or extension. */
+export function videoMime(b: Buffer, file = ''): (typeof VIDEO_MIMES)[number] | undefined {
+  const ext = path.extname(file).toLowerCase();
+  if (b.length >= 4 && b.readUInt32BE(0) === 0x1a45dfa3) return 'video/webm';
+  if (b.length >= 4 && b.toString('ascii', 0, 4) === 'OggS') return 'video/ogg';
+  if (b.length >= 12 && b.toString('ascii', 4, 8) === 'ftyp') {
+    const brand = b.toString('ascii', 8, 12);
+    return brand === 'qt  ' || ext === '.mov' ? 'video/quicktime' : 'video/mp4';
+  }
+  if (ext === '.mp4' || ext === '.m4v') return 'video/mp4';
+  if (ext === '.webm') return 'video/webm';
+  if (ext === '.mov') return 'video/quicktime';
+  if (ext === '.ogg' || ext === '.ogv') return 'video/ogg';
+  return undefined;
+}
+
+function svgSize(b: Buffer): { w: number; h: number } | undefined {
+  const head = b.subarray(0, Math.min(b.length, 4096)).toString('utf8');
+  const tag = /<svg\b[^>]*>/i.exec(head)?.[0];
+  if (!tag) return undefined;
+  const vb = /\bviewBox\s*=\s*["']\s*[-+]?\d*\.?\d+[\s,]+[-+]?\d*\.?\d+[\s,]+(\d+(?:\.\d+)?)[\s,]+(\d+(?:\.\d+)?)\s*["']/i.exec(tag);
+  if (vb) {
+    const w = Math.round(Number(vb[1]));
+    const h = Math.round(Number(vb[2]));
+    if (w > 0 && h > 0) return { w, h };
+  }
+  const wm = /\bwidth\s*=\s*["']\s*(\d+(?:\.\d+)?)(?:px)?\s*["']/i.exec(tag);
+  const hm = /\bheight\s*=\s*["']\s*(\d+(?:\.\d+)?)(?:px)?\s*["']/i.exec(tag);
+  if (wm && hm) {
+    const w = Math.round(Number(wm[1]));
+    const h = Math.round(Number(hm[1]));
+    if (w > 0 && h > 0) return { w, h };
+  }
+  return undefined;
+}
+
 /** A PNG, JPEG, GIF or WebP's pixel size, when its header says. */
 export function imageSize(b: Buffer): { w: number; h: number } | undefined {
   const mime = pictureMime(b);
@@ -394,21 +446,206 @@ export function loadPicture(file: string): { ref: FileRef; bytes: Buffer; size?:
   return { ref: fileRef(body, mime), bytes: body, size: imageSize(body) };
 }
 
-/** An image as an html card: a generated page that shows it, with the image as its one asset. */
-export function loadImageCard(file: string, title: string): Loaded {
-  const pic = loadPicture(file);
-  const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }[pic.ref.mime as (typeof PICTURE_MIMES)[number]];
+/** An image as an html card: a Factory-styled showcase page with the image (PNG, JPEG, WebP, GIF or SVG) as its asset. */
+export function loadImageCard(file: string, title: string, opts: { caption?: string; theme?: DesignTheme } = {}): Loaded {
+  const abs = path.resolve(file);
+  let st: ReturnType<typeof statSync>;
+  try {
+    st = statSync(abs);
+  } catch {
+    throw new LoadError(`${file} doesn't exist`);
+  }
+  if (!st.isFile()) throw new LoadError(`${file} is not a file`);
+  if (st.size > MAX_ASSET_BYTES) throw new LoadError(`${file} is ${bytes(st.size)}; the limit for an image is ${bytes(MAX_ASSET_BYTES)}`);
+  const imgBytes = readFileSync(abs);
+  const mime = cardImageMime(imgBytes, abs);
+  if (!mime) throw new LoadError(`${file} isn't a PNG, JPEG, WebP, GIF or SVG image`);
+  const size = mime === 'image/svg+xml' ? svgSize(imgBytes) : imageSize(imgBytes);
+  const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' }[mime];
   const name = `image.${ext}`;
-  const esc = (s: string) => s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch] ?? ch);
+  const imgRef = fileRef(imgBytes, mime);
   const html = Buffer.from(
-    `<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>${esc(title)}</title>\n<style>html,body{margin:0;background:#fff}img{display:block;max-width:100%;height:auto;margin:0 auto}</style>\n</head>\n<body>\n<img data-wb-id="image" src="${name}" alt="${esc(title)}"${pic.size ? ` width="${pic.size.w}" height="${pic.size.h}"` : ''}>\n</body>\n</html>\n`,
+    renderImageArtifact({
+      title,
+      imageSrc: name,
+      imageMime: mime,
+      width: size?.w,
+      height: size?.h,
+      sizeBytes: imgBytes.length,
+      caption: opts.caption,
+      theme: opts.theme,
+    }),
+    'utf8',
   );
   const page = fileRef(html, 'text/html; charset=utf-8');
   const blobs = new Map([
     [page.hash, html],
-    [pic.ref.hash, pic.bytes],
+    [imgRef.hash, imgBytes],
   ]);
-  return { content: { entry: 'index.html', files: { 'index.html': page, [name]: pic.ref } }, blobs, root: path.dirname(path.resolve(file)), files: [path.resolve(file)] };
+  return { content: { entry: 'index.html', format: 'image', files: { 'index.html': page, [name]: imgRef } }, blobs, root: path.dirname(abs), files: [abs] };
+}
+
+/** A video file (.mp4, .webm, .mov, .ogg) as a dedicated Factory cinema card, with optional poster and caption. */
+export function loadVideoCard(file: string, title: string, opts: { poster?: string; caption?: string; theme?: DesignTheme } = {}): Loaded {
+  const abs = path.resolve(file);
+  let st: ReturnType<typeof statSync>;
+  try {
+    st = statSync(abs);
+  } catch {
+    throw new LoadError(`${file} doesn't exist`);
+  }
+  if (!st.isFile()) throw new LoadError(`${file} is not a file`);
+  if (st.size > MAX_ASSET_BYTES) throw new LoadError(`${file} is ${bytes(st.size)}; the limit for a video is ${bytes(MAX_ASSET_BYTES)}`);
+  if (st.size === 0) throw new LoadError(`${file} is empty`);
+  const vidBytes = readFileSync(abs);
+  const mime = videoMime(vidBytes, abs);
+  if (!mime) throw new LoadError(`${file} isn't an MP4, WebM, MOV or Ogg video`);
+  const ext = { 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/ogg': 'ogg' }[mime];
+  const videoName = `video.${ext}`;
+  const vidRef = fileRef(vidBytes, mime);
+
+  let posterName: string | undefined;
+  let posterRef: FileRef | undefined;
+  let posterBytes: Buffer | undefined;
+  let posterAbs: string | undefined;
+  const resolvePoster = (candidate: string, explicit: boolean) => {
+    const pAbs = path.resolve(candidate);
+    if (!existsSync(pAbs)) {
+      if (explicit) throw new LoadError(`Poster ${candidate} doesn't exist`);
+      return;
+    }
+    const pst = statSync(pAbs);
+    if (!pst.isFile()) {
+      if (explicit) throw new LoadError(`Poster ${candidate} is not a file`);
+      return;
+    }
+    if (pst.size > MAX_ASSET_BYTES || st.size + pst.size > MAX_CARD_BYTES - 64 * KB) {
+      if (explicit) throw new LoadError(`Poster ${candidate} exceeds the card size limit`);
+      return;
+    }
+    const raw = readFileSync(pAbs);
+    const pMime = cardImageMime(raw, pAbs);
+    if (!pMime) {
+      if (explicit) throw new LoadError(`Poster ${candidate} isn't a PNG, JPEG, WebP, GIF or SVG image`);
+      return;
+    }
+    const pExt = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' }[pMime];
+    posterName = `poster.${pExt}`;
+    posterRef = fileRef(raw, pMime);
+    posterBytes = raw;
+    posterAbs = pAbs;
+  };
+
+  if (opts.poster) resolvePoster(opts.poster, true);
+  else {
+    const stem = abs.slice(0, abs.length - path.extname(abs).length);
+    for (const suffix of ['.poster.jpg', '.poster.jpeg', '.poster.png', '.poster.webp']) {
+      if (existsSync(stem + suffix)) {
+        resolvePoster(stem + suffix, false);
+        if (posterRef) break;
+      }
+    }
+  }
+
+  const html = Buffer.from(
+    renderVideoArtifact({
+      title,
+      videoSrc: videoName,
+      videoMime: mime,
+      posterSrc: posterName,
+      caption: opts.caption,
+      sizeBytes: vidBytes.length,
+      theme: opts.theme,
+    }),
+    'utf8',
+  );
+  const page = fileRef(html, 'text/html; charset=utf-8');
+  const files: Record<string, FileRef> = { 'index.html': page, [videoName]: vidRef };
+  const blobs = new Map<string, Buffer>([
+    [page.hash, html],
+    [vidRef.hash, vidBytes],
+  ]);
+  if (posterName && posterRef && posterBytes) {
+    files[posterName] = posterRef;
+    blobs.set(posterRef.hash, posterBytes);
+  }
+  return {
+    content: { entry: 'index.html', format: 'video', files },
+    blobs,
+    root: path.dirname(abs),
+    files: [abs, ...(posterAbs ? [posterAbs] : [])],
+  };
+}
+
+/** GitHub-Flavored Markdown text rendered into a Factory-styled artifact, preserving `document.md` alongside `index.html`. */
+export function loadMarkdownText(markdown: string, title: string, opts: { theme?: DesignTheme; actions?: readonly ArtifactAction[] } = {}): Loaded {
+  const mdBody = Buffer.from(markdown, 'utf8');
+  if (mdBody.length > MAX_HTML_BYTES) throw new LoadError(`The Markdown is ${bytes(mdBody.length)}; the limit is ${bytes(MAX_HTML_BYTES)}`);
+  if (!markdown.trim()) throw new LoadError('The Markdown is empty');
+  const html = Buffer.from(renderMarkdownArtifact(markdown, { title, theme: opts.theme, actions: opts.actions }), 'utf8');
+  if (html.length > MAX_HTML_BYTES) throw new LoadError(`The rendered Markdown HTML is ${bytes(html.length)}; the limit is ${bytes(MAX_HTML_BYTES)}`);
+  const page = fileRef(html, 'text/html; charset=utf-8');
+  const mdRef = fileRef(mdBody, 'text/markdown; charset=utf-8');
+  return {
+    content: { entry: 'index.html', format: 'markdown', files: { 'index.html': page, 'document.md': mdRef } },
+    blobs: new Map([
+      [page.hash, html],
+      [mdRef.hash, mdBody],
+    ]),
+    root: '',
+    files: [],
+  };
+}
+
+/** A Markdown file on disk, collecting relative local images inside its folder and preserving `document.md`. */
+export function loadMarkdownFile(file: string, title?: string, opts: { theme?: DesignTheme; actions?: readonly ArtifactAction[] } = {}): Loaded {
+  const abs = path.resolve(file);
+  checkPage(abs);
+  const root = path.dirname(abs);
+  const c = new Collector(root);
+  const mdBytes = readFileSync(abs);
+  const markdown = mdBytes.toString('utf8');
+  if (!markdown.trim()) throw new LoadError(`${file} is empty`);
+  const resolvedTitle = title?.trim() || extractMarkdownTitle(markdown) || path.basename(abs, path.extname(abs));
+
+  for (const raw of markdownReferences(markdown)) {
+    const local = localRef(raw);
+    if ('skip' in local) continue;
+    if ('outside' in local) {
+      c.miss(raw, local.outside);
+      continue;
+    }
+    const targetAbs = path.resolve(root, local.path);
+    const inside = path.relative(root, targetAbs);
+    if (!inside || inside.startsWith('..') || path.isAbsolute(inside)) {
+      c.miss(raw, "outside the Markdown file's folder");
+      continue;
+    }
+    const relPath = inside.split(path.sep).join('/');
+    if (relPath === 'index.html' || relPath === 'document.md') continue;
+    const why = c.add(relPath, targetAbs, MAX_ASSET_BYTES, 'file');
+    if (why) c.miss(raw, why);
+  }
+
+  const html = Buffer.from(renderMarkdownArtifact(markdown, { title: resolvedTitle, theme: opts.theme, actions: opts.actions }), 'utf8');
+  if (html.length > MAX_HTML_BYTES) throw new LoadError(`The rendered Markdown HTML is ${bytes(html.length)}; the limit is ${bytes(MAX_HTML_BYTES)}`);
+  const page = fileRef(html, 'text/html; charset=utf-8');
+  const mdRef = fileRef(mdBytes, 'text/markdown; charset=utf-8');
+  c.files['index.html'] = page;
+  c.files['document.md'] = mdRef;
+  c.blobs.set(page.hash, html);
+  c.blobs.set(mdRef.hash, mdBytes);
+  c.read.unshift(abs);
+  return c.done('index.html', 'markdown');
+}
+
+/** Loads a linked file according to its extension: Markdown, video, image, or HTML page. */
+export function loadLinkedFile(file: string, title: string): Loaded {
+  const ext = path.extname(file).toLowerCase();
+  if (ext === '.md' || ext === '.markdown') return loadMarkdownFile(file, title);
+  if (ext === '.mp4' || ext === '.m4v' || ext === '.webm' || ext === '.mov' || ext === '.ogg' || ext === '.ogv') return loadVideoCard(file, title);
+  if (ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp' || ext === '.gif' || ext === '.svg') return loadImageCard(file, title);
+  return loadPage(file);
 }
 
 /** HTML given as text (stdin), with no assets. */
@@ -417,5 +654,5 @@ export function pageFromText(html: string): Loaded {
   if (body.length > MAX_HTML_BYTES) throw new LoadError(`The HTML is ${bytes(body.length)}; the limit for a card's HTML is ${bytes(MAX_HTML_BYTES)}`);
   if (!html.trim()) throw new LoadError('The HTML is empty');
   const ref = fileRef(body, 'text/html; charset=utf-8');
-  return { content: { entry: 'index.html', files: { 'index.html': ref } }, blobs: new Map([[ref.hash, body]]), root: '', files: [] };
+  return { content: { entry: 'index.html', format: 'html', files: { 'index.html': ref } }, blobs: new Map([[ref.hash, body]]), root: '', files: [] };
 }

@@ -36,6 +36,9 @@ class TagsTest {
         assertEquals("worker.thread.group/t1", Tags.Worker.threadGroup("t1"))
         assertEquals("worker.thread.group.toggle/t1", Tags.Worker.threadGroupToggle("t1"))
         assertEquals("worker.thread.more/u1", Tags.Worker.threadMore("u1"))
+        assertEquals("board.filter/markdown", Tags.Board.filter("markdown"))
+        assertEquals("board.message.edit/m1", Tags.Board.editMessage("m1"))
+        assertEquals("board.seek/@01:24", Tags.Board.seek("@01:24"))
     }
 
     @Test

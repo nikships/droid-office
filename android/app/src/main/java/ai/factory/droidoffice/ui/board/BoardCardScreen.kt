@@ -136,7 +136,7 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
+fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavigateCard: ((String) -> Unit)? = null) {
     val graph = LocalGraph.current
     val connection = graph.connection
     val snackbar = LocalSnackbar.current
@@ -319,13 +319,21 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
     Box(Modifier.fillMaxSize().tagged(Tags.Screen.BOARD_CARD).background(Palette.Bg)) {
         Column(Modifier.fillMaxSize().imePadding()) {
             if (!immersive) {
-                Header(card, board, onBack, onPing = { pinging = true }, onFullscreen = if (page != null) ({ immersive = true }) else null, onShow = { onWall ->
-                    scope.launch {
-                        if (apply("Showing it on the wall", WbOps.show(if (onWall) null else cardId))) {
-                            snackbar.showSnackbar(if (onWall) "The wall shows the grid again" else "The wall shows ${card?.title?.ifBlank { null } ?: "this card"}")
+                Header(
+                    card,
+                    board,
+                    onBack,
+                    onNavigateCard = onNavigateCard,
+                    onPing = { pinging = true },
+                    onFullscreen = if (page != null) ({ immersive = true }) else null,
+                    onShow = { onWall ->
+                        scope.launch {
+                            if (apply("Showing it on the wall", WbOps.show(if (onWall) null else cardId))) {
+                                snackbar.showSnackbar(if (onWall) "The wall shows the grid again" else "The wall shows ${card?.title?.ifBlank { null } ?: "this card"}")
+                            }
                         }
-                    }
-                })
+                    },
+                )
             }
             if (board != null && card == null) {
                 Gone(onBack)
@@ -426,9 +434,14 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit) {
             live = page != null,
             onDismiss = { comments = false },
             onReply = { thread, text -> scope.launch { apply("The reply", WbOps.commentReply(cardId, thread, WbOps.newId("m"), text)) } },
+            onEdit = { thread, message, text -> scope.launch { apply("Editing the comment", WbOps.commentEdit(cardId, thread, message, text)) } },
             onResolve = { thread, resolved ->
                 scope.launch { apply(if (resolved) "Reopening it" else "Resolving it", if (resolved) WbOps.commentReopen(cardId, thread) else WbOps.commentResolve(cardId, thread)) }
             },
+            onSeek = if (page != null && card.format == "video") ({ seconds ->
+                comments = false
+                page.send(WbPage.seek(seconds))
+            }) else null,
             onShow = { id ->
                 comments = false
                 page?.send(WbPage.focus(id))
@@ -498,8 +511,17 @@ private fun LiveFooter(card: WbCard, mode: String, adding: Boolean, onMode: (Str
 }
 
 @Composable
-private fun Header(card: WbCard?, board: WbBoard?, onBack: () -> Unit, onPing: () -> Unit, onFullscreen: (() -> Unit)?, onShow: (onWall: Boolean) -> Unit) {
+private fun Header(
+    card: WbCard?,
+    board: WbBoard?,
+    onBack: () -> Unit,
+    onNavigateCard: ((String) -> Unit)?,
+    onPing: () -> Unit,
+    onFullscreen: (() -> Unit)?,
+    onShow: (onWall: Boolean) -> Unit,
+) {
     val now = rememberNow(30_000)
+    val neighbors = if (board != null && card != null) WhiteboardView.neighbors(board, card.id) else null
     Row(
         Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -516,6 +538,22 @@ private fun Header(card: WbCard?, board: WbBoard?, onBack: () -> Unit, onPing: (
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.tagged(Tags.Board.META),
                 )
+            }
+        }
+        if (onNavigateCard != null && neighbors != null && neighbors.total > 1) {
+            IconButton(
+                onClick = { neighbors.prev?.let(onNavigateCard) },
+                enabled = neighbors.prev != null,
+                modifier = Modifier.size(36.dp).tagged(Tags.Board.PREV),
+            ) {
+                Icon(OfficeIcons.ChevronLeft, "Previous card", tint = if (neighbors.prev != null) Palette.TextSecondary else Palette.TextTertiary)
+            }
+            IconButton(
+                onClick = { neighbors.next?.let(onNavigateCard) },
+                enabled = neighbors.next != null,
+                modifier = Modifier.size(36.dp).tagged(Tags.Board.NEXT),
+            ) {
+                Icon(OfficeIcons.Chevron, "Next card", tint = if (neighbors.next != null) Palette.TextSecondary else Palette.TextTertiary)
             }
         }
         if (card != null) {
@@ -753,7 +791,9 @@ private fun CommentsSheet(
     live: Boolean,
     onDismiss: () -> Unit,
     onReply: (thread: String, text: String) -> Unit,
+    onEdit: (thread: String, message: String, text: String) -> Unit,
     onResolve: (thread: String, resolved: Boolean) -> Unit,
+    onSeek: ((seconds: Double) -> Unit)?,
     onShow: (id: String) -> Unit,
     onMove: (id: String) -> Unit,
     onSticky: (id: String) -> Unit,
@@ -779,7 +819,7 @@ private fun CommentsSheet(
                     if (threads.isEmpty()) Text(if (live) "No comments yet. In Mark up, tap the card to start one." else "No comments yet. Long-press the page to start one.", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary, modifier = Modifier.padding(top = 8.dp))
                 }
             }
-            items(threads, key = { it.id }) { t -> ThreadCard(t, board.threadChangedSince(t, since), now, live, onReply, onResolve, onShow, onMove) }
+            items(threads, key = { it.id }) { t -> ThreadCard(t, board.threadChangedSince(t, since), now, live, onReply, onEdit, onResolve, onSeek, onShow, onMove) }
             if (card.stickies.isNotEmpty()) {
                 item(key = "stickies") { Eyebrow("Sticky notes", Modifier.padding(top = 8.dp)) }
                 items(card.stickies, key = { "s-" + it.id }) { StickyRow(it) { onSticky(it.id) } }
@@ -804,11 +844,15 @@ private fun ThreadCard(
     now: Long,
     live: Boolean,
     onReply: (String, String) -> Unit,
+    onEdit: (String, String, String) -> Unit,
     onResolve: (String, Boolean) -> Unit,
+    onSeek: ((Double) -> Unit)?,
     onShow: (String) -> Unit,
     onMove: (String) -> Unit,
 ) {
     var reply by rememberSaveable(t.id) { mutableStateOf("") }
+    var editingId by rememberSaveable(t.id) { mutableStateOf<String?>(null) }
+    var editDraft by rememberSaveable(t.id) { mutableStateOf("") }
     Column(
         Modifier.fillMaxWidth()
             .panel(RoundedCornerShape(12.dp), if (t.resolved) Palette.Bg else Palette.SurfaceRaised, if (changed) Palette.Accent.copy(alpha = 0.55f) else Palette.Border)
@@ -837,9 +881,63 @@ private fun ThreadCard(
                     Spacer(Modifier.width(6.dp))
                     Text(WhiteboardView.author(m.author), style = MaterialTheme.typography.labelMedium)
                     Spacer(Modifier.width(6.dp))
-                    Text(Workers.ago(m.at, now), style = MaterialTheme.typography.bodySmall)
+                    Text(Workers.ago(m.at, now), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                    if (m.author.isOwner && editingId != m.id) {
+                        TextButton(
+                            onClick = { editingId = m.id; editDraft = m.text },
+                            modifier = Modifier.tagged(Tags.Board.editMessage(m.id)),
+                        ) {
+                            Text("Edit", color = Palette.TextSecondary, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                 }
-                Text(m.text, style = MaterialTheme.typography.bodyMedium, color = if (t.resolved) Palette.TextSecondary else Palette.Text, modifier = Modifier.padding(start = 14.dp, top = 2.dp))
+                if (editingId == m.id) {
+                    OutlinedTextField(
+                        value = editDraft,
+                        onValueChange = { editDraft = it },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp).tagged(Tags.Board.editInput(m.id)),
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        maxLines = 4,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = fieldColors(),
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { editingId = null }, modifier = Modifier.tagged(Tags.Board.editCancel(m.id))) {
+                            Text("Cancel", color = Palette.TextSecondary)
+                        }
+                        TextButton(
+                            onClick = {
+                                val next = editDraft.trim()
+                                if (next.isNotEmpty() && next != m.text) onEdit(t.id, m.id, next)
+                                editingId = null
+                            },
+                            enabled = editDraft.isNotBlank(),
+                            modifier = Modifier.tagged(Tags.Board.editSave(m.id)),
+                        ) {
+                            Text("Save", color = Palette.Accent)
+                        }
+                    }
+                } else {
+                    Text(m.text, style = MaterialTheme.typography.bodyMedium, color = if (t.resolved) Palette.TextSecondary else Palette.Text, modifier = Modifier.padding(start = 14.dp, top = 2.dp))
+                    if (onSeek != null) {
+                        val stamps = remember(m.text) { WhiteboardView.timecodes(m.text) }
+                        if (stamps.isNotEmpty()) {
+                            Row(
+                                Modifier.padding(start = 14.dp, top = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                stamps.forEach { tc ->
+                                    TextButton(
+                                        onClick = { onSeek(tc.seconds) },
+                                        modifier = Modifier.tagged(Tags.Board.seek(tc.label)),
+                                    ) {
+                                        Text("▶ ${tc.label}", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Accent, fontSize = 10.sp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         val send = {

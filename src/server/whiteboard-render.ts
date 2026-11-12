@@ -702,6 +702,19 @@ function drawn(m: Draw, plan?: { x: number; y: number }): DrawnMark {
   return { id: m.id, kind: m.kind, x, y, w: m.w, h: m.h, detached: m.detached };
 }
 
+/** Maximum bytes returned in one open-ended Range answer for video/audio inside headless Chromium, avoiding huge CDP buffers. */
+export const RENDER_MEDIA_CHUNK_BYTES = 2 * 1024 * 1024;
+
+/** Caps open-ended `bytes=<start>-` Range headers for media streams during headless renders so Chromium reads headers/frames without buffering whole 80+ MB clips over CDP. */
+export function capRenderMediaRange(range: string | undefined, mime: string | undefined, chunkBytes = RENDER_MEDIA_CHUNK_BYTES): string | undefined {
+  if (!mime || !/^(?:video|audio)\//i.test(mime)) return range;
+  if (!range) return `bytes=0-${chunkBytes - 1}`;
+  const open = /^\s*bytes\s*=\s*(\d+)\s*-\s*$/i.exec(range);
+  if (!open) return range;
+  const start = Number(open[1]);
+  return Number.isSafeInteger(start) && start >= 0 ? `bytes=${start}-${start + chunkBytes - 1}` : range;
+}
+
 /** The harness's answers: its page, the card's files from the pinned snapshot, and the snapshot's pictures. */
 async function answer(route: Route, pin: PinnedCard, harness: string) {
   const req = route.request();
@@ -719,7 +732,9 @@ async function answer(route: Route, pin: PinnedCard, harness: string) {
         rel = '\0';
       }
       const h = req.headers();
-      const out = pin.serve(rel, { method: req.method(), range: h.range, ifRange: h['if-range'] });
+      const ref = rel === '' ? (pin.card.content ? pin.files[pin.card.content.entry] : undefined) : Object.hasOwn(pin.files, rel) ? pin.files[rel] : undefined;
+      const range = capRenderMediaRange(h.range, ref?.mime);
+      const out = pin.serve(rel, { method: req.method(), range, ifRange: h['if-range'] });
       return await route.fulfill({ status: out.status, headers: out.headers, body: out.body });
     }
     const pic = /^\/pic\/([0-9a-f]{64})$/.exec(url.pathname);
@@ -743,7 +758,7 @@ function harnessPage(pin: PinnedCard, nonce: string, plan?: CanvasPlan): string 
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>render</title>
 <style>
-html,body{margin:0;padding:0;background:#fff;overflow:hidden}
+html,body{margin:0;padding:0;background:${plan ? '#141414' : '#fff'};overflow:hidden}
 #stage{position:relative;${stage}}
 #wb-card{display:block;border:0;margin:0;padding:0;width:${CANONICAL_WIDTH}px;height:${FRAME_HEIGHT}px;background:#fff}
 #marks{position:absolute;left:0;top:0;width:0;height:0;overflow:visible}
@@ -760,7 +775,7 @@ html,body{margin:0;padding:0;background:#fff;overflow:hidden}
 </body></html>`;
 }
 
-const CANVAS_BACKGROUND = 'background-color:#f7f6f2;background-image:radial-gradient(#d6d3cb 1px,transparent 1px);background-size:24px 24px';
+const CANVAS_BACKGROUND = 'background-color:#141414;background-image:radial-gradient(rgba(255,255,255,.12) 1px,transparent 1.5px);background-size:24px 24px';
 
 /**
  * The harness's side of the bridge (shared/whiteboard-bridge.ts), as the window's: a message counts

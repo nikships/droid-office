@@ -301,6 +301,9 @@ object WbPage {
 
     fun width(widthDp: Float) = call("width") { put("widthDp", widthDp) }
 
+    /** Seeks the card's video or audio to [seconds], when it has one. */
+    fun seek(seconds: Double) = call("seek") { put("seconds", seconds) }
+
     /** Who the card's `data-wb-ping` buttons tell now; the page passes it to the card, which disables them otherwise. */
     fun buttons(target: ButtonTarget) = call("buttons") {
         when (target) {

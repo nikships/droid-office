@@ -2,7 +2,9 @@ package ai.factory.droidoffice.ui.board
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,11 +26,17 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -61,8 +69,10 @@ import ai.factory.droidoffice.core.WhiteboardView
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
+import ai.factory.droidoffice.ui.components.Chip
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.GlyphMark
+import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.parseColor
@@ -145,7 +155,11 @@ fun WhiteboardScreen(onOpenCard: (floor: String, card: String) -> Unit) {
 @Composable
 private fun Grid(floor: WbFloor, board: WbBoard, onOpen: (String) -> Unit) {
     val now = rememberNow(30_000)
-    val cards = remember(board) { board.newestFirst() }
+    var query by rememberSaveable(floor.floor) { mutableStateOf("") }
+    var filter by rememberSaveable(floor.floor) { mutableStateOf("all") }
+    val counts = remember(board) { WhiteboardView.filterCounts(board) }
+    val cards = remember(board, query, filter) { WhiteboardView.filterCards(board, query, filter) }
+    val isFiltered = filter != "all" || query.isNotBlank()
     LazyVerticalGrid(
         columns = GridCells.Adaptive(160.dp),
         modifier = Modifier.fillMaxSize().tagged(Tags.Board.GRID),
@@ -153,15 +167,72 @@ private fun Grid(floor: WbFloor, board: WbBoard, onOpen: (String) -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
+        item(key = "toolbar", span = { GridItemSpan(maxLineSpan) }) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth().tagged(Tags.Board.SEARCH),
+                    placeholder = { Text("Search cards, authors, comments…", color = Palette.TextTertiary) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Palette.Accent.copy(alpha = 0.6f),
+                        unfocusedBorderColor = Palette.BorderStrong,
+                        cursorColor = Palette.Accent,
+                        focusedContainerColor = Palette.SurfaceRaised,
+                        unfocusedContainerColor = Palette.SurfaceRaised,
+                    ),
+                    trailingIcon = if (query.isNotEmpty()) ({
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Default.Close, "Clear search", tint = Palette.TextSecondary)
+                        }
+                    }) else null,
+                )
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    WhiteboardView.FILTERS.forEach { spec ->
+                        val count = counts[spec.id] ?: 0
+                        if (spec.id != "all" && spec.id != filter && count == 0) return@forEach
+                        Chip(
+                            "${spec.label} · $count",
+                            selected = filter == spec.id,
+                            onClick = { filter = spec.id },
+                            modifier = Modifier.tagged(Tags.Board.filter(spec.id)),
+                        )
+                    }
+                }
+            }
+        }
         val changed = board.changedCards()
         item(key = "summary", span = { GridItemSpan(maxLineSpan) }) {
+            val countLabel = if (isFiltered) {
+                "${cards.size} of ${board.cards.size} card${if (board.cards.size == 1) "" else "s"}"
+            } else {
+                "${board.cards.size} card${if (board.cards.size == 1) "" else "s"}"
+            }
             Text(
-                listOfNotNull("${board.cards.size} card${if (board.cards.size == 1) "" else "s"}", changed.takeIf { it > 0 }?.let { "$it changed since you looked" }).joinToString(" · "),
+                listOfNotNull(countLabel, changed.takeIf { it > 0 }?.let { "$it changed since you looked" }).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(start = 2.dp, bottom = 2.dp),
             )
         }
-        items(cards, key = { it.id }) { card -> CardTile(floor, card, board.changed(card.id), now) { onOpen(card.id) } }
+        if (cards.isEmpty()) {
+            item(key = "no-match", span = { GridItemSpan(maxLineSpan) }) {
+                Column(
+                    Modifier.fillMaxWidth().padding(vertical = 28.dp).tagged(Tags.Board.NO_MATCH),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text("No cards match this filter.", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary)
+                    SecondaryButton("Show all cards", onClick = { query = ""; filter = "all" }, modifier = Modifier.height(42.dp))
+                }
+            }
+        } else {
+            items(cards, key = { it.id }) { card -> CardTile(floor, card, board.changed(card.id), now) { onOpen(card.id) } }
+        }
     }
 }
 
@@ -170,6 +241,8 @@ private fun CardTile(floor: WbFloor, card: WbCard, changed: Boolean, now: Long, 
     val connection = LocalGraph.current.connection
     val render = floor.renders[card.id]
     val thumb = rememberThumb(connection, floor.floor, card.id, render?.at)
+    val badge = WhiteboardView.formatBadge(card)
+    val accentBadge = card.format == "markdown" || card.format == "video"
     Column(
         Modifier.fillMaxWidth()
             .panel(RoundedCornerShape(12.dp), Palette.Surface, if (changed) Palette.Accent.copy(alpha = 0.55f) else Palette.Border)
@@ -181,6 +254,23 @@ private fun CardTile(floor: WbFloor, card: WbCard, changed: Boolean, now: Long, 
                 Image(thumb, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
             } else {
                 Icon(if (card.isCanvas) OfficeIcons.Layers else OfficeIcons.Whiteboard, null, Modifier.size(28.dp), tint = Palette.TextTertiary)
+            }
+            val badgeShape = RoundedCornerShape(4.dp)
+            Box(
+                Modifier.align(Alignment.TopStart).padding(8.dp)
+                    .clip(badgeShape)
+                    .background(Palette.Bg.copy(alpha = 0.84f))
+                    .border(1.dp, if (accentBadge) Palette.Accent.copy(alpha = 0.55f) else Palette.BorderStrong, badgeShape)
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .tagged(Tags.Board.CARD_FORMAT),
+            ) {
+                Text(
+                    badge,
+                    style = LocalOfficeType.current.eyebrow.copy(
+                        color = if (accentBadge) Palette.Accent else Palette.TextSecondary,
+                        fontSize = 9.sp,
+                    ),
+                )
             }
             if (changed) {
                 Box(

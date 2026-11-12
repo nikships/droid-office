@@ -12,7 +12,7 @@ import type { WhiteboardRendererStatus } from '../src/shared/protocol.js';
 import { WhiteboardStore, renderInfo, renderStatus, type PinnedCard } from '../src/server/whiteboard.js';
 import { readBoard } from '../src/server/whiteboard-agent.js';
 import { BrowserError, browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
-import { CANVAS_MARGIN, RenderEngine, THUMB_WIDTH, canvasPlan, type Capture, type CaptureOptions, type FloorRenderer, type RenderEngineOptions } from '../src/server/whiteboard-render.js';
+import { CANVAS_MARGIN, RenderEngine, THUMB_WIDTH, canvasPlan, capRenderMediaRange, type Capture, type CaptureOptions, type FloorRenderer, type RenderEngineOptions } from '../src/server/whiteboard-render.js';
 
 const AGENT = { kind: 'worker', id: 'w1', name: 'Pixel', color: '#ff8800' } as const;
 const FLOOR = { id: 'f1', name: 'Main' };
@@ -500,7 +500,7 @@ test('a canvas card renders at the bounds of its marks plus a margin', { skip, t
   ]);
   assert.ok(near(one, hex(STICKY_COLORS.pink)), `one ${one}`);
   assert.ok(near(two, hex(STICKY_COLORS.blue)), `two ${two}`);
-  assert.ok(near(gap, [0xf7, 0xf6, 0xf2], 30), `gap ${gap}`);
+  assert.ok(near(gap, [0x14, 0x14, 0x14], 20), `gap ${gap}`);
   // An empty canvas is one blank frame.
   assert.deepEqual(canvasPlan({ ...store.board.cards[0], stickies: [] }), { x: 0, y: 0, w: 1280, h: 800, scale: 1, marks: [] });
 });
@@ -660,4 +660,14 @@ test('canvasPlan places marks with the renderer margin, not the window fit', () 
     ],
   );
   assert.deepEqual(canvasPlan({ ...board.cards[0], stickies: [], threads: [], pictures: [] }), { x: 0, y: 0, w: 1280, h: 800, scale: 1, marks: [] });
+});
+
+test('capRenderMediaRange bounds open-ended video Range headers to 2 MiB chunks', () => {
+  const twoMb = 2 * 1024 * 1024;
+  assert.equal(capRenderMediaRange(undefined, 'video/mp4'), `bytes=0-${twoMb - 1}`);
+  assert.equal(capRenderMediaRange('bytes=0-', 'video/mp4'), `bytes=0-${twoMb - 1}`);
+  assert.equal(capRenderMediaRange('bytes=1000-', 'audio/ogg'), `bytes=1000-${1000 + twoMb - 1}`);
+  assert.equal(capRenderMediaRange('bytes=100-499', 'video/mp4'), 'bytes=100-499');
+  assert.equal(capRenderMediaRange('bytes=0-', 'text/html'), 'bytes=0-');
+  assert.equal(capRenderMediaRange(undefined, 'image/png'), undefined);
 });

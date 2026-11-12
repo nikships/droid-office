@@ -69,7 +69,9 @@ import {
   type ReaderId,
 } from '../shared/whiteboard.js';
 import { CARD_SANDBOX } from '../shared/whiteboard-bridge.js';
-import { LoadError, fileRef, loadImageCard, loadPackage, loadPage, loadPicture, pageFromText, type Loaded } from './whiteboard-assets.js';
+import { LoadError, fileRef, loadImageCard, loadLinkedFile, loadMarkdownFile, loadMarkdownText, loadPackage, loadPage, loadPicture, loadVideoCard, pageFromText, type Loaded } from './whiteboard-assets.js';
+import type { DesignTheme } from '../shared/whiteboard-design.js';
+import type { ArtifactAction } from '../shared/whiteboard-markdown.js';
 import { SDK_SCRIPT, SDK_VERSION } from './whiteboard-sdk.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -780,12 +782,13 @@ export class WhiteboardStore {
     try {
       // A new card linked from the start: `content: { load: { link, entry? } }`.
       if (o.op === 'card.create' && o.content?.load && typeof o.content.load === 'object' && 'link' in o.content.load) {
-        const { content, link } = this.linked(o.content.load.link, o.content.load.entry, actor, take, o.content.load.dir === true);
+        const { content, link } = this.linked(o.content.load.link, o.content.load.entry, actor, take, o.content.load.dir === true, typeof o.title === 'string' ? o.title : undefined);
         ops.push({ ...(o as Op & { op: 'card.create' }), content }, { op: 'card.link', card: o.card, link });
         return;
       }
       if ((o.op === 'card.create' || o.op === 'card.content') && o.content && typeof o.content === 'object' && 'load' in o.content) {
-        o.content = take(loadSpec(o.content.load, typeof o.title === 'string' ? o.title : 'Image'));
+        const existingTitle = o.op === 'card.content' && typeof o.card === 'string' ? findCard(this.current, o.card)?.title : undefined;
+        o.content = take(loadSpec(o.content.load, typeof o.title === 'string' ? o.title : (existingTitle ?? 'Artifact')));
       }
       if ((o.op === 'picture.add' || o.op === 'picture.file') && o.file && typeof o.file === 'object' && 'load' in o.file) {
         if (typeof o.file.load !== 'string') throw new LoadError('file.load must be the path of a picture');
@@ -795,7 +798,8 @@ export class WhiteboardStore {
         if (o.op === 'picture.add') o.box = pictureBox(o.box, pic.size);
       }
       if (o.op === 'card.linkTo') {
-        const { content, link } = this.linked(o.path, o.entry, actor, take, o.dir === true);
+        const existingTitle = typeof o.card === 'string' ? findCard(this.current, o.card)?.title : undefined;
+        const { content, link } = this.linked(o.path, o.entry, actor, take, o.dir === true, existingTitle);
         ops.push({ op: 'card.content', card: o.card, content, viaLink: true }, { op: 'card.link', card: o.card, link });
         return;
       }
@@ -810,13 +814,14 @@ export class WhiteboardStore {
     ops.push(o as Op);
   }
 
-  /** A link's first content and the link itself: a file and its assets, or a whole folder. */
-  private linked(target: unknown, entry: unknown, actor: Author, take: (l: Loaded) => CardContent, dir = false): { content: CardContent; link: CardLink } {
+  /** A link's first content and the link itself: a file (HTML, Markdown, video or image) and its assets, or a whole folder. */
+  private linked(target: unknown, entry: unknown, actor: Author, take: (l: Loaded) => CardContent, dir = false, title?: string): { content: CardContent; link: CardLink } {
     if (typeof target !== 'string' || !target) throw new LoadError('A link needs the path of the file or folder to link');
     const abs = path.resolve(target);
     const isDir = dir || (existsSync(abs) && statSync(abs).isDirectory());
+    const fallbackTitle = title?.trim() || path.basename(abs, path.extname(abs)) || 'Linked artifact';
     // A folder's page is the content's entry from then on, which the watcher reads it by.
-    const content = take(isDir ? loadPackage(abs, typeof entry === 'string' ? entry : undefined) : loadPage(abs));
+    const content = take(isDir ? loadPackage(abs, typeof entry === 'string' ? entry : undefined) : loadLinkedFile(abs, fallbackTitle));
     return { content, link: { path: abs, status: 'ok', author: actor, ...(isDir ? { dir: true } : {}) } };
   }
 
@@ -851,7 +856,10 @@ export class WhiteboardStore {
     if (w.link.dir) return [w.link.path];
     const card = findCard(this.current, w.card);
     const root = path.dirname(w.link.path);
-    const assets = Object.keys(card?.content?.files ?? {}).map((rel) => path.join(root, ...rel.split('/')));
+    const generated = card?.content?.format && card.content.format !== 'html';
+    const assets = Object.keys(card?.content?.files ?? {})
+      .filter((rel) => !generated || (rel !== 'index.html' && rel !== 'document.md' && !/^(?:image|video|poster)\.[a-z0-9]+$/i.test(rel)))
+      .map((rel) => path.join(root, ...rel.split('/')));
     return [w.link.path, ...assets.filter((f) => f !== w.link.path)];
   }
 
@@ -916,7 +924,7 @@ export class WhiteboardStore {
     let loaded: Loaded | undefined;
     let why: string | undefined;
     try {
-      loaded = link.dir ? loadPackage(link.path, card.content?.entry ?? 'index.html') : loadPage(link.path);
+      loaded = link.dir ? loadPackage(link.path, card.content?.entry ?? 'index.html') : loadLinkedFile(link.path, card.title);
     } catch (e) {
       why = e instanceof LoadError ? e.message : `${link.path} can't be read: ${(e as Error).message}`;
     }
@@ -1108,13 +1116,27 @@ function invalid(index: number, op: string | undefined, reason: string): ApplyOu
 }
 
 function loadSpec(spec: unknown, title: string): Loaded {
-  if (!spec || typeof spec !== 'object') throw new LoadError('content.load must say where the content comes from: { html }, { file }, { dir } or { image }');
+  if (!spec || typeof spec !== 'object') throw new LoadError('content.load must say where the content comes from: { html }, { markdown }, { markdownFile }, { file }, { dir }, { video } or { image }');
   const s = spec as Record<string, unknown>;
+  const theme: DesignTheme | undefined = s.theme === 'light' ? 'light' : s.theme === 'dark' ? 'dark' : undefined;
+  const caption = typeof s.caption === 'string' ? s.caption : undefined;
+  const actions: ArtifactAction[] | undefined = Array.isArray(s.actions)
+    ? s.actions.flatMap((x) => {
+        if (!x || typeof x !== 'object') return [];
+        const o = x as Record<string, unknown>;
+        if (typeof o.action !== 'string' || typeof o.label !== 'string') return [];
+        return [{ action: o.action, label: o.label, ...(typeof o.ping === 'string' ? { ping: o.ping } : {}), ...(o.primary === true ? { primary: true } : {}) }];
+      })
+    : undefined;
+  const resolvedTitle = typeof s.title === 'string' ? s.title : title;
   if (typeof s.html === 'string') return pageFromText(s.html);
+  if (typeof s.markdown === 'string') return loadMarkdownText(s.markdown, resolvedTitle, { theme, actions });
+  if (typeof s.markdownFile === 'string') return loadMarkdownFile(s.markdownFile, resolvedTitle, { theme, actions });
   if (typeof s.file === 'string') return loadPage(s.file);
   if (typeof s.dir === 'string') return loadPackage(s.dir, typeof s.entry === 'string' ? s.entry : undefined);
-  if (typeof s.image === 'string') return loadImageCard(s.image, typeof s.title === 'string' ? s.title : title);
-  throw new LoadError('content.load must be { html }, { file }, { dir } or { image }');
+  if (typeof s.video === 'string') return loadVideoCard(s.video, resolvedTitle, { poster: typeof s.poster === 'string' ? s.poster : undefined, caption, theme });
+  if (typeof s.image === 'string') return loadImageCard(s.image, resolvedTitle, { caption, theme });
+  throw new LoadError('content.load must be { html }, { markdown }, { markdownFile }, { file }, { dir }, { video } or { image }');
 }
 
 /** A picture's box when the agent left its size out: the image's own size, at most 480 px wide. */

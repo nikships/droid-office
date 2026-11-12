@@ -2,7 +2,8 @@
 // last looked, the detached marks with Reattach, every comment thread (reply, resolve or reopen,
 // delete), and the card's stickies and pictures.
 
-import { STICKY_COLORS, type Author, type Card, type Op, type Thread } from '../../shared/whiteboard';
+import { STICKY_COLORS, cardFormat, type Author, type Card, type Message, type Op, type Thread } from '../../shared/whiteboard';
+import { parseTimecodeTokens } from '../../shared/whiteboard-markdown';
 import { h, timeAgo } from './dom';
 import { colorDot } from './kit';
 import type { MarkKind, Surface } from './whiteboard-surface';
@@ -30,9 +31,18 @@ export class Panel {
   private card: Card | null = null;
   private expanded = new Set<string>();
   private drafts = new Map<string, string>();
+  private editingMsg: { thread: string; message: string; draft: string } | null = null;
   private showResolved = false;
 
   constructor(private host: PanelHost) {}
+
+  /** Cancels inline comment editing on Escape without closing the Whiteboard window. */
+  cancelEditing(): boolean {
+    if (!this.editingMsg) return false;
+    this.editingMsg = null;
+    if (this.card) this.render(this.card);
+    return true;
+  }
 
   /** Opens a thread and brings it into view in the panel. */
   focusThread(id: string) {
@@ -48,9 +58,10 @@ export class Panel {
     this.card = card;
     const surface = this.host.surface();
     const detached = (kind: MarkKind, id: string) => surface?.detached(kind, id) ?? false;
-    // Keep a reply being typed, and where the panel was scrolled to.
+    // Keep a reply or edit being typed, and where the panel was scrolled to.
     const active = document.activeElement as HTMLElement | null;
     const typingIn = active?.closest<HTMLElement>('[data-reply]')?.dataset.reply;
+    const editingIn = active?.closest<HTMLElement>('[data-edit-msg]')?.dataset.editMsg;
     const sel = active instanceof HTMLTextAreaElement ? [active.selectionStart, active.selectionEnd] : null;
     const top = this.el.scrollTop;
 
@@ -188,12 +199,14 @@ export class Panel {
 
     this.el.replaceChildren(...sections.filter((s): s is HTMLElement => !!s));
     this.el.scrollTop = top;
-    if (typingIn) {
-      const ta = this.el.querySelector<HTMLTextAreaElement>(`[data-reply="${CSS.escape(typingIn)}"] textarea`);
-      if (ta) {
-        ta.focus();
-        if (sel) ta.setSelectionRange(sel[0], sel[1]);
-      }
+    const restoreTa = editingIn
+      ? this.el.querySelector<HTMLTextAreaElement>(`[data-edit-msg="${CSS.escape(editingIn)}"] textarea`)
+      : typingIn
+        ? this.el.querySelector<HTMLTextAreaElement>(`[data-reply="${CSS.escape(typingIn)}"] textarea`)
+        : null;
+    if (restoreTa) {
+      restoreTa.focus();
+      if (sel) restoreTa.setSelectionRange(sel[0], sel[1]);
     }
   }
 
@@ -250,27 +263,9 @@ export class Panel {
         );
       return el;
     }
-    for (const m of t.messages) {
-      el.append(
-        h(
-          'div.wb-msg',
-          {},
-          h(
-            'div.wb-msg-head',
-            {},
-            who(m.author),
-            h('span.wb-thread-when', {}, timeAgo(m.at)),
-            h(
-              'button.wb-msg-x',
-              { type: 'button', title: 'Delete this message', 'aria-label': 'Delete this message', onclick: () => void this.host.apply([{ op: 'comment.rm', card: card.id, thread: t.id, message: m.id }], 'Deleting the message') },
-              '✕',
-            ),
-          ),
-          h('div.wb-msg-text', {}, m.text),
-        ),
-      );
-    }
-    const ta = h('textarea.input.sm', { rows: '2', placeholder: 'Reply…', 'aria-label': 'Reply', maxlength: '10000' });
+    const isVideo = cardFormat(card) === 'video';
+    for (const m of t.messages) el.append(this.messageEl(card, t, m, isVideo));
+    const ta = h('textarea.input.sm', { rows: '2', placeholder: isVideo ? 'Reply (use @00:12 to link a timestamp)…' : 'Reply…', 'aria-label': 'Reply', maxlength: '10000' });
     ta.value = this.drafts.get(t.id) ?? '';
     ta.addEventListener('input', () => this.drafts.set(t.id, ta.value));
     const send = async () => {
@@ -290,5 +285,94 @@ export class Panel {
     });
     el.append(h('div.wb-reply', { 'data-reply': t.id }, ta, h('div.row', {}, h('span.grow'), h('button.btn.sm', { type: 'button', onclick: () => void send() }, 'Reply'))));
     return el;
+  }
+
+  private messageEl(card: Card, t: Thread, m: Message, isVideo: boolean): HTMLElement {
+    const isEditing = this.editingMsg?.thread === t.id && this.editingMsg.message === m.id;
+    const actions: HTMLElement[] = [];
+    if (m.author.kind === 'owner' && !isEditing) {
+      actions.push(
+        h(
+          'button.wb-msg-act',
+          {
+            type: 'button',
+            title: 'Edit this message',
+            onclick: () => {
+              this.editingMsg = { thread: t.id, message: m.id, draft: m.text };
+              this.render(card);
+              const ta = this.el.querySelector<HTMLTextAreaElement>(`[data-edit-msg="${CSS.escape(m.id)}"] textarea`);
+              ta?.focus();
+              ta?.setSelectionRange(ta.value.length, ta.value.length);
+            },
+          },
+          'Edit',
+        ),
+      );
+    }
+    actions.push(
+      h(
+        'button.wb-msg-x',
+        { type: 'button', title: 'Delete this message', 'aria-label': 'Delete this message', onclick: () => void this.host.apply([{ op: 'comment.rm', card: card.id, thread: t.id, message: m.id }], 'Deleting the message') },
+        '✕',
+      ),
+    );
+    const head = h('div.wb-msg-head', {}, who(m.author), h('span.wb-thread-when', {}, timeAgo(m.at)), h('span.wb-msg-actions', {}, ...actions));
+    if (isEditing && this.editingMsg) {
+      const state = this.editingMsg;
+      const editTa = h('textarea.input.sm', { rows: '2', 'aria-label': 'Edit comment', maxlength: '10000' });
+      editTa.value = state.draft;
+      editTa.addEventListener('input', () => {
+        if (this.editingMsg?.message === m.id) this.editingMsg.draft = editTa.value;
+      });
+      const saveEdit = async () => {
+        const next = editTa.value.trim();
+        if (!next) return;
+        this.editingMsg = null;
+        if (next === m.text) {
+          this.render(card);
+          return;
+        }
+        const ok = await this.host.apply([{ op: 'comment.edit', card: card.id, thread: t.id, message: m.id, text: next }], 'Editing the comment');
+        if (!ok) {
+          this.editingMsg = { thread: t.id, message: m.id, draft: next };
+          this.render(card);
+        }
+      };
+      const cancelEdit = () => {
+        this.editingMsg = null;
+        this.render(card);
+      };
+      editTa.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelEdit();
+        } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          void saveEdit();
+        }
+      });
+      return h(
+        'div.wb-msg',
+        { 'data-edit-msg': m.id },
+        head,
+        h(
+          'div.wb-msg-editor',
+          {},
+          editTa,
+          h('div.row', {}, h('span.grow'), h('button.btn.sm.ghost', { type: 'button', onclick: cancelEdit }, 'Cancel'), h('button.btn.sm.accent', { type: 'button', onclick: () => void saveEdit() }, 'Save')),
+        ),
+      );
+    }
+    const body = h('div.wb-msg-text');
+    if (isVideo) {
+      for (const part of parseTimecodeTokens(m.text)) {
+        if (part.kind === 'timecode' && part.seconds !== undefined) {
+          const sec = part.seconds;
+          body.append(h('button.wb-timecode', { type: 'button', title: `Jump video to ${part.text}`, onclick: () => this.host.surface()?.seekMedia(sec) }, part.text));
+        } else body.append(part.text);
+      }
+    } else body.textContent = m.text;
+    return h('div.wb-msg', {}, head, body);
   }
 }

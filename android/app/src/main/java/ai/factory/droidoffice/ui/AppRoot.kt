@@ -124,6 +124,9 @@ class Nav(private val stack: NavBackStack<NavKey>) {
     fun pop() {
         if (stack.size > 1) stack.removeAt(stack.lastIndex)
     }
+    fun replaceTop(key: NavKey) {
+        if (stack.isEmpty()) stack.add(key) else stack[stack.lastIndex] = key
+    }
     /** Replaces everything with [key]: after pairing, or when the last office is forgotten. */
     fun reset(key: NavKey) {
         stack.add(key)
@@ -278,7 +281,12 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
                         WorkerScreen(workerId = key.id, onBack = { nav.pop() }, draft = key.draft, onOpenWorker = { nav.push(WorkerKey(it)) })
                     }
                     entry<BoardCardKey> { key ->
-                        BoardCardScreen(floorId = key.floor, cardId = key.card, onBack = { nav.pop() })
+                        BoardCardScreen(
+                            floorId = key.floor,
+                            cardId = key.card,
+                            onBack = { nav.pop() },
+                            onNavigateCard = { nextId -> nav.replaceTop(BoardCardKey(key.floor, nextId)) },
+                        )
                     }
                     entry<OfficesKey> {
                         OfficesScreen(onBack = { nav.pop() }, onPairNew = { nav.push(ScanKey) }, onSwitched = { nav.home() })

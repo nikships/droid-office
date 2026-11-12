@@ -348,6 +348,12 @@ export class Surface {
     this.host.changed();
   }
 
+  /** Seeks `<video>`/`<audio>` inside an artifact card to `seconds` (for clickable `@mm:ss` comment chips). */
+  seekMedia(seconds: number) {
+    if (this.card.kind !== 'html' || !Number.isFinite(seconds) || seconds < 0) return;
+    if (this.slot?.ready) this.post(this.slot, { type: 'seekMedia', seconds });
+  }
+
   setPan(pan: boolean) {
     this.pan = pan;
     this.el.classList.toggle('pan-tool', this.pan || this.spacePan);

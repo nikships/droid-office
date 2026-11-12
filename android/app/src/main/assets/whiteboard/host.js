@@ -212,6 +212,11 @@ function receive(m) {
       buttons = typeof m.to === 'string' && m.to ? { to: m.to } : { to: null, ...(typeof m.reason === 'string' ? { reason: m.reason } : {}) };
       for (const s of [slot, incoming]) if (s?.ready) post(s, { type: 'buttons', ...buttons });
       break;
+    case 'seek':
+      if (isNum(m.seconds) && m.seconds >= 0) {
+        for (const s of [slot, incoming]) if (s?.ready) post(s, { type: 'seekMedia', seconds: m.seconds });
+      }
+      break;
   }
 }
 

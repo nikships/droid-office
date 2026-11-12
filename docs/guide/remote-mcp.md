@@ -134,7 +134,7 @@ Owner action results contain `status: done | pending | unconfirmed`, notes, and 
 
 A bot's key still conveys owner-level worker control, including hiring agents that execute commands and answering terminal menus. Floor workers do not see these owner tools. All paths and `cwd` values refer to the **office machine**, not the bot's host.
 
-Remote bots have no Whiteboard, visits, raw terminal input, floor-management, forge, pipeline, settings, connection, picture or jukebox tools. These app features are unchanged. Internal workers retain `team`, `models_list`, `team_report`, `visit_roster`, `visit_look`, `whiteboard_read`, `whiteboard_card`, `whiteboard_state`, `whiteboard_marks` and `whiteboard_apply`, subject to their existing permissions.
+Remote bots have no Whiteboard, visits, raw terminal input, floor-management, forge, pipeline, settings, connection, picture or jukebox tools. These app features are unchanged. Internal workers retain `team`, `models_list`, `team_report`, `visit_roster`, `visit_look`, `whiteboard_guide`, `whiteboard_read`, `whiteboard_card`, `whiteboard_state`, `whiteboard_marks` and `whiteboard_apply`, subject to their existing permissions.
 
 `tests/remote-mcp.test.ts` asserts exact set equality for an external-bot session and checks this reference against the live tool arguments.
 

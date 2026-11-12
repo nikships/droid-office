@@ -85,7 +85,9 @@ export type HostMsg =
    * Who the card's `data-wb-ping` buttons tell now (a worker's name), or null and why not: the SDK
    * disables them until a host says. Sent after `init` and whenever it changes.
    */
-  | { type: 'buttons'; to: string | null; reason?: string };
+  | { type: 'buttons'; to: string | null; reason?: string }
+  /** Seeks the first video or audio element in the card to `seconds` (from a comment timestamp click). */
+  | { type: 'seekMedia'; seconds: number };
 
 /** Frame to host. */
 export type FrameMsg =
@@ -159,6 +161,8 @@ export function parseHostMsg(data: unknown, nonce: string): HostMsg | undefined 
       if (d.to !== null && !(typeof d.to === 'string' && d.to)) return undefined;
       if (d.reason !== undefined && typeof d.reason !== 'string') return undefined;
       return d.to === null ? { type: 'buttons', to: null, ...(d.reason === undefined ? {} : { reason: d.reason }) } : { type: 'buttons', to: d.to };
+    case 'seekMedia':
+      return isNum(d.seconds) && d.seconds >= 0 ? { type: 'seekMedia', seconds: d.seconds } : undefined;
     default:
       return undefined;
   }

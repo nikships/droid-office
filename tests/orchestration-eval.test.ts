@@ -165,8 +165,8 @@ test('orchestration-eval rig serves live Office MCP roles, measures context, and
 
   assert.equal(counts.orchestrator, 24);
   assert.equal(counts['external-bot'], 26);
-  assert.equal(counts['floor-lead'], 25);
-  assert.equal(counts.subagent, 9);
+  assert.equal(counts['floor-lead'], 26);
+  assert.equal(counts.subagent, 10);
 });
 
 test('orchestration-eval scenario suite has unique ids and grades live MCP interactions end to end', async (t) => {

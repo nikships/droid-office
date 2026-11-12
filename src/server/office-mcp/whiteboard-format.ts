@@ -71,6 +71,8 @@ function removedText(tombstone: Tombstone, now: number): string {
 interface FormatOptions {
   now: number;
   full: boolean;
+  onlyChanged?: boolean;
+  peek?: boolean;
   pngs?: Map<string, string>;
 }
 
@@ -78,7 +80,8 @@ function formatCard(card: CardOut, { now, full, pngs }: FormatOptions): string {
   const lines: string[] = [];
   const mark = (changed: boolean) => (changed ? '  ← CHANGED' : '');
   const changes = card.changes;
-  lines.push(`${card.id} ${quote(card.title)} (${card.kind}, by ${who(card.author)}, updated ${ago(card.updatedAt, now)})${card.changed ? ' — CHANGED' : ''}`);
+  const kindLabel = card.format === 'html' || card.format === 'canvas' ? card.kind : `${card.kind}:${card.format}`;
+  lines.push(`${card.id} ${quote(card.title)} (${kindLabel}, by ${who(card.author)}, updated ${ago(card.updatedAt, now)})${card.changed ? ' — CHANGED' : ''}`);
   if (card.changed) lines.push(`  Changed for you: ${[...changesText(changes), ...card.removed.map((t) => removedText(t, now))].join('; ')}`);
   if (card.link) lines.push(`  Linked to ${card.link.path}${card.link.dir ? ' (folder)' : ''}: ${card.link.status === 'ok' ? 'following it' : `BROKEN — ${card.link.reason ?? 'unreadable'}`}`);
   if (card.content) {
@@ -87,7 +90,8 @@ function formatCard(card: CardOut, { now, full, pngs }: FormatOptions): string {
     lines.push(`  Page: ${card.content.entry}${page ? ` (${page.size} B) ${page.file}` : ''}`);
     if (others.length) lines.push('  Files:', ...others.map((name) => `    ${name}: ${card.content!.files[name].file}`));
     for (const missing of card.content.missing ?? []) lines.push(`  Not collected: ${missing.ref} (${missing.reason})`);
-    if (full && card.content.html !== undefined) lines.push('  HTML:', indent(card.content.html.replace(/\s+$/, ''), '    | '));
+    if (full && card.content.markdown !== undefined) lines.push('  Markdown:', indent(card.content.markdown.replace(/\s+$/, ''), '    | '));
+    else if (full && card.content.html !== undefined) lines.push('  HTML:', indent(card.content.html.replace(/\s+$/, ''), '    | '));
   }
   const state = JSON.stringify(card.state);
   if (state !== '{}') lines.push(`  State${mark(changes.some((piece) => piece.kind === 'state'))}: ${state}`);
@@ -122,13 +126,16 @@ function formatCard(card: CardOut, { now, full, pngs }: FormatOptions): string {
 export function formatRead(out: ReadOut, options: FormatOptions): string {
   const selection = out.selection.kind === 'card' ? `card ${out.selection.id}` : 'the grid';
   const changed = out.cards.filter((card) => card.changed).length;
+  const peekNote = options.peek ? ' (peek — read points unchanged)' : '';
   const lines = [
-    `Whiteboard on ${out.floor.name}, revision ${out.rev}. The wall shows ${selection}.`,
+    `Whiteboard on ${out.floor.name}, revision ${out.rev}. The wall shows ${selection}.${peekNote}`,
     `${out.cards.length} card${out.cards.length === 1 ? '' : 's'}${changed ? `, ${changed} changed for you` : ''}.${out.renderer.available ? '' : ` Renders: unavailable (${out.renderer.reason ?? 'no renderer'}).`}`,
   ];
   for (const card of out.cards) lines.push('', formatCard(card, options));
   if (out.removed.length) lines.push('', 'Removed:', ...out.removed.map((tombstone) => `  ${removedText(tombstone, options.now)}`));
   if (out.unknown.length) lines.push('', `No such card: ${out.unknown.join(', ')}`);
-  if (!out.cards.length && !out.removed.length && !out.unknown.length) lines.push('', 'The board is empty. Create a card with whiteboard_card.');
+  if (!out.cards.length && !out.removed.length && !out.unknown.length) {
+    lines.push('', options.onlyChanged && out.totalCards > 0 ? 'No cards changed for you since your last read.' : 'The board is empty. Create a card with whiteboard_card.');
+  }
   return lines.join('\n');
 }

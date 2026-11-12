@@ -39,7 +39,7 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 | --- | --- | --- |
 | [Airgapped setup](./airgapped.md) | Office page, web companion model API, Android picker | Browser on Linux, fresh credential-free office, welcome/settings at 1440×900 and 1024×700, missing-model blocking and HTTP guards, 2026-11-11; real BYOK turn and Android execution pending |
 | [Hire a worker](./hire-worker.md) | Office page, web companion | All but `hire-droid-dialog` (`hire-shell.mjs`), Mac Mini, fresh office, 2026-11-02 |
-| [Whiteboard](./whiteboard.md) | Office page, Android | Not yet driven |
+| [Whiteboard](./whiteboard.md) | Office page, web companion, Android | Browser on macOS M5 Pro, owner clone, 3D office & `/dashboard` at 1440×900 and 1024×700 (Markdown, Video, SVG, Factory HTML, Canvas, search/filters, in-place edit, comment edit & `@mm:ss` video seek, cleanup), 2026-11-11; Android JVM unit/lint/R8 verified, live adb device pending |
 | [Office MCP tool call](./office-mcp.md) | Office MCP over HTTP | `mcp-refuse-anon` and `mcp-refuse-shell` (`mcp-shell-refusal.mjs`), Mac Mini, fresh office, 2026-11-02 |
 | [Mission Control](./mission-control.md) | Office page, web/Mac companion, Android, Office MCP | Entry, blocked companion, shared settings and floor continuity; browser and Electron scene/settings, owner clone, 2026-11-09; live team proof pending |
 | [Android Workers list](./android-workers.md) | Android app (adb) | Pixel 9 Pro XL emulator, cloned owner office: Shell from Asks and past a pending Droid snackbar |

@@ -85,6 +85,7 @@ object OfficeIcons {
     val ArrowUp = icon("ArrowUp", "M12 19.5V5", "M5.5 11.5L12 5l6.5 6.5")
     val ArrowDown = icon("ArrowDown", "M12 4.5V19", "M5.5 12.5L12 19l6.5-6.5")
     val Chevron = icon("Chevron", "M9.5 6l6 6-6 6")
+    val ChevronLeft = icon("ChevronLeft", "M14.5 6l-6 6 6 6")
     val Retry = icon("Retry", "M19 12a7 7 0 1 1-2.05-4.95", "M19 4.5V8.5h-4")
     val Sliders = icon(
         "Sliders",

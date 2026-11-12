@@ -9,7 +9,7 @@
 
 import type { ServerMsg } from '../../shared/protocol';
 import { changesSince, type ChangeItem } from '../../shared/whiteboard-marks';
-import { OWNER, cardChanged, cardsNewestFirst, findCard, type Board, type Card, type CardView, type Op, type Selection } from '../../shared/whiteboard';
+import { OWNER, cardChanged, cardFormat, cardsNewestFirst, findCard, type Board, type Card, type CardFormat, type CardView, type Op, type Selection } from '../../shared/whiteboard';
 import { buttonDelivery, buttonTarget } from '../../shared/whiteboard-ping';
 import type { Net } from '../net';
 import { store } from '../state';
@@ -17,10 +17,27 @@ import { withToken } from '../token';
 import { copy } from './clipboard';
 import { claimEscape, h, openModal, setDoing, timeAgo, toast, type Modal } from './dom';
 import { colorDot, emptyState } from './kit';
-import { confirmDelete, openAddHtml, openPing, routePinged } from './whiteboard-dialogs';
+import { buildDroppedCard, confirmDelete, openAddCard, openEditMarkdown, openPing, routePinged } from './whiteboard-dialogs';
 import { Panel } from './whiteboard-panel';
 import { Surface } from './whiteboard-surface';
-import { authorColor, authorName, changedCount, copyForAgent, deleteOps, newId, ownerReadPoint, selectedOnBoard, viewMoved, zoomLabel } from './whiteboard-view';
+import {
+  GRID_FILTERS,
+  type GridFilter,
+  authorColor,
+  authorName,
+  cardFormatBadge,
+  cardNeighbors,
+  changedCount,
+  copyForAgent,
+  deleteOps,
+  filterCards,
+  filterCounts,
+  newId,
+  ownerReadPoint,
+  selectedOnBoard,
+  viewMoved,
+  zoomLabel,
+} from './whiteboard-view';
 
 interface WindowCtl {
   floor: string;
@@ -80,7 +97,8 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
   const titles = h('div.titles', {}, titleEl, sub);
   const actions = h('div.actions');
   const back = h('button.btn.sm.wb-back', { type: 'button', title: 'Back to the grid of cards' }, '← Grid');
-  const header = h('header', {}, back, titles, actions);
+  const navSlot = h('div.wb-nav-slot.hidden');
+  const header = h('header', {}, back, navSlot, titles, actions);
   const bars = h('div.wb-bars');
   const main = h('div.wb-main');
   const el = h('div.modal.wb', { 'aria-label': 'Whiteboard', tabindex: '-1' }, header, bars, main);
@@ -98,6 +116,33 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
   /** The grid is picking cards to delete together rather than opening them. */
   let selecting = false;
   const selected = new Set<string>();
+  let gridQuery = '';
+  let gridFilter: GridFilter = 'all';
+  let dropDepth = 0;
+
+  const searchInput = h('input.input.sm.wb-search', {
+    type: 'search',
+    placeholder: 'Search title, author, or comments (/ to focus)…',
+    'aria-label': 'Search cards',
+  });
+  const filterChips = h('div.chips.wb-filters', { role: 'group', 'aria-label': 'Filter cards' });
+  const clearFilterBtn = h('button.btn.sm.ghost.wb-filter-clear.hidden', { type: 'button' }, 'Reset');
+  const gridBar = h('div.wb-grid-bar', {}, searchInput, filterChips, clearFilterBtn);
+  const gridListWrap = h('div.wb-grid-list');
+
+  searchInput.addEventListener('input', () => {
+    gridQuery = searchInput.value;
+    paintGridResults();
+  });
+  searchInput.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+  });
+  clearFilterBtn.addEventListener('click', () => {
+    gridQuery = '';
+    gridFilter = 'all';
+    searchInput.value = '';
+    paintGridResults();
+  });
 
   const board = (): Board | null => sync.board(floor);
   const fileUrl = (hash: string) => withToken(`/api/whiteboard/file?${new URLSearchParams({ floor, card: card ?? '', hash })}`);
@@ -167,6 +212,77 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
 
   // ---- The grid ----
 
+  function formatIcon(fmt: CardFormat): string {
+    switch (fmt) {
+      case 'canvas':
+        return '🧑‍🎨';
+      case 'video':
+        return '🎬';
+      case 'markdown':
+        return '📝';
+      case 'image':
+        return '🖼';
+      case 'html':
+        return '📄';
+    }
+  }
+
+  function paintGridResults() {
+    const b = board();
+    if (!b) return;
+    const counts = filterCounts(b);
+    filterChips.replaceChildren(
+      ...GRID_FILTERS.filter((f) => f.always || counts[f.id] > 0 || gridFilter === f.id).map((f) => {
+        const active = gridFilter === f.id;
+        const count = f.id === 'all' ? counts.all : counts[f.id];
+        return h(
+          'button.chip',
+          {
+            type: 'button',
+            class: active ? 'on' : '',
+            'aria-pressed': String(active),
+            onclick: () => {
+              gridFilter = active && f.id !== 'all' ? 'all' : f.id;
+              paintGridResults();
+            },
+          },
+          f.label,
+          count > 0 ? h('span.wb-chip-count', {}, String(count)) : null,
+        );
+      }),
+    );
+    const hasFilter = gridFilter !== 'all' || gridQuery.trim().length > 0;
+    clearFilterBtn.classList.toggle('hidden', !hasFilter);
+    gridBar.classList.toggle('hidden', selecting);
+
+    const visible = selecting ? cardsNewestFirst(b) : filterCards(b, { query: gridQuery, filter: gridFilter });
+    if (!visible.length) {
+      gridListWrap.replaceChildren(
+        emptyState(
+          '🔎',
+          'No matching cards',
+          'Try another search term or reset the active filter.',
+          h(
+            'button.btn.sm',
+            {
+              type: 'button',
+              onclick: () => {
+                gridQuery = '';
+                gridFilter = 'all';
+                searchInput.value = '';
+                paintGridResults();
+              },
+            },
+            'Show all cards',
+          ),
+        ),
+      );
+      return;
+    }
+    const grid = h('div.wb-grid', { role: 'list', class: selecting ? 'selecting' : '', 'aria-multiselectable': selecting ? 'true' : undefined }, ...visible.map((c) => tile(b, c)));
+    gridListWrap.replaceChildren(grid);
+  }
+
   function paintGrid() {
     const b = board();
     setDoing(modal, '🧑‍🎨 at the Whiteboard');
@@ -180,37 +296,100 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     if (!cards.length) {
       selecting = false;
       main.replaceChildren(
-        h(
-          'div.wb-grid-wrap',
-          {},
-          emptyState(
-            '🧑‍🎨',
-            'Nothing on the board yet',
-            'Ask a worker to put something on it ("put your plan on the Whiteboard"), or start a canvas or add your own HTML.',
-            h('div.row', {}, h('button.btn.accent', { type: 'button', onclick: newCanvas }, 'New canvas'), h('button.btn', { type: 'button', onclick: addHtml }, 'Add HTML')),
+        wireGridDrop(
+          h(
+            'div.wb-grid-wrap',
+            {},
+            emptyState(
+              '🧑‍🎨',
+              'Nothing on the board yet',
+              'Ask a worker to put something on it ("put your plan on the Whiteboard"), drop a Markdown/video/image/HTML file here, or create a card.',
+              h('div.row', {}, h('button.btn.accent', { type: 'button', onclick: addCard }, 'Add card'), h('button.btn', { type: 'button', onclick: newCanvas }, 'New canvas')),
+            ),
           ),
         ),
       );
       return;
     }
-    const scroller = main.querySelector('.wb-grid-wrap');
-    const top = scroller?.scrollTop ?? 0;
-    const grid = h('div.wb-grid', { role: 'list', class: selecting ? 'selecting' : '', 'aria-multiselectable': selecting ? 'true' : undefined }, ...cards.map((c) => tile(b, c)));
+    const existing = main.querySelector<HTMLElement>('.wb-grid-wrap');
+    const top = existing?.scrollTop ?? 0;
     const note = rendererNote();
-    const wrap = h('div.wb-grid-wrap', {}, ...(note ? [h('p.note.info.wb-grid-note', {}, note)] : []), grid);
+    paintGridResults();
+    if (existing?.contains(gridBar) && existing.contains(gridListWrap)) {
+      const oldNote = existing.querySelector('.wb-grid-note');
+      if (note) {
+        const nextNote = h('p.note.info.wb-grid-note', {}, note);
+        if (oldNote) oldNote.replaceWith(nextNote);
+        else existing.prepend(nextNote);
+      } else oldNote?.remove();
+      existing.scrollTop = top;
+      return;
+    }
+    const wrap = wireGridDrop(h('div.wb-grid-wrap', {}, ...(note ? [h('p.note.info.wb-grid-note', {}, note)] : []), gridBar, gridListWrap));
     main.replaceChildren(wrap);
     wrap.scrollTop = top;
   }
 
+  function wireGridDrop(wrap: HTMLElement): HTMLElement {
+    wrap.addEventListener('dragenter', (e) => {
+      if (!e.dataTransfer?.types.includes('Files')) return;
+      e.preventDefault();
+      dropDepth++;
+      wrap.classList.add('dropping');
+    });
+    wrap.addEventListener('dragover', (e) => {
+      if (!e.dataTransfer?.types.includes('Files')) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    });
+    wrap.addEventListener('dragleave', () => {
+      dropDepth = Math.max(0, dropDepth - 1);
+      if (dropDepth === 0) wrap.classList.remove('dropping');
+    });
+    wrap.addEventListener('drop', (e) => {
+      if (!e.dataTransfer?.files.length) return;
+      e.preventDefault();
+      dropDepth = 0;
+      wrap.classList.remove('dropping');
+      void handleDroppedFiles([...e.dataTransfer.files]);
+    });
+    return wrap;
+  }
+
+  async function handleDroppedFiles(files: File[]) {
+    const ops: Op[] = [];
+    const createdIds: string[] = [];
+    for (const file of files) {
+      try {
+        const res = await buildDroppedCard(floor, file);
+        if (typeof res === 'string') {
+          toast(res, 'warn');
+          continue;
+        }
+        ops.push(...res.ops);
+        createdIds.push(res.card);
+      } catch (err) {
+        toast(`Upload failed for "${file.name}": ${(err as Error).message}`, 'error');
+      }
+    }
+    if (!ops.length) return;
+    const ok = await apply(ops, createdIds.length === 1 ? 'Adding the card' : 'Adding the cards');
+    if (!ok || !open) return;
+    if (createdIds.length === 1) go(createdIds[0]);
+    else toast(`Added ${createdIds.length} cards to the board.`);
+  }
+
   function tile(b: Board, c: Card): HTMLElement {
     const changed = cardChanged(b, OWNER, c.id);
+    const fmt = cardFormat(c);
     const url = sync.renderUrl(floor, c.id, { size: 'thumb' });
+    const badge = h('span.wb-format-badge', { class: fmt === 'video' || fmt === 'markdown' ? 'accent' : '' }, cardFormatBadge(fmt));
     const thumb = h('div.wb-thumb', { class: c.kind });
-    const placeholder = () => thumb.replaceChildren(h('div.wb-thumb-empty', {}, h('span.wb-thumb-icon', { 'aria-hidden': 'true' }, c.kind === 'canvas' ? '🧑‍🎨' : '📄'), h('span', {}, previewNote(c))));
+    const placeholder = () => thumb.replaceChildren(h('div.wb-thumb-empty', {}, h('span.wb-thumb-icon', { 'aria-hidden': 'true' }, formatIcon(fmt)), h('span', {}, previewNote(c))), badge);
     if (url) {
       const img = h('img', { src: withToken(url), alt: '', loading: 'lazy' });
       img.addEventListener('error', placeholder);
-      thumb.append(img);
+      thumb.append(img, badge);
     } else placeholder();
     const marks = [c.threads.length && `💬 ${c.threads.filter((t) => !t.resolved).length}`, c.stickies.length && `🗒 ${c.stickies.length}`, c.pictures.length && `🖼 ${c.pictures.length}`].filter(Boolean).join('  ');
     const on = selecting && selected.has(c.id);
@@ -394,11 +573,19 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
 
   // ---- Header, bars ----
 
+  function currentNeighbors(b: Board, id: string) {
+    const filtered = filterCards(b, { query: gridQuery, filter: gridFilter });
+    const list = filtered.some((x) => x.id === id) ? filtered : cardsNewestFirst(b);
+    return cardNeighbors(list, id);
+  }
+
   function paintHeader() {
     const b = board();
     const c = b && card ? findCard(b, card) : undefined;
     back.classList.toggle('hidden', !c);
     if (!c) {
+      navSlot.classList.add('hidden');
+      navSlot.replaceChildren();
       titleEl.replaceChildren('Whiteboard');
       const n = b ? cardsNewestFirst(b).length : 0;
       if (selecting && b) {
@@ -415,13 +602,30 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
       const changedN = b ? changedCount(b) : 0;
       sub.replaceChildren(b ? `${n} card${n === 1 ? '' : 's'} on ${store.currentFloor()?.name ?? 'this floor'}${changedN ? `, ${changedN} changed since you looked` : ''}` : 'Loading…');
       actions.replaceChildren(
+        h('button.btn.sm.accent', { type: 'button', onclick: addCard }, 'Add card'),
         h('button.btn.sm', { type: 'button', onclick: newCanvas }, 'New canvas'),
-        h('button.btn.sm', { type: 'button', onclick: addHtml }, 'Add HTML'),
         h('button.btn.sm', { type: 'button', onclick: () => openPing(net) }, 'Ping a worker'),
         ...(n ? [h('button.btn.sm', { type: 'button', title: 'Select cards to delete several at once', onclick: () => startSelecting() }, 'Select')] : []),
       );
       return;
     }
+    const nav = b ? currentNeighbors(b, c.id) : undefined;
+    if (nav && nav.total > 1) {
+      navSlot.classList.remove('hidden');
+      navSlot.replaceChildren(
+        h(
+          'div.seg.wb-nav',
+          { role: 'group', 'aria-label': 'Adjacent cards' },
+          h('button.btn.sm.icon', { type: 'button', disabled: !nav.prev, title: 'Newer card ([)', 'aria-label': 'Previous card', onclick: () => nav.prev && go(nav.prev) }, '‹'),
+          h('span.wb-nav-pos', { title: `Card ${nav.index} of ${nav.total} ([ / ] to switch)` }, `${nav.index}/${nav.total}`),
+          h('button.btn.sm.icon', { type: 'button', disabled: !nav.next, title: 'Older card (])', 'aria-label': 'Next card', onclick: () => nav.next && go(nav.next) }, '›'),
+        ),
+      );
+    } else {
+      navSlot.classList.add('hidden');
+      navSlot.replaceChildren();
+    }
+
     const input = titleEl.querySelector<HTMLInputElement>('input.wb-title');
     if (input && document.activeElement === input) {
       // Leave a title being edited alone.
@@ -448,18 +652,32 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
       });
       titleEl.replaceChildren(t);
     }
+    const fmt = cardFormat(c);
     const link = c.link ? (c.link.status === 'ok' ? h('span.pill.done', { title: `Follows ${c.link.path}` }, 'Linked') : h('span.pill.needs_input', { title: c.link.reason ?? 'The linked file is gone' }, 'Link broken')) : null;
-    const parts: HTMLElement[] = [h('span.wb-who', {}, colorDot(authorColor(c.author)), `by ${authorName(c.author)}`), h('span', {}, `updated ${timeAgo(c.updatedAt)}`)];
-    if (c.kind === 'canvas') parts.push(h('span', {}, 'canvas'));
+    const parts: HTMLElement[] = [h('span.wb-sub-badge', {}, cardFormatBadge(fmt)), h('span.wb-who', {}, colorDot(authorColor(c.author)), `by ${authorName(c.author)}`), h('span', {}, `updated ${timeAgo(c.updatedAt)}`)];
     if (link) parts.push(link);
     if (c.link?.status === 'broken' && c.link.reason) parts.push(h('span.wb-link-why', { title: c.link.reason }, c.link.reason));
     sub.replaceChildren(...parts);
+
+    const editMdBtn =
+      fmt === 'markdown' && !c.link
+        ? h(
+            'button.btn.sm',
+            {
+              type: 'button',
+              title: 'Edit this Markdown card in place',
+              onclick: () => void editMarkdownCard(c),
+            },
+            'Edit Markdown',
+          )
+        : null;
     const copyBtn = h('button.btn.sm', { type: 'button', title: 'Copy a line that names this card, to paste into a prompt' }, 'Copy for agent');
     copyBtn.addEventListener('click', async () => {
       copyBtn.textContent = (await copy(copyForAgent(c))) ? '✓ Copied' : 'Copy failed';
       setTimeout(() => (copyBtn.textContent = 'Copy for agent'), 1600);
     });
     actions.replaceChildren(
+      ...(editMdBtn ? [editMdBtn] : []),
       copyBtn,
       h('button.btn.sm', { type: 'button', onclick: () => openPing(net, c.author.kind === 'worker' ? c.author.id : undefined) }, 'Ping a worker'),
       h(
@@ -617,12 +835,26 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     setTimeout(() => titleEl.querySelector<HTMLInputElement>('input.wb-title')?.select(), 60);
   }
 
-  function addHtml() {
-    openAddHtml(floor, async (ops, id) => {
-      const ok = await apply(ops, 'Adding the HTML');
+  function addCard() {
+    openAddCard(floor, async (ops, id) => {
+      const ok = await apply(ops, 'Adding the card');
       if (ok && open) go(id);
       return ok;
     });
+  }
+
+  async function editMarkdownCard(c: Card) {
+    const mdRef = c.content?.files['document.md'];
+    let currentMd = `# ${c.title}\n`;
+    if (mdRef) {
+      try {
+        const res = await fetch(withToken(`/api/whiteboard/file?${new URLSearchParams({ floor, card: c.id, hash: mdRef.hash })}`));
+        if (res.ok) currentMd = await res.text();
+      } catch {
+        // fall back to default heading if offline
+      }
+    }
+    openEditMarkdown(floor, c, currentMd, (ops) => apply(ops, 'Updating Markdown'));
   }
 
   // ---- Live ----
@@ -655,15 +887,24 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
   const offs = [store.on('whiteboard', onBoard), store.on('workers', () => (card ? surface?.refreshButtons() : paintGrid())), store.on('floor', () => store.floor !== floor && modal.close())];
   const clock = window.setInterval(() => (card ? paintHeader() : paintGrid()), 30_000);
 
-  // Keys: M switches Use and Mark up; H pans; F is full screen; + - 0 1 zoom. Not while typing in a field of the window.
+  // Keys: M switches Use and Mark up; H pans; F is full screen; + - 0 1 zoom; [ / ] switch cards; / focuses grid search.
   const onKey = (e: KeyboardEvent) => {
-    if (!surface || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     // Only while this window is on top; focus may have fallen back to the page body (after a rename, say).
     if (modal.backdrop.nextElementSibling) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.closest('input, textarea, select, [contenteditable]') || (t !== document.body && !el.contains(t)))) return;
-    const s = surface;
     const k = e.key;
+    if (!surface) {
+      if (k === '/' && !selecting && board()?.cards.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        searchInput.focus();
+        searchInput.select();
+      }
+      return;
+    }
+    const s = surface;
     if (k === 'm' || k === 'M') s.setMode(s.mode === 'use' ? 'markup' : 'use');
     else if (k === 'h' || k === 'H') s.setPan(!s.pan);
     else if ((k === 'f' || k === 'F') && !e.repeat) void s.toggleFullscreen();
@@ -671,7 +912,12 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     else if (k === '-' || k === '_') s.zoomBy(-1);
     else if (k === '0') s.fit();
     else if (k === '1') s.actual();
-    else return;
+    else if (k === '[' || k === ']') {
+      const b = board();
+      const nav = b && card ? currentNeighbors(b, card) : undefined;
+      const target = k === '[' ? nav?.prev : nav?.next;
+      if (target) go(target);
+    } else return;
     e.preventDefault();
     e.stopPropagation();
   };
@@ -689,9 +935,18 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
   window.addEventListener('paste', onPaste);
 
   const unclaimEsc = claimEscape(el, () => {
-    if (!selecting || card) return false;
-    stopSelecting();
-    return true;
+    if (card) return panel?.cancelEditing() ?? false;
+    if (selecting) {
+      stopSelecting();
+      return true;
+    }
+    if (searchInput.value) {
+      searchInput.value = '';
+      gridQuery = '';
+      paintGridResults();
+      return true;
+    }
+    return false;
   });
 
   const modal: Modal = openModal(el, {

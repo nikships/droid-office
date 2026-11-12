@@ -7,7 +7,7 @@
 // JavaScript in a string. Keep it ES2017, with no template literals (this is a String.raw).
 
 /** Changes whenever the script does, so cached card pages are fetched again. */
-export const SDK_VERSION = '7';
+export const SDK_VERSION = '8';
 
 export const SDK_SCRIPT = String.raw`(function () {
   'use strict';
@@ -29,7 +29,7 @@ export const SDK_SCRIPT = String.raw`(function () {
   var started = false;
   // Who data-wb-ping buttons tell, as the host last said ({ to, reason }); null until it does.
   var buttons = null;
-  var listeners = { state: [], ready: [], mode: [] };
+  var listeners = { state: [], ready: [], mode: [], seek: [] };
   var resolveReady;
   var ready = new Promise(function (r) { resolveReady = r; });
 
@@ -141,7 +141,7 @@ export const SDK_SCRIPT = String.raw`(function () {
       }
     },
     on: function (ev, fn) {
-      if (!listeners[ev]) throw new TypeError('whiteboard.on: "' + ev + '" is not an event (state, ready or mode)');
+      if (!listeners[ev]) throw new TypeError('whiteboard.on: "' + ev + '" is not an event (state, ready, mode or seek)');
       if (typeof fn !== 'function') throw new TypeError('whiteboard.on needs a function');
       listeners[ev].push(fn);
       if (ev === 'ready' && started) fn(api);
@@ -828,6 +828,18 @@ export const SDK_SCRIPT = String.raw`(function () {
       }
     } else if (d.type === 'focus') {
       if (isObj(d.field) && !rendering) restoreFocus(d.field);
+    } else if (d.type === 'seekMedia') {
+      if (num(d.seconds) && d.seconds >= 0 && !rendering) {
+        var media = document.querySelector('video, audio');
+        if (media) {
+          try {
+            media.pause();
+            var target = isFinite(media.duration) && media.duration > 0 ? Math.min(media.duration, d.seconds) : d.seconds;
+            media.currentTime = Math.max(0, target);
+          } catch (err) {}
+        }
+        fire('seek', d.seconds);
+      }
     }
   });
 
