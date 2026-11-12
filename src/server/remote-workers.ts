@@ -72,6 +72,8 @@ export class RemoteWorkers {
   private readonly grokFile: string;
   private reported = new Map<string, Reported>();
   private deliveries = new Map<string, RemoteMcpWebhookDelivery>();
+  /** Bounded in-session history of acknowledged direct messages so overlapping webhook runs still see `acked: true` (team events persist in `team.json`). */
+  private ackedHistory = new Map<string, Map<string, RemoteMessage>>();
 
   constructor(
     dataDir: string,
@@ -259,6 +261,7 @@ export class RemoteWorkers {
   remove(id: string) {
     this.reported.delete(id);
     this.deliveries.delete(id);
+    this.ackedHistory.delete(id);
     this.commit(this.records.filter((r) => r.id !== id));
   }
 
@@ -282,13 +285,39 @@ export class RemoteWorkers {
   }
 
   /** Reads never consume messages. Acknowledgments name exact messages, not a high-water mark. */
-  inbox(id: string, ack: readonly string[] = [], limit = 50): { messages: RemoteMessage[]; remaining: number } {
+  inbox(id: string, ack: readonly string[] = [], limit = 50, onlyIds?: ReadonlySet<string>): { messages: (RemoteMessage & { acked?: boolean })[]; remaining: number } {
     let row = this.records.find((r) => r.id === id);
     if (!row) throw new Error('Remote worker was revoked');
     if (ack.length) {
       const ids = new Set(ack);
-      this.change(id, (r) => ({ ...r, inbox: r.inbox.filter((m) => !ids.has(m.id)) }));
-      row = this.records.find((r) => r.id === id)!;
+      const removed = row.inbox.filter((m) => ids.has(m.id));
+      if (removed.length) {
+        let history = this.ackedHistory.get(id);
+        if (!history) {
+          history = new Map();
+          this.ackedHistory.set(id, history);
+        }
+        for (const m of removed) {
+          history.delete(m.id);
+          history.set(m.id, { ...m });
+          while (history.size > 500) {
+            const oldest = history.keys().next().value;
+            if (oldest !== undefined) history.delete(oldest);
+          }
+        }
+        this.change(id, (r) => ({ ...r, inbox: r.inbox.filter((m) => !ids.has(m.id)) }));
+        row = this.records.find((r) => r.id === id)!;
+      }
+    }
+    if (onlyIds) {
+      const unacked = row.inbox.filter((m) => onlyIds.has(m.id)).map((m) => ({ ...m, acked: false }));
+      const unackedSet = new Set(unacked.map((m) => m.id));
+      const history = this.ackedHistory.get(id);
+      const acked = history ? [...history.values()].filter((m) => onlyIds.has(m.id) && !unackedSet.has(m.id)).map((m) => ({ ...m, acked: true })) : [];
+      const matched = [...unacked, ...acked].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+      const shown = matched.slice(0, limit);
+      const shownUnacked = shown.filter((m) => !m.acked).length;
+      return { messages: shown, remaining: Math.max(0, unacked.length - shownUnacked) };
     }
     return { messages: row.inbox.slice(0, limit).map((m) => ({ ...m })), remaining: Math.max(0, row.inbox.length - limit) };
   }

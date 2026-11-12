@@ -67,6 +67,10 @@ export interface GrokWebhookItem {
 export interface GrokWebhookPayload {
   source: 'droid-office';
   version: 1;
+  /** Unique id for durable webhook deliveries so overlapping runs can read or ack only this payload. */
+  deliveryId?: string;
+  /** Exact ackIds of durable items in this payload; omitted on test pings. */
+  ackIds?: string[];
   event: GrokWebhookItemKind;
   test?: true;
   summary: string;
@@ -111,7 +115,7 @@ function scrubWebhookText(text: string, secrets: (string | undefined)[]): string
 }
 
 /** Fixed protocol values and opaque references are not credential-bearing prose. */
-const PROTOCOL_FIELDS = new Set(['source', 'event', 'kind', 'status', 'state', 'reportPhase', 'id', 'ackId', 'reportId', 'questionId', 'at', 'sentAt', 'pushedSha', 'mergeCommit']);
+const PROTOCOL_FIELDS = new Set(['source', 'event', 'kind', 'status', 'state', 'reportPhase', 'id', 'ackId', 'ackIds', 'deliveryId', 'reportId', 'questionId', 'at', 'sentAt', 'pushedSha', 'mergeCommit']);
 
 function scrubWebhookPayload(value: unknown, secrets: string[], field = ''): unknown {
   if (typeof value === 'string') return PROTOCOL_FIELDS.has(field) || (field === 'commits' && /^[0-9a-f]{7,64}$/i.test(value)) ? value : scrubWebhookText(value, secrets);
@@ -161,7 +165,7 @@ export function webhookWorkerFromMember(m: TeamMember | undefined, w?: WorkerInf
 }
 
 function teamActionHint(item: { kind: GrokWebhookItemKind; questionId?: string; terminalAsk?: GrokWebhookTerminalAsk; hasChanges?: boolean }): string {
-  const ack = 'Acknowledge the ackId after handling this item.';
+  const ack = "Acknowledge only this item's ackId after handling it, never other runs' inbox items.";
   if (item.kind === 'question' && item.questionId) {
     return `Answer the question identified by questionId, or send guidance to this worker on this floor. ${ack}`;
   }
@@ -273,13 +277,16 @@ function itemHeadline(item: GrokWebhookItem, leadName: string): string {
   }
 }
 
-export function buildGrokWebhookPayload(lead: { id: string; name: string }, items: GrokWebhookItem[], now = Date.now()): GrokWebhookPayload {
+export function buildGrokWebhookPayload(lead: { id: string; name: string }, items: GrokWebhookItem[], now = Date.now(), deliveryId?: string): GrokWebhookPayload {
   const primary = items.reduce((best, cur) => (PRIORITY[cur.kind] > PRIORITY[best.kind] ? cur : best), items[0]);
   const test = items.length === 1 && primary.kind === 'test';
+  const ackIds = items.flatMap((item) => (item.ackId ? [item.ackId] : []));
   const summary = items.length === 1 ? itemHeadline(primary, lead.name) : `${itemHeadline(primary, lead.name)} (+${items.length - 1} more updates)`;
   return {
     source: 'droid-office',
     version: 1,
+    ...(deliveryId ? { deliveryId } : {}),
+    ...(ackIds.length ? { ackIds } : {}),
     event: primary.kind,
     ...(test ? { test: true as const } : {}),
     summary,
@@ -296,7 +303,7 @@ export async function sendGrokWebhook(target: GrokBotCredentials, payload: GrokW
   try {
     const safe = scrubWebhookPayload(payload, [target.webhookToken, target.webhookUrl]) as GrokWebhookPayload;
     // Rebuild from redacted content: clipping a credential before redaction leaks a partial secret.
-    safe.summary = buildGrokWebhookPayload(safe.lead, safe.items, Date.parse(safe.sentAt)).summary;
+    safe.summary = buildGrokWebhookPayload(safe.lead, safe.items, Date.parse(safe.sentAt), safe.deliveryId).summary;
     const res = await fetchImpl(target.webhookUrl, {
       method: 'POST',
       headers: {

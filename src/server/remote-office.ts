@@ -15,7 +15,7 @@ export interface RemoteFloor {
   def: { name: string };
   dir: string;
   workers: Pick<WorkerManager, 'get' | 'list' | 'authenticate' | 'releaseLead'> & Partial<Pick<WorkerManager, 'screenLines' | 'screenMenu' | 'write'>>;
-  team: Pick<Team, 'handle' | 'inbox' | 'onWorkerGone' | 'cannotHire' | 'hasNews' | 'leadRested' | TeamViews>;
+  team: Pick<Team, 'handle' | 'inbox' | 'onWorkerGone' | 'cannotHire' | 'hasNews' | 'leadRested' | TeamViews> & Partial<Pick<Team, 'formerMatches'>>;
   visits: Pick<Visits, 'handle' | 'onWorkerGone' | 'cannotVisit'>;
   whiteboard: WhiteboardStore;
 }
@@ -54,6 +54,7 @@ export class RemoteOffice {
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly inFlight = new Map<string, Promise<GrokWebhookResult | undefined>>();
   private readonly pushedIds = new Set<string>();
+  private readonly webhookDeliveries = new Map<string, { leadId: string; ackIds: string[] }>();
   private stopped = false;
 
   constructor(
@@ -177,7 +178,7 @@ export class RemoteOffice {
       if (enqueued.message) ackId = enqueued.message.id;
     }
     const id = ackId ?? `test-${randomBytes(8).toString('hex')}`;
-    const ackNote = ackId ? ' Acknowledge the ackId once handled.' : '';
+    const ackNote = ackId ? " Acknowledge only this item's ackId once handled." : '';
     const item: GrokWebhookItem = {
       id,
       ...(ackId ? { ackId } : {}),
@@ -284,6 +285,15 @@ export class RemoteOffice {
     if (timer) clearTimeout(timer);
     this.timers.delete(leadId);
     this.pending.delete(leadId);
+    for (const [deliveryId, rec] of this.webhookDeliveries) {
+      if (rec.leadId === leadId) this.webhookDeliveries.delete(deliveryId);
+    }
+  }
+
+  /** Resolves the exact item ackIds delivered in one Grok Bot webhook POST for payload-scoped reads and acks. */
+  deliveryAckIds(leadId: string, deliveryId: string): string[] | undefined {
+    const found = this.webhookDeliveries.get(deliveryId);
+    return found?.leadId === leadId ? [...found.ackIds] : undefined;
   }
 
   private async deliverPending(leadId: string): Promise<GrokWebhookResult | undefined> {
@@ -302,8 +312,17 @@ export class RemoteOffice {
       }
     }
     const items = entries.map((entry) => this.materializeItem(leadId, entry));
+    const ackIds = items.flatMap((item) => (item.ackId ? [item.ackId] : []));
+    const deliveryId = ackIds.length ? `whk-${randomBytes(8).toString('hex')}` : undefined;
+    if (deliveryId) {
+      this.webhookDeliveries.set(deliveryId, { leadId, ackIds });
+      while (this.webhookDeliveries.size > PUSHED_HISTORY_MAX) {
+        const oldest = this.webhookDeliveries.keys().next().value;
+        if (oldest) this.webhookDeliveries.delete(oldest);
+      }
+    }
     const now = (this.opts.now ?? Date.now)();
-    const payload = buildGrokWebhookPayload({ id: bot.id, name: bot.name }, items, now);
+    const payload = buildGrokWebhookPayload({ id: bot.id, name: bot.name }, items, now, deliveryId);
     const result = await sendGrokWebhook(target, payload, { fetchImpl: this.opts.fetchImpl, timeoutMs: this.opts.webhookTimeoutMs });
     this.store.recordDelivery(leadId, {
       at: now,
@@ -327,7 +346,7 @@ export class RemoteOffice {
         at: new Date(m.at).toISOString(),
         ...(f ? { floor: { id: f.id, name: f.def.name, cwd: f.dir } } : {}),
         text: m.text,
-        actionHint: 'Acknowledge the ackId after handling this message.',
+        actionHint: "Acknowledge only this item's ackId after handling this message.",
       };
     }
     const { floor, event } = entry;
@@ -353,18 +372,68 @@ export class RemoteOffice {
     }));
   }
 
-  inbox(id: string, ack: readonly string[] = [], limit = 50, own = true) {
-    const messages = own ? this.store.inbox(id, ack, 500).messages.map((m) => ({ ...m, kind: 'message' })) : [];
+  inbox(id: string, ack: readonly string[] = [], limit = 50, own = true, filter?: { ids?: readonly string[]; deliveryId?: string }) {
+    const deliveryIds = filter?.deliveryId !== undefined ? (this.deliveryAckIds(id, filter.deliveryId) ?? []) : undefined;
+    const scopedList = filter?.ids !== undefined || filter?.deliveryId !== undefined ? [...(deliveryIds ?? []), ...(filter?.ids ?? [])] : undefined;
+    const onlyIds = scopedList ? new Set(scopedList) : undefined;
+    const expandedAck: string[] = [];
+    for (const rawEntry of ack) {
+      const entry = rawEntry.trim();
+      const fromDelivery = this.deliveryAckIds(id, entry);
+      if (fromDelivery) expandedAck.push(...fromDelivery);
+      else expandedAck.push(entry);
+    }
+    const ignoredAck = onlyIds ? expandedAck.filter((a) => !onlyIds.has(a)) : [];
+    const effectiveAck = onlyIds ? expandedAck.filter((a) => onlyIds.has(a)) : expandedAck;
+    const storeLimit = onlyIds ? Math.max(500, onlyIds.size) : 500;
+    const messages: Array<{ id: string; floor?: string; at: number; kind: string; text: string; acked?: boolean }> = own ? this.store.inbox(id, effectiveAck, storeLimit, onlyIds).messages.map((m) => ({ ...m, kind: 'message' })) : [];
     for (const floor of this.floors()) {
       const prefix = `team:${floor.id}:`;
-      const heard = ack
+      const heard = effectiveAck
         .filter((s) => s.startsWith(prefix))
         .map((s) => Number(s.slice(prefix.length)))
         .filter(Number.isSafeInteger);
-      for (const e of floor.team.inbox(id, heard)) messages.push({ id: `${prefix}${e.seq}`, floor: floor.id, at: e.at, kind: e.kind, text: `${e.name}: ${e.kind}${e.text ? `\n${e.text}` : ''}` });
+      const unacked = floor.team.inbox(id, heard);
+      if (!onlyIds) {
+        for (const e of unacked) messages.push({ id: `${prefix}${e.seq}`, floor: floor.id, at: e.at, kind: e.kind, text: `${e.name}: ${e.kind}${e.text ? `\n${e.text}` : ''}` });
+      } else {
+        const wantedSeqs = new Set(
+          [...onlyIds]
+            .filter((s) => s.startsWith(prefix))
+            .map((s) => Number(s.slice(prefix.length)))
+            .filter(Number.isSafeInteger),
+        );
+        if (!wantedSeqs.size) continue;
+        const unackedSeqs = new Set(unacked.map((e) => e.seq));
+        const allEvents = typeof floor.team.news === 'function' ? floor.team.news(id) : unacked;
+        for (const e of allEvents) {
+          if (!wantedSeqs.has(e.seq)) continue;
+          messages.push({
+            id: `${prefix}${e.seq}`,
+            floor: floor.id,
+            at: e.at,
+            kind: e.kind,
+            text: `${e.name}: ${e.kind}${e.text ? `\n${e.text}` : ''}`,
+            acked: !unackedSeqs.has(e.seq),
+          });
+        }
+      }
     }
     messages.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
-    return { messages: messages.slice(0, limit), remaining: Math.max(0, messages.length - limit), floors: this.list(id) };
+    const shown = messages.slice(0, limit);
+    if (!onlyIds) return { messages: shown, remaining: Math.max(0, messages.length - limit), floors: this.list(id) };
+    const foundIds = new Set(messages.map((m) => m.id));
+    const missingIds = [...onlyIds].filter((want) => !foundIds.has(want));
+    const totalUnacked = messages.filter((m) => !m.acked).length;
+    const shownUnacked = shown.filter((m) => !m.acked).length;
+    return {
+      messages: shown,
+      remaining: Math.max(0, totalUnacked - shownUnacked),
+      filtered: true as const,
+      ...(missingIds.length ? { missingIds } : {}),
+      ...(ignoredAck.length ? { ignoredAck } : {}),
+      floors: this.list(id),
+    };
   }
 
   /** `since` holds a status cursor per floor; a floor it leaves out reports everything it keeps. */
@@ -421,6 +490,14 @@ export class RemoteOffice {
     }
     if (args.worker) {
       const matches = matchesFor(args.worker);
+      if (!matches.length && (args.action === 'diff' || args.action === 'review')) {
+        const wanted = args.worker.trim().toLowerCase();
+        const former = floors.flatMap((f) => (f.team.formerMatches?.(worker.id, args.worker!) ?? []).map((m) => ({ f, id: m.id, name: m.name })));
+        const exact = former.filter((m) => m.id.toLowerCase() === wanted);
+        const picked = exact.length ? exact : former;
+        if (picked.length === 1) return picked[0].f.team.handle(worker, { ...args, worker: picked[0].id });
+        if (picked.length > 1) return { status: 409, body: { error: `${args.worker} names more than one former subagent; use the worker id${floors.length > 1 ? ' or specify floor' : ''}` } };
+      }
       if (matches.length !== 1) return { status: matches.length ? 409 : 404, body: { error: matches.length ? 'That name occurs on several floors; use the worker id or specify floor' : 'No such subagent in your teams' } };
       const { f, w } = matches[0];
       const result = await f.team.handle(worker, { ...args, worker: w.id, since: args.since ? (args.since[f.id] ?? 0) : undefined });

@@ -25,6 +25,8 @@ const WAIT_FOR = [...EVENT_FILTERS, 'idle'] as const;
 const WAIT_DEFAULT: (typeof WAIT_FOR)[number][] = ['report', 'question', 'blocked', 'idle'];
 const WAIT_DEFAULT_SEC = 30;
 const WAIT_MAX_SEC = 600;
+/** Single-call hold cap so long waits return cleanly with a cursor before ~120–240s HTTP/MCP client timeouts (-32001). */
+export const WAIT_HOLD_MAX_SEC = 90;
 /** Open waits one caller may hold at once, so a looping client can't pile up held requests. */
 const WAITS_PER_CALLER = 4;
 const BEAT_MS = 15_000;
@@ -341,7 +343,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_wait',
       description:
-        'Wait (when Wake the lead is off or as an external bot) until a subagent reports, asks, blocks, or settles; returns matched events, waiting questions, workers, and cursor (matched: false on timeout; reuse cursor only with same until). On return, inspect worker_diff, answer technical questions via question_answer, and relay contract changes via team_message.',
+        'Wait (when Wake the lead is off or as an external bot) until a subagent reports, asks, blocks, or settles; returns matched events, waiting questions, workers, and cursor (holds up to 90s per call to stay under MCP client timeouts, returning matched: false with cursor; reuse cursor only with same until). On return, inspect worker_diff, answer technical questions via question_answer, and relay contract changes via team_message.',
       inputSchema: z.object({
         until: z
           .array(z.enum(WAIT_FOR))
@@ -350,12 +352,27 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .optional()
           .describe(`Event kinds, blocked, or idle. Default ${WAIT_DEFAULT.join(', ')}.`),
         workers: z.array(z.string().trim().min(1).max(128)).min(1).max(20).optional().describe('Subagent names or ids; omit for all.'),
-        timeoutSec: z.number().int().min(1).max(WAIT_MAX_SEC).optional().describe(`Max seconds (default ${WAIT_DEFAULT_SEC}, max ${WAIT_MAX_SEC}).`),
+        timeoutSec: z
+          .number()
+          .int()
+          .min(1)
+          .max(WAIT_MAX_SEC)
+          .optional()
+          .describe(`Max seconds (default ${WAIT_DEFAULT_SEC}, max ${WAIT_MAX_SEC}; holds up to ${WAIT_HOLD_MAX_SEC}s per call under client timeouts, returning matched: false + cursor to continue).`),
         since: cursorArg.optional(),
         floor: floorArg,
         verbose: z.boolean().optional().describe('Full event text instead of summaries.'),
       }),
-      outputSchema: z.looseObject({ matched: z.boolean(), reason: z.string(), waitedMs: z.number(), events: z.array(eventOut), questions: z.array(questionOut), workers: statusOutput.workers, cursor: statusOutput.cursor }),
+      outputSchema: z.looseObject({
+        matched: z.boolean(),
+        reason: z.string(),
+        waitedMs: z.number(),
+        capped: z.boolean().optional(),
+        events: z.array(eventOut),
+        questions: z.array(questionOut),
+        workers: statusOutput.workers,
+        cursor: statusOutput.cursor,
+      }),
       annotations: readOnly,
     },
     mayWait,
@@ -384,11 +401,17 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         // already so would end every default wait at once. Team questions are news, which since already orders.
         const askedBefore = new Set(asks());
         let busy = !team().every(settled);
+        const requestedSec = args.timeoutSec ?? WAIT_DEFAULT_SEC;
+        const requestedMs = requestedSec * 1000;
+        const overrideMs = deps.waitHoldMaxMs;
+        const maxHoldMs = overrideMs !== undefined && Number.isFinite(overrideMs) && overrideMs > 0 ? overrideMs : WAIT_HOLD_MAX_SEC * 1000;
+        const holdMs = Math.min(requestedMs, maxHoldMs);
+        const capped = requestedMs > holdMs;
         const started = Date.now();
         const outcome = await waitFor(scopes, {
           signal,
           progress,
-          timeoutMs: (args.timeoutSec ?? WAIT_DEFAULT_SEC) * 1000,
+          timeoutMs: holdMs,
           check: () => {
             const events = news();
             if (events.length) return { reason: reasonOf(events), events };
@@ -421,10 +444,13 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
             .filter((m) => !watched || watched.has(m.id))
             .map((m) => compactWorker(m, s.id)),
         );
-        const body = { matched, reason, waitedMs: Date.now() - started, events, questions, workers, cursor };
+        const body = { matched, reason, waitedMs: Date.now() - started, ...(capped && !matched ? { capped: true } : {}), events, questions, workers, cursor };
+        let headline = `Nothing matched within ${requestedSec} s.`;
+        if (matched) headline = `Matched ${reason}.`;
+        else if (capped) headline = `Nothing matched within ${Math.max(1, Math.round(holdMs / 1000))} s (capped from ${requestedSec} s to stay under MCP client timeouts; call team_wait again with since set to Cursor to keep waiting).`;
         return officeResult(
           [
-            matched ? `Matched ${reason}.` : `Nothing matched within ${args.timeoutSec ?? WAIT_DEFAULT_SEC} s.`,
+            headline,
             ...events.map(compactEventText),
             ...(questions.length ? [`Questions waiting on you:\n${questions.map(questionText).join('\n')}`] : []),
             ...(workers.length ? workers.map(compactWorkerText) : ['You have no subagents.']),

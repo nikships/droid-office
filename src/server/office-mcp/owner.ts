@@ -4,7 +4,7 @@ import { ORCHESTRATOR_ID, type MissionAgent } from '../../shared/mission-control
 import { OFFICE_SHELL_ID } from '../../shared/office-shell.js';
 import type { ClientMsg, ServerMsg, WorkerInfo, WorktreeState } from '../../shared/protocol.js';
 import { officeError, officeResult, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
-import { floorRef, workerRef } from './owner-schemas.js';
+import { floorRef, resolveWorkerTarget, WORKER_TARGET_ERROR, workerTarget } from './owner-schemas.js';
 import { registerOwnerTools } from './owner-tools.js';
 
 /** Owner actions used by the remote worker tools, including dismissal's worktree inspection. */
@@ -268,15 +268,18 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       return officeResult([floorText, ...(mission.length ? [`Mission Control\n${mission.map((a) => missionLine(a, caller.worker.id)).join('\n')}`] : [])].join('\n\n'), { floors: shown, workers, mission });
     },
   );
+  const hasWorker = (a: { worker?: string; workerId?: string; name?: string }) => resolveWorkerTarget(a) !== undefined;
   server.tool(
     {
       name: 'office_look',
-      description: `Read a bounded terminal snapshot (<=48,000 characters) of a local worker, "${OFFICE_SHELL_ID}" shell, or Orchestrator, read-only. Use office_worker_thread for cloud/history.`,
-      inputSchema: z.strictObject({ name: workerRef, floor: floorRef.optional(), lines: z.number().int().min(1).max(400).default(80).describe('Latest lines (default 80, max 400).') }),
+      description: `Read a bounded terminal snapshot (<=48,000 characters) of a local worker, "${OFFICE_SHELL_ID}" shell, or Orchestrator, read-only. Accepts worker (or name/workerId). Use office_worker_thread for cloud/history.`,
+      inputSchema: z.strictObject({ ...workerTarget, floor: floorRef.optional(), lines: z.number().int().min(1).max(400).default(80).describe('Latest lines (default 80, max 400).') }).refine(hasWorker, WORKER_TARGET_ERROR),
       annotations: readOnly,
     },
     buildingOnly,
-    ({ name, floor, lines }, caller) => {
+    (args, caller) => {
+      const name = resolveWorkerTarget(args)!;
+      const { floor, lines } = args;
       if (name.toLowerCase() === OFFICE_SHELL_ID) {
         const floors = owner.floors();
         let shellFloor: OwnerFloor | undefined;
@@ -319,17 +322,21 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'office_send_home',
-      description: 'Send a floor worker home (prefer team_dismiss for subagents). cleanup defaults to keep; pass worktree/all or deleteSession: true only when the owner asked.',
-      inputSchema: z.strictObject({
-        name: workerRef,
-        floor: floorRef.optional(),
-        cleanup: z.enum(['keep', 'worktree', 'all']).default('keep').describe('Default keep; worktree/all only when asked.'),
-        deleteSession: z.boolean().default(false).describe('Cloud only: delete Factory session when asked.'),
-      }),
+      description: 'Send a floor worker home (prefer team_dismiss for subagents; accepts worker, name, or workerId). cleanup defaults to keep; pass worktree/all or deleteSession: true only when the owner asked.',
+      inputSchema: z
+        .strictObject({
+          ...workerTarget,
+          floor: floorRef.optional(),
+          cleanup: z.enum(['keep', 'worktree', 'all']).default('keep').describe('Default keep; worktree/all only when asked.'),
+          deleteSession: z.boolean().default(false).describe('Cloud only: delete Factory session when asked.'),
+        })
+        .refine(hasWorker, WORKER_TARGET_ERROR),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     buildingOnly,
-    async ({ name, floor, cleanup, deleteSession }, caller, signal) => {
+    async (args, caller, signal) => {
+      const name = resolveWorkerTarget(args)!;
+      const { floor, cleanup, deleteSession } = args;
       const found = findWorker(owner.floors(), name, floor);
       if (typeof found === 'string') {
         const building = findMissionAgent(owner, name);

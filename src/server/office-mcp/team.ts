@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { z } from 'zod';
+import { floorNamed } from '../remote-office.js';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply, WorkerReview } from '../team.js';
 import { teamBoardText, type TeamBoardMember } from '../team.js';
 import { modelUsageWords } from '../../shared/subscriptions.js';
@@ -259,7 +260,8 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'worker_diff',
-      description: 'Read your subagent’s bounded Git stat and diff (recorded base vs tracked working tree, or pass base or commits). Inspect during check-ins and before accepting "done", relaying contract changes, or merging.',
+      description:
+        'Read your subagent’s bounded Git stat and diff (recorded base vs tracked working tree, or pass base or commits; also works after dismissal while its worktree or branch exists). Inspect during check-ins and before accepting "done", relaying contract changes, or merging.',
       inputSchema: z.strictObject({ worker, floor: floorArg, base: z.string().trim().min(1).max(200).optional(), commits: z.number().int().min(1).max(1000).optional() }),
       annotations: readOnly,
     },
@@ -384,23 +386,23 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_hire',
       description:
-        'Hire a fresh subagent in its own terminal and usually a worktree. Read team_models once per batch and commit task-authored prerequisites first. Give each independent scope single-writer edit ownership, dependency context and checks (building agents set floor or task.repo). Actively check in, relay changes, unblock questions and review before integration.',
+        'Hire a fresh subagent in its own terminal (and isolated Git worktree on Git floors). Read team_models once per batch and commit task-authored prerequisites first. Pass top-level title + brief for a simple hire, or structured task when pinning baseBranch, branch, prNumber, or acceptanceCriteria (building agents set floor or task.repo; task.repo is optional). Give each independent scope single-writer edit ownership, dependency context and checks. Actively check in, relay changes, unblock questions and review before integration.',
       inputSchema: z.strictObject({
-        title: z.string().trim().min(1).max(80).optional().describe('Short task title.'),
-        brief: text.optional().describe('Ticket: goal, context, exact owned files, checks, and delivery.'),
+        title: z.string().trim().min(1).max(80).optional().describe('Short task title (use with top-level brief; omit when passing task).'),
+        brief: text.optional().describe('Ticket: goal, context, exact owned files, checks, and delivery (omit when passing task).'),
         floor: z.string().trim().min(1).max(4096).optional().describe('Building agents only (floor workers omit): floor id, name, or path.'),
         task: z
           .strictObject({
             title: z.string().trim().min(1).max(80),
             brief: text,
-            repo: z.string().trim().min(1).max(4096).describe('Exact floor checkout path (never "."), or floor id/name/path for building agents.'),
+            repo: z.string().trim().min(1).max(4096).optional().describe('Optional floor checkout path (never "."), or floor id/name/path for building agents; omit to use your floor or top-level floor.'),
             baseBranch: z.string().trim().min(1).max(4096).optional().describe('The same setting as from: ref, your subagent as worker:<name/id>, or its absolute worktree path; committed state only. Omit for lead HEAD/floor base.'),
             branch: z.string().trim().min(1).max(200).optional().describe('New local branch name.'),
             prNumber: z.number().int().positive().optional(),
             acceptanceCriteria: z.array(z.string().trim().min(1).max(2000)).max(30).optional(),
           })
           .optional()
-          .describe('Structured ticket (overrides title/brief).'),
+          .describe('Structured ticket with optional branch/PR/criteria metadata (overrides top-level title/brief; repo is optional and works on non-git floors too).'),
         model: z.string().trim().min(1).optional().describe('Exact model id from team_models (match owner notes, difficulty, images, quota).'),
         effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional().describe('Effort from team_models.'),
         from: z
@@ -410,7 +412,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           .max(4096)
           .optional()
           .describe('The same setting as task.baseBranch: ref, your subagent as worker:<name/id>, or its absolute worktree path. Pins committed HEAD without moving the source; requires a worktree. Omit for lead HEAD/floor base.'),
-        worktree: z.boolean().optional().describe('Structured task defaults true; otherwise follows owner settings. True: isolated worktree; false: shared checkout for read-only/non-git (omit baseBranch/branch/from).'),
+        worktree: z.boolean().optional().describe('Structured task defaults true on Git floors (false on non-Git floors); otherwise follows owner settings. True: isolated worktree; false: shared checkout (omit baseBranch/branch/from).'),
       }),
       annotations: changesState,
     },
@@ -419,8 +421,8 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const title = task?.title ?? args.title;
       const ticket = task?.brief ?? brief;
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
-      if (caller.building && !task && !args.floor) {
-        return officeError('A building agent names the floor to hire on: pass floor with the open floor’s id, name or path from office_floors, or use a structured task whose repo names it.');
+      if (caller.building && !args.floor && !task?.repo) {
+        return officeError('A building agent names the floor to hire on: pass floor with the open floor’s id, name or path from office_floors, or set task.repo.');
       }
       if (!title || !ticket) return officeError('team_hire needs title and brief, either at the top level or in task.');
       if (task && args.from && task.baseBranch && !sameBase(args.from, task.baseBranch)) {
@@ -428,15 +430,22 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       }
       if (task && args.worktree === false && (task.baseBranch || task.branch))
         return officeError('A structured task with baseBranch or branch requires a fresh worktree: leave worktree out, or omit baseBranch and branch for read-only work in the checkout.');
-      if (task && !caller.building && path.resolve(task.repo) !== path.resolve(ownFloor(caller).dir)) return officeError('task.repo must name your floor repository.');
+      if (task?.repo !== undefined && !caller.building && path.resolve(task.repo) !== path.resolve(ownFloor(caller).dir)) return officeError('task.repo must name your floor repository.');
+      const pickedFloor = task && caller.building && deps.remote ? floorNamed(deps.remote.floors(), task.repo ?? args.floor!) : undefined;
+      const repoLabel = task ? (typeof pickedFloor === 'object' ? pickedFloor.dir : (task.repo ?? (caller.building ? args.floor : ownFloor(caller).dir))) : undefined;
       const prompt = task
-        ? `${ticket}\n\nRepository: ${task.repo}${task.baseBranch ? `\nBase branch: ${task.baseBranch}` : ''}${task.branch ? `\nTask branch: ${task.branch}` : ''}${task.prNumber ? `\nPull request: #${task.prNumber}` : ''}${task.acceptanceCriteria?.length ? `\nAcceptance criteria:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}` : ''}`
+        ? `${ticket}${repoLabel ? `\n\nRepository: ${repoLabel}` : ''}${task.baseBranch ? `\nBase branch: ${task.baseBranch}` : ''}${task.branch ? `\nTask branch: ${task.branch}` : ''}${task.prNumber ? `\nPull request: #${task.prNumber}` : ''}${task.acceptanceCriteria?.length ? `\nAcceptance criteria:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}` : ''}`
         : ticket;
       if (prompt.length > 20_000) return officeError('The complete structured task ticket must fit in 20,000 characters.');
-      // A structured task gets a fresh worktree unless the caller asks for the checkout.
-      const worktree = task ? (args.worktree ?? true) : args.worktree;
       return reply(
-        await command(caller, { action: 'hire', ...args, title, task: prompt, ...(task ? { repo: task.repo, from: task.baseBranch ?? args.from, branch: task.branch } : {}), worktree }),
+        await command(caller, {
+          action: 'hire',
+          ...args,
+          title,
+          task: prompt,
+          ...(task ? { structured: true, ...(task.repo ? { repo: task.repo } : {}), from: task.baseBranch ?? args.from, branch: task.branch } : {}),
+          worktree: args.worktree,
+        }),
         (body) => `Hired ${memberText(body.worker as TeamMember)}\nIt is working on the brief. Review its report and commits before integration.`,
       );
     },
@@ -514,7 +523,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     {
       name: 'team_review',
       description:
-        'Record approve, request_changes or comment on a subagent’s latest report after checking worker_diff. request_changes notifies it by default to fix and re-report; approve/comment do not wake it by default. Approval is the lead’s workflow gate, not a server-enforced merge lock. Re-review changed work.',
+        'Record approve, request_changes or comment on a subagent’s latest report after checking worker_diff (also works after the subagent was dismissed). request_changes notifies an active subagent by default to fix and re-report; approve/comment do not wake it by default. Approval is the lead’s workflow gate, not a server-enforced merge lock. Re-review changed work.',
       inputSchema: z.strictObject({
         worker,
         verdict: z.enum(['approve', 'request_changes', 'comment']).describe('approve: verified ready; request_changes: fixes needed; comment: notes.'),

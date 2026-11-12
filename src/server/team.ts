@@ -180,6 +180,18 @@ export interface TeamNote {
   at: number;
 }
 
+interface SubagentRecord {
+  id: string;
+  name: string;
+  lead: string;
+  deskId?: string;
+  model?: string;
+  effort?: string;
+  task?: string;
+  worktree?: { path: string; branch: string; base?: string; from?: string };
+  pr?: { number: number; url: string };
+}
+
 export interface TeamBoardMember {
   id: string;
   name: string;
@@ -311,6 +323,7 @@ export class Team {
   private now: () => number;
   private idleSince = new Map<string, number>();
   private notes = new Map<string, TeamNote>();
+  private subagents = new Map<string, SubagentRecord>();
 
   constructor(
     private workers: TeamWorkers,
@@ -321,6 +334,7 @@ export class Team {
     this.restore();
     for (const w of workers.list()) {
       this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
+      this.rememberSubagent(w);
       if ((w.status === 'idle' || w.status === 'done') && !this.idleSince.has(w.id)) this.idleSince.set(w.id, this.now());
     }
   }
@@ -335,6 +349,7 @@ export class Team {
   private observe(w: WorkerInfo) {
     const prev = this.known.get(w.id);
     this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
+    this.rememberSubagent(w);
     if (w.status !== 'idle' && w.status !== 'done') this.idleSince.delete(w.id);
     else if (!this.idleSince.has(w.id)) this.idleSince.set(w.id, this.now());
     if (!prev || prev.status === w.status) return;
@@ -368,6 +383,19 @@ export class Team {
     this.known.delete(id);
     this.idleSince.delete(id);
     const hadNote = this.notes.delete(id);
+    const hadSubagent = this.subagents.has(id);
+    let droppedFormer = false;
+    for (const [subId, rec] of this.subagents) {
+      if (rec.lead === id) {
+        this.subagents.delete(subId);
+        droppedFormer = true;
+      }
+    }
+    const ownRec = this.subagents.get(id);
+    if (ownRec && !this.workers.get(ownRec.lead) && !this.workers.buildingAgent?.(ownRec.lead)) {
+      this.subagents.delete(id);
+      droppedFormer = true;
+    }
     this.reported.delete(id);
     this.spoke.delete(id);
     const before = this.log.length;
@@ -376,7 +404,7 @@ export class Team {
     const hadCursor = this.statusCursors.delete(id);
     clearTimeout(this.timers.get(id));
     this.timers.delete(id);
-    if (this.log.length !== before || hadCursor || hadNote) this.persist();
+    if (this.log.length !== before || hadCursor || hadNote || hadSubagent || droppedFormer) this.persist();
   }
 
   /** Runs `send`, which may send worker `id` home, so its lead hears who did it. */
@@ -510,14 +538,15 @@ export class Team {
       case 'pr':
         return this.openPull(caller, b);
       case 'diff': {
-        const w = this.resolve(caller, b.worker);
-        if (typeof w === 'string') return no(404, w);
+        const resolved = this.resolveWithFormer(caller, b.worker);
+        if ('status' in resolved) return resolved;
         if (!this.opts.git) return no(400, 'Worker diffs require a Git floor; plain folders cannot inspect an enclosing checkout.');
         if (b.commits !== undefined && (typeof b.commits !== 'number' || !Number.isInteger(b.commits) || b.commits < 1 || b.commits > 1000)) return no(400, 'commits takes the last 1–1000 commits through HEAD.');
         if (b.base !== undefined && typeof b.base !== 'string') return no(400, 'base takes a branch, tag or commit.');
         if (b.base !== undefined && b.commits !== undefined) return no(400, 'Choose base or commits, not both.');
+        const target = resolved.live ?? { id: resolved.record.id, name: resolved.record.name, worktree: resolved.record.worktree, dismissed: true };
         try {
-          return ok(await workerDiff(this.opts.dir, w, typeof b.base === 'string' ? b.base : undefined, typeof b.commits === 'number' ? b.commits : undefined));
+          return ok(await workerDiff(this.opts.dir, target, typeof b.base === 'string' ? b.base : undefined, typeof b.commits === 'number' ? b.commits : undefined));
         } catch (err) {
           return no(400, (err as Error).message);
         }
@@ -759,6 +788,7 @@ export class Team {
   }
 
   private member(w: WorkerInfo): TeamMember {
+    this.rememberSubagent(w);
     const note = this.notes.get(w.id);
     const last = [...this.log].reverse().find((e) => e.worker === w.id && (e.kind === 'report' || e.kind === 'question'));
     const model = w.activeModel ?? w.model;
@@ -800,6 +830,116 @@ export class Team {
       ...(open ? { openQuestion: open.seq } : {}),
       ...(awaitingJob ? { awaitingJob: true as const } : {}),
       ...((w.status === 'idle' || w.status === 'done') && this.idleSince.has(w.id) ? { idleSince: this.idleSince.get(w.id), idleForMs: Math.max(0, this.now() - this.idleSince.get(w.id)!) } : {}),
+    };
+  }
+
+  private rememberSubagent(w: WorkerInfo): SubagentRecord | undefined {
+    if (!w.lead) return undefined;
+    const prev = this.subagents.get(w.id);
+    const model = w.activeModel ?? w.model ?? prev?.model;
+    const effort = w.activeEffort ?? w.effort ?? prev?.effort;
+    const task = w.task?.name ?? prev?.task;
+    const worktree = w.worktree ? { path: w.worktree.path, branch: w.worktree.branch, ...(w.worktree.base ? { base: w.worktree.base } : {}), ...(w.worktree.from ? { from: w.worktree.from } : {}) } : prev?.worktree;
+    const pr = w.pr ? { ...w.pr } : prev?.pr;
+    const rec: SubagentRecord = {
+      id: w.id,
+      name: w.name,
+      lead: w.lead,
+      ...(w.deskId ? { deskId: w.deskId } : prev?.deskId ? { deskId: prev.deskId } : {}),
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(task ? { task } : {}),
+      ...(worktree ? { worktree } : {}),
+      ...(pr ? { pr } : {}),
+    };
+    this.subagents.delete(w.id);
+    this.subagents.set(w.id, rec);
+    if (this.subagents.size > LOG_MAX * 2) {
+      let evicted = false;
+      for (const [key] of this.subagents) {
+        if (!this.workers.get(key)) {
+          this.subagents.delete(key);
+          evicted = true;
+          break;
+        }
+      }
+      if (!evicted) {
+        const oldest = this.subagents.keys().next().value;
+        if (oldest) this.subagents.delete(oldest);
+      }
+    }
+    return rec;
+  }
+
+  private formerRecords(lead: string): SubagentRecord[] {
+    const active = new Set(this.teamOf(lead).map((w) => w.id));
+    const map = new Map<string, SubagentRecord>();
+    for (const rec of this.subagents.values()) {
+      if (rec.lead === lead && !active.has(rec.id)) map.set(rec.id, rec);
+    }
+    for (const e of this.log) {
+      if (e.lead === lead && !active.has(e.worker) && !map.has(e.worker)) map.set(e.worker, { id: e.worker, name: e.name, lead: e.lead });
+    }
+    return [...map.values()];
+  }
+
+  /** Former subagents of `lead` matching `ref` by id or name, for post-dismissal diff and review across floors. */
+  formerMatches(lead: string, ref: string): { id: string; name: string; worktree?: { path: string; branch: string; base?: string; from?: string } }[] {
+    const want = ref.trim().toLowerCase();
+    if (!want) return [];
+    const all = this.formerRecords(lead);
+    const exact = all.filter((r) => r.id.toLowerCase() === want);
+    const matched = exact.length ? exact : all.filter((r) => r.name.toLowerCase() === want || r.name.replace(/ 🐚$/, '').toLowerCase() === want);
+    return matched.map((r) => ({ id: r.id, name: r.name, ...(r.worktree ? { worktree: { ...r.worktree } } : {}) }));
+  }
+
+  private resolveWithFormer(lead: WorkerInfo, ref: unknown): { live?: WorkerInfo; record: SubagentRecord } | TeamReply {
+    const want = typeof ref === 'string' ? ref.trim().toLowerCase() : '';
+    if (!want) return no(404, 'Name the subagent: team with action status shows your team');
+    const team = this.teamOf(lead.id);
+    const found = team.find((w) => w.id === want || w.name.toLowerCase() === want || w.name.replace(/ 🐚$/, '').toLowerCase() === want);
+    if (found) return { live: found, record: this.rememberSubagent(found)! };
+    const former = this.formerRecords(lead.id);
+    const byId = former.find((r) => r.id.toLowerCase() === want);
+    if (byId) return { record: byId };
+    const byName = former.filter((r) => r.name.toLowerCase() === want || r.name.replace(/ 🐚$/, '').toLowerCase() === want);
+    if (byName.length === 1) return { record: byName[0] };
+    if (byName.length > 1) return no(409, `${String(ref).trim()} names more than one former subagent: use the worker id.`);
+    const err = this.resolve(lead, ref);
+    return no(404, typeof err === 'string' ? err : 'No such subagent');
+  }
+
+  private formerMember(rec: SubagentRecord): TeamMember {
+    const last = [...this.log].reverse().find((e) => e.worker === rec.id && e.lead === rec.lead && (e.kind === 'report' || e.kind === 'question'));
+    return {
+      id: rec.id,
+      name: rec.name,
+      status: 'exited',
+      state: 'exited',
+      desk: rec.deskId ? (DESK_BY_ID.get(rec.deskId)?.label ?? rec.deskId) : 'sent home',
+      ...(rec.model ? { model: rec.model } : {}),
+      ...(rec.effort ? { effort: rec.effort } : {}),
+      ...(rec.worktree
+        ? { worktree: { path: path.resolve(this.opts.dir, rec.worktree.path), branch: rec.worktree.branch, ...((rec.worktree.from ?? rec.worktree.base) ? { from: rec.worktree.from ?? rec.worktree.base?.slice(0, 7) } : {}) } }
+        : {}),
+      ...(rec.task ? { task: rec.task } : {}),
+      ...(rec.pr ? { pr: rec.pr } : {}),
+      settled: true,
+      ...(last?.text
+        ? {
+            report: {
+              text: last.text,
+              question: last.kind === 'question',
+              at: last.at,
+              seq: last.seq,
+              ...(last.pushedSha ? { pushedSha: last.pushedSha } : {}),
+              ...(last.prUrl ? { prUrl: last.prUrl } : {}),
+              ...(last.progress ? { progress: true as const } : {}),
+              ...(last.result ? { result: cloneWorkerResult(last.result) } : {}),
+              ...(last.review ? { review: { ...last.review } } : {}),
+            },
+          }
+        : {}),
     };
   }
 
@@ -856,7 +996,7 @@ export class Team {
     const tooMany = full();
     if (tooMany) return no(409, tooMany);
     if (b.worktree === true && !this.opts.git) return no(400, "This floor's project isn't a git checkout, so subagents can't have worktrees: set worktree: false in team_hire");
-    const worktree = (typeof b.worktree === 'boolean' ? b.worktree : s.worktree) && this.opts.git;
+    const worktree = (typeof b.worktree === 'boolean' ? b.worktree : b.structured === true ? true : s.worktree) && this.opts.git;
     let from = typeof b.from === 'string' && b.from.trim() ? b.from.trim() : undefined;
     let handoff: Awaited<ReturnType<typeof handoffStart>> | undefined;
     if (from && worktree && (from.startsWith('worker:') || path.isAbsolute(from))) {
@@ -896,6 +1036,7 @@ export class Team {
     const title = str(b.title, TITLE_MAX).trim();
     if (title) this.workers.setTask(info.id, { name: title, summary: clip(task, 120) });
     this.known.set(info.id, { name: info.name, lead: still.id, status: info.status });
+    this.rememberSubagent(this.workers.get(info.id) ?? info);
     this.opts.toast(`🧭 ${still.name} hired ${info.name} at ${seat.label}${title ? `: ${title}` : ''}`, 'info', info.id);
     return ok({ worker: this.member(this.workers.get(info.id) ?? info), worktree: info.worktree ? path.resolve(this.opts.dir, info.worktree.path) : this.opts.dir, branch: info.worktree?.branch ?? null, ...(handoff ? { handoff } : {}) });
   }
@@ -1070,6 +1211,7 @@ export class Team {
     const safe = b.pruneWorktree !== undefined || b.keepBranch !== undefined;
     // Even false needs retention-safe dismissal: legacy kill may prune clean worktrees.
     if (safe && !this.workers.dismiss) return no(409, 'Safe worktree cleanup is unavailable on this floor; no worker was dismissed');
+    this.rememberSubagent(w);
     let result: { note?: string; error?: string };
     this.sending.set(w.id, 'lead');
     try {
@@ -1080,6 +1222,7 @@ export class Team {
     }
     const { note, error } = result;
     if (error) return no(409, `${w.name}: ${error}`);
+    this.persist();
     this.opts.toast(`👋 ${lead.name} sent ${w.name} home${note ? `. ${note}` : ''}`, 'info');
     return ok({ name: w.name, ...(note ? { note } : {}) });
   }
@@ -1087,6 +1230,7 @@ export class Team {
   private async report(w: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const lead = w.lead ? this.workers.get(w.lead) : undefined;
     if (!lead) return no(403, 'You have no lead to report to: say it in your own terminal instead');
+    this.rememberSubagent(w);
     const text = str(b.text, TASK_MAX).trim();
     if (!text) return no(400, 'Provide text for team_report');
     if (b.pushedSha !== undefined && (typeof b.pushedSha !== 'string' || !/^[0-9a-f]{40,64}$/.test(b.pushedSha))) return no(400, 'pushedSha takes a full hexadecimal commit SHA.');
@@ -1119,26 +1263,28 @@ export class Team {
   }
 
   private review(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
-    const w = this.resolve(lead, b.worker);
-    if (typeof w === 'string') return no(404, w);
+    const resolved = this.resolveWithFormer(lead, b.worker);
+    if ('status' in resolved) return resolved;
+    const { live: w, record } = resolved;
     if (typeof b.verdict !== 'string' || !(REVIEW_VERDICTS as readonly string[]).includes(b.verdict)) return no(400, `verdict must be one of ${REVIEW_VERDICTS.join(', ')}.`);
     const verdict = b.verdict as ReviewVerdict;
     const notes = str(b.notes, TASK_MAX).trim();
     if (!notes) return no(400, 'Provide notes for team_review.');
     if (b.notify !== undefined && typeof b.notify !== 'boolean') return no(400, 'notify takes true or false.');
-    const last = [...this.log].reverse().find((e) => e.worker === w.id && e.lead === lead.id && (e.kind === 'report' || e.kind === 'question'));
-    if (!last) return no(409, `${w.name} has not reported a result to review yet.`);
+    const last = [...this.log].reverse().find((e) => e.worker === record.id && e.lead === lead.id && (e.kind === 'report' || e.kind === 'question'));
+    if (!last) return no(409, `${record.name} has not reported a result to review yet.`);
     const review: WorkerReview = { verdict, notes, by: lead.name, at: this.now() };
     last.review = review;
     this.persist();
-    this.emit({ type: 'worker', worker: w });
+    if (w) this.emit({ type: 'worker', worker: w });
     const icon = verdict === 'approve' ? '✅' : verdict === 'request_changes' ? '🔁' : '💬';
-    this.opts.toast(`${icon} ${lead.name} reviewed ${w.name} (${verdict}): “${clip(notes, 90)}”`, 'info', w.id);
+    this.opts.toast(`${icon} ${lead.name} reviewed ${record.name} (${verdict}): “${clip(notes, 90)}”`, 'info', record.id);
     const shouldNotify = typeof b.notify === 'boolean' ? b.notify : verdict === 'request_changes';
     let notified = false;
     let notifyNote: string | undefined;
     if (shouldNotify) {
-      if (w.status === 'starting') notifyNote = `${w.name} is still starting up; send follow-up with team_message once ready.`;
+      if (!w) notifyNote = `${record.name} was already sent home; hire a follow-up subagent if changes are needed.`;
+      else if (w.status === 'starting') notifyNote = `${w.name} is still starting up; send follow-up with team_message once ready.`;
       else if (w.status === 'needs_input') notifyNote = `${w.name} is waiting on an answer in its own terminal (${w.activity ?? 'a prompt'}).`;
       else {
         const message = officePrompt(this.opts.prompts, 'subagent.message', { from: lead.name, ...workerMessageVars(`Review verdict: ${verdict}\n\n${notes}`) });
@@ -1152,7 +1298,7 @@ export class Team {
         }
       }
     }
-    return ok({ worker: this.member(this.workers.get(w.id) ?? w), review: { ...review }, reportSeq: last.seq, notified, ...(notifyNote ? { notifyNote } : {}) });
+    return ok({ worker: w ? this.member(this.workers.get(w.id) ?? w) : this.formerMember(record), review: { ...review }, reportSeq: last.seq, notified, ...(notifyNote ? { notifyNote } : {}) });
   }
 
   private push(e: Omit<TeamEvent, 'seq' | 'at'>) {
@@ -1225,7 +1371,32 @@ export class Team {
 
   private restore() {
     try {
-      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as { events?: unknown; nudged?: unknown; seq?: unknown; idleSince?: unknown; statusCursors?: unknown; notes?: unknown };
+      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as { events?: unknown; nudged?: unknown; seq?: unknown; idleSince?: unknown; statusCursors?: unknown; notes?: unknown; former?: unknown };
+      if (Array.isArray(raw.former))
+        for (const entry of raw.former) {
+          if (!isPlainObject(entry) || typeof entry.id !== 'string' || typeof entry.name !== 'string' || typeof entry.lead !== 'string') continue;
+          const wt =
+            isPlainObject(entry.worktree) && typeof entry.worktree.path === 'string' && typeof entry.worktree.branch === 'string'
+              ? {
+                  path: entry.worktree.path,
+                  branch: entry.worktree.branch,
+                  ...(typeof entry.worktree.base === 'string' ? { base: entry.worktree.base } : {}),
+                  ...(typeof entry.worktree.from === 'string' ? { from: entry.worktree.from } : {}),
+                }
+              : undefined;
+          const pr = isPlainObject(entry.pr) && typeof entry.pr.number === 'number' && typeof entry.pr.url === 'string' ? { number: entry.pr.number, url: entry.pr.url } : undefined;
+          this.subagents.set(entry.id, {
+            id: entry.id,
+            name: entry.name,
+            lead: entry.lead,
+            ...(typeof entry.deskId === 'string' ? { deskId: entry.deskId } : {}),
+            ...(typeof entry.model === 'string' ? { model: entry.model } : {}),
+            ...(typeof entry.effort === 'string' ? { effort: entry.effort } : {}),
+            ...(typeof entry.task === 'string' ? { task: entry.task } : {}),
+            ...(wt ? { worktree: wt } : {}),
+            ...(pr ? { pr } : {}),
+          });
+        }
       if (raw.notes && typeof raw.notes === 'object' && !Array.isArray(raw.notes))
         for (const [id, value] of Object.entries(raw.notes)) {
           if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
@@ -1279,6 +1450,9 @@ export class Team {
     }
     // A lead that didn't come back with the office has nobody to hear its news.
     this.log = this.log.filter((e) => !!this.workers.get(e.lead) || this.workers.buildingAgent?.(e.lead));
+    for (const [subId, rec] of this.subagents) {
+      if (!this.workers.get(rec.lead) && !this.workers.buildingAgent?.(rec.lead)) this.subagents.delete(subId);
+    }
     // Cursors and inbox ids name a seq, so it never goes back, even when the newest events left with their lead.
     this.seq = this.log.reduce((m, e) => Math.max(m, e.seq), Math.max(this.seq, ...this.statusCursors.values()));
   }
@@ -1294,6 +1468,7 @@ export class Team {
           idleSince: Object.fromEntries(this.idleSince),
           statusCursors: Object.fromEntries(this.statusCursors),
           notes: Object.fromEntries(this.notes),
+          former: [...this.subagents.values()].slice(-LOG_MAX),
         }),
         {
           mode: 0o600,

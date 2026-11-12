@@ -154,11 +154,13 @@ No arguments.
 
 ### `office_inbox`
 
-Read messages and team updates from all floors without consuming them. Acknowledge exact ids only after processing them, in a later call. Returns at most limit messages and a remaining count. No waiting, push delivery or automatic acknowledgment.
+Read messages and team updates from all floors without consuming them. Acknowledge exact ids only after processing them, in a later call. In overlapping Grok Bot webhook runs, pass `ids` (for example `payload.ackIds`) or `deliveryId` (`payload.deliveryId`) to scope the view to that webhook delivery (already-acknowledged items still appear with `acked: true`) and prevent acknowledging another run's items. Returns at most `limit` messages and a `remaining` count of unacknowledged items.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `ack` | string[] | no, default `[]` | Exact message ids from an earlier call to acknowledge, at most 500. |
+| `ack` | string[] | no, default `[]` | Exact message/ack ids (or a `whk-…` webhook `deliveryId`) to acknowledge, at most 500. Scoped to `ids`/`deliveryId` when supplied; out-of-scope ids are ignored and returned in `ignoredAck`. |
+| `ids` | string[] | no | Filter returned messages to these exact event/message ids (e.g. a webhook payload’s ackIds); includes already-acked items with acked: true. |
+| `deliveryId` | string | no | Webhook payload deliveryId (whk-…) to scope returned messages and acks to that webhook delivery. |
 | `limit` | integer | no, default `50` | Messages to return, 1 to 100. |
 
 ### `office_status`
@@ -180,11 +182,13 @@ List every worker in the building, or on one floor: id, name, floor id and numbe
 
 ### `office_look`
 
-Read the end of any worker's terminal, on any floor, without typing anything. name "office-shell" reads the floor's boss shell. In Mission Control, it reads the Orchestrator's terminal; an external bot has no terminal on this machine. At most 48,000 characters, with a truncation marker if older text was omitted. A snapshot, not a transcript; for conversation history or a cloud worker use office_worker_thread.
+Read the end of any worker's terminal, on any floor, without typing anything. `"office-shell"` reads the floor's boss shell. In Mission Control, it reads the Orchestrator's terminal; an external bot has no terminal on this machine. At most 48,000 characters, with a truncation marker if older text was omitted. A snapshot, not a transcript; for conversation history or a cloud worker use `office_worker_thread`.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `name` | string | yes | Worker name or id, case-insensitive. Use office_roster to find it. |
+| `worker` | string | one target | Worker id or name from office_roster (or `"office-shell"`). |
+| `name` | string | alias | Alias for `worker`. |
+| `workerId` | string | alias | Alias for `worker`. |
 | `floor` | string | no | Floor id, number (1 is the top of the elevator list) or name. |
 | `lines` | integer | no, default `80` | Latest terminal lines, default 80, at most 400. |
 
@@ -194,7 +198,9 @@ Send any floor worker home, exactly as the owner's SEND HOME does: an owner-hire
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `name` | string | yes | Worker name or id, case-insensitive. Use office_roster to find it. |
+| `worker` | string | one target | Worker id or name from office_roster. |
+| `name` | string | alias | Alias for `worker`. |
+| `workerId` | string | alias | Alias for `worker`. |
 | `floor` | string | no | Floor id, number (1 is the top of the elevator list) or name. |
 | `cleanup` | "keep" \| "worktree" \| "all" | no, default `"keep"` | What becomes of its worktree. Default keep. Use worktree or all only when the owner asked to delete it. |
 | `deleteSession` | boolean | no, default `false` | Also delete a cloud worker’s Factory session, only when the owner asked. Otherwise it is kept. |
@@ -226,9 +232,12 @@ Prompt any floor worker as the owner, as a message in its session. Your own suba
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `worker` | string | one target | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `workerId` | string | alias | Alias for `worker`. |
+| `name` | string | alias | Alias for `worker`. |
 | `floor` | string | no | Floor id, elevator number or name. Required when the name exists on more than one floor; a building agent has no current floor. |
-| `prompt` | string | yes |  |
+| `prompt` | string | one body | Prompt message (or pass `text`). |
+| `text` | string | alias | Alias for `prompt`. |
 | `issue` | integer | no |  |
 | `images` | string[] | no | Existing office-upload image ids, not paths or image bytes. |
 | `queue` | boolean | no, default `false` | Queue behind the current turn using Ctrl+Enter instead of sending immediately. |
@@ -239,7 +248,9 @@ Answer a worker’s currently displayed menu as the owner. Supply its exact menu
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `worker` | string | one target | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `workerId` | string | alias | Alias for `worker`. |
+| `name` | string | alias | Alias for `worker`. |
 | `floor` | string | no | Floor id, elevator number or name. Required when the name exists on more than one floor; a building agent has no current floor. |
 | `menu` | object | yes | Exact menu snapshot from the worker’s screen. The server refuses an answer if the menu changed. |
 | `menu.question` | string | no | Exact question currently shown. |
@@ -257,7 +268,9 @@ Interrupt any worker’s current turn without dismissing it. Sends Escape locall
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `worker` | string | one target | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `workerId` | string | alias | Alias for `worker`. |
+| `name` | string | alias | Alias for `worker`. |
 | `floor` | string | no | Floor id, elevator number or name. Required when the name exists on more than one floor; a building agent has no current floor. |
 
 ### `office_worker_thread`
@@ -266,7 +279,9 @@ Read one page of any local or cloud agent’s conversation, including the Orches
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `workerId` | string | yes | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `worker` | string | one target | Worker id or unambiguous name from office_roster. May target any worker, not only your subagents. |
+| `workerId` | string | alias | Alias for `worker`. |
+| `name` | string | alias | Alias for `worker`. |
 | `floor` | string | no | Floor id, elevator number or name. Required when the name exists on more than one floor; a building agent has no current floor. |
 | `before` | integer | no | Exclusive entry sequence for older history; omit for the newest page. |
 
@@ -282,18 +297,18 @@ No arguments.
 
 ### `team_hire`
 
-Hire one fresh subagent at the nearest free desk for an independent task. It gets your brief, its own terminal, and normally a fresh worktree. Read team_models first. Permission, capacity and model refusals explain what to do; no desk is taken for an unavailable model. Commit shared prerequisites before hiring. A building agent names the open floor it hires on, either with `floor` or in a structured task's `repo`.
+Hire one fresh subagent at the nearest free desk for an independent task. It gets your brief, its own terminal, and normally a fresh worktree on Git floors. Pass top-level `title` + `brief` for a simple hire, or `task` when adding branch, PR, or acceptance-criteria metadata. Read team_models first. Permission, capacity and model refusals explain what to do; no desk is taken for an unavailable model. Commit shared prerequisites before hiring. A building agent names the open floor it hires on, either with `floor` or in `task.repo`.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `title` | string | no | Short task title, required unless task supplies it. |
 | `brief` | string | no | Complete task ticket, required unless task supplies it. Quotes, dollar signs and backticks are preserved. |
-| `floor` | string | no | Building agents only: the open floor to hire on, by id, name or checkout path. A structured task names it in task.repo instead. |
-| `task` | object | no | Structured task ticket. Its title/brief take precedence; an optional baseBranch controls the fresh worktree base. Fields: `title`, `brief`, `repo` (an open floor's id or name, or its repository path), optional `baseBranch`, and optional `branch`, `prNumber` and `acceptanceCriteria`. A structured task uses a fresh worktree unless `worktree: false`; then it has no baseBranch or branch. |
+| `floor` | string | no | Building agents only: the open floor to hire on, by id, name or checkout path (or set `task.repo`). |
+| `task` | object | no | Structured task ticket. Its title/brief take precedence; Fields: `title`, `brief`, optional `repo` (an open floor's id, name or path; omit to use your floor or top-level `floor`), optional `baseBranch`, `branch`, `prNumber` and `acceptanceCriteria`. Defaults to a fresh worktree on Git floors and shared folder on non-Git floors unless `worktree` overrides it. |
 | `model` | string | no | Id from team_models. Omit for the Subagents setting, else the office default, else Droid default. Pick by owner notes, task difficulty and credit multiplier. |
 | `effort` | "low" \| "medium" \| "high" \| "xhigh" \| "max" | no | Reasoning effort; choose a value this model supports according to team_models. Omit to inherit its configured effort. |
 | `from` | string | no | Branch/tag/commit, worker:<name or id>, or a registered worktree's absolute path for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true. |
-| `worktree` | boolean | no | Omit to follow the owner's Subagents setting (office_whoami shows it). True: isolated git worktree. False: use the project main checkout without switching its branch, only for read-only work or when your uncommitted changes must be visible. Non-git floors require false. |
+| `worktree` | boolean | no | Omit to default to a fresh worktree for structured tasks on Git floors (false on non-Git floors) or follow the owner's Subagents setting. True: isolated git worktree. False: shared checkout without switching its branch (omit baseBranch/branch/from). |
 
 ### `team_status`
 
@@ -325,11 +340,11 @@ Steer one subagent, a subset or all your teams without interrupting a running tu
 
 ### `team_review`
 
-Record a review verdict (approve, request_changes or comment) and concrete notes on your subagent's latest reported result, surfaced in team_status and team_report_get. By default, request_changes also sends the notes to the subagent to fix and re-report; approve and comment record the verdict without waking it.
+Record a review verdict (approve, request_changes or comment) and concrete notes on your subagent's latest reported result, surfaced in team_status and team_report_get. Also works after the subagent has already been dismissed. By default, request_changes sends the notes to an active subagent to fix and re-report (or notes that a dismissed subagent was already sent home); approve and comment record the verdict without waking it.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
+| `worker` | string | yes | Your subagent’s name or id, case-insensitive (including dismissed subagents). |
 | `verdict` | "approve" \| "request_changes" \| "comment" | yes | approve when verified and ready to merge, request_changes when fixes are required before merging, or comment for non-blocking notes. |
 | `notes` | string | yes | Concrete review findings, verified checks, or approval rationale. |
 | `notify` | boolean | no | Send the review notes to the subagent as a follow-up message. Defaults to true for request_changes and false for approve or comment. |
@@ -372,11 +387,11 @@ Open an authorized PR/MR from an already-pushed worker branch through its floor'
 
 ### `worker_diff`
 
-Read a size-capped Git diff and stat for your subagent. Defaults to its recorded base versus the tracked working tree (no untracked files). base selects another revision. commits selects the last N commits through HEAD, excluding uncommitted changes. Uses Git's built-in diff only, with no external diff drivers or textconv.
+Read a size-capped Git diff and stat for your subagent (including dismissed subagents whose worktree or branch still exists). Defaults to its recorded base versus the tracked working tree (no untracked files), or `base..branch` when the worktree was pruned and the branch kept. `base` selects another revision. `commits` selects the last N commits through HEAD, excluding uncommitted changes. Uses Git's built-in diff only, with no external diff drivers or textconv.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
+| `worker` | string | yes | Your subagent’s name or id, case-insensitive (including dismissed subagents). |
 | `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 | `base` | string | no | Revision to diff against instead of the recorded base. Not with `commits`. |
 | `commits` | integer | no | Diff only the last N commits through HEAD, 1 to 1000. Not with `base`. |
@@ -393,15 +408,15 @@ Read your subagent's recent terminal output and current tool activity, read-only
 
 ### `team_wait`
 
-Wait until one of your subagents reports, asks, gets blocked in its terminal or settles, then return with what happened: typed events with ids, waiting questions and a cursor. Matching news you have not heard (or news after since) returns at once. A terminal question counts when it appears during the wait, and idle when every watched subagent settles during it; questions already waiting are listed without ending the wait. At timeoutSec it returns with matched false. The cursor moves past news that until leaves out, so reuse it with the same until. Without since, a local lead hears the news it is shown, as with team_status. Set your client timeout to cover long waits; with a progress token it reports progress every 15 s.
+Wait until one of your subagents reports, asks, gets blocked in its terminal or settles, then return with what happened: typed events with ids, waiting questions and a cursor. Matching news you have not heard (or news after since) returns at once. A terminal question counts when it appears during the wait, and idle when every watched subagent settles during it; questions already waiting are listed without ending the wait. Each call holds at most 90 s on the server so MCP clients do not abort with `-32001` request timeouts around 200–240 s; when nothing matches in that slice it returns `matched: false` (with `capped: true` when `timeoutSec > 90`) and a `cursor` to pass as `since` on the next wait. The cursor moves past news that until leaves out, so reuse it with the same until. Without since, a local lead hears the news it is shown, as with team_status. With a progress token it also reports progress every 15 s.
 
-Without `since`, an external worker's wait starts from the news as it stands when the call arrives, and it consumes nothing in `office_inbox` or the status cursor. A plain JSON client (`Accept: application/json`) gets no progress notifications, so its HTTP timeout must cover `timeoutSec`.
+Without `since`, an external worker's wait starts from the news as it stands when the call arrives, and it consumes nothing in `office_inbox` or the status cursor.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `until` | "question" \| "report" \| "needs_input" \| "stopped" \| "left" \| "sent_home" \| "done" \| "blocked" \| "idle"[] | no | What to wait for. Event kinds, blocked (needs input in its own terminal), or idle (every watched subagent settles during the wait). Default report, question, blocked, idle. |
 | `workers` | string[] | no | Subagent names or ids to watch. Omit for your whole team. |
-| `timeoutSec` | integer | no | Longest wait in seconds, default 30, at most 600. |
+| `timeoutSec` | integer | no | Longest wait in seconds, default 30, at most 600 (each call holds at most 90 s and returns `matched: false` + `cursor` to continue). |
 | `since` | string | no | A cursor from an earlier response (cursor field), or one event id: only events after it are considered, whether or not you have heard them. |
 | `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
 | `verbose` | boolean | no | Include each event full text, not just its summary. |
@@ -447,5 +462,5 @@ The office sends an HTTP `POST` (`Content-Type: application/json`, `Authorizatio
 - Floor hooks report that a subagent entered `needs_input` (including terminal `AskUser` choices and `questionId`, or a desk permission prompt), `stopped`, `done` (when not already covered by a report), `left`, or `sent_home` (coalesced across bursts).
 - A message is queued to the bot's inbox, or the owner clicks **Send test** in Settings (`test: true`).
 
-Each payload has `{ source: "droid-office", version: 1, event, test?, summary, sentAt, lead: { id, name }, items: [...] }`. Durable items carry an `ackId` (`team:<floor>:<seq>` or `msg-...`) that stays in `office_inbox` until acknowledged via `office_inbox({ ack: [ackId] })`, so a failed or retried webhook wake never loses work.
+Each payload has `{ source: "droid-office", version: 1, event, test?, deliveryId?, ackIds?, summary, sentAt, lead: { id, name }, items: [...] }`. Durable items carry an `ackId` (`team:<floor>:<seq>` or `msg-...`) that stays in `office_inbox` until acknowledged via `office_inbox({ ack: [ackId] })` (or `office_inbox({ deliveryId, ack: [ackId] })` in overlapping webhook runs), so a failed, retried, or concurrent webhook wake never loses or cross-acknowledges work.
 
