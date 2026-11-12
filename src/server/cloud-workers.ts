@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { CloudScreenFrame } from '../shared/cloud-screen.js';
+import { CLOUD_SCREEN_COLS, CLOUD_SCREEN_ROWS, type CloudScreenFrame } from '../shared/cloud-screen.js';
 import type { CloudTurn, CloudWorker } from '../shared/factory-cloud.js';
 import type { AgentEffort, WorkerInfo, WorkerStatus } from '../shared/protocol.js';
 import { isAgentEffort } from '../shared/protocol.js';
@@ -153,8 +153,8 @@ export class CloudWorkers {
       createdAt: Date.now(),
       prompt,
       sessionId: n.sessionId,
-      cols: 100,
-      rows: 30,
+      cols: CLOUD_SCREEN_COLS,
+      rows: CLOUD_SCREEN_ROWS,
       open: false,
       activity: prompt ? (prompt.length > 80 ? `${prompt.slice(0, 79)}…` : prompt) : 'Ready for a first prompt',
       cloud: n.cloud,
@@ -334,8 +334,8 @@ function validInfo(raw: unknown): WorkerInfo | undefined {
     effort: isAgentEffort(r.effort) ? r.effort : undefined,
     acked: r.acked !== false,
     open: false,
-    cols: 100,
-    rows: 30,
+    cols: CLOUD_SCREEN_COLS,
+    rows: CLOUD_SCREEN_ROWS,
     cloud: {
       computerId: c.computerId,
       computerName: c.computerName,

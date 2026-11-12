@@ -147,6 +147,21 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
     const row = win.top + y;
     const runs = row < win.above ? s.above?.[row] : s.lines[row - win.above];
     if (!runs) continue;
+    const rowPlacements = s.placements?.filter((p) => p.cols > 0 && p.rows > 0 && win.above + p.y <= row && row < win.above + p.y + p.rows);
+    let blankFrom = Infinity;
+    if (rowPlacements?.length) {
+      const imgStart = Math.min(...rowPlacements.map((p) => Math.max(0, p.x)));
+      let lastVisibleCol = 0;
+      let col = 0;
+      for (const [text, , , flags] of runs) {
+        const chars = [...text];
+        for (let i = 0; i < chars.length; i++) {
+          if (chars[i].trim() || flags & FLAG_INVERSE) lastVisibleCol = col + i + 1;
+        }
+        col += chars.length;
+      }
+      blankFrom = Math.max(imgStart, lastVisibleCol);
+    }
     let x = 0;
     const py = pad + y * lineH;
     for (const [text, fgc, bgc, flags] of runs) {
@@ -161,7 +176,20 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
       const px = pad + x * charW;
       if (bg) {
         ctx.fillStyle = bg;
-        ctx.fillRect(px, py, len * charW + 0.5, lineH + 0.5);
+        if (!rowPlacements?.length || flags & FLAG_INVERSE) {
+          ctx.fillRect(px, py, len * charW + 0.5, lineH + 0.5);
+        } else if (text.trim() || !rowPlacements.some((p) => x < p.x + p.cols && x + len > p.x)) {
+          let spanStart = -1;
+          const end = Math.min(x + len, blankFrom);
+          for (let c = x; c <= end; c++) {
+            const keep = c < end && !rowPlacements.some((p) => c >= p.x && c < p.x + p.cols);
+            if (keep && spanStart < 0) spanStart = c;
+            else if (!keep && spanStart >= 0) {
+              ctx.fillRect(pad + spanStart * charW, py, (c - spanStart) * charW + 0.5, lineH + 0.5);
+              spanStart = -1;
+            }
+          }
+        }
       }
       if (text.trim()) {
         ctx.font = `${flags & FLAG_BOLD ? 700 : 400} ${fontSize}px ${TERM_FONT}`;
@@ -198,9 +226,18 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
   }
 }
 
-/** The lit screen in lid space, nearly edge to edge on the 0.78 x 0.5 lid. */
-const SCREEN_W = 0.775;
-const SCREEN_H = 0.495;
+/** The unchanged keyboard deck width; only the hinged lid and display widen past it. */
+export const BASE_W = 0.78;
+/** Widescreen lid width in laptop space: fills a 2.14 m workbench while leaving ~6.9 cm between neighboring 2.2 m desks. */
+export const LID_W = 1.065;
+const LID_H = 0.5;
+/** Outer shell and cover-glass bevels in macbook-lid.glb sit past ±0.37; the 0.70 hinge lip, notch, lens and badge stay inside. */
+const LID_END_X = 0.37;
+/** The lit widescreen panel in lid space, nearly edge to edge on the 1.065 x 0.5 lid (212:99 aspect). */
+export const SCREEN_W = 1.06;
+export const SCREEN_H = 0.495;
+/** Default terminal canvas matching SCREEN_W : SCREEN_H (212:99) so glyphs and Kitty images have square texels. */
+export const SCREEN_CANVAS = { width: 2968, height: 1386 } as const;
 /** In front of the GLB's bezel frame, whose face is at z 0.018. */
 const SCREEN_Z = 0.02;
 
@@ -217,6 +254,7 @@ const SPACE_BLACK = '#1c1c1e';
  */
 const RETONE: Record<string, string> = { MacbookBody: SPACE_BLACK, Chrome: SPACE_BLACK, MacbookPad: '#2a2a2a', MacbookGrille: SPACE_BLACK };
 const retoned = new Map<THREE.Material, THREE.Material>();
+const widenedLids = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
 
 /** Swaps a freshly installed GLB's materials for their Factory-toned copies (made once, shared by every laptop). */
 function retone(root: THREE.Object3D) {
@@ -235,6 +273,49 @@ function retone(root: THREE.Object3D) {
       return out;
     };
     m.material = Array.isArray(m.material) ? m.material.map(swap) : swap(m.material);
+  });
+}
+
+/**
+ * Widens the MacBook lid GLB's outer shell and front glass to LID_W by translating their left/right
+ * end-caps outward (made once, shared by every laptop). Central features inside ±LID_END_X — the
+ * 0.70 hinge lip mating with the 0.78 base, the camera notch/lens, and the back badge — stay untouched
+ * and unstretched, with corner bevel radii and normals preserved.
+ */
+function widenLid(root: THREE.Object3D) {
+  const shift = (LID_W - BASE_W) / 2;
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || m.name === 'Display' || m.name === 'pinwheel-decal') return;
+    const src = m.geometry;
+    let out = widenedLids.get(src);
+    if (!out) {
+      const pos = src.getAttribute('position');
+      let hasOuter = false;
+      if (pos) {
+        for (let i = 0; i < pos.count; i++) {
+          if (Math.abs(pos.getX(i)) > LID_END_X) {
+            hasOuter = true;
+            break;
+          }
+        }
+      }
+      if (!hasOuter || !pos) {
+        out = src;
+      } else {
+        out = src.clone();
+        const dst = out.getAttribute('position');
+        for (let i = 0; i < dst.count; i++) {
+          const x = dst.getX(i);
+          if (Math.abs(x) > LID_END_X) dst.setX(i, x + Math.sign(x) * shift);
+        }
+        dst.needsUpdate = true;
+        out.computeBoundingBox();
+        out.computeBoundingSphere();
+      }
+      widenedLids.set(src, out);
+    }
+    m.geometry = out;
   });
 }
 
@@ -278,7 +359,7 @@ export class Laptop {
   private placeholder = 'booting…';
 
   /** `size` is the screen canvas in pixels: smaller for a laptop only ever seen from across a room (the web companion's map). */
-  constructor(size: { width: number; height: number } = { width: 2048, height: 1360 }) {
+  constructor(size: { width: number; height: number } = SCREEN_CANVAS) {
     this.canvas.width = size.width;
     this.canvas.height = size.height;
     this.ctx = this.canvas.getContext('2d')!;
@@ -292,16 +373,16 @@ export class Laptop {
     // authored in this same space, so the swap changes nothing but the meshes.
     const shell = toon(SPACE_BLACK);
     const dark = toon('#0a0a0a');
-    // Base with keyboard and trackpad, where the GLB has them
+    // Base with keyboard and trackpad, where the GLB has them (unchanged 0.78 width)
     this.root.add(this.baseModel);
-    this.baseModel.add(mesh(roundedBox(0.78, 0.026, 0.52, 0.02), shell, 0, 0.017, 0.02));
+    this.baseModel.add(mesh(roundedBox(BASE_W, 0.026, 0.52, 0.02), shell, 0, 0.017, 0.02));
     this.baseModel.add(mesh(new THREE.BoxGeometry(0.612, 0.004, 0.243), dark, 0, 0.029, -0.0865));
     this.baseModel.add(mesh(new THREE.BoxGeometry(0.356, 0.004, 0.202), toon('#2a2a2a'), 0, 0.029, 0.163));
     // Lid, hinged along the deck's top back edge
     this.lid.position.set(0, 0.03, -0.24);
     this.root.add(this.lid);
     this.lid.add(this.lidModel);
-    const lidShell = mesh(roundedBox(0.78, 0.025, 0.5, 0.04), shell, 0, 0.25, 0);
+    const lidShell = mesh(roundedBox(LID_W, 0.025, LID_H, 0.04), shell, 0, LID_H / 2, 0);
     lidShell.rotation.x = Math.PI / 2;
     this.lidModel.add(lidShell);
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(SCREEN_W, SCREEN_H), this.screenMat);
@@ -367,6 +448,7 @@ export class Laptop {
     if (this.lidSwapped || !propReady('macbook-lid')) return;
     if (useProp(this.lidModel, 'macbook-lid')) {
       this.lidSwapped = true;
+      widenLid(this.lidModel);
       retone(this.lidModel);
       this.lidModel.add(pinwheelDecal());
       this.wireDisplay();
@@ -380,7 +462,7 @@ export class Laptop {
     display.material = this.screenMat;
     this.screen = display;
     // The GLB's plane (0.72 x 0.46, centred at y 0.253, z 0.013) sits recessed in a bezel frame.
-    // Stretch it to nearly the lid's full 0.78 x 0.5 and float it just in front of the frame.
+    // Stretch it across the widened 1.065 x 0.5 lid and float it just in front of the frame.
     const sx = SCREEN_W / 0.72;
     const sy = SCREEN_H / 0.46;
     display.scale.set(sx, sy, 1);

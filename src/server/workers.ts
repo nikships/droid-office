@@ -62,6 +62,10 @@ import { pickUniqueForkName, pickUniqueSeat, pickUniqueWorkerName, readHeadBranc
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
 
+/** Widescreen default PTY dimensions matching the 3D laptop's 212:99 display at 0.6:1.25 cell aspect. */
+export const DEFAULT_COLS = 136;
+export const DEFAULT_ROWS = 30;
+
 /** Workers' names, and their colors. */
 export const NAMES = [
   'Pixel',
@@ -746,8 +750,8 @@ export class WorkerManager {
       prompt: kind === 'shell' ? undefined : shown,
       worktree: wt,
       repos: others,
-      cols: 100,
-      rows: 30,
+      cols: DEFAULT_COLS,
+      rows: DEFAULT_ROWS,
       open: false,
       activity: shown && kind !== 'shell' ? truncate(shown, 80) : prompt ? truncate(prompt, 80) : undefined,
       ...(lead !== undefined ? { lead } : {}),
@@ -1140,8 +1144,8 @@ export class WorkerManager {
       createdBy: by,
       createdAt: Date.now(),
       prompt: shown,
-      cols: 100,
-      rows: 30,
+      cols: DEFAULT_COLS,
+      rows: DEFAULT_ROWS,
       open: false,
       activity: truncate(shown, 80),
     };
@@ -3315,8 +3319,8 @@ export class WorkerManager {
           taskSince: typeof s.taskSince === 'number' && Number.isFinite(s.taskSince) && s.taskSince > 0 ? s.taskSince : undefined,
           ...(!shell && validTodoProgress(s.todos) ? { todos: validTodoProgress(s.todos) } : {}),
           pr: s.pr && typeof s.pr.number === 'number' && typeof s.pr.url === 'string' ? { number: s.pr.number, url: s.pr.url } : undefined,
-          cols: 100,
-          rows: 30,
+          cols: DEFAULT_COLS,
+          rows: DEFAULT_ROWS,
           open: false,
           lastInputAt: legacyLastInputAt(s.lastInput),
           ...(typeof s.lead === 'string' && s.kind !== 'shell' ? { lead: s.lead } : {}),
