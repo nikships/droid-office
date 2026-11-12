@@ -3,6 +3,7 @@ import { DESK_BY_ID } from '../../shared/layout.js';
 import { ORCHESTRATOR_ID, type MissionAgent } from '../../shared/mission-control.js';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell.js';
 import type { ClientMsg, ServerMsg, WorkerInfo, WorktreeState } from '../../shared/protocol.js';
+import { buildWorkerInspection, describeTaskLabel, formatTaskTag, formatWorkerInspection, type WorkerInspection, type WorkerTaskLabel } from '../worker-status.js';
 import { officeError, officeResult, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { floorRef, resolveWorkerTarget, WORKER_TARGET_ERROR, workerTarget } from './owner-schemas.js';
 import { registerOwnerTools } from './owner-tools.js';
@@ -45,6 +46,10 @@ export interface OwnerOffice {
   mission(): MissionAgent[];
   /** The end of a worker's terminal, or of a floor's boss shell (OFFICE_SHELL_ID with its floor). */
   tail(workerId: string, lines: number, floor?: string): string | undefined;
+  /** Structured worker telemetry (plan, current/last tool, model cooldown, PR/CI, label provenance). */
+  inspect?(workerId: string, floor?: string): Promise<WorkerInspection | undefined> | WorkerInspection | undefined;
+  /** Whether background worker labels are currently enabled in Settings. */
+  labelsOn?(): boolean;
   /** `owner`: the owner's own choice (a Settings pick), so the model list for building agents doesn't apply. */
   act(by: WorkerInfo, msg: { t: OwnerAction } & Record<string, unknown>, opts?: { floor?: string; signal?: AbortSignal; owner?: boolean }): Promise<OwnerReply>;
 }
@@ -78,6 +83,7 @@ export interface RosterWorker {
   status: WorkerInfo['status'];
   title?: string;
   task?: string;
+  taskLabel?: WorkerTaskLabel;
   activity?: string;
   model?: string;
   effort?: string;
@@ -119,7 +125,7 @@ export function pickFloor(floors: OwnerFloor[], ref: string): { floor: OwnerFloo
   return { floor: floors[at], number: at + 1 };
 }
 
-export function roster(floors: OwnerFloor[], caller: string, only?: string): RosterWorker[] {
+export function roster(floors: OwnerFloor[], caller: string, only?: string, labelsOn = true): RosterWorker[] {
   const names = new Map(floors.flatMap((f) => f.workers.map((w) => [w.id, w.name] as const)));
   return floors.flatMap((f, i) =>
     f.id !== only && only !== undefined
@@ -129,6 +135,7 @@ export function roster(floors: OwnerFloor[], caller: string, only?: string): Ros
           .map((w): RosterWorker => {
             const model = w.activeModel ?? w.model;
             const effort = w.activeEffort ?? w.effort;
+            const taskLabel = describeTaskLabel(w, labelsOn);
             return {
               id: w.id,
               name: w.name,
@@ -140,6 +147,7 @@ export function roster(floors: OwnerFloor[], caller: string, only?: string): Ros
               status: w.status,
               ...(w.title ? { title: w.title } : {}),
               ...(w.task ? { task: w.task.summary ? `${w.task.name}: ${w.task.summary}` : w.task.name } : {}),
+              ...(taskLabel ? { taskLabel } : {}),
               ...(w.activity ? { activity: w.activity } : {}),
               ...(model ? { model } : {}),
               ...(effort ? { effort } : {}),
@@ -175,18 +183,19 @@ function rosterLine(w: RosterWorker): string {
   const tags = [w.you ? 'you' : '', w.yours ? 'your subagent' : '', w.lead && !w.yours ? `subagent of ${w.lead.name}` : '', w.remote ? 'external' : '', w.cloud ? 'cloud' : '', w.kind === 'shell' ? 'shell' : ''].filter(Boolean);
   return [
     `  ${w.name} (${w.id})${tags.length ? ` [${tags.join(', ')}]` : ''}, ${w.desk}, ${w.status}${w.model ? `, ${w.model}${w.effort ? ` ${w.effort}` : ''}` : ''}`,
-    ...(w.task || w.title ? [`    Task: ${w.task ?? w.title}`] : []),
+    ...(w.task || w.title ? [`    Task: ${w.task ?? w.title}${formatTaskTag(w.taskLabel)}`] : []),
     ...(w.activity ? [`    Doing: ${w.activity}`] : []),
     ...(w.worktree ? [`    Branch: ${w.worktree.branch}${w.pr ? `, PR ${w.pr.url}` : ''}`] : []),
   ].join('\n');
 }
 
-function missionLine(agent: MissionAgent, caller: string): string {
+function missionLine(agent: MissionAgent, caller: string, labelsOn = true): string {
   const w = agent.worker;
   const tags = [w.id === caller ? 'you' : '', w.id === ORCHESTRATOR_ID ? 'orchestrator' : 'external'].filter(Boolean);
+  const taskLabel = describeTaskLabel(w, labelsOn);
   return [
     `  ${w.name} (${w.id}) [${tags.join(', ')}], Mission Control, ${w.status}${w.model ? `, ${w.model}${w.effort ? ` ${w.effort}` : ''}` : ''}`,
-    ...(w.task ? [`    Task: ${w.task.name}`] : []),
+    ...(w.task ? [`    Task: ${w.task.name}${formatTaskTag(taskLabel)}`] : []),
     ...(w.activity ? [`    Doing: ${w.activity}`] : []),
     ...(agent.team.length ? [`    Team: ${agent.team.map((m) => `${m.name} on ${m.floorName} (${m.status})`).join(', ')}`] : []),
   ].join('\n');
@@ -236,6 +245,17 @@ export function ownerResult(name: string, result: OwnerReply) {
   });
 }
 
+function renderLookWithTerminal(title: string, shown: { text: string; truncated?: true }, emptyLabel: string, state?: WorkerInspection): string {
+  const truncBanner = shown.truncated ? '[Truncated: latest 48,000 characters]\n' : '';
+  if (!state) return `${title}:\n\n${truncBanner}${shown.text || emptyLabel}`;
+  const stateBlock = formatWorkerInspection(state);
+  const prefix = `${title}:\n\n${stateBlock}\n\nTerminal:\n${truncBanner}`;
+  const budget = Math.max(0, TERMINAL_MAX - prefix.length);
+  const body = shown.text.length > budget ? shown.text.slice(-budget) : shown.text;
+  const out = `${prefix}${body || emptyLabel}`;
+  return out.length > TERMINAL_MAX ? out.slice(-TERMINAL_MAX) : out;
+}
+
 export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   const owner = deps.owner;
   if (!owner) return;
@@ -249,13 +269,14 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     buildingOnly,
     ({ floor }, caller) => {
       const floors = owner.floors();
+      const labelsOn = owner.labelsOn?.() ?? true;
       let only: string | undefined;
       if (floor) {
         const picked = pickFloor(floors, floor);
         if (typeof picked === 'string') return officeError(picked);
         only = picked.floor.id;
       }
-      const workers = roster(floors, caller.worker.id, only);
+      const workers = roster(floors, caller.worker.id, only, labelsOn);
       const shown = floors.map((f, i) => ({ id: f.id, name: f.name, number: i + 1 })).filter((f) => !only || f.id === only);
       const mission = only ? [] : owner.mission();
       const floorText =
@@ -265,22 +286,34 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
             return [`Floor ${f.number}: ${f.name} (${f.id}), ${here.length} worker${here.length === 1 ? '' : 's'}`, ...here.map(rosterLine)].join('\n');
           })
           .join('\n\n') || 'No floors are open.';
-      return officeResult([floorText, ...(mission.length ? [`Mission Control\n${mission.map((a) => missionLine(a, caller.worker.id)).join('\n')}`] : [])].join('\n\n'), { floors: shown, workers, mission });
+      return officeResult([floorText, ...(mission.length ? [`Mission Control\n${mission.map((a) => missionLine(a, caller.worker.id, labelsOn)).join('\n')}`] : [])].join('\n\n'), {
+        floors: shown,
+        workers,
+        mission,
+        workerLabelsEnabled: labelsOn,
+      });
     },
   );
   const hasWorker = (a: { worker?: string; workerId?: string; name?: string }) => resolveWorkerTarget(a) !== undefined;
   server.tool(
     {
       name: 'office_look',
-      description: `Read a bounded terminal snapshot (<=48,000 characters) of a local worker, "${OFFICE_SHELL_ID}" shell, or Orchestrator, read-only. Accepts worker (or name/workerId). Use office_worker_thread for cloud/history.`,
-      inputSchema: z.strictObject({ ...workerTarget, floor: floorRef.optional(), lines: z.number().int().min(1).max(400).default(80).describe('Latest lines (default 80, max 400).') }).refine(hasWorker, WORKER_TARGET_ERROR),
+      description: `Read structured worker state (plan, tool, model cooldown, PR/CI) and a bounded terminal snapshot (<=48,000 characters) of a local worker, "${OFFICE_SHELL_ID}" shell, or Orchestrator, read-only. Accepts worker (or name/workerId); pass lines: 0 for structured state without raw terminal noise, or use office_worker_thread for cloud/history.`,
+      inputSchema: z
+        .strictObject({
+          ...workerTarget,
+          floor: floorRef.optional(),
+          lines: z.number().int().min(0).max(400).default(80).describe('Latest lines (default 80, max 400; 0 for structured worker state only).'),
+        })
+        .refine(hasWorker, WORKER_TARGET_ERROR),
       annotations: readOnly,
     },
     buildingOnly,
-    (args, caller) => {
+    async (args, caller) => {
       const name = resolveWorkerTarget(args)!;
       const { floor, lines } = args;
       if (name.toLowerCase() === OFFICE_SHELL_ID) {
+        if (lines === 0) return officeError(`${OFFICE_SHELL_ID} has no structured agent state; pass lines >= 1.`);
         const floors = owner.floors();
         let shellFloor: OwnerFloor | undefined;
         if (floor) {
@@ -299,22 +332,45 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         const building = findMissionAgent(owner, name);
         if (!building) return officeError(found);
         if (building.worker.id !== ORCHESTRATOR_ID) return officeError(outsideOffice(building, 'terminal'));
+        const state = await owner.inspect?.(building.worker.id);
+        if (lines === 0) {
+          const snap = state ?? buildWorkerInspection({ worker: building.worker, labelsOn: owner.labelsOn?.() ?? true });
+          return officeResult(`${building.worker.name} in Mission Control:\n\n${formatWorkerInspection(snap, { includeSteps: true })}`, {
+            worker: building.worker.id,
+            floor: null,
+            missionControl: true,
+            lines: 0,
+            state: snap,
+          });
+        }
         const text = owner.tail(building.worker.id, lines);
         if (text === undefined) return officeError(`${building.worker.name} has no terminal yet (${building.worker.status}).`);
         const shown = terminalText(text);
-        return officeResult(`${building.worker.name} in Mission Control:\n\n${shown.truncated ? '[Truncated: latest 48,000 characters]\n' : ''}${shown.text || '(its terminal is empty)'}`, {
+        return officeResult(renderLookWithTerminal(`${building.worker.name} in Mission Control`, shown, '(its terminal is empty)', state), {
           worker: building.worker.id,
           floor: null,
           missionControl: true,
+          ...(state ? { state } : {}),
           ...shown,
+        });
+      }
+      const state = await owner.inspect?.(found.worker.id, found.floor.id);
+      if (lines === 0) {
+        const snap = state ?? buildWorkerInspection({ worker: found.worker, labelsOn: owner.labelsOn?.() ?? true });
+        return officeResult(`${found.worker.name} on floor ${found.number} (${found.floor.name}):\n\n${formatWorkerInspection(snap, { includeSteps: true })}`, {
+          worker: found.worker.id,
+          floor: found.floor.id,
+          lines: 0,
+          state: snap,
         });
       }
       const text = owner.tail(found.worker.id, lines);
       if (text === undefined) return officeError(`${found.worker.name} has no terminal to read (${found.worker.cloud ? 'a cloud worker: use office_worker_thread' : found.worker.status}).`);
       const shown = terminalText(text);
-      return officeResult(`${found.worker.name} on floor ${found.number} (${found.floor.name}):\n\n${shown.truncated ? '[Truncated: latest 48,000 characters]\n' : ''}${shown.text || '(its terminal is empty)'}`, {
+      return officeResult(renderLookWithTerminal(`${found.worker.name} on floor ${found.number} (${found.floor.name})`, shown, '(its terminal is empty)', state), {
         worker: found.worker.id,
         floor: found.floor.id,
+        ...(state ? { state } : {}),
         ...shown,
       });
     },

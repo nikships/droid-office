@@ -8,10 +8,11 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DESK_BY_ID, nearestFreeSeat } from '../shared/layout.js';
-import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type SubagentModel, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../shared/protocol.js';
+import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type GhPull, type SubagentModel, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../shared/protocol.js';
+import type { PipelinesState } from '../shared/pipelines.js';
 import { isAsleep } from '../shared/status.js';
 import type { DroidModelCatalogue, DroidModelOption } from './droid-models.js';
-import { availabilityWords, cannotRun, type ModelAvailability, type ModelUsage } from '../shared/subscriptions.js';
+import { availabilityWords, cannotRun, durationWords, isSubscriptionModel, type ModelAvailability, type ModelUsage, type SubscriptionProviderKey } from '../shared/subscriptions.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { workerMessageVars } from '../shared/prompts.js';
 import { hireRefusal } from './subscriptions/map.js';
@@ -20,6 +21,19 @@ import { modelList, outsideModelList, outsideModelListMessage } from './model-po
 import { pushedSha, workerDiff } from './team-inspect.js';
 import { canonicalPath, currentBranch, handoffStart, integrateWorker, verifyPushed, workerBranch, workerCwd } from './team-integrate.js';
 import type { PullHost, PullRef } from './forge.js';
+import {
+  buildWorkerInspection,
+  inspectTerminalRetry,
+  summarizeProviderQuotas,
+  type ProviderQuotaSummary,
+  type WorkerInspection,
+  type WorkerModelCooldown,
+  type WorkerPlanStatus,
+  type WorkerPullStatus,
+  type WorkerRunStatus,
+  type WorkerRuntimeSnapshot,
+  type WorkerTaskLabel,
+} from './worker-status.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
 export interface TeamWorkers {
@@ -40,6 +54,7 @@ export interface TeamWorkers {
   kill(id: string): Promise<{ note?: string; error?: string }>;
   dismiss?(id: string, pruneWorktree: boolean, keepBranch: boolean): Promise<{ note?: string; error?: string }>;
   tail(id: string, lines: number): string | undefined;
+  runtime?(id: string): WorkerRuntimeSnapshot | undefined;
   setTask(id: string, task: WorkerTask): void;
   fetchStart?(lead: string, from?: string): Promise<void> | undefined;
 }
@@ -51,6 +66,9 @@ export interface TeamOptions {
   /** It's a git checkout, so subagents can have worktrees. */
   git: boolean;
   pulls?: Pick<PullHost, 'createPull'>;
+  pullItems?: () => readonly GhPull[];
+  pipelineState?: () => PipelinesState | undefined;
+  labelsOn?: () => boolean;
   baseBranch?(): string | undefined;
   onPull?(worker: string, pr: PullRef): void;
   settings(): SubagentSettings;
@@ -60,6 +78,8 @@ export interface TeamOptions {
   availability?: (model: string) => ModelAvailability | undefined;
   /** Subscriptions: what the plan behind a subscription model has left at `now`, for team_models. */
   usage?: (model: string, now: number) => ModelUsage | undefined;
+  /** Throttled DroidProxy `/models` recheck so recently exhausted subscription windows show up without waiting 60s. */
+  recheckModels?: () => Promise<void>;
   prompts?: PromptSource;
   toast(text: string, level: 'info' | 'warn', workerId?: string): void;
   /** How long news waits before a lead at rest is told, so a report and the turn ending with it go as one. */
@@ -138,9 +158,22 @@ export interface TeamMember {
   worktree?: { path: string; branch: string; from?: string };
   activity?: string;
   task?: string;
+  taskLabel?: WorkerTaskLabel;
+  plan?: WorkerPlanStatus;
+  currentTool?: WorkerInspection['currentTool'];
+  lastTool?: WorkerInspection['lastTool'];
+  lastActivityAt?: string;
+  silentForMs?: number;
+  queued?: WorkerInspection['queued'];
+  retryingModel?: WorkerInspection['retryingModel'];
+  modelError?: string;
+  modelStatus?: WorkerModelCooldown;
   areas?: string[];
   note?: { text: string; at: number };
   pr?: { number: number; url: string };
+  prStatus?: WorkerPullStatus;
+  ci?: WorkerRunStatus;
+  releaseRun?: WorkerRunStatus;
   /** It has been given its task and isn't in the middle of a turn now. */
   settled: boolean;
   /** What it last reported or asked. */
@@ -242,10 +275,16 @@ export interface TeamModel {
   unlisted?: true;
   /** Why a worker on it can't run now (out of quota, nobody signed in): hire refuses it. */
   cannotRun?: string;
+  /** Subscription provider backing this model when DroidProxy manages it. */
+  subscriptionProvider?: SubscriptionProviderKey;
+  /** Active subscription cooldown window and reset time when exhausted. */
+  cooldown?: { until: string | null; window: string; remainingMs?: number; resetsIn?: string };
   /** A subscription model: what its plan has left, so a lead can weigh a nearly spent plan against a full one. */
   usage?: ModelUsage;
   enabled?: boolean;
 }
+
+export type { ProviderQuotaSummary };
 
 const TASK_MAX = 20_000;
 const TITLE_MAX = 80;
@@ -522,7 +561,7 @@ export class Team {
       case 'whoami':
         return ok(this.whoami(caller));
       case 'status':
-        return this.status(caller, b);
+        return await this.status(caller, b);
       case 'board':
         return ok({ members: this.board(caller.lead ?? caller.id), you: caller.id });
       case 'note':
@@ -554,9 +593,19 @@ export class Team {
       case 'log': {
         const w = this.resolve(caller, b.worker);
         if (typeof w === 'string') return no(404, w);
-        const tail = Number.isInteger(b.tail) ? Math.min(READ_MAX, Math.max(1, b.tail as number)) : 100;
-        const terminal = this.workers.tail(w.id, tail);
-        return ok({ worker: w.id, tail, activity: w.activity ?? null, action: w.action ?? null, terminal: terminal?.slice(-48_000) ?? null, truncated: (terminal?.length ?? 0) > 48_000 });
+        await this.recheckIfRetrying([w]);
+        const tail = Number.isInteger(b.tail) ? Math.min(READ_MAX, Math.max(0, b.tail as number)) : 100;
+        const terminal = tail > 0 ? this.workers.tail(w.id, tail) : undefined;
+        const inspection = this.inspectWorker(w);
+        return ok({
+          worker: w.id,
+          tail,
+          activity: w.activity ?? null,
+          action: w.action ?? null,
+          terminal: terminal?.slice(-48_000) ?? null,
+          truncated: (terminal?.length ?? 0) > 48_000,
+          inspection,
+        });
       }
       case 'send':
         return this.send(caller, b);
@@ -628,6 +677,12 @@ export class Team {
   private async models(caller: WorkerInfo, includeDisabled = false): Promise<TeamReply> {
     const why = this.cannotHire(caller);
     if (why) return no(403, why);
+    try {
+      await this.opts.recheckModels?.();
+    } catch {
+      // Fall back to cached subscription availability and usage.
+    }
+    const now = this.now();
     const s = this.opts.settings();
     const catalogue = await this.catalogue();
     const known = new Map([...(catalogue?.models ?? []), ...(includeDisabled ? (catalogue?.disabledModels ?? []) : [])].map((m) => [m.id, m]));
@@ -635,8 +690,25 @@ export class Team {
     const eligible = (id: string) => !catalogue?.customOnly || known.get(id)?.custom === true;
     const fallback = preferred && eligible(preferred) ? preferred : undefined;
     const describe = (id: string, m: DroidModelOption | undefined, note?: string): TeamModel => {
+      const avail = this.opts.availability?.(id);
       const stuck = m?.disabled ? 'Switched off in Droid.' : this.whyNot(id);
-      const usage = this.opts.usage?.(id, this.now());
+      const usage = this.opts.usage?.(id, now);
+      const subscriptionProvider = usage?.provider ?? (avail && 'provider' in avail ? avail.provider : undefined);
+      const emptyWin = usage?.windows.find((w) => w.leftPercent <= 0);
+      let cooldown: TeamModel['cooldown'];
+      if (avail?.state === 'exhausted') {
+        cooldown = {
+          until: avail.until !== null ? new Date(avail.until).toISOString() : null,
+          window: avail.window || emptyWin?.name || 'quota',
+          ...(avail.until !== null && avail.until > now ? { remainingMs: avail.until - now, resetsIn: durationWords(avail.until - now) } : {}),
+        };
+      } else if (emptyWin) {
+        cooldown = {
+          until: emptyWin.resetsAt !== null ? new Date(emptyWin.resetsAt).toISOString() : null,
+          window: emptyWin.name,
+          ...(emptyWin.resetsAt !== null && emptyWin.resetsAt > now ? { remainingMs: emptyWin.resetsAt - now, resetsIn: durationWords(emptyWin.resetsAt - now) } : {}),
+        };
+      }
       return {
         id,
         name: m?.displayName ?? id,
@@ -652,6 +724,8 @@ export class Team {
         ...(id === fallback ? { default: true as const } : {}),
         ...(catalogue && !m ? { unlisted: true as const } : {}),
         ...(stuck ? { cannotRun: stuck } : {}),
+        ...(subscriptionProvider ? { subscriptionProvider } : {}),
+        ...(cooldown ? { cooldown } : {}),
         ...(usage ? { usage } : {}),
       };
     };
@@ -669,7 +743,14 @@ export class Team {
       const model = describe(fallback, known.get(fallback));
       models.unshift({ ...model, ...(includeDisabled ? { enabled: !model.cannotRun } : {}) });
     }
-    return ok({ restricted: !!allowed, models, ...(fallback ? { defaultModel: fallback } : {}), ...(catalogue ? {} : { unavailable: true }) });
+    const quotas = summarizeProviderQuotas(models, now);
+    return ok({
+      restricted: !!allowed,
+      models,
+      ...(quotas.length ? { quotas } : {}),
+      ...(fallback ? { defaultModel: fallback } : {}),
+      ...(catalogue ? {} : { unavailable: true }),
+    });
   }
 
   /** Only a model outside the list needs droid's own default, which subagents may always run. */
@@ -787,16 +868,71 @@ export class Team {
     return ok({ note: this.notes.get(w.id), notified });
   }
 
+  /** Structured, noise-free state snapshot for any worker on this floor (`office_look`, `worker_log`, `team_status`). */
+  inspectWorker(w: WorkerInfo, precomputed?: { last?: TeamEvent; open?: TeamEvent }): WorkerInspection {
+    const now = this.now();
+    const reversed = precomputed ? undefined : [...this.log].reverse();
+    const last = precomputed ? precomputed.last : reversed?.find((e) => e.worker === w.id && (e.kind === 'report' || e.kind === 'question'));
+    const open = precomputed ? precomputed.open : reversed?.find((e) => e.worker === w.id && e.kind === 'question' && !e.answered && e.lead === w.lead);
+    const asking = w.status === 'needs_input' && w.ask?.kind === 'question';
+    const state: TeamState = open || asking ? 'blocked_on_question' : w.status;
+    const model = w.activeModel ?? w.model;
+    return buildWorkerInspection({
+      worker: w,
+      state,
+      runtime: this.workers.runtime?.(w.id),
+      availability: model ? this.opts.availability?.(model) : undefined,
+      usage: model ? this.opts.usage?.(model, now) : undefined,
+      pulls: this.opts.pullItems?.(),
+      pipelines: this.opts.pipelineState?.(),
+      labelsOn: this.opts.labelsOn?.() ?? true,
+      report: last?.text
+        ? {
+            text: last.text,
+            question: last.kind === 'question',
+            ...(last.progress ? { progress: true as const } : {}),
+            at: last.at,
+            ...(last.prUrl ? { prUrl: last.prUrl } : {}),
+            ...(last.result ? { result: cloneWorkerResult(last.result) } : {}),
+            ...(last.review ? { review: { ...last.review } } : {}),
+          }
+        : undefined,
+      now,
+    });
+  }
+
+  /** Triggers a throttled DroidProxy `/models` recheck when an inspected worker is retrying a subscription model. */
+  async recheckIfRetrying(workers: readonly WorkerInfo[]): Promise<void> {
+    if (!this.opts.recheckModels) return;
+    for (const w of workers) {
+      if (w.status !== 'working') continue;
+      const model = w.activeModel ?? w.model;
+      if (!model || !isSubscriptionModel(model)) continue;
+      if (this.opts.availability?.(model)?.state === 'exhausted') continue;
+      const rt = this.workers.runtime?.(w.id);
+      if (inspectTerminalRetry(rt?.screenRows, w.status, Boolean(rt?.currentTool))?.retrying) {
+        try {
+          await this.opts.recheckModels();
+        } catch {
+          // Fall back to cached availability.
+        }
+        return;
+      }
+    }
+  }
+
   private member(w: WorkerInfo): TeamMember {
     this.rememberSubagent(w);
     const note = this.notes.get(w.id);
-    const last = [...this.log].reverse().find((e) => e.worker === w.id && (e.kind === 'report' || e.kind === 'question'));
+    const reversed = [...this.log].reverse();
+    const last = reversed.find((e) => e.worker === w.id && (e.kind === 'report' || e.kind === 'question'));
     const model = w.activeModel ?? w.model;
     const effort = w.activeEffort ?? w.effort;
-    const open = [...this.log].reverse().find((e) => e.worker === w.id && e.kind === 'question' && !e.answered && e.lead === w.lead);
+    const open = reversed.find((e) => e.worker === w.id && e.kind === 'question' && !e.answered && e.lead === w.lead);
     const asking = w.status === 'needs_input' && w.ask?.kind === 'question';
     // A later event (a turn that ended without a report, a stop) means the job already woke it.
     const awaitingJob = (w.status === 'idle' || w.status === 'done') && last?.progress && !this.log.some((e) => e.worker === w.id && e.seq > last.seq);
+    const inspection = this.inspectWorker(w, { last, open });
     return {
       id: w.id,
       name: w.name,
@@ -808,9 +944,21 @@ export class Team {
       ...(w.worktree ? { worktree: { path: path.join(this.opts.dir, w.worktree.path), branch: w.worktree.branch, from: w.worktree.from ?? w.worktree.base?.slice(0, 7) } } : {}),
       ...(w.activity ? { activity: w.activity } : {}),
       ...(w.task ? { task: w.task.name } : {}),
+      ...(inspection.taskLabel ? { taskLabel: inspection.taskLabel } : {}),
+      ...(inspection.plan ? { plan: inspection.plan } : {}),
+      ...(inspection.currentTool ? { currentTool: inspection.currentTool } : {}),
+      ...(inspection.lastTool ? { lastTool: inspection.lastTool } : {}),
+      ...(inspection.lastActivityAt ? { lastActivityAt: inspection.lastActivityAt, silentForMs: inspection.silentForMs } : {}),
+      ...(inspection.queued ? { queued: inspection.queued } : {}),
+      ...(inspection.retryingModel ? { retryingModel: inspection.retryingModel } : {}),
+      ...(inspection.modelError ? { modelError: inspection.modelError } : {}),
+      ...(inspection.modelStatus ? { modelStatus: inspection.modelStatus } : {}),
       ...(note?.areas.length ? { areas: [...note.areas] } : {}),
       ...(note?.text ? { note: { text: note.text, at: note.at } } : {}),
       ...(w.pr ? { pr: w.pr } : {}),
+      ...(inspection.pr ? { prStatus: inspection.pr } : {}),
+      ...(inspection.ci ? { ci: inspection.ci } : {}),
+      ...(inspection.releaseRun ? { releaseRun: inspection.releaseRun } : {}),
       settled: settled(w),
       ...(last?.text
         ? {
@@ -1096,10 +1244,11 @@ export class Team {
   }
 
   /** Snapshot and all unread news for this caller, without waiting for new events. */
-  private status(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
+  private async status(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const named = b.worker !== undefined ? this.resolve(lead, b.worker) : undefined;
     if (typeof named === 'string') return no(404, named);
     const selected = named ? [named] : this.teamOf(lead.id);
+    await this.recheckIfRetrying(selected);
     const lines = Number.isInteger(b.lines) ? Math.min(READ_MAX, Math.max(1, b.lines as number)) : undefined;
     const team = selected.map((w) => {
       const member = this.member(w);

@@ -69,12 +69,15 @@ export interface Subscriptions {
    * refuse the hire: this starts it.
    */
   gate(model: string | undefined): string | undefined;
+  /** Re-reads DroidProxy's `/status` and `/models` when older than `minAgeMs` (usage keeps its 5-minute floor). */
+  recheck(minAgeMs?: number): Promise<void>;
   /** Whether a look at DroidProxy, an install, a models update or another call on DroidProxy is under way. */
   busy(): boolean;
   stop(): void;
 }
 
 const POLL_RUNNING_MS = 60_000;
+const RECHECK_MIN_MS = 15_000;
 const POLL_USAGE_MS = 5 * 60_000;
 const POLL_FAST_MS = 2000;
 const POLL_DOWN_MS = 30_000;
@@ -555,6 +558,12 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
     },
     availability,
     usage: (model, at) => modelUsage(state, model, at),
+    async recheck(minAgeMs = RECHECK_MIN_MS) {
+      if (!supported || stopped || installing) return;
+      if (state.proxy.phase !== 'running' && state.proxy.phase !== 'outdated') return;
+      if (state.checkedAt !== null && now() - state.checkedAt < minAgeMs) return;
+      await look();
+    },
     gate(model) {
       const a = availability(model);
       if (!a || !model) return undefined;

@@ -174,7 +174,7 @@ Set your self-reported office status and optional short activity. This does not 
 
 ### `office_roster`
 
-List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells and cloud workers. Mission Control's building agents have their own section, with no floor or desk: tools read them and never control them.
+List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, task-label provenance (`taskLabel`: whether the task text is a `generated` label vs `lead`/`prompt` assigned, its `updatedAt` ISO timestamp when generated, and `stale: true` when Worker labels are turned off), model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells and cloud workers. Mission Control's building agents have their own section, with no floor or desk: tools read them and never control them.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -182,7 +182,7 @@ List every worker in the building, or on one floor: id, name, floor id and numbe
 
 ### `office_look`
 
-Read the end of any worker's terminal, on any floor, without typing anything. `"office-shell"` reads the floor's boss shell. In Mission Control, it reads the Orchestrator's terminal; an external bot has no terminal on this machine. At most 48,000 characters, with a truncation marker if older text was omitted. A snapshot, not a transcript; for conversation history or a cloud worker use `office_worker_thread`.
+Read structured worker state (plan steps and progress, current or last tool call, hook age, queued messages, model retry or subscription cooldown with reset time, and PR/CI/Release runs) plus the end of any worker's terminal, on any floor, without typing anything. Pass `lines: 0` for structured worker state without raw terminal output. `"office-shell"` reads the floor's boss shell (`lines >= 1`). In Mission Control, it reads the Orchestrator; an external bot has no terminal on this machine. At most 48,000 characters, with a truncation marker if older text was omitted. A snapshot, not a transcript; for conversation history or a cloud worker's thread use `office_worker_thread`.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -190,7 +190,7 @@ Read the end of any worker's terminal, on any floor, without typing anything. `"
 | `name` | string | alias | Alias for `worker`. |
 | `workerId` | string | alias | Alias for `worker`. |
 | `floor` | string | no | Floor id, number (1 is the top of the elevator list) or name. |
-| `lines` | integer | no, default `80` | Latest terminal lines, default 80, at most 400. |
+| `lines` | integer | no, default `80` | Latest terminal lines, default 80, at most 400 (`0` returns structured worker state only). |
 
 ### `office_send_home`
 
@@ -291,9 +291,11 @@ When the office is connected to [Linear](../linear.md), building agents can use 
 
 ### `team_models`
 
-Read the models allowed for your subagents, including ids, providers, credit multipliers, efforts, owner notes, no-images limits, the default, the quota a subscription model's plan has left, and why any cannot run. Read it before choosing each task's model. Hiring refuses a blocked model, the default included, before taking a desk.
+Read the models allowed for your subagents, led by a compact per-provider `Subscription quotas:` summary (5-hour and weekly remaining percentages, reset countdowns and ISO timestamps, runnable model counts, and active cooldowns), followed by model ids, providers, credit multipliers, efforts, owner notes, no-images limits, the default, and why any cannot run. Triggers a throttled DroidProxy `/models` recheck so newly exhausted windows surface promptly. Read it before choosing each task's model. Hiring refuses a blocked model, the default included, before taking a desk.
 
-No arguments.
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `only` | "all" \| "subscriptions" \| "available" \| "quotas" | no | Filter output to compact provider `quotas`, `subscriptions` models only, `available` runnable models only, or `all` (default). |
 
 ### `team_hire`
 
@@ -312,7 +314,7 @@ Hire one fresh subagent at the nearest free desk for an independent task. It get
 
 ### `team_status`
 
-Read your subagents and unread team news at once, without waiting; optionally one worker, with recent terminal lines. structuredContent has workers (one compact object each; state blocked_on_question while a question waits for an answer), news (typed events with ids and times) and a cursor to pass as since. verbose: false makes the text compact too. team_report_get reads a full report.
+Read your subagents and unread team news at once, without waiting; optionally one worker, with recent terminal lines. `structuredContent` has `workers` (one compact object each with `state`, `task`, `taskLabel` provenance/timestamp/staleness, `plan`, `currentTool`/`lastTool`, `lastActivityAt`/`silentForMs`, `queued`, `retryingModel`/`modelStatus` cooldowns, and `prStatus`/`ci`/`releaseRun` from cached floor state), `news` (typed events with ids and times) and a `cursor` to pass as `since`. `verbose: false` makes the text compact too. `team_report_get` reads a full report.
 
 For an external worker, status news follows a cursor kept for that bot across reconnects and office restarts: the first status call sets a baseline without replaying old reports, later calls return only newer events, and each news line starts with its UTC time. `team` with action `status` reads the same cursor. Reading status does not acknowledge anything in `office_inbox`.
 
@@ -398,13 +400,13 @@ Read a size-capped Git diff and stat for your subagent (including dismissed suba
 
 ### `worker_log`
 
-Read your subagent's recent terminal output and current tool activity, read-only. At most 400 lines and 48,000 characters.
+Read your subagent's structured runtime state (plan steps, current/last tool, hook age, queued messages, model retry or cooldown with reset time, PR/CI/Release runs) and recent terminal output, read-only. Pass `tail: 0` for structured state only; otherwise at most 400 lines and 48,000 characters.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
 | `worker` | string | yes | Your subagent’s name or id, case-insensitive. |
 | `floor` | string | no | Building agents only: just this open floor, by id, name or checkout path. Omit for all your teams across the building. |
-| `tail` | integer | yes | Latest terminal lines to read, 1 to 400. |
+| `tail` | integer | no, default `80` | Latest terminal lines to read, 0 to 400 (`0` returns structured worker state only). |
 
 ### `team_wait`
 

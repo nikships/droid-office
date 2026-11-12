@@ -27,7 +27,8 @@ import { forgeVars, officeSays, placeholders, PROMPTS, WORKER_VISITS, withoutRem
 import { isBusy } from '../shared/status.js';
 import { linearTaskOf } from '../shared/linear.js';
 import { fallbackTask } from './tasks.js';
-import { todoProgress, todosFinished, validTodoProgress } from '../shared/todos.js';
+import { todoItems, todoProgress, todosFinished, validTodoProgress, type TodoItem } from '../shared/todos.js';
+import type { WorkerRuntimeSnapshot, WorkerToolSpan } from './worker-status.js';
 import { forkRefusal, nearestForkSeat } from '../shared/worker-fork.js';
 import { githubPulls } from './github.js';
 import type { PullHost, PullRef } from './forge.js';
@@ -218,6 +219,11 @@ interface Worker {
   subSessions: Set<string>;
   /** The latest tool each session started (PreToolUse), and its input, to know which call a permission prompt is about. */
   lastTool: Map<string, { tool: string; input: unknown }>;
+  /** Full bounded TodoWrite plan steps alongside WorkerInfo.todos. */
+  todoSteps?: TodoItem[];
+  /** Currently executing PreToolUse span, and the latest completed tool span. */
+  currentTool?: WorkerToolSpan;
+  completedTool?: WorkerToolSpan;
   /** Who raised its needs_input from a hook: the session asking, and the tool it asks about. */
   asking?: { session: string; tool?: string };
   /** When its last hook came in, and its terminal last printed something (see reconcile). */
@@ -957,7 +963,17 @@ export class WorkerManager {
   setTask(id: string, task: WorkerTask) {
     const w = this.workers.get(id);
     if (!w || this.closing) return;
-    w.info.task = { name: task.name.trim().slice(0, 60), summary: task.summary.trim().slice(0, 140), ...(task.generated ? { generated: true, textHash: task.textHash } : {}) };
+    w.info.task = {
+      name: task.name.trim().slice(0, 60),
+      summary: task.summary.trim().slice(0, 140),
+      ...(task.generated
+        ? {
+            generated: true,
+            ...(typeof task.textHash === 'string' && /^[a-f0-9]{64}$/.test(task.textHash) ? { textHash: task.textHash } : {}),
+            ...(typeof task.updatedAt === 'number' && Number.isFinite(task.updatedAt) && task.updatedAt > 0 ? { updatedAt: task.updatedAt } : {}),
+          }
+        : {}),
+    };
     this.emitUpdate(w);
     this.persist();
   }
@@ -1117,6 +1133,8 @@ export class WorkerManager {
     clockWork(w.info, 'exited');
     w.info.status = 'exited';
     w.info.acked = true;
+    w.currentTool = undefined;
+    w.completedTool = undefined;
     delete w.info.ask;
     this.emitUpdate(w);
     this.persist();
@@ -2062,6 +2080,8 @@ export class WorkerManager {
       w.pendingFork = undefined;
       w.subSessions.clear();
       w.lastTool.clear();
+      w.currentTool = undefined;
+      w.completedTool = undefined;
       w.bootBlocked = false;
       w.settingUp = false;
       w.queued = 0;
@@ -2070,6 +2090,7 @@ export class WorkerManager {
       this.sendLaunchPrompt(w);
     } else if (event === 'UserPromptSubmit') {
       w.bootBlocked = false;
+      w.currentTool = undefined;
       w.info.action = undefined;
       if (typeof report.prompt === 'string') {
         // The office's reminders after the owner's words (an Orchestrator prompt's floor) aren't what was asked.
@@ -2080,6 +2101,10 @@ export class WorkerManager {
       this.setStatus(w, 'working');
     } else if (event === 'PreToolUse') this.toolStarted(w, session, report);
     else if (event === 'PostToolUse') {
+      if (w.currentTool && (!report.tool_name || w.currentTool.name === report.tool_name)) {
+        w.completedTool = { ...w.currentTool, at: w.hookAt || Date.now() };
+        w.currentTool = undefined;
+      }
       // The structured list (PreToolUse has it as typed text).
       if (report.tool_name === 'TodoWrite') this.noteTodos(w, report.tool_input);
       this.noteOutcome(w, report, false);
@@ -2194,7 +2219,9 @@ export class WorkerManager {
       }
       return;
     }
-    w.info.activity = describeTool(report);
+    const summary = describeTool(report);
+    w.info.activity = summary;
+    if (!sub) w.currentTool = { name: String(tool ?? 'tool'), summary, at: w.hookAt || Date.now() };
     w.info.action = toolAction(tool, report.tool_input);
     // Moving on means its question was answered, unless another session is the one asking.
     if (w.info.status !== 'needs_input' || !w.asking || w.asking.session === session) this.setStatus(w, 'working');
@@ -2292,8 +2319,13 @@ export class WorkerManager {
   /** Its latest TodoWrite list; one with no items clears it. */
   private noteTodos(w: Worker, input: unknown) {
     const todos = todoProgress(input);
-    if (todos) w.info.todos = todos;
-    else delete w.info.todos;
+    if (todos) {
+      w.info.todos = todos;
+      w.todoSteps = todoItems(input);
+    } else {
+      delete w.info.todos;
+      delete w.todoSteps;
+    }
   }
 
   private clearTask(w: Worker, cleared: boolean) {
@@ -2301,6 +2333,7 @@ export class WorkerManager {
     w.info.taskSince = cleared ? Date.now() : undefined;
     w.info.task = undefined;
     delete w.info.todos;
+    delete w.todoSteps;
     this.emitUpdate(w);
     this.persist();
   }
@@ -2380,6 +2413,8 @@ export class WorkerManager {
     // A new process: whatever subagents and prompts the last one had went with it.
     w.subSessions.clear();
     w.lastTool.clear();
+    w.currentTool = undefined;
+    w.completedTool = undefined;
     w.asking = undefined;
     w.hookVersion = 0;
     w.outbox = [];
@@ -2595,7 +2630,10 @@ export class WorkerManager {
     if (w.info.status === status) return;
     if (w.info.status === 'needs_input') w.leftNeedsInputAt = Date.now();
     w.info.status = status;
-    if (status !== 'working') w.stopAt = undefined;
+    if (status !== 'working') {
+      w.stopAt = undefined;
+      w.currentTool = undefined;
+    }
     if (status !== 'needs_input') {
       w.asking = undefined;
       delete w.info.ask;
@@ -2603,7 +2641,10 @@ export class WorkerManager {
     // Done, idle or asleep: it's not acting anything out any more.
     if (status !== 'working' && status !== 'needs_input') w.info.action = undefined;
     // A finished list stays up for the turn that finished it, not after.
-    if ((status === 'done' || status === 'idle') && w.info.todos && todosFinished(w.info.todos)) delete w.info.todos;
+    if ((status === 'done' || status === 'idle') && w.info.todos && todosFinished(w.info.todos)) {
+      delete w.info.todos;
+      delete w.todoSteps;
+    }
     // Nobody is looking at the terminal right now -> raise the flag (the worker jumps).
     if (status === 'done' || status === 'needs_input') {
       w.info.acked = status === 'done' && w.info.open;
@@ -2634,6 +2675,25 @@ export class WorkerManager {
 
   private emitUpdate(w: Worker) {
     this.events.update({ ...w.info });
+  }
+
+  /** Structured runtime telemetry for MCP worker inspection without modifying terminal state. */
+  runtime(id: string): WorkerRuntimeSnapshot | undefined {
+    const w = this.workers.get(id);
+    if (!w) return undefined;
+    const rows = w.term ? screenRows(w.term) : undefined;
+    const droidQueue = rows ? readDroidQueue(rows) : undefined;
+    const queuedMessages = droidQueue?.length ? droidQueue.map((item) => `${item.text}${item.cut ? '…' : ''}${item.more > 0 ? ` (+${item.more} line${item.more === 1 ? '' : 's'})` : ''}`) : undefined;
+    return {
+      ...(w.todoSteps?.length ? { todoSteps: w.todoSteps.map((s) => ({ ...s })) } : {}),
+      ...(w.currentTool ? { currentTool: { ...w.currentTool } } : {}),
+      ...(w.completedTool ? { lastTool: { ...w.completedTool } } : {}),
+      ...(w.hookAt > 0 ? { lastHookAt: w.hookAt } : {}),
+      ...(w.outputAt > 0 ? { lastOutputAt: w.outputAt } : {}),
+      ...(queuedMessages ? { queuedMessages } : {}),
+      ...(w.outbox.length > 0 ? { queuedNotices: w.outbox.length } : {}),
+      ...(rows ? { screenRows: rows.slice(-20) } : {}),
+    };
   }
 
   /** One worker's current visible rows, for revalidating a question without serializing all PTYs. */
@@ -3000,7 +3060,17 @@ function validAsk(a: unknown): WorkerAsk | undefined {
 function validTask(t: unknown): WorkerTask | undefined {
   const v = t as Partial<WorkerTask> | undefined;
   return typeof v?.name === 'string' && typeof v.summary === 'string'
-    ? { name: v.name, summary: v.summary, ...(v.generated === true ? { generated: true, ...(typeof v.textHash === 'string' && /^[a-f0-9]{64}$/.test(v.textHash) ? { textHash: v.textHash } : {}) } : {}) }
+    ? {
+        name: v.name,
+        summary: v.summary,
+        ...(v.generated === true
+          ? {
+              generated: true,
+              ...(typeof v.textHash === 'string' && /^[a-f0-9]{64}$/.test(v.textHash) ? { textHash: v.textHash } : {}),
+              ...(typeof v.updatedAt === 'number' && Number.isFinite(v.updatedAt) && v.updatedAt > 0 ? { updatedAt: v.updatedAt } : {}),
+            }
+          : {}),
+      }
     : undefined;
 }
 

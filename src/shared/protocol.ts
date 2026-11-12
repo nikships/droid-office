@@ -75,6 +75,8 @@ export interface WorkerTask {
   generated?: boolean;
   /** Digest of the bounded visible text, so an Office restart does not re-label unchanged text. */
   textHash?: string;
+  /** Epoch ms when the generated label was last written. */
+  updatedAt?: number;
 }
 
 export interface WorkerInfo {
