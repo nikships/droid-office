@@ -281,7 +281,20 @@ export function encodeKittyKey(e: KittyKeyEvent, flags: number, opts: KittyEncod
   const reportAll = (flags & KITTY_KB_REPORT_ALL) !== 0;
   const reportText = (flags & KITTY_KB_REPORT_TEXT) !== 0;
 
-  if (e.type === 'keypress') return { do: 'swallow' };
+  if (e.type === 'keypress') {
+    // xterm types Space and Shift+A..Z on keypress, not keydown, so swallow a keypress only when its keydown already sent bytes.
+    const press: KittyKeyEvent = {
+      type: 'keydown',
+      key: e.key,
+      code: e.code,
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      metaKey: e.metaKey,
+      repeat: e.repeat,
+    };
+    return encodeKittyKey(press, flags, opts).do === 'send' ? { do: 'swallow' } : { do: 'default' };
+  }
   if (e.type === 'keyup') {
     if (!reportEvents) return { do: 'default' };
   } else if (e.type !== 'keydown') {

@@ -114,6 +114,13 @@ test('encodeKittyKey handles progressive flags 0, 1, 2, 4, 8 and 16 while preser
   assert.deepEqual(encodeKittyKey(key('Delete', { ctrlKey: true }), f1), { do: 'send', data: '\x1b[3;5~' });
   assert.deepEqual(encodeKittyKey(key('Shift', { code: 'ShiftLeft', shiftKey: true }), f1), { do: 'default' });
   assert.deepEqual(encodeKittyKey(key('Escape', { type: 'keyup' }), f1), { do: 'default' });
+  // xterm types Space and Shift+A..Z on keypress, so a keypress whose keydown sent nothing must reach xterm.
+  assert.deepEqual(encodeKittyKey(key(' ', { type: 'keypress', code: 'Space', keyCode: 32 }), f1), { do: 'default' });
+  assert.deepEqual(encodeKittyKey(key('A', { type: 'keypress', shiftKey: true, code: 'KeyA', keyCode: 65 }), f1), { do: 'default' });
+  assert.deepEqual(encodeKittyKey(key(' ', { type: 'keypress', shiftKey: true, code: 'Space', keyCode: 32 }), f1), { do: 'swallow' });
+  assert.deepEqual(encodeKittyKey(key('Enter', { type: 'keypress', code: 'Enter', keyCode: 13 }), f1), { do: 'swallow' });
+  assert.deepEqual(encodeKittyKey(key(' ', { type: 'keypress', code: 'Space', keyCode: 32 }), KITTY_KB_DISAMBIGUATE | KITTY_KB_REPORT_EVENTS), { do: 'default' });
+  assert.deepEqual(encodeKittyKey(key(' ', { type: 'keypress', code: 'Space', keyCode: 32 }), KITTY_KB_ALL_FLAGS), { do: 'swallow' });
 
   // Flags 1 | 2 | 4 | 8 | 16 (full progressive enhancement; C0 control keys omit associated text per Kitty spec).
   const full = KITTY_KB_ALL_FLAGS;
