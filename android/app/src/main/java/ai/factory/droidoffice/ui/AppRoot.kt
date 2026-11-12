@@ -45,8 +45,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -66,9 +68,15 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import ai.factory.droidoffice.AppGraph
+import ai.factory.droidoffice.core.DeepLink
+import ai.factory.droidoffice.core.DeepLinkTarget
+import ai.factory.droidoffice.core.DeepLinks
 import ai.factory.droidoffice.core.InviteParse
+import ai.factory.droidoffice.core.OfficeJson
+import ai.factory.droidoffice.core.OfficeRouteCandidate
 import ai.factory.droidoffice.core.Pairing
 import ai.factory.droidoffice.core.PairingInvite
+import ai.factory.droidoffice.core.WorkerLinkView
 import ai.factory.droidoffice.notify.Banner
 import ai.factory.droidoffice.notify.StayConnectedService
 import ai.factory.droidoffice.session.Phase
@@ -97,6 +105,7 @@ import kotlinx.serialization.Serializable
 
 sealed interface Incoming {
     data class Link(val raw: String) : Incoming
+    data class Deep(val link: DeepLink) : Incoming
     data class Worker(val officeId: String, val workerId: String) : Incoming
     data class Floor(val officeId: String, val floorId: String) : Incoming
 }
@@ -105,7 +114,15 @@ sealed interface Incoming {
 @Serializable data object ScanKey : NavKey
 @Serializable data class PairKey(val invite: PairingInvite) : NavKey
 @Serializable data object HomeKey : NavKey
-@Serializable data class WorkerKey(val id: String, val draft: String? = null) : NavKey
+@Serializable data class WorkerKey(
+    val id: String,
+    val draft: String? = null,
+    val floorHint: String? = null,
+    val view: WorkerLinkView? = null,
+    val openQuestion: Boolean = false,
+    val questionId: String? = null,
+    val launchId: Int = 0,
+) : NavKey
 @Serializable data object OfficesKey : NavKey
 @Serializable data class BoardCardKey(val floor: String, val card: String) : NavKey
 
@@ -147,11 +164,24 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
     }
     val stack = rememberNavBackStack(if (snapshot.offices.isEmpty()) WelcomeKey else HomeKey)
     val nav = remember(stack) { Nav(stack) }
+    val appScope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val snackbarLift = remember { mutableStateOf<Dp?>(null) }
     val context = LocalContext.current
     var showUpdate by rememberSaveable { mutableStateOf(false) }
     var announcedUpdate by rememberSaveable { mutableStateOf<String?>(null) }
+    var requestedTab by rememberSaveable { mutableStateOf<MainTab?>(null) }
+    var deepLaunchId by rememberSaveable { mutableIntStateOf(0) }
+    var pendingDeepLinkJson by rememberSaveable { mutableStateOf<String?>(null) }
+    val pendingDeepLink = remember(pendingDeepLinkJson) {
+        pendingDeepLinkJson?.let { raw -> runCatching { OfficeJson.decodeFromString(DeepLink.serializer(), raw) }.getOrNull() }
+    }
+    LaunchedEffect(pendingDeepLinkJson, pendingDeepLink) {
+        if (pendingDeepLinkJson != null && pendingDeepLink == null) pendingDeepLinkJson = null
+    }
+    fun setPendingDeepLink(next: DeepLink?) {
+        pendingDeepLinkJson = next?.let { OfficeJson.encodeToString(DeepLink.serializer(), it) }
+    }
     val update by graph.updates.state.collectAsStateWithLifecycle()
     LaunchedEffect(update.release?.version) {
         val version = update.release?.version ?: return@LaunchedEffect
@@ -166,13 +196,21 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
         }
     }
 
-    // Links from the system camera, a share, or a notification tap.
+    // Links from the system camera, a share, a chat deep link, or a notification tap.
     val pending by incoming.collectAsStateWithLifecycle()
     LaunchedEffect(pending) {
         when (val p = pending) {
             is Incoming.Link -> when (val r = Pairing.parse(p.raw)) {
                 is InviteParse.Ok -> nav.push(PairKey(r.invite))
                 is InviteParse.Invalid -> snackbar.showSnackbar(r.reason)
+            }
+            is Incoming.Deep -> {
+                setPendingDeepLink(p.link)
+                if (graph.store.snapshot.value.offices.isEmpty()) {
+                    if (!nav.contains { it is WelcomeKey || it is ScanKey || it is PairKey }) nav.reset(WelcomeKey)
+                } else {
+                    nav.home()
+                }
             }
             is Incoming.Worker -> {
                 if (graph.store.snapshot.value.offices.any { it.id == p.officeId }) {
@@ -184,6 +222,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
             is Incoming.Floor -> {
                 if (graph.store.snapshot.value.offices.any { it.id == p.officeId }) {
                     graph.store.setActive(p.officeId)
+                    requestedTab = MainTab.Office
                     nav.home()
                     graph.connection.link.first { it.phase == Phase.Connected }
                     graph.connection.goFloor(p.floorId)
@@ -205,8 +244,86 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
 
     // Unpaired while looking at a worker: back to the office screen, which offers to pair again.
     val link by graph.connection.link.collectAsStateWithLifecycle()
+    val data by graph.connection.data.collectAsStateWithLifecycle()
     LaunchedEffect(link.phase) {
         if (link.phase == Phase.Unauthorized && nav.contains { it is WorkerKey || it is BoardCardKey }) nav.home()
+    }
+
+    val inOnboarding = stack.any { it is WelcomeKey || it is ScanKey || it is PairKey }
+    LaunchedEffect(pendingDeepLink, snapshot.offices, snapshot.activeId, inOnboarding, link.phase, link.officeId, data.officeId, data.synced, data.floorId) {
+        val deep = pendingDeepLink ?: return@LaunchedEffect
+        if (snapshot.offices.isEmpty() || inOnboarding) return@LaunchedEffect
+        val candidates = snapshot.offices.map { OfficeRouteCandidate(id = it.id, bases = it.bases, lastBase = it.lastBase) }
+        val targetOfficeId = deep.resolveOfficeId(candidates, snapshot.active?.id)
+        if (targetOfficeId == null) {
+            setPendingDeepLink(null)
+            appScope.launch { snackbar.showSnackbar("That office isn’t paired on this phone.") }
+            return@LaunchedEffect
+        }
+        if (snapshot.active?.id != targetOfficeId) {
+            graph.store.setActive(targetOfficeId)
+            return@LaunchedEffect
+        }
+        if (link.phase == Phase.Unauthorized && link.officeId == targetOfficeId) {
+            setPendingDeepLink(null)
+            return@LaunchedEffect
+        }
+        when (val t = deep.target) {
+            is DeepLinkTarget.Worker -> {
+                val launch = ++deepLaunchId
+                setPendingDeepLink(null)
+                val nextKey = WorkerKey(id = t.workerId, floorHint = t.floorId, view = t.view, launchId = launch)
+                if ((nav.top as? WorkerKey)?.id == t.workerId) nav.replaceTop(nextKey) else {
+                    nav.home()
+                    nav.push(nextKey)
+                }
+            }
+            is DeepLinkTarget.Question -> {
+                val launch = ++deepLaunchId
+                setPendingDeepLink(null)
+                val nextKey = WorkerKey(id = t.workerId, floorHint = t.floorId, openQuestion = true, questionId = t.questionId, launchId = launch)
+                if ((nav.top as? WorkerKey)?.id == t.workerId) nav.replaceTop(nextKey) else {
+                    nav.home()
+                    nav.push(nextKey)
+                }
+            }
+            is DeepLinkTarget.Floor -> {
+                if (nav.top != HomeKey) nav.home()
+                if (link.phase != Phase.Connected || link.officeId != targetOfficeId || data.officeId != targetOfficeId || !data.synced) {
+                    return@LaunchedEffect
+                }
+                val resolved = DeepLinks.resolveFloorId(data.floors, t.floorId)
+                setPendingDeepLink(null)
+                if (resolved != null) {
+                    if (requestedTab != MainTab.Office) requestedTab = MainTab.Office
+                    if (data.floorId != resolved) graph.connection.goFloor(resolved)
+                } else {
+                    appScope.launch { snackbar.showSnackbar("Floor “${t.floorId}” is no longer open.") }
+                }
+            }
+            is DeepLinkTarget.Card -> {
+                if (nav.top != HomeKey) nav.home()
+                if (link.phase != Phase.Connected || link.officeId != targetOfficeId || data.officeId != targetOfficeId || !data.synced) {
+                    return@LaunchedEffect
+                }
+                val resolvedFloor = if (t.floorId != null) {
+                    DeepLinks.resolveFloorId(data.floors, t.floorId)
+                } else {
+                    data.floorId
+                }
+                if (t.floorId != null && resolvedFloor == null) {
+                    setPendingDeepLink(null)
+                    appScope.launch { snackbar.showSnackbar("Floor “${t.floorId}” is no longer open.") }
+                    return@LaunchedEffect
+                }
+                val cardFloor = resolvedFloor ?: return@LaunchedEffect
+                setPendingDeepLink(null)
+                requestedTab = MainTab.Board
+                if (data.floorId != cardFloor) graph.connection.goFloor(cardFloor)
+                nav.home()
+                nav.push(BoardCardKey(floor = cardFloor, card = t.cardId))
+            }
+        }
     }
 
     // The office's own toasts, as snackbars.
@@ -254,7 +371,11 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
                 predictivePopTransitionSpec = { backward() },
                 entryProvider = entryProvider {
                     entry<WelcomeKey> {
-                        WelcomeScreen(onScan = { nav.push(ScanKey) }, onLink = { invite -> nav.push(PairKey(invite)) })
+                        WelcomeScreen(
+                            onScan = { nav.push(ScanKey) },
+                            onLink = { invite -> nav.push(PairKey(invite)) },
+                            pendingDeepLink = pendingDeepLink,
+                        )
                     }
                     entry<ScanKey> {
                         ScanScreen(onBack = { nav.pop() }, onInvite = { invite -> nav.push(PairKey(invite)) })
@@ -275,10 +396,22 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
                             onOpenWorker = { id, draft -> nav.push(WorkerKey(id, draft)) },
                             onOpenCard = { floor, card -> nav.push(BoardCardKey(floor, card)) },
                             onScan = { nav.push(ScanKey) },
+                            requestedTab = requestedTab,
+                            onTabShown = { requestedTab = null },
                         )
                     }
                     entry<WorkerKey> { key ->
-                        WorkerScreen(workerId = key.id, onBack = { nav.pop() }, draft = key.draft, onOpenWorker = { nav.push(WorkerKey(it)) })
+                        WorkerScreen(
+                            workerId = key.id,
+                            onBack = { nav.pop() },
+                            draft = key.draft,
+                            onOpenWorker = { nav.push(WorkerKey(it)) },
+                            floorHint = key.floorHint,
+                            initialView = key.view,
+                            openQuestion = key.openQuestion,
+                            questionId = key.questionId,
+                            launchId = key.launchId,
+                        )
                     }
                     entry<BoardCardKey> { key ->
                         BoardCardScreen(

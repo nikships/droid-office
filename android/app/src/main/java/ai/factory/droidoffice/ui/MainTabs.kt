@@ -69,7 +69,13 @@ enum class MainTab(val label: String, val icon: ImageVector, val tag: String) {
  * Workers and Office keep the worker list and terminal side by side.
  */
 @Composable
-fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (floor: String, card: String) -> Unit, onScan: () -> Unit) {
+fun MainTabs(
+    onOpenWorker: (id: String, draft: String?) -> Unit,
+    onOpenCard: (floor: String, card: String) -> Unit,
+    onScan: () -> Unit,
+    requestedTab: MainTab? = null,
+    onTabShown: (() -> Unit)? = null,
+) {
     val graph = LocalGraph.current
     val store by graph.store.snapshot.collectAsStateWithLifecycle()
     val officeId = store.active?.id
@@ -83,9 +89,18 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
     var workersSelected by rememberSaveable(officeId) { mutableStateOf<String?>(null) }
     var officeSelected by rememberSaveable(officeId, data.floorId) { mutableStateOf<String?>(null) }
     val snackbar = LocalSnackbar.current
+    LaunchedEffect(requestedTab) {
+        if (requestedTab != null) {
+            tab = requestedTab
+            if (requestedTab == MainTab.Office) officeSelected = null
+            onTabShown?.invoke()
+        }
+    }
     // Opens on Workers when something is waiting the first time the office is in, else on Office.
-    LaunchedEffect(data.synced) { if (tab == null && data.synced) tab = if (waiting > 0) MainTab.Workers else MainTab.Office }
-    val shown = tab ?: MainTab.Office
+    LaunchedEffect(data.synced) {
+        if (tab == null && requestedTab == null && data.synced) tab = if (waiting > 0) MainTab.Workers else MainTab.Office
+    }
+    val shown = requestedTab ?: tab ?: MainTab.Office
 
     BoxWithConstraints(Modifier.fillMaxSize().background(Palette.Bg)) {
         val wide = maxWidth >= 840.dp
@@ -132,7 +147,7 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
                     MainTab.entries.forEach { t ->
                         NavigationRailItem(
                             selected = t == shown,
-                            onClick = { tab = t },
+                            onClick = { tab = t; onTabShown?.invoke() },
                             icon = { TabIcon(t, badge(t)) },
                             label = { Text(t.label, style = MaterialTheme.typography.labelMedium) },
                             colors = NavigationRailItemDefaults.colors(
@@ -157,7 +172,7 @@ fun MainTabs(onOpenWorker: (id: String, draft: String?) -> Unit, onOpenCard: (fl
                     MainTab.entries.forEach { t ->
                         NavigationBarItem(
                             selected = t == shown,
-                            onClick = { tab = t },
+                            onClick = { tab = t; onTabShown?.invoke() },
                             icon = { TabIcon(t, badge(t)) },
                             label = { Text(t.label, style = MaterialTheme.typography.labelMedium) },
                             colors = NavigationBarItemDefaults.colors(

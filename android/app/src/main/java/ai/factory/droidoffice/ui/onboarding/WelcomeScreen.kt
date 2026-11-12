@@ -50,6 +50,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import ai.factory.droidoffice.core.DeepLink
 import ai.factory.droidoffice.core.PairingInvite
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.ui.components.Eyebrow
@@ -65,7 +66,7 @@ import ai.factory.droidoffice.ui.theme.Palette
 import kotlinx.coroutines.delay
 
 @Composable
-fun WelcomeScreen(onScan: () -> Unit, onLink: (PairingInvite) -> Unit) {
+fun WelcomeScreen(onScan: () -> Unit, onLink: (PairingInvite) -> Unit, pendingDeepLink: DeepLink? = null) {
     var showPaste by remember { mutableStateOf(false) }
     val rise = remember { Animatable(0f) }
     LaunchedEffect(Unit) { rise.animateTo(1f, tween(900)) }
@@ -108,6 +109,28 @@ fun WelcomeScreen(onScan: () -> Unit, onLink: (PairingInvite) -> Unit) {
             }
             Spacer(Modifier.weight(1f).height(32.dp))
             Column(Modifier.widthIn(max = 520.dp).fillMaxWidth().padding(bottom = 16.dp)) {
+                if (pendingDeepLink != null) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(bottom = 14.dp)
+                            .panel(RoundedCornerShape(10.dp), Palette.SurfaceRaised, Palette.Accent.copy(alpha = 0.5f))
+                            .tagged(Tags.Welcome.DEEP_LINK)
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Eyebrow("Link waiting", color = Palette.Accent)
+                        Text(
+                            pendingDeepLink.pairingPrompt(),
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "Scan your office's QR code or paste its join link below, and the app opens straight there.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Palette.TextSecondary,
+                        )
+                    }
+                }
                 PrimaryButton("Scan the office's QR code", onScan, Modifier.fillMaxWidth().tagged(Tags.Welcome.SCAN), icon = OfficeIcons.Scan)
                 Spacer(Modifier.height(6.dp))
                 TextButton(onClick = { showPaste = true }, modifier = Modifier.fillMaxWidth().height(48.dp).tagged(Tags.Welcome.PASTE)) {

@@ -188,6 +188,7 @@ object Tags {
     object Welcome {
         const val SCAN = "welcome.scan"
         const val PASTE = "welcome.paste"
+        const val DEEP_LINK = "welcome.deep_link"
     }
 
     object Scan {

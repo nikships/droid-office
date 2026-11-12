@@ -190,6 +190,11 @@ export class RemoteMcp {
     return this.state();
   }
 
+  /** MagicDNS name discovered while starting Tailscale Serve, when known. */
+  dnsName(): string | undefined {
+    return this.hostname;
+  }
+
   state(): RemoteMcpState {
     const url = this.status === 'serving' && this.hostname && this.httpsPort ? remoteMcpUrl(this.hostname, this.httpsPort) : undefined;
     const bots = this.opts.office.store.list().map((r): RemoteMcpBot => {

@@ -4,6 +4,7 @@ import { ORCHESTRATOR_ID } from '../../shared/mission-control.js';
 import type { ClientMsg } from '../../shared/protocol.js';
 import { AUTO_DESK } from '../../shared/protocol.js';
 import { formatImageLines, type StoredImageMeta } from '../office-images.js';
+import { mcpDeepLinkBase } from './deep-links.js';
 import type { OfficeMcpDeps, OfficeMcpServer } from './index.js';
 import { officeError } from './index.js';
 import { buildingOnly, findMissionAgent, findWorker, missionControlRefusal, outsideOffice, pickFloor, ownerResult, type OwnerAction, type OwnerOffice } from './owner.js';
@@ -153,7 +154,7 @@ export function registerOwnerTools(server: OfficeMcpServer, owner: OwnerOffice, 
       if (args.urgent === undefined) delete args.urgent;
       if (signal.aborted) return officeError('Cancelled before taking the action.');
       const result = await owner.act(caller.worker, { ...args, t: entry.action }, { floor, signal });
-      const out = ownerResult(entry.name, result);
+      const out = ownerResult(entry.name, result, { floor, linkBase: deps ? mcpDeepLinkBase(deps) : undefined });
       if (!out.isError && entry.action === 'thread.read' && result.reply?.t === 'thread.snapshot' && owner.threadImages) {
         let metas: StoredImageMeta[] = [];
         try {

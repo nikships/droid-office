@@ -8,6 +8,7 @@ import { analyzeCheckoutSafety, workerLocation } from '../floor-watch.js';
 import type { StoredImageMeta } from '../office-images.js';
 import { buildWorkerInspection, describeTaskLabel, formatTaskTag, formatWorkerInspection, type WorkerInspection, type WorkerTaskLabel } from '../worker-status.js';
 import { formatBlockingSummary, formatQueueBrief, type BlockingToolState, type WorkerQueueState } from '../worker-queue.js';
+import { floorDeepLink, mcpDeepLinkBase, workerDeepLink } from './deep-links.js';
 import { officeError, officeResult, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { floorRef, resolveWorkerTarget, WORKER_TARGET_ERROR, workerTarget } from './owner-schemas.js';
 import { registerOwnerTools } from './owner-tools.js';
@@ -116,6 +117,7 @@ export interface RosterWorker {
   pr?: { number: number; url: string };
   queuedMessages?: WorkerQueueState;
   blockingTool?: BlockingToolState;
+  deepLink?: string;
 }
 
 export const ownerInstructions = `You have owner-level access across floors via office_* tools. Act only within the owner's request. Use team_hire and team_* for delegated work; use office_worker_spawn only when explicitly asked for a standalone, shell, or cloud worker. Inspect workers with office_roster, office_look and office_worker_thread before steering with office_worker_prompt (default queue: false steers now; queue: true queues behind the turn; urgent: true interrupts blocking commands; worker_queue lists/clears/promotes queued items); interrupt or answer AskUser menus with office_worker_interrupt and office_worker_answer (leave terminal permission prompts untouched and tell the owner). Keep worktrees, branches and cloud sessions unless asked to delete them, and check state before retrying pending/unconfirmed actions.`;
@@ -285,16 +287,18 @@ function outcomeStatus(result: OwnerReply): 'pending' | 'unconfirmed' | 'done' {
   return 'done';
 }
 
-export function ownerResult(name: string, result: OwnerReply) {
+export function ownerResult(name: string, result: OwnerReply, extra?: { floor?: string; linkBase?: string }) {
   if (result.error) return officeError(`${name} refused: ${result.error}${result.notes.length ? `\n${result.notes.join('\n')}` : ''}`);
   const details = replyText(result);
   const status = outcomeStatus(result);
+  const deepLink = result.workerId ? workerDeepLink(result.workerId, extra?.floor, extra?.linkBase) : undefined;
   return officeResult(`${name}: ${outcomeText(result)}${details.text ? `\n${details.text}` : ''}`, {
     status,
     ...(result.pending ? { pending: true } : {}),
     ...(result.unconfirmed ? { unconfirmed: true } : {}),
     notes: result.notes,
     ...(result.workerId ? { workerId: result.workerId } : {}),
+    ...(deepLink ? { deepLink } : {}),
     ...(result.reply ? (details.truncated ? { replyType: result.reply.t, replyTruncated: true } : { reply: result.reply }) : {}),
   });
 }
@@ -343,7 +347,11 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const selectedFloors = floors.filter((f) => !only || f.id === only);
       const safety = analyzeCheckoutSafety(selectedFloors);
       const { warnings } = safety;
-      const workers = roster(floors, caller.worker.id, only, labelsOn, metaFor, safety);
+      const linkBase = mcpDeepLinkBase(deps);
+      const workers = roster(floors, caller.worker.id, only, labelsOn, metaFor, safety).map((w) => ({
+        ...w,
+        deepLink: workerDeepLink(w.id, w.floor, linkBase),
+      }));
       const shown = floors
         .map((f, i) => ({
           id: f.id,
@@ -352,6 +360,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           ...(f.dir ? { dir: f.dir } : {}),
           ...(f.branch ? { branch: f.branch } : {}),
           ...(f.baseBranch ? { baseBranch: f.baseBranch } : {}),
+          deepLink: floorDeepLink(f.id, linkBase),
         }))
         .filter((f) => !only || f.id === only);
       const mission = only ? [] : owner.mission();
@@ -411,12 +420,14 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         if (!building) return officeError(found);
         if (building.worker.id !== ORCHESTRATOR_ID) return officeError(outsideOffice(building, 'terminal'));
         const state = await owner.inspect?.(building.worker.id);
+        const deepLink = workerDeepLink(building.worker.id, undefined, mcpDeepLinkBase(deps));
         if (lines === 0) {
           const snap = state ?? buildWorkerInspection({ worker: building.worker, labelsOn: owner.labelsOn?.() ?? true });
           return officeResult(`${building.worker.name} in Mission Control:\n\n${formatWorkerInspection(snap, { includeSteps: true })}`, {
             worker: building.worker.id,
             floor: null,
             missionControl: true,
+            deepLink,
             lines: 0,
             state: snap,
           });
@@ -428,16 +439,19 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           worker: building.worker.id,
           floor: null,
           missionControl: true,
+          deepLink,
           ...(state ? { state } : {}),
           ...shown,
         });
       }
       const state = await owner.inspect?.(found.worker.id, found.floor.id);
+      const deepLink = workerDeepLink(found.worker.id, found.floor.id, mcpDeepLinkBase(deps));
       if (lines === 0) {
         const snap = state ?? buildWorkerInspection({ worker: found.worker, labelsOn: owner.labelsOn?.() ?? true });
         return officeResult(`${found.worker.name} on floor ${found.number} (${found.floor.name}):\n\n${formatWorkerInspection(snap, { includeSteps: true })}`, {
           worker: found.worker.id,
           floor: found.floor.id,
+          deepLink,
           lines: 0,
           state: snap,
         });
@@ -448,6 +462,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       return officeResult(renderLookWithTerminal(`${found.worker.name} on floor ${found.number} (${found.floor.name})`, shown, '(its terminal is empty)', state), {
         worker: found.worker.id,
         floor: found.floor.id,
+        deepLink,
         ...(state ? { state } : {}),
         ...shown,
       });

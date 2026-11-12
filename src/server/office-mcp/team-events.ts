@@ -9,6 +9,7 @@ import { settled, TEAM_EVENT_KINDS, type Team, type TeamEvent, type TeamEventKin
 import { briefAge, formatForgeLines, formatTaskTag } from '../worker-status.js';
 import type { WorkerManager } from '../workers.js';
 import { formatBlockingSummary, formatQueueBrief } from '../worker-queue.js';
+import { mcpDeepLinkBase, questionDeepLink, withCompactWorkerDeepLink, withQuestionDeepLink, workerDeepLink } from './deep-links.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpAccess, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer, type OfficeProgress } from './index.js';
 import { floorNamed } from '../remote-office.js';
 
@@ -355,6 +356,8 @@ const workerOut = z.looseObject({
   lastReportAt: z.string().optional(),
   lastReportSummary: z.string().optional(),
   openQuestionId: z.string().optional(),
+  deepLink: z.string().optional(),
+  questionDeepLink: z.string().optional(),
 });
 const eventOut = z.looseObject({ id: z.string(), kind: z.string(), worker: z.string(), name: z.string(), floor: z.string(), at: z.string(), summary: z.string().optional(), text: z.string().optional() });
 const questionOut = z.looseObject({
@@ -369,6 +372,7 @@ const questionOut = z.looseObject({
   takesText: z.boolean(),
   answerable: z.boolean(),
   why: z.string().optional(),
+  deepLink: z.string().optional(),
 });
 export const statusOutput = { workers: z.array(workerOut), news: z.array(eventOut), cursor: z.string() };
 
@@ -480,13 +484,14 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
               found.filter((x) => x.floor === s.id).map((x) => x.e.seq),
             );
         const imageOrigin = caller.remoteOrigin ?? (deps.images ?? deps.remote?.images)?.origin();
+        const linkBase = mcpDeepLinkBase(deps);
         const events = found.map(({ e, floor }) => compactEvent(e, floor, args.verbose, imageOrigin));
-        const questions = openQuestions(scopes, lead, watched);
+        const questions = openQuestions(scopes, lead, watched).map((q) => withQuestionDeepLink(q, linkBase));
         const workers = scopes.flatMap((s) =>
           s.team
             .roster(lead)
             .filter((m) => !watched || watched.has(m.id))
-            .map((m) => compactWorker(m, s.id, imageOrigin)),
+            .map((m) => withCompactWorkerDeepLink(compactWorker(m, s.id, imageOrigin), linkBase)),
         );
         const body = { matched, reason, waitedMs: Date.now() - started, ...(capped && !matched ? { capped: true } : {}), events, questions, workers, cursor };
         let headline = `Nothing matched within ${requestedSec} s.`;
@@ -549,6 +554,8 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const imageOrigin = caller.remoteOrigin ?? (deps.images ?? deps.remote?.images)?.origin();
       const history = scopes.flatMap((s) => s.team.reports(lead, pick.e.worker).map((e) => compactEvent(e, s.id, false, imageOrigin))).slice(-HISTORY_MAX);
       const report = compactEvent(pick.e, pick.floor, true, imageOrigin);
+      const linkBase = mcpDeepLinkBase(deps);
+      const deepLink = report.kind === 'question' ? questionDeepLink(report.worker, report.floor || undefined, report.id, linkBase) : workerDeepLink(report.worker, report.floor || undefined, linkBase);
       return officeResult(
         [
           `${report.kind === 'question' ? 'Question' : report.progress ? 'Progress report (not finished)' : 'Report'} ${report.id} from ${report.name} at ${report.at}:`,
@@ -557,7 +564,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           ...formatImageLines(report.images),
           ...(history.length > 1 ? [`History:\n${history.map(compactEventText).join('\n')}`] : []),
         ].join('\n'),
-        { report, history },
+        { report, history, deepLink },
       );
     },
   );
@@ -576,7 +583,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (typeof scopes === 'string') return officeError(scopes);
       const watched = watchedWorkers(scopes, caller.worker.id, args.workers);
       if (typeof watched === 'string') return officeError(watched);
-      const questions = openQuestions(scopes, caller.worker.id, watched);
+      const questions = openQuestions(scopes, caller.worker.id, watched).map((q) => withQuestionDeepLink(q, mcpDeepLinkBase(deps)));
       return officeResult(questions.length ? questions.map(questionText).join('\n\n') : 'No questions are waiting on you.', { questions });
     },
   );

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
+import { normalizeDeepLinkBase, questionDeepLink, workerDeepLink } from '../shared/deep-links.js';
 import type { WorkerInfo } from '../shared/protocol.js';
 import { buildGrokWebhookPayload, buildTeamWebhookItem, sendGrokWebhook, webhookWorkerFromMember, type GrokWebhookItem, type GrokWebhookResult } from './grok-webhook.js';
 import { formatImageLines, OfficeImageStore, type OfficeImageRef, type StoredImageMeta } from './office-images.js';
@@ -37,6 +38,7 @@ export interface RemoteOfficeOptions {
   /** Debounce window (ms) for coalescing automatic floor hook events before POSTing to a Grok Bot's webhook. */
   webhookDelayMs?: number;
   webhookTimeoutMs?: number;
+  deepLinkBase?: () => string | undefined;
   now?: () => number;
   images?: OfficeImageStore;
   imageOrigin?: () => string | undefined;
@@ -190,13 +192,21 @@ export class RemoteOffice {
     }
     const id = ackId ?? `test-${randomBytes(8).toString('hex')}`;
     const ackNote = ackId ? " Acknowledge only this item's ackId once handled." : '';
+    const linkBase = normalizeDeepLinkBase(this.opts.deepLinkBase?.());
+    const workerSnapshot = webhookWorkerFromMember(member, caller.worker);
+    if (workerSnapshot && linkBase) workerSnapshot.deepLink = workerDeepLink(caller.worker.id, caller.floor.id, linkBase);
+    let deepLink: string | undefined;
+    if (linkBase && input.kind !== 'test') {
+      deepLink = input.kind === 'question' ? questionDeepLink(caller.worker.id, caller.floor.id, undefined, linkBase) : workerDeepLink(caller.worker.id, caller.floor.id, linkBase);
+    }
     const item: GrokWebhookItem = {
       id,
       ...(ackId ? { ackId } : {}),
       kind: input.kind,
       at: new Date(now).toISOString(),
       floor: { id: caller.floor.id, name: caller.floor.name, cwd: caller.floor.dir },
-      worker: webhookWorkerFromMember(member, caller.worker),
+      worker: workerSnapshot,
+      ...(deepLink ? { deepLink } : {}),
       text: input.text,
       ...(input.options?.length ? { options: [...input.options] } : {}),
       ...(prUrl ? { prUrl } : {}),
@@ -378,6 +388,7 @@ export class RemoteOffice {
       worker,
       openQuestion,
       imageOrigin: this.images.origin(),
+      deepLinkBase: normalizeDeepLinkBase(this.opts.deepLinkBase?.()),
     });
   }
 
@@ -483,7 +494,8 @@ export class RemoteOffice {
       if (repo && named && repo !== named) return { status: 400, body: { error: `floor and task.repo name different floors (${named.def.name} and ${repo.def.name}). Name one floor.` } };
       const target = repo ?? named;
       if (!target) return { status: 400, body: { error: 'Name the floor to hire on: floor or task.repo takes an open floor’s id, name or path (office_floors lists them).' } };
-      return target.team.handle(worker, { ...args, ...(repo ? { repo: target.dir } : {}) });
+      const hired = await target.team.handle(worker, { ...args, ...(repo ? { repo: target.dir } : {}) });
+      return hired.status < 400 && !('floor' in hired.body) ? { ...hired, body: { ...hired.body, floor: target.id } } : hired;
     }
     const floors = named ? [named] : all;
     if (!floors.length) return { status: 404, body: { error: 'No floor is open.' } };
@@ -588,13 +600,18 @@ export class RemoteOffice {
         const former = floors.flatMap((f) => (f.team.formerMatches?.(worker.id, args.worker!) ?? []).map((m) => ({ f, id: m.id, name: m.name })));
         const exact = former.filter((m) => m.id.toLowerCase() === wanted);
         const picked = exact.length ? exact : former;
-        if (picked.length === 1) return picked[0].f.team.handle(worker, { ...args, worker: picked[0].id });
+        if (picked.length === 1) {
+          const formerResult = await picked[0].f.team.handle(worker, { ...args, worker: picked[0].id });
+          return formerResult.status < 400 && !('floor' in formerResult.body) ? { ...formerResult, body: { ...formerResult.body, floor: picked[0].f.id } } : formerResult;
+        }
         if (picked.length > 1) return { status: 409, body: { error: `${args.worker} names more than one former subagent; use the worker id${floors.length > 1 ? ' or specify floor' : ''}` } };
       }
       if (matches.length !== 1) return { status: matches.length ? 409 : 404, body: { error: matches.length ? 'That name occurs on several floors; use the worker id or specify floor' : 'No such subagent in your teams' } };
       const { f, w } = matches[0];
       const result = await f.team.handle(worker, { ...args, worker: w.id, since: args.since ? args.since[f.id] : undefined });
-      if (args.action !== 'status' || result.status >= 400) return result;
+      if (args.action !== 'status' || result.status >= 400) {
+        return result.status < 400 && !('floor' in result.body) ? { ...result, body: { ...result.body, floor: f.id } } : result;
+      }
       // Every floor's position, so this cursor also serves a later status of the whole building.
       const latest = Object.fromEntries(floors.map((x) => [x.id, x === f ? result.body.latest : x.team.latest()]));
       return { status: 200, body: { ...result.body, ...merged([{ floor: f.id, result }]), latest } };
