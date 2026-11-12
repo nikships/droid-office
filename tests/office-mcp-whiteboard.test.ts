@@ -18,7 +18,7 @@ import { OWNER, OWNER_AUTHOR, findCard, readPoint, type Op } from '../src/shared
 import type { ReadOut } from '../src/server/whiteboard-agent.js';
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
-const TOOL_NAMES = ['whiteboard_apply', 'whiteboard_card', 'whiteboard_marks', 'whiteboard_read', 'whiteboard_state'];
+const TOOL_NAMES = ['whiteboard_apply', 'whiteboard_card', 'whiteboard_guide', 'whiteboard_marks', 'whiteboard_read', 'whiteboard_state'];
 
 class Renderer implements WhiteboardRenderer {
   available = true;
@@ -145,7 +145,7 @@ const textOf = (result: { content: unknown }) =>
     .join('\n');
 const readOf = (value: unknown) => value as ReadOut;
 
-test('both lead and subagent discover all five Whiteboard tools and their complete artifact guide', async (t) => {
+test('both lead and subagent discover all six Whiteboard tools and their complete artifact guide', async (t) => {
   const r = await rig(t);
   const lead = await r.connect('lead');
   for (const client of [lead, r.client])
@@ -157,7 +157,7 @@ test('both lead and subagent discover all five Whiteboard tools and their comple
       TOOL_NAMES,
     );
   const instructions = r.client.getInstructions() ?? '';
-  for (const detail of ['reviewable screenshots', 'name its title and id', 'Read feedback', 'window.whiteboard', 'data-wb-id', '1280', 'Never put secrets', 'state.fields', 'Linked cards', 'board.json'])
+  for (const detail of ['reviewable screenshots', 'name its title and id', 'Read feedback', 'window.whiteboard', 'data-wb-id', '1280', 'Never put secrets', 'state.fields', 'Linked cards', 'board.json', 'whiteboard_guide'])
     assert.ok(instructions.includes(detail), detail);
   for (const detail of ['data-wb-ping="', 'pinged.<name>', 'data-wb-ping-state']) assert.ok(instructions.includes(detail), detail);
 });
@@ -376,7 +376,7 @@ test('source and anchor mistakes get errors that say how to fix them and change 
     assert.equal(result.isError, true, JSON.stringify(args));
     assert.match(textOf(result), expected);
   };
-  await refusal('whiteboard_card', { action: 'update', card, source: {} }, /source needs one of html, file, dir, image, link or canvas, for example \{"dir"/);
+  await refusal('whiteboard_card', { action: 'update', card, source: {} }, /source needs one of html, markdown, markdownFile, file, dir, video, image, link or canvas, for example/);
   await refusal('whiteboard_card', { action: 'update', card, source: { file: 'a.html', dir: 'site' } }, /exactly one of .*not file and dir/);
   await refusal('whiteboard_card', { action: 'update', card, source: { file: 'a.html', entry: 'index.html' } }, /entry goes with dir or link, not file/);
   await refusal('whiteboard_card', { action: 'update', card, source: { link: 'a.html' } }, /Use the link action/);
@@ -531,4 +531,142 @@ test('invalid atomic batches and uncertain commit failures report what to do wit
   assert.match(textOf(uncertain), /Read the current state before retrying/);
   assert.doesNotMatch(textOf(uncertain), /Nothing was changed|private failure/);
   assert.equal(findCard(r.store.board, card)!.title, 'Committed');
+});
+
+test('whiteboard_guide serves Factory design system topics and safely exports official SVG logos inside the worktree', async (t) => {
+  const r = await rig(t);
+  const full = await r.call('whiteboard_guide', {});
+  assert.equal(full.isError, undefined);
+  assert.match(textOf(full), /Factory Design Guide/);
+  assert.match(textOf(full), /#EE6018/);
+  assert.match(textOf(full), /FACTORY_ARTIFACT_CSS/);
+
+  const exported = await r.call('whiteboard_guide', { topic: 'brand', exportLogosTo: 'assets/brand' });
+  assert.equal(exported.isError, undefined);
+  const glyph = readFileSync(path.join(r.cwd, 'assets', 'brand', 'rotor-white.svg'), 'utf8');
+  assert.match(glyph, /^<svg/);
+
+  for (const bad of ['../escaped', '/tmp/escaped', '.git/logos', '.droid-office/logos']) {
+    const res = await r.call('whiteboard_guide', { topic: 'brand', exportLogosTo: bad });
+    assert.equal(res.isError, true, bad);
+  }
+  const outside = mkdtempSync(path.join(tmpdir(), 'wb-guide-outside-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  symlinkSync(outside, path.join(r.cwd, 'linked-out'));
+  const symRes = await r.call('whiteboard_guide', { topic: 'brand', exportLogosTo: 'linked-out/brand' });
+  assert.equal(symRes.isError, true);
+});
+
+test('markdown, markdownFile, video, SVG image, live .md links, show:true, onlyChanged and peek work end to end', async (t) => {
+  const r = await rig(t);
+
+  // 1. Inline Markdown card with inferred title, action buttons and show: true
+  const mdCreated = await r.ok('whiteboard_card', {
+    action: 'create',
+    show: true,
+    source: {
+      markdown: '# Launch Readiness\n\n- [x] Lint & typecheck\n- [ ] Smoke test\n',
+      actions: [{ action: 'ship', label: 'Ship release', ping: 'Approved Launch Readiness — ship it.', primary: true }],
+    },
+  });
+  const mdId = mdCreated.card as string;
+  assert.equal(r.store.board.selection.kind, 'card');
+  if (r.store.board.selection.kind === 'card') assert.equal(r.store.board.selection.id, mdId);
+  const mdCard = findCard(r.store.board, mdId)!;
+  assert.equal(mdCard.title, 'Launch Readiness');
+  assert.equal(mdCard.content?.format, 'markdown');
+  assert.ok(mdCard.content?.files['document.md']);
+
+  // 2. Markdown file card collecting relative local images
+  const docsDir = path.join(r.cwd, 'docs');
+  mkdirSync(docsDir, { recursive: true });
+  writeFileSync(path.join(docsDir, 'arch.png'), PNG);
+  writeFileSync(path.join(docsDir, 'rfc.md'), '# Storage Engine\n\n![Architecture](./arch.png)\n');
+  const fileMd = await r.ok('whiteboard_card', {
+    action: 'create',
+    source: { markdownFile: 'docs/rfc.md' },
+  });
+  const fileMdCard = findCard(r.store.board, fileMd.card as string)!;
+  assert.equal(fileMdCard.title, 'Storage Engine');
+  assert.ok(fileMdCard.content?.files['arch.png']);
+  assert.ok(fileMdCard.content?.files['document.md']);
+
+  // 3. Video card with auto-detected sibling poster + caption
+  writeFileSync(path.join(r.cwd, 'demo-take.mp4'), Buffer.from('00000018667479706d703432', 'hex'));
+  writeFileSync(path.join(r.cwd, 'demo-take.poster.png'), PNG);
+  const vid = await r.ok('whiteboard_card', {
+    action: 'create',
+    source: { video: 'demo-take.mp4', caption: 'Full flow at 60 fps' },
+  });
+  const vidCard = findCard(r.store.board, vid.card as string)!;
+  assert.equal(vidCard.title, 'demo-take');
+  assert.equal(vidCard.content?.format, 'video');
+  assert.ok(vidCard.content?.files['video.mp4']);
+  assert.ok(vidCard.content?.files['poster.png']);
+
+  // 4. SVG image card with caption
+  writeFileSync(path.join(r.cwd, 'diagram.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>');
+  const svgOut = await r.ok('whiteboard_card', {
+    action: 'create',
+    title: 'Topology SVG',
+    source: { image: 'diagram.svg', caption: 'Zero-trust boundary' },
+  });
+  const svgCard = findCard(r.store.board, svgOut.card as string)!;
+  assert.equal(svgCard.content?.format, 'image');
+  assert.ok(svgCard.content?.files['image.svg']);
+
+  // 5. Read named Markdown card: returns inline Markdown source and format
+  const namedRead = await r.call('whiteboard_read', { cards: [mdId] });
+  assert.match(textOf(namedRead), /html:markdown/);
+  assert.match(textOf(namedRead), /Markdown:\n\s+\| # Launch Readiness/);
+  assert.equal(readOf(namedRead.structuredContent).cards[0].format, 'markdown');
+  assert.match(readOf(namedRead.structuredContent).cards[0].content?.markdown ?? '', /# Launch Readiness/);
+
+  // 5b. Live-linked .md file updates automatically when edited on disk
+  writeFileSync(path.join(docsDir, 'live.md'), '# Draft v1\n\nInitial copy.\n');
+  const linkedMd = await r.ok('whiteboard_card', {
+    action: 'create',
+    title: 'Live Spec',
+    source: { link: 'docs/live.md' },
+  });
+  const linkedMdId = linkedMd.card as string;
+  writeFileSync(path.join(docsDir, 'live.md'), '# Draft v2\n\nUpdated live copy.\n');
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const cur = findCard(r.store.board, linkedMdId)?.content;
+    const rawMd = cur?.files['document.md'] ? r.store.readBlob(cur.files['document.md'].hash)?.toString() : '';
+    if (rawMd?.includes('Draft v2')) break;
+    await new Promise((res) => setTimeout(res, 50));
+  }
+  const finalMd = r.store.readBlob(findCard(r.store.board, linkedMdId)!.content!.files['document.md'].hash)!.toString();
+  assert.match(finalMd, /Draft v2/);
+
+  // Mark whole board read for sub, then have owner comment on vidCard only.
+  await r.ok('whiteboard_read', {});
+  const vidId = vid.card as string;
+  r.owner({
+    op: 'comment.add',
+    card: vidId,
+    thread: 't-vid',
+    message: 'm-vid',
+    anchor: { kind: 'point', point: { x: 120, y: 80 } },
+    text: 'Trim pause @00:14',
+  });
+  const revAfterComment = r.store.board.rev;
+
+  // 6. peek: true + onlyChanged: true sees only vidId AND leaves its read point untouched!
+  const peeked = await r.call('whiteboard_read', { onlyChanged: true, peek: true });
+  const peekOut = readOf(peeked.structuredContent);
+  assert.deepEqual(peekOut.returned, [vidId]);
+  assert.equal(peekOut.totalCards, 5);
+  assert.match(textOf(peeked), /peek — read points unchanged/);
+  assert.ok(readPoint(r.store.board, 'sub', vidId) < revAfterComment, 'peek leaves read point unchanged');
+
+  // 7. Non-peek onlyChanged: true advances read point for vidId only, then next onlyChanged is empty.
+  const consumed = readOf(await r.ok('whiteboard_read', { onlyChanged: true }));
+  assert.deepEqual(consumed.returned, [vidId]);
+  assert.equal(readPoint(r.store.board, 'sub', vidId), revAfterComment);
+  const noneLeft = await r.call('whiteboard_read', { onlyChanged: true });
+  assert.deepEqual(readOf(noneLeft.structuredContent).returned, []);
+  assert.match(textOf(noneLeft), /No cards changed for you since your last read/);
 });

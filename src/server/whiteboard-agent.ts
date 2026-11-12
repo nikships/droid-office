@@ -3,7 +3,7 @@
 // whiteboard_read (office-mcp/whiteboard.ts) returns it.
 
 import type { WorkerInfo } from '../shared/protocol.js';
-import { OWNER, changesFor, findCard, readPoint, type Author, type Board, type Card, type FileRef, type PieceRef, type Tombstone } from '../shared/whiteboard.js';
+import { OWNER, cardFormat, changesFor, findCard, readPoint, type ArtifactFormat, type Author, type Board, type Card, type CardFormat, type FileRef, type PieceRef, type Tombstone } from '../shared/whiteboard.js';
 import { type PinnedCard, type RenderImage, type RenderStatus, type WhiteboardStore, renderKey, renderStatus, sameKey } from './whiteboard.js';
 
 /** How long a read with PNGs waits on each card's render by default. */
@@ -28,6 +28,7 @@ export type PngOut =
 export interface CardOut {
   id: string;
   kind: Card['kind'];
+  format: CardFormat;
   title: string;
   author: Author;
   createdAt: number;
@@ -38,7 +39,7 @@ export interface CardOut {
   /** The pieces someone else changed since `since`, and what they removed. */
   changes: PieceRef[];
   removed: Tombstone[];
-  content?: { entry: string; html?: string; files: Record<string, FileOut>; missing?: { ref: string; reason: string }[] };
+  content?: { entry: string; format?: ArtifactFormat; html?: string; markdown?: string; files: Record<string, FileOut>; missing?: { ref: string; reason: string }[] };
   link?: Card['link'];
   state: Card['state'];
   view?: Card['view'];
@@ -54,6 +55,8 @@ export interface ReadOut {
   floor: { id: string; name: string };
   selection: Board['selection'];
   renderer: ReturnType<WhiteboardStore['renderer']['status']>;
+  /** Total cards currently on the board (even when `onlyChanged` filters `cards`). */
+  totalCards: number;
   cards: CardOut[];
   /** Cards removed since this agent last read them (or the named ones that were removed). */
   removed: Tombstone[];
@@ -67,12 +70,19 @@ export interface ReadOut {
  * The board as one reader sees it at one snapshot revision. With `png`, every card returned is
  * rendered from that same snapshot (pinned, so later changes can't reach it), or the read says why not.
  */
-export async function readBoard(store: WhiteboardStore, reader: string, floor: { id: string; name: string }, opts: { cards?: string[]; png?: boolean; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<ReadOut> {
+export async function readBoard(
+  store: WhiteboardStore,
+  reader: string,
+  floor: { id: string; name: string },
+  opts: { cards?: string[]; onlyChanged?: boolean; png?: boolean; timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<ReadOut> {
   const board = store.board;
   const wanted = opts.cards ? [...new Set(opts.cards)] : undefined;
-  const onBoard = wanted ? wanted.flatMap((id) => findCard(board, id) ?? []) : board.cards;
-  const removedCards = board.tombstones.filter((t) => t.kind === 'card' && (wanted ? wanted.includes(t.id) : changesFor(board, reader, t.card).changed));
-  const unknown = wanted ? wanted.filter((id) => !findCard(board, id) && !removedCards.some((t) => t.id === id)) : [];
+  const allRemoved = board.tombstones.filter((t) => t.kind === 'card');
+  const candidates = wanted ? wanted.flatMap((id) => findCard(board, id) ?? []) : board.cards;
+  const onBoard = opts.onlyChanged ? candidates.filter((c) => changesFor(board, reader, c.id).changed) : candidates;
+  const removedCards = allRemoved.filter((t) => (wanted ? wanted.includes(t.id) && (!opts.onlyChanged || changesFor(board, reader, t.card).changed) : changesFor(board, reader, t.card).changed));
+  const unknown = wanted ? wanted.filter((id) => !findCard(board, id) && !allRemoved.some((t) => t.id === id)) : [];
   const pins = opts.png ? new Map(onBoard.map((c) => [c.id, store.pin(c.id, board)])) : undefined;
   try {
     // Every card is pinned to the same snapshot, so a few render side by side, and slow cards don't
@@ -92,6 +102,7 @@ export async function readBoard(store: WhiteboardStore, reader: string, floor: {
       floor,
       selection: board.selection,
       renderer: store.renderer.status(),
+      totalCards: board.cards.length,
       cards,
       removed: removedCards,
       unknown,
@@ -104,14 +115,19 @@ export async function readBoard(store: WhiteboardStore, reader: string, floor: {
 
 function cardOut(store: WhiteboardStore, board: Board, reader: string, card: Card): CardOut {
   const ch = changesFor(board, reader, card.id);
+  const format = cardFormat(card);
   const file = (ref: FileRef): FileOut => ({ ...ref, file: store.blobFile(ref.hash) });
   let content: CardOut['content'];
   if (card.content) {
     const entry = card.content.files[card.content.entry];
     const page = entry && /^text\/html\b/i.test(entry.mime) && entry.size <= HTML_INLINE_MAX ? store.readBlob(entry.hash)?.toString('utf8') : undefined;
+    const mdRef = Object.hasOwn(card.content.files, 'document.md') ? card.content.files['document.md'] : undefined;
+    const markdown = mdRef && mdRef.size <= HTML_INLINE_MAX ? store.readBlob(mdRef.hash)?.toString('utf8') : undefined;
     content = {
       entry: card.content.entry,
+      ...(card.content.format ? { format: card.content.format } : {}),
       ...(page !== undefined ? { html: page } : {}),
+      ...(markdown !== undefined ? { markdown } : {}),
       files: Object.fromEntries(Object.entries(card.content.files).map(([p, ref]) => [p, file(ref)])),
       ...(card.content.missing?.length ? { missing: card.content.missing } : {}),
     };
@@ -119,6 +135,7 @@ function cardOut(store: WhiteboardStore, board: Board, reader: string, card: Car
   return {
     id: card.id,
     kind: card.kind,
+    format,
     title: card.title,
     author: card.author,
     createdAt: card.createdAt,

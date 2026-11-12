@@ -94,7 +94,11 @@ data class WbPicture(
 data class WbLink(val path: String = "", val dir: Boolean = false, val status: String = "ok", val reason: String? = null)
 
 @Serializable
-data class WbContent(val entry: String = "")
+data class WbContent(
+    val entry: String = "",
+    val format: String? = null,
+    val files: Map<String, WbFileRef> = emptyMap(),
+)
 
 @Serializable
 data class WbCardStamps(val title: WbStamp = WbStamp(), val content: WbStamp? = null, val state: Map<String, WbStamp> = emptyMap())
@@ -116,6 +120,21 @@ data class WbCard(
 ) {
     val isCanvas: Boolean get() = kind == "canvas"
     val openThreads: Int get() = threads.count { !it.resolved }
+
+    /** The artifact's format (`canvas`, `markdown`, `video`, `image` or `html`), mirroring `cardFormat`. */
+    val format: String
+        get() {
+            if (isCanvas) return "canvas"
+            val c = content ?: return "html"
+            when (c.format) {
+                "markdown", "video", "image", "html" -> return c.format
+            }
+            if ("document.md" in c.files) return "markdown"
+            val keys = c.files.keys
+            if (keys.any { it.startsWith("video.") }) return "video"
+            if (keys.size == 2 && "index.html" in keys && keys.any { it.startsWith("image.") }) return "image"
+            return "html"
+        }
 
     /** Every stamped piece's stamp (cardPieces). */
     fun stamps(): Sequence<WbStamp> = sequence {
@@ -262,6 +281,12 @@ object WbOps {
     fun stickyRm(card: String, id: String): JsonObject = op("sticky.rm", card) { put("id", id) }
 
     fun commentReply(card: String, thread: String, message: String, text: String): JsonObject = op("comment.reply", card) {
+        put("thread", thread)
+        put("message", message)
+        put("text", text)
+    }
+
+    fun commentEdit(card: String, thread: String, message: String, text: String): JsonObject = op("comment.edit", card) {
         put("thread", thread)
         put("message", message)
         put("text", text)
@@ -540,10 +565,41 @@ class WhiteboardSync(private val send: (String) -> Boolean) {
     private fun JsonObject.int(k: String) = (this[k] as? JsonPrimitive)?.let { it.longOrNull?.toInt() ?: it.contentOrNull?.toDoubleOrNull()?.toInt() }
 }
 
+/** A filter chip on the board's grid (`GRID_FILTERS` in `whiteboard-view.ts`). */
+data class WbFilterSpec(val id: String, val label: String)
+
+/** Where a card sits in the newest-first board, and the cards next to it (`cardNeighbors`). */
+data class WbNeighbors(val prev: String?, val next: String?, val index: Int, val total: Int)
+
+/** A `@mm:ss` or `@12.5s` video timestamp found in a comment (`parseTimecodeTokens`). */
+data class WbTimecode(val label: String, val seconds: Double)
+
 /** Labels and orderings the board screens show. */
 object WhiteboardView {
+    val FILTERS: List<WbFilterSpec> = listOf(
+        WbFilterSpec("all", "All"),
+        WbFilterSpec("changed", "Changed"),
+        WbFilterSpec("comments", "Open comments"),
+        WbFilterSpec("markdown", "Markdown"),
+        WbFilterSpec("video", "Video"),
+        WbFilterSpec("html", "HTML"),
+        WbFilterSpec("image", "Images"),
+        WbFilterSpec("canvas", "Canvas"),
+    )
+
+    private val TIMECODE = Regex("""(?:^|(?<=\s|\())@(?:(\d{1,2}):(\d{2})(?::(\d{2}))?|(\d+(?:\.\d+)?)s)\b""")
+
     /** "You" for the owner, else the worker as it was when it acted. */
     fun author(a: WbAuthor): String = if (a.isOwner) "You" else a.name?.ifBlank { null } ?: "A worker"
+
+    /** Uppercase badge on a grid tile (`cardFormatBadge`). */
+    fun formatBadge(card: WbCard): String = when (card.format) {
+        "canvas" -> "CANVAS"
+        "markdown" -> "MD"
+        "video" -> "VIDEO"
+        "image" -> "IMG"
+        else -> "HTML"
+    }
 
     /** Who made the card, when it last changed, its link and whether the wall shows it. */
     fun meta(card: WbCard, onWall: Boolean, now: Long): String = listOfNotNull(
@@ -555,6 +611,74 @@ object WhiteboardView {
 
     /** Open threads first, then resolved ones; each group in the order they were started. */
     fun threads(card: WbCard): List<WbThread> = card.threads.filter { !it.resolved } + card.threads.filter { it.resolved }
+
+    /** Whether [card] passes a grid filter chip (`cardMatchesFilter`). */
+    fun matchesFilter(board: WbBoard, card: WbCard, filter: String, reader: String = WB_OWNER): Boolean = when (filter) {
+        "all" -> true
+        "changed" -> board.changed(card.id, reader)
+        "comments" -> card.threads.any { !it.resolved }
+        "canvas" -> card.isCanvas
+        "markdown" -> card.format == "markdown"
+        "video" -> card.format == "video"
+        "image" -> card.format == "image"
+        "html" -> card.format == "html"
+        else -> true
+    }
+
+    /** Filters the newest-first grid by chip and search query (`filterCards`). */
+    fun filterCards(board: WbBoard, query: String = "", filter: String = "all", reader: String = WB_OWNER): List<WbCard> {
+        val q = query.trim().lowercase()
+        return board.newestFirst().filter { card ->
+            if (!matchesFilter(board, card, filter, reader)) return@filter false
+            if (q.isEmpty()) return@filter true
+            if (card.title.lowercase().contains(q)) return@filter true
+            if (card.id.lowercase().contains(q)) return@filter true
+            if (author(card.author).lowercase().contains(q)) return@filter true
+            if (card.link?.path?.lowercase()?.contains(q) == true) return@filter true
+            if (formatBadge(card).lowercase().contains(q) || card.format.contains(q)) return@filter true
+            if (card.threads.any { t -> t.messages.any { m -> m.text.lowercase().contains(q) } }) return@filter true
+            if (card.stickies.any { s -> s.text.lowercase().contains(q) }) return@filter true
+            false
+        }
+    }
+
+    /** Counts per filter chip (`filterCounts`). */
+    fun filterCounts(board: WbBoard, reader: String = WB_OWNER): Map<String, Int> =
+        FILTERS.associate { spec -> spec.id to board.cards.count { matchesFilter(board, it, spec.id, reader) } }
+
+    /** Adjacent cards in newest-first order (`cardNeighbors`). */
+    fun neighbors(board: WbBoard, cardId: String): WbNeighbors? {
+        val ordered = board.newestFirst()
+        val idx = ordered.indexOfFirst { it.id == cardId }
+        if (idx < 0) return null
+        return WbNeighbors(
+            prev = ordered.getOrNull(idx - 1)?.id,
+            next = ordered.getOrNull(idx + 1)?.id,
+            index = idx,
+            total = ordered.size,
+        )
+    }
+
+    /** Unique `@mm:ss` / `@hh:mm:ss` / `@12.5s` timestamps in [text], in order (`parseTimecodeTokens`). */
+    fun timecodes(text: String): List<WbTimecode> {
+        val seen = HashSet<String>()
+        val out = mutableListOf<WbTimecode>()
+        for (m in TIMECODE.findAll(text)) {
+            val raw = m.value
+            if (!seen.add(raw)) continue
+            val secStr = m.groupValues[4]
+            val seconds = if (secStr.isNotEmpty()) {
+                secStr.toDoubleOrNull() ?: continue
+            } else {
+                val a = m.groupValues[1].toIntOrNull() ?: continue
+                val b = m.groupValues[2].toIntOrNull() ?: continue
+                val c = m.groupValues[3].takeIf { it.isNotEmpty() }?.toIntOrNull()
+                if (c != null) (a * 3600 + b * 60 + c).toDouble() else (a * 60 + b).toDouble()
+            }
+            if (seconds >= 0 && seconds.isFinite()) out += WbTimecode(raw, seconds)
+        }
+        return out
+    }
 
     /** A sticky note's paper, as the office draws it. */
     fun stickyColor(name: String): String = when (name) {

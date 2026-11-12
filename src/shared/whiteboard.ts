@@ -62,6 +62,10 @@ export type StickyColor = keyof typeof STICKY_COLORS;
 export const STICKY_SIZE = { w: 200, h: 160 } as const;
 
 export const PICTURE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const;
+export const IMAGE_CARD_MIMES = [...PICTURE_MIMES, 'image/svg+xml'] as const;
+export const VIDEO_MIMES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/ogg'] as const;
+export const ARTIFACT_FORMATS = ['html', 'markdown', 'video', 'image'] as const;
+export type ArtifactFormat = (typeof ARTIFACT_FORMATS)[number];
 
 /** Where the office saves plain form fields in a card's state, by field name or id. */
 export const FIELDS_KEY = 'fields';
@@ -142,6 +146,8 @@ export interface FileRef {
 export interface CardContent {
   entry: string;
   files: Record<string, FileRef>;
+  /** How the artifact was authored when the office generated its wrapper page. */
+  format?: ArtifactFormat;
   /** References in the page that couldn't be collected (outside the folder, too large, missing). */
   missing?: { ref: string; reason: string }[];
 }
@@ -210,6 +216,23 @@ export interface CardView {
 }
 
 export type CardKind = 'html' | 'canvas';
+export type CardFormat = CardKind | ArtifactFormat;
+
+/** What kind of artifact a card shows, inferring older generated media/markdown cards from their files. */
+export function cardFormat(card: Pick<Card, 'kind' | 'content'>): CardFormat {
+  if (card.kind === 'canvas') return 'canvas';
+  const c = card.content;
+  if (!c) return 'html';
+  if (c.format) return c.format;
+  const names = Object.keys(c.files);
+  if (Object.hasOwn(c.files, 'document.md')) return 'markdown';
+  if (names.length <= 4 && names.some((n) => /^video\//i.test(c.files[n].mime))) return 'video';
+  if (names.length === 2 && c.entry === 'index.html') {
+    const other = names.find((n) => n !== 'index.html');
+    if (other && /^image\./i.test(other) && /^image\//i.test(c.files[other].mime)) return 'image';
+  }
+  return 'html';
+}
 
 export interface Card {
   id: string;
@@ -735,6 +758,12 @@ function contentOf(v: unknown): CardContent {
     if (p !== v.entry && files[p].size > MAX_ASSET_BYTES) fail(`The asset ${p} is ${bytes(files[p].size)}; the limit per file is ${bytes(MAX_ASSET_BYTES)}`);
   }
   const content: CardContent = { entry: v.entry, files };
+  if (v.format !== undefined) {
+    if (typeof v.format !== 'string' || !(ARTIFACT_FORMATS as readonly string[]).includes(v.format)) {
+      fail(`content.format must be ${ARTIFACT_FORMATS.join(', ')}`);
+    }
+    content.format = v.format as ArtifactFormat;
+  }
   if (v.missing !== undefined) {
     if (!Array.isArray(v.missing) || v.missing.length > 500) fail('content.missing must be a list of at most 500 references');
     content.missing = v.missing.map((m: unknown, i: number) => {

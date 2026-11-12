@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { WhiteboardRenderInfo, WhiteboardRendererStatus } from '../../shared/protocol';
-import { OWNER, cardChanged, cardsNewestFirst, findCard, type Author, type Board, type Card, type CardView, type Point } from '../../shared/whiteboard';
+import { OWNER, cardChanged, cardFormat, cardsNewestFirst, findCard, type Author, type Board, type Card, type CardFormat, type CardView, type Point } from '../../shared/whiteboard';
 import { MONO, SANS } from '../fonts';
 import { withToken } from '../token';
 import { ANISOTROPY, SCREEN_SCALE } from './texture-quality';
@@ -548,6 +548,7 @@ export class WhiteboardTexture {
     const g = this.ctx;
     const author = authorLabel(card.author);
     const changed = cardChanged(board, OWNER, card.id);
+    const fmt = cardFormat(card);
     g.fillStyle = PANEL;
     g.fillRect(rect.x, rect.y, rect.w, rect.h);
     const t = thumbRect(rect);
@@ -555,7 +556,7 @@ export class WhiteboardTexture {
       // The top of the page across the tile's width.
       const k = t.w / thumb.width;
       const sh = Math.min(thumb.height, t.h / k);
-      g.fillStyle = '#ffffff';
+      g.fillStyle = fmt === 'canvas' ? '#141414' : '#0a0a0a';
       g.fillRect(t.x, t.y, t.w, t.h);
       g.drawImage(thumb, 0, 0, thumb.width, sh, t.x, t.y, t.w, sh * k);
     } else {
@@ -569,6 +570,20 @@ export class WhiteboardTexture {
       lines.forEach((l, n) => g.fillText(l, t.x + t.w / 2, t.y + t.h / 2 + 20 + n * 20));
       g.textAlign = 'left';
     }
+    const badge = wallFormatTag(fmt);
+    g.font = `600 13px ${MONO}`;
+    track(g, 2);
+    const bw = g.measureText(badge).width + 16;
+    const bx = t.x + t.w - bw - 10;
+    const by = t.y + 10;
+    g.fillStyle = 'rgba(2, 2, 2, .84)';
+    g.fillRect(bx, by, bw, 24);
+    g.strokeStyle = fmt === 'video' || fmt === 'markdown' ? 'rgba(238, 96, 24, .65)' : HAIR_STRONG;
+    g.lineWidth = 1;
+    g.strokeRect(bx + 0.5, by + 0.5, bw - 1, 23);
+    g.fillStyle = fmt === 'video' || fmt === 'markdown' ? ORANGE : INK;
+    g.fillText(badge, bx + 8, by + 16.5);
+    track(g, 0);
     // The caption: the author's color down its edge, the title, who and when.
     const cy = rect.y + rect.h - CAPTION_H;
     g.fillStyle = '#141414';
@@ -683,7 +698,8 @@ export class WhiteboardTexture {
     g.fillStyle = MUTED;
     g.font = `600 17px ${MONO}`;
     track(g, 4);
-    g.fillText(card.kind === 'canvas' ? 'CANVAS' : 'ARTIFACT', x, box.y + 76);
+    const fmt = cardFormat(card);
+    g.fillText(fmt === 'canvas' ? 'CANVAS' : `${fmt.toUpperCase()} ARTIFACT`, x, box.y + 76);
     track(g, 0);
     g.fillStyle = INK;
     g.font = `600 52px ${SANS}`;
@@ -717,6 +733,21 @@ export class WhiteboardTexture {
     g.fillText(title, WALL_W / 2, WALL_H / 2 + 30);
     track(g, 0);
     g.textAlign = 'left';
+  }
+}
+
+function wallFormatTag(fmt: CardFormat): string {
+  switch (fmt) {
+    case 'markdown':
+      return 'MD';
+    case 'video':
+      return 'VIDEO';
+    case 'image':
+      return 'IMG';
+    case 'canvas':
+      return 'CANVAS';
+    case 'html':
+      return 'HTML';
   }
 }
 

@@ -186,6 +186,7 @@ class WbPageTest {
         assertEquals(Json.parseToJsonElement("""{"t":"draft","point":{"x":1.0,"y":2.0}}"""), message(WbPage.draft(WbPoint(1.0, 2.0))))
         assertEquals(Json.parseToJsonElement("""{"t":"draft","point":null}"""), message(WbPage.draft(null)))
         assertEquals(Json.parseToJsonElement("""{"t":"focus","id":"s1"}"""), message(WbPage.focus("s1")))
+        assertEquals(Json.parseToJsonElement("""{"t":"seek","seconds":84.5}"""), message(WbPage.seek(84.5)))
         assertEquals(
             Json.parseToJsonElement("""{"t":"picture","file":{"hash":"$hash","size":9,"mime":"image/png"},"w":640,"h":480}"""),
             message(WbPage.picture(WbFileRef(hash, 9, "image/png"), 640, 480)),

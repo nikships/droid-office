@@ -4,7 +4,7 @@
 // src/shared/whiteboard-marks.ts. Ping rows and folder uploads are whiteboard-picker.ts. No DOM
 // here: tests/whiteboard-window.test.ts runs it in Node.
 
-import { CANONICAL_WIDTH, OWNER, cardsNewestFirst, changesFor, readPoint, type Author, type Board, type Box, type Card, type CardView, type Op, type Point } from '../../shared/whiteboard';
+import { CANONICAL_WIDTH, OWNER, cardChanged, cardFormat, cardsNewestFirst, changesFor, readPoint, type Author, type Board, type Box, type Card, type CardFormat, type CardView, type Op, type Point } from '../../shared/whiteboard';
 
 // ---- Zoom and pan ----
 
@@ -182,12 +182,95 @@ export function deleteConfirmText(titles: readonly string[], shown = 5): { title
   return { title: `Delete ${titles.length} cards?`, lead: `These ${titles.length} cards go from the board with their comments, stickies and pictures. Workers see them as removed.`, more: list };
 }
 
+// ---- Filtering, badges and card navigation ----
+
+export type GridFilter = 'all' | 'changed' | 'open_comments' | 'markdown' | 'video' | 'html' | 'image' | 'canvas';
+
+export const GRID_FILTERS: readonly { id: GridFilter; label: string; always?: boolean }[] = [
+  { id: 'all', label: 'All', always: true },
+  { id: 'changed', label: 'Changed' },
+  { id: 'open_comments', label: 'Open comments' },
+  { id: 'markdown', label: 'Markdown' },
+  { id: 'video', label: 'Video' },
+  { id: 'html', label: 'HTML' },
+  { id: 'image', label: 'Images' },
+  { id: 'canvas', label: 'Canvas' },
+];
+
+export function cardFormatBadge(format: CardFormat): string {
+  switch (format) {
+    case 'markdown':
+      return 'MD';
+    case 'video':
+      return 'VIDEO';
+    case 'image':
+      return 'IMG';
+    case 'canvas':
+      return 'CANVAS';
+    case 'html':
+      return 'HTML';
+  }
+}
+
+export function cardMatchesFilter(board: Board, card: Card, filter: GridFilter): boolean {
+  switch (filter) {
+    case 'all':
+      return true;
+    case 'changed':
+      return cardChanged(board, OWNER, card.id);
+    case 'open_comments':
+      return card.threads.some((t) => !t.resolved);
+    default:
+      return cardFormat(card) === filter;
+  }
+}
+
+/** Filters `cardsNewestFirst(board)` by chip filter and case-insensitive search across title, id, author, format, comments and stickies. */
+export function filterCards(board: Board, opts: { query?: string; filter?: GridFilter } = {}): Card[] {
+  const filter = opts.filter ?? 'all';
+  const q = (opts.query ?? '').trim().toLowerCase();
+  return cardsNewestFirst(board).filter((card) => {
+    if (!cardMatchesFilter(board, card, filter)) return false;
+    if (!q) return true;
+    const fmt = cardFormat(card);
+    if (card.title.toLowerCase().includes(q) || card.id.toLowerCase().includes(q) || authorName(card.author).toLowerCase().includes(q) || fmt.includes(q)) return true;
+    if (card.threads.some((t) => t.messages.some((m) => m.text.toLowerCase().includes(q)))) return true;
+    if (card.stickies.some((s) => s.text.toLowerCase().includes(q))) return true;
+    return false;
+  });
+}
+
+/** Counts matching cards per filter chip so empty optional chips stay hidden. */
+export function filterCounts(board: Board): Record<GridFilter, number> {
+  const counts: Record<GridFilter, number> = { all: board.cards.length, changed: 0, open_comments: 0, markdown: 0, video: 0, html: 0, image: 0, canvas: 0 };
+  for (const card of board.cards) {
+    if (cardChanged(board, OWNER, card.id)) counts.changed++;
+    if (card.threads.some((t) => !t.resolved)) counts.open_comments++;
+    counts[cardFormat(card)]++;
+  }
+  return counts;
+}
+
+/** The 1-based position of `currentId` in `cards`, plus adjacent card ids (`prev` = newer, `next` = older). */
+export function cardNeighbors(cards: readonly Pick<Card, 'id'>[], currentId: string): { index: number; total: number; prev?: string; next?: string } | undefined {
+  const idx = cards.findIndex((c) => c.id === currentId);
+  if (idx < 0) return undefined;
+  return {
+    index: idx + 1,
+    total: cards.length,
+    ...(idx > 0 ? { prev: cards[idx - 1].id } : {}),
+    ...(idx + 1 < cards.length ? { next: cards[idx + 1].id } : {}),
+  };
+}
+
 // ---- Copy for agent ----
 
 /** One line to paste into a prompt that names the card and how to read it. */
-export function copyForAgent(card: Pick<Card, 'id' | 'title' | 'kind'>): string {
+export function copyForAgent(card: Pick<Card, 'id' | 'title' | 'kind'> & { content?: Card['content'] }): string {
   const title = card.title.replace(/\s+/g, ' ').trim();
-  return `Whiteboard card ${card.id} “${title}” (${card.kind === 'canvas' ? 'canvas' : 'artifact'}): call \`whiteboard_read\` with cards: ["${card.id}"] to see it with my marks.`;
+  const fmt = card.kind === 'canvas' ? 'canvas' : cardFormat({ kind: card.kind, content: card.content });
+  const label = fmt === 'canvas' ? 'canvas' : fmt === 'html' ? 'artifact' : `${fmt} artifact`;
+  return `Whiteboard card ${card.id} “${title}” (${label}): call \`whiteboard_read\` with cards: ["${card.id}"] to see it with my marks.`;
 }
 
 // ---- Ids ----

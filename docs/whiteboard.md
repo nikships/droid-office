@@ -11,9 +11,9 @@ Status: **implemented**, apart from the renderer checks on Linux, Windows, the E
 - **Services is removed entirely**: the wall board, the window, the port scan, the tunnel relay and their docs. The Whiteboard takes its wall slot on the east wall, north of the lounge TV.
 - **Native to the office.** [Lavish](https://github.com/kunchenguid/lavish-axi) was the starting idea, not a spec: no Lavish dependency, no Lavish file format, no copying its flows.
 - **A feed of artifacts, and each one opens into its own surface.** The board is a grid of cards. Opening one shows it large, with its marks on it.
-- **What agents push:** full HTML artifacts (any JavaScript, any network access), images and screenshots, and interactive forms whose values agents read back.
-- **What the owner does on an artifact:** pin comments to an element or a spot, fill in its forms and press its buttons, and add sticky notes and pictures. There is no freehand pen.
-- **What the owner creates:** a blank canvas card (for stickies, pictures and comments), and their own pasted or uploaded HTML as an artifact.
+- **What agents push:** dedicated Markdown documents (specs, RFCs, checklists and action buttons), video walkthroughs (MP4, WebM, MOV, Ogg with frame step, speed control and timestamp pinning), images and diagrams (PNG, JPEG, WebP, GIF, SVG), full HTML artifacts (any JavaScript, any network access), and interactive forms whose values agents read back.
+- **What the owner does on an artifact:** pin comments to an element or a spot, edit their own comments, seek video cards from `@mm:ss` / `@12.5s` comment timestamps, fill in forms and press buttons, edit unlinked Markdown cards in place, and add sticky notes and pictures. There is no freehand pen.
+- **What the owner creates:** a blank canvas card (for stickies, pictures and comments), or a Markdown, Video, Image or HTML card via **Add card** or by dropping files onto the grid.
 - **Agents are not limited.** Anything the owner can do on the board, an agent can do through Office MCP tools, and more: create, update, rename, delete, reply to and resolve comments, manage stickies and pictures, read and set state, and choose what the wall shows.
 - **One board per floor.** Every agent on that floor reads and edits every card (see [Which agents](#which-agents) for what "agent" covers). An agent cannot reach another floor's board.
 - **Feedback is never sent.** The owner tells an agent to look. The window has one helper for that: a **Ping a worker** button. You pick an active worker on the floor, and the office types a line into its terminal telling it to read the board. A card's own buttons can do it too: a `data-wb-ping` button tells the worker who made the page, once (see [Buttons that tell a worker](#buttons-that-tell-a-worker)). There is no blocking `wait` command.
@@ -67,7 +67,7 @@ Cloud workers are excluded, and the window and the guide say so:
 ### The window
 
 - A `.full` window, opened from the wall, the **☰** menu (`whiteboard`, with a count of cards changed since you looked) and `office.open('whiteboard')`.
-- **Grid:** cards newest-first, with their thumbnail, title, author, an "updated 2m ago" time and a changed dot. Actions: **New canvas**, **Add HTML** (paste, or upload a `.html` file or a folder with its assets), **Ping a worker**, and **Select**.
+- **Grid:** cards newest-first, with their thumbnail, format badge (**MD**, **VIDEO**, **IMG**, **HTML**, **CANVAS**), title, author, an "updated 2m ago" time and a changed dot. A live search bar (**/**) and filter chips (**All**, **Changed**, **Open comments**, **Markdown**, **Video**, **HTML**, **Images**, **Canvas**) narrow the grid; dropping `.md`, video, image or `.html` files onto the grid adds cards directly. Actions: **New canvas**, **Add card** (Markdown editor or `.md` file, Video or Image with optional poster and caption, pasted HTML with a **Load Factory starter** template, `.html` file, or folder package), **Ping a worker**, and **Select**.
   - **Select** (or ⌘/Ctrl- or Shift-clicking a card) puts the grid in selection mode: a click ticks or unticks a card instead of opening it, the header counts the selection and has **Select all** / **Select none**, **Cancel** (or **Esc**) and **Delete N**. One confirm lists the cards, and they go in one batch of `card.rm`, so workers see a single change. A card a worker deletes meanwhile drops out of the selection.
 - **Artifact:** the card large in its sandbox, a toolbar and a side panel.
   - Modes: **Use** (the default: click, type, press the artifact's buttons) and **Mark up** (a click pins a comment; drag places a sticky). One key toggles them, shown as a `.key`.
@@ -80,7 +80,7 @@ Cloud workers are excluded, and the window and the guide say so:
   - **Sticky note:** text in one of a few colors. Move it, resize it, edit it, delete it.
   - **Picture:** paste, drop or pick a PNG, JPEG, WebP or GIF, placed like a sticky.
   - **Side panel:** every comment thread, sticky and picture on the card, the detached ones (each with **Reattach**: click the new spot), and what changed since you last looked.
-  - Header: title (editable), author, link status for a linked card (**Linked**, or **Link broken** with the reason), **Back to grid**, **Delete**, and **Copy for agent** (copies a one-line reference to the card for a prompt).
+  - Header: title (editable), author, link status for a linked card (**Linked**, or **Link broken** with the reason), previous/next card arrows (**[** / **]**), **Back to grid**, **Edit Markdown** (for unlinked Markdown cards, preserving marks, state and relative assets), **Delete**, and **Copy for agent** (copies a one-line reference to the card for a prompt).
 - **Canvas card:** a large pannable, zoomable blank surface with the same stickies, pictures and comments, and no HTML.
 - **Live:** an agent's change shows at once. A content change re-renders the artifact and keeps your scroll position. A state change goes into the running artifact without a reload. A change to marks just moves the marks. See [Concurrent edits](#concurrent-edits-and-reconnects) for what happens while you type.
 - **Offline:** while the office connection is down, the window says so, keeps your edits, and sends them once it reconnects. Nothing you did is lost or applied twice.
@@ -112,7 +112,7 @@ A plain `data-wb-action` press is only recorded, for the next read. A button tha
 
 ### Office MCP tools
 
-The authenticated [Office MCP](office-mcp.md) gives local workers tools to read the board, manage cards and state, edit marks and apply atomic batches. `whiteboard_read` can return PNG renders as MCP image content and advances read points only for returned cards. Local paths resolve against the worker's own working folder. Errors explain what to do next.
+The authenticated [Office MCP](office-mcp.md) gives local workers tools to fetch the bundled Factory design guide (`whiteboard_guide`), read the board (`whiteboard_read`, including `onlyChanged: true` and `peek: true`), manage Markdown, Video, Image, HTML and Canvas cards (`whiteboard_card`), read and write state (`whiteboard_state`), edit marks (`whiteboard_marks`) and apply atomic batches (`whiteboard_apply`). Rather than bloating every worker's system prompt, the Factory design rules, token palette, ready-to-paste 1280px dark/light stylesheet and official SVG brand marks live in `src/shared/whiteboard-design.ts` and are served on demand by `whiteboard_guide`. `whiteboard_read` can return PNG renders as MCP image content and advances read points only for returned cards unless `peek: true` is set. Local paths resolve against the worker's own working folder. Errors explain what to do next.
 
 ### Reading the board
 

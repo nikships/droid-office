@@ -110,6 +110,7 @@ class WhiteboardTest {
         assertEquals("12.3", add["anchor"]!!.jsonObject["point"]!!.jsonObject["x"]!!.jsonPrimitive.content)
         assertEquals("Tighten this", add["text"]!!.jsonPrimitive.content)
         assertEquals("""{"op":"comment.reply","card":"c1","thread":"t1","message":"m2","text":"ok"}""", WbOps.commentReply("c1", "t1", "m2", "ok").toString())
+        assertEquals("""{"op":"comment.edit","card":"c1","thread":"t1","message":"m1","text":"fixed"}""", WbOps.commentEdit("c1", "t1", "m1", "fixed").toString())
         assertEquals("""{"op":"comment.resolve","card":"c1","thread":"t1"}""", WbOps.commentResolve("c1", "t1").toString())
         assertEquals("""{"op":"comment.reopen","card":"c1","thread":"t1"}""", WbOps.commentReopen("c1", "t1").toString())
         assertEquals("""{"op":"read","cards":["c1"],"rev":12}""", WbOps.read(listOf("c1"), 12).toString())
@@ -375,5 +376,59 @@ class WhiteboardTest {
         assertEquals("Sent “Accept” to Atlas. It gets it once it has started.", WhiteboardPing.sent("Accept", to, worker("starting")))
         assertEquals("Sent “Accept” to Atlas.", WhiteboardPing.sent("Accept", to, worker("offline", extra = ""","remote":true""")))
         assertEquals("Sent “Accept”.", WhiteboardPing.sent("Accept", ButtonTarget.No("Gone."), null))
+    }
+
+    @Test
+    fun formatBadgesFiltersNeighborsAndTimecodesMatchTheOffice() {
+        val hash = "a".repeat(64)
+        val multi = OfficeJson.decodeFromString(
+            WbBoard.serializer(),
+            """
+            {"rev":20,"reads":{"owner":{"c1":5,"c2":20,"c3":20,"c4":20}},
+             "cards":[
+               {"id":"c1","kind":"html","title":"Architecture RFC","author":$atlas,"createdAt":100,"updatedAt":900,
+                "content":{"entry":"index.html","format":"markdown","files":{"index.html":{"hash":"$hash","size":10,"mime":"text/html"},"document.md":{"hash":"$hash","size":5,"mime":"text/markdown"}}},
+                "threads":[{"id":"t1","resolved":false,"messages":[{"id":"m1","author":$owner,"text":"Check @01:24 and (@12.5s) or @1:02:03","at":200,"stamp":{"rev":9,"author":$atlas}}]}],
+                "stamps":{"title":{"rev":8,"author":$atlas}}},
+               {"id":"c2","kind":"html","title":"Launch take","author":$owner,"createdAt":200,"updatedAt":200,
+                "content":{"entry":"index.html","files":{"index.html":{"hash":"$hash","size":10,"mime":"text/html"},"video.mp4":{"hash":"$hash","size":50,"mime":"video/mp4"}}}},
+               {"id":"c3","kind":"html","title":"Hero shot","author":$owner,"createdAt":300,"updatedAt":300,
+                "content":{"entry":"index.html","files":{"index.html":{"hash":"$hash","size":10,"mime":"text/html"},"image.png":{"hash":"$hash","size":50,"mime":"image/png"}}}},
+               {"id":"c4","kind":"canvas","title":"Brainstorm","author":$owner,"createdAt":400,"updatedAt":400,
+                "stickies":[{"id":"s1","text":"Pricing notes","color":"yellow"}]}
+             ]}
+            """.trimIndent(),
+        )
+        assertEquals("MD", WhiteboardView.formatBadge(multi.card("c1")!!))
+        assertEquals("VIDEO", WhiteboardView.formatBadge(multi.card("c2")!!))
+        assertEquals("IMG", WhiteboardView.formatBadge(multi.card("c3")!!))
+        assertEquals("CANVAS", WhiteboardView.formatBadge(multi.card("c4")!!))
+
+        val counts = WhiteboardView.filterCounts(multi)
+        assertEquals(4, counts["all"])
+        assertEquals(1, counts["changed"])
+        assertEquals(1, counts["comments"])
+        assertEquals(1, counts["markdown"])
+        assertEquals(1, counts["video"])
+        assertEquals(1, counts["image"])
+        assertEquals(1, counts["canvas"])
+        assertEquals(0, counts["html"])
+
+        assertEquals(listOf("c4", "c3", "c2", "c1"), WhiteboardView.filterCards(multi).map { it.id })
+        assertEquals(listOf("c1"), WhiteboardView.filterCards(multi, filter = "markdown").map { it.id })
+        assertEquals(listOf("c2"), WhiteboardView.filterCards(multi, filter = "video").map { it.id })
+        assertEquals(listOf("c1"), WhiteboardView.filterCards(multi, query = "atlas").map { it.id })
+        assertEquals(listOf("c4"), WhiteboardView.filterCards(multi, query = "pricing").map { it.id })
+        assertEquals(listOf("c1"), WhiteboardView.filterCards(multi, query = "01:24").map { it.id })
+
+        assertEquals(WbNeighbors(prev = null, next = "c3", index = 0, total = 4), WhiteboardView.neighbors(multi, "c4"))
+        assertEquals(WbNeighbors(prev = "c4", next = "c2", index = 1, total = 4), WhiteboardView.neighbors(multi, "c3"))
+        assertEquals(WbNeighbors(prev = "c2", next = null, index = 3, total = 4), WhiteboardView.neighbors(multi, "c1"))
+        assertNull(WhiteboardView.neighbors(multi, "missing"))
+
+        assertEquals(
+            listOf(WbTimecode("@01:24", 84.0), WbTimecode("@12.5s", 12.5), WbTimecode("@1:02:03", 3723.0)),
+            WhiteboardView.timecodes(multi.card("c1")!!.threads.single().messages.single().text),
+        )
     }
 }

@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { WorkerInfo } from '../src/shared/protocol.js';
-import { CANONICAL_WIDTH, OWNER_AUTHOR, applyOps, emptyBoard, type Author, type Board, type Op } from '../src/shared/whiteboard.js';
+import { CANONICAL_WIDTH, OWNER_AUTHOR, applyOps, cardFormat, cardsNewestFirst, emptyBoard, type Author, type Board, type Op } from '../src/shared/whiteboard.js';
 import { canvasBounds, changesSince, dragBox, dragMarkOps, pictureSize, placeMarks, reattachMarkOps } from '../src/shared/whiteboard-marks.js';
 import { forgeWords } from '../src/shared/floors.js';
-import { folderFiles, mimeFor, pingRows, pingTask, pingWhere, pingedText } from '../src/client/ui/whiteboard-picker.js';
+import { droppedCardKind, folderFiles, mimeFor, pingRows, pingTask, pingWhere, pingedText } from '../src/client/ui/whiteboard-picker.js';
 import {
   CANVAS_MARGIN,
   ZOOM_MAX,
@@ -16,11 +16,15 @@ import {
   canvasCardView,
   canvasFit,
   canvasFromCardView,
+  cardFormatBadge,
+  cardNeighbors,
   changedCount,
   clampZoom,
   copyForAgent,
   deleteConfirmText,
   deleteOps,
+  filterCards,
+  filterCounts,
   fitZoom,
   newId,
   ownerReadPoint,
@@ -399,4 +403,109 @@ test('selecting: the delete confirm names one card, or lists several with the re
   assert.equal(many.title, 'Delete 7 cards?');
   assert.match(many.lead, /These 7 cards/);
   assert.deepEqual(many.more, ['“1”', '“2”', '“3”', '“4”', '“5”', 'and 2 more']);
+});
+
+test('grid search, filter chips, format badges, neighbors, dropped files and format-aware copyForAgent', () => {
+  const hash = 'a'.repeat(64);
+  const b = play(
+    [
+      PIXEL,
+      [
+        {
+          op: 'card.create',
+          card: 'md1',
+          kind: 'html',
+          title: 'Rollout Plan',
+          content: {
+            entry: 'index.html',
+            format: 'markdown',
+            files: {
+              'index.html': { hash, size: 10, mime: 'text/html' },
+              'document.md': { hash, size: 8, mime: 'text/markdown' },
+            },
+          },
+        },
+        {
+          op: 'comment.add',
+          card: 'md1',
+          thread: 't1',
+          message: 'm1',
+          anchor: { kind: 'point', point: { x: 20, y: 40 } },
+          text: 'Verify canary metrics',
+        },
+      ],
+    ],
+    [
+      OWNER_AUTHOR,
+      [
+        {
+          op: 'card.create',
+          card: 'vid1',
+          kind: 'html',
+          title: 'Demo Walkthrough',
+          content: {
+            entry: 'index.html',
+            format: 'video',
+            files: {
+              'index.html': { hash, size: 10, mime: 'text/html' },
+              'video.mp4': { hash, size: 80, mime: 'video/mp4' },
+            },
+          },
+        },
+        { op: 'card.create', card: 'cv1', kind: 'canvas', title: 'Scratchpad' },
+        { op: 'sticky.add', card: 'cv1', id: 's1', anchor: { kind: 'point', point: { x: 0, y: 0 } }, text: 'Latency budget' },
+      ],
+    ],
+  );
+
+  const mdCard = b.cards.find((c) => c.id === 'md1')!;
+  const vidCard = b.cards.find((c) => c.id === 'vid1')!;
+  const cvCard = b.cards.find((c) => c.id === 'cv1')!;
+  assert.equal(cardFormatBadge(cardFormat(mdCard)), 'MD');
+  assert.equal(cardFormatBadge(cardFormat(vidCard)), 'VIDEO');
+  assert.equal(cardFormatBadge(cardFormat(cvCard)), 'CANVAS');
+
+  assert.match(copyForAgent(mdCard), /\(markdown artifact\)/);
+  assert.match(copyForAgent(vidCard), /\(video artifact\)/);
+
+  const counts = filterCounts(b);
+  assert.equal(counts.all, 3);
+  assert.equal(counts.changed, 1);
+  assert.equal(counts.open_comments, 1);
+  assert.equal(counts.markdown, 1);
+  assert.equal(counts.video, 1);
+  assert.equal(counts.canvas, 1);
+  assert.equal(counts.html, 0);
+
+  assert.deepEqual(
+    filterCards(b, { filter: 'markdown' }).map((c) => c.id),
+    ['md1'],
+  );
+  assert.deepEqual(
+    filterCards(b, { query: 'pixel' }).map((c) => c.id),
+    ['md1'],
+  );
+  assert.deepEqual(
+    filterCards(b, { query: 'canary' }).map((c) => c.id),
+    ['md1'],
+  );
+  assert.deepEqual(
+    filterCards(b, { query: 'latency' }).map((c) => c.id),
+    ['cv1'],
+  );
+
+  const ordered = cardsNewestFirst(b);
+  assert.deepEqual(cardNeighbors(ordered, 'cv1'), { next: 'vid1', index: 1, total: 3 });
+  assert.deepEqual(cardNeighbors(ordered, 'vid1'), { prev: 'cv1', next: 'md1', index: 2, total: 3 });
+  assert.deepEqual(cardNeighbors(ordered, 'md1'), { prev: 'vid1', index: 3, total: 3 });
+  assert.equal(cardNeighbors(ordered, 'missing'), undefined);
+
+  assert.equal(droppedCardKind('notes.md', ''), 'markdown');
+  assert.equal(droppedCardKind('clip.mp4', 'video/mp4'), 'video');
+  assert.equal(droppedCardKind('shot.png', 'image/png'), 'image');
+  assert.equal(droppedCardKind('diagram.svg', 'image/svg+xml'), 'image');
+  assert.equal(droppedCardKind('index.html', 'text/html'), 'html');
+  assert.equal(droppedCardKind('archive.zip', 'application/zip'), undefined);
+  assert.equal(mimeFor('rfc.md'), 'text/markdown; charset=utf-8');
+  assert.equal(mimeFor('take.mp4'), 'video/mp4');
 });

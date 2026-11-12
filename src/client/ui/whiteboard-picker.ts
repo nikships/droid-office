@@ -101,6 +101,7 @@ const MIME_BY_EXT: Record<string, string> = {
   map: 'application/json',
   txt: 'text/plain; charset=utf-8',
   md: 'text/markdown; charset=utf-8',
+  markdown: 'text/markdown; charset=utf-8',
   csv: 'text/csv; charset=utf-8',
   xml: 'application/xml',
   svg: 'image/svg+xml',
@@ -117,11 +118,26 @@ const MIME_BY_EXT: Record<string, string> = {
   otf: 'font/otf',
   wasm: 'application/wasm',
   mp3: 'audio/mpeg',
+  ogg: 'audio/ogg',
   wav: 'audio/wav',
   mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
   webm: 'video/webm',
+  ogv: 'video/ogg',
   pdf: 'application/pdf',
 };
+
+/** Classifies a single uploaded or dropped file into a Whiteboard card format, or undefined when unsupported. */
+export function droppedCardKind(name: string, browserType = ''): 'markdown' | 'video' | 'image' | 'html' | undefined {
+  const ext = /\.([a-z0-9]+)$/i.exec(name)?.[1]?.toLowerCase() ?? '';
+  const type = browserType.toLowerCase();
+  if (ext === 'md' || ext === 'markdown' || type === 'text/markdown') return 'markdown';
+  if (ext === 'mp4' || ext === 'm4v' || ext === 'webm' || ext === 'mov' || ext === 'ogv' || type.startsWith('video/')) return 'video';
+  if (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'webp' || ext === 'gif' || ext === 'svg' || /^image\/(?:png|jpeg|webp|gif|svg\+xml)$/.test(type)) return 'image';
+  if (ext === 'html' || ext === 'htm' || type === 'text/html') return 'html';
+  return undefined;
+}
 
 /** The media type a file of a folder upload is served as: from its extension, else what the browser said. */
 export function mimeFor(name: string, browserType = ''): string {
