@@ -9,7 +9,7 @@
     "typecheck": "bun check -p tsconfig.json"
   },
   "dependencies": {
-    "framer-motion": "^11.5.4",
+    "framer-motion": "^11.18.2",
     "lucide-react": "0.522.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
@@ -17,8 +17,8 @@
   "devDependencies": {
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "autoprefixer": "^10.4.21",
-    "postcss": "^8.5.6",
+    "autoprefixer": "^10.6.2",
+    "postcss": "^8.5.32",
     "tailwindcss": "3.4.17"
   }
 }
