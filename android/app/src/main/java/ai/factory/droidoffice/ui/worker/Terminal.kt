@@ -1,6 +1,7 @@
 package ai.factory.droidoffice.ui.worker
 
 import ai.factory.droidoffice.core.ClientMsg
+import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.PageMsg
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
@@ -12,6 +13,7 @@ import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.Palette
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -78,17 +80,24 @@ fun Terminal(
     onKittyFlags: (Int) -> Unit = {},
 ) {
     val connection = LocalGraph.current.connection
+    val data by connection.data.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val fontScale = LocalDensity.current.fontScale
     // A new page whenever the WebView's renderer goes away; it starts from a fresh snapshot.
     var generation by remember(workerId) { mutableIntStateOf(0) }
     var drawn by remember(workerId, generation) { mutableStateOf(false) }
     var atBottom by remember(workerId, generation) { mutableStateOf(true) }
+    var viewingImage by remember(workerId) { mutableStateOf<PageMsg.Image?>(null) }
     val latestView by rememberUpdatedState(view)
     val latestLive by rememberUpdatedState(live)
     val latestFit by rememberUpdatedState(onFit)
     val latestScale by rememberUpdatedState(fontScale)
     val latestKittyFlags by rememberUpdatedState(onKittyFlags)
+    val workerName = if (workerId == ORCHESTRATOR_ID) {
+        data.mission?.orchestrator?.agent?.worker?.name ?: "Orchestrator"
+    } else {
+        data.deskWorker(workerId)?.name
+    }
 
     val page = remember(workerId, generation) {
         lateinit var p: TerminalPage
@@ -105,6 +114,7 @@ fun Terminal(
                     is PageMsg.Bottom -> atBottom = msg.at
                     is PageMsg.Fit -> latestFit(msg.size)
                     is PageMsg.Kitty -> latestKittyFlags(msg.flags)
+                    is PageMsg.Image -> viewingImage = msg
                     is PageMsg.Input -> if (latestLive) connection.send(ClientMsg.termInput(workerId, msg.data))
                 }
             },
@@ -153,4 +163,5 @@ fun Terminal(
             }
         }
     }
+    viewingImage?.let { image -> KittyPictureViewer(image, about = workerName) { viewingImage = null } }
 }

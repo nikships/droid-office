@@ -1,11 +1,14 @@
 package ai.factory.droidoffice.ui.worker
 
 import android.graphics.ImageDecoder
+import android.util.Base64
 import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,16 +39,25 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import ai.factory.droidoffice.core.PageMsg
+import ai.factory.droidoffice.core.PictureTransform
+import ai.factory.droidoffice.core.PictureZoom
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.ThreadImage
 import ai.factory.droidoffice.session.OfficeConnection
@@ -148,25 +160,107 @@ private fun shape(image: ThreadImage, picture: ImageBitmap?): Float {
     return if (w != null && h != null && w > 0 && h > 0) (w.toFloat() / h).coerceIn(0.2f, 5f) else 4f / 3f
 }
 
-/** One picture over everything, fit to the screen, until the owner taps it, ✕ or Back. */
+/** One picture over everything, fit to the screen with pinch-zoom, until the owner taps it, ✕ or Back. */
 @Composable
 private fun PictureViewer(connection: OfficeConnection, source: PictureSource, image: ThreadImage, name: String, about: String?, onClose: () -> Unit) {
+    val picture = rememberPicture(connection, source, image, FULL_SIDE) ?: rememberPicture(connection, source, image, THUMB_SIDE)
+    FullscreenPictureDialog(picture, image.width, image.height, name, about, onClose)
+}
+
+/** Opens a tapped Raw TTY Kitty image in the shared fullscreen viewer. */
+@Composable
+internal fun KittyPictureViewer(image: PageMsg.Image, about: String?, onClose: () -> Unit) {
+    val picture by produceState<ImageBitmap?>(null, image) {
+        val bytes = withContext(Dispatchers.Default) {
+            runCatching { Base64.decode(image.data, Base64.DEFAULT) }.getOrNull()
+        } ?: return@produceState
+        value = decodeScaled(bytes, FULL_SIDE)
+    }
+    FullscreenPictureDialog(picture, image.width, image.height, "Terminal image", about, onClose)
+}
+
+@Composable
+internal fun FullscreenPictureDialog(
+    picture: ImageBitmap?,
+    width: Int?,
+    height: Int?,
+    name: String,
+    about: String?,
+    onClose: () -> Unit,
+) {
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        val picture = rememberPicture(connection, source, image, FULL_SIDE) ?: rememberPicture(connection, source, image, THUMB_SIDE)
+        var boxSize by remember { mutableStateOf(IntSize.Zero) }
+        var transform by remember(picture) { mutableStateOf(PictureTransform()) }
+        val imgW = picture?.width ?: width ?: 0
+        val imgH = picture?.height ?: height ?: 0
         Column(Modifier.fillMaxSize().background(Palette.Bg).systemBarsPadding().tagged(Tags.Worker.THREAD_IMAGE_VIEWER)) {
             Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(name, style = MaterialTheme.typography.titleSmall, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    val sub = listOfNotNull(about, if (image.width != null && image.height != null) "${image.width} × ${image.height}" else null).joinToString(" · ")
+                    val sub = listOfNotNull(about, if (width != null && height != null) "$width × $height" else null).joinToString(" · ")
                     if (sub.isNotEmpty()) Text(sub, style = LocalOfficeType.current.monoBody.copy(color = Palette.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 IconButton(onClick = onClose, modifier = Modifier.tagged(Tags.Worker.THREAD_IMAGE_CLOSE)) {
                     Icon(Icons.Filled.Close, contentDescription = "Close the picture", tint = Palette.Text)
                 }
             }
-            Box(Modifier.weight(1f).fillMaxWidth().clickable(onClickLabel = "Close the picture", onClick = onClose).padding(12.dp), contentAlignment = Alignment.Center) {
-                if (picture != null) Image(picture, name, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                else Spinner(Modifier.size(20.dp), Palette.Accent)
+            Box(
+                Modifier.weight(1f).fillMaxWidth().padding(12.dp).clipToBounds()
+                    .onSizeChanged { next ->
+                        boxSize = next
+                        transform = PictureZoom.clamp(transform.zoom, transform.panX, transform.panY, imgW, imgH, next.width.toFloat(), next.height.toFloat())
+                    }
+                    .semantics {
+                        onClick(label = "Close the picture") {
+                            onClose()
+                            true
+                        }
+                    }
+                    .pointerInput(picture, boxSize) {
+                        detectTransformGestures { centroid, pan, gestureZoom, _ ->
+                            transform = PictureZoom.step(
+                                transform,
+                                gestureZoom,
+                                pan.x,
+                                pan.y,
+                                centroid.x,
+                                centroid.y,
+                                imgW,
+                                imgH,
+                                boxSize.width.toFloat(),
+                                boxSize.height.toFloat(),
+                            )
+                        }
+                    }
+                    .pointerInput(picture, boxSize) {
+                        detectTapGestures(
+                            onDoubleTap = { pos ->
+                                if (picture != null) {
+                                    transform = PictureZoom.doubleTap(transform, pos.x, pos.y, imgW, imgH, boxSize.width.toFloat(), boxSize.height.toFloat())
+                                }
+                            },
+                            onTap = {
+                                if (transform.zoom <= 1.05f) onClose()
+                            },
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (picture != null) {
+                    Image(
+                        picture,
+                        name,
+                        Modifier.fillMaxSize().graphicsLayer {
+                            scaleX = transform.zoom
+                            scaleY = transform.zoom
+                            translationX = transform.panX
+                            translationY = transform.panY
+                        },
+                        contentScale = ContentScale.Fit,
+                    )
+                } else {
+                    Spinner(Modifier.size(20.dp), Palette.Accent)
+                }
             }
         }
     }
