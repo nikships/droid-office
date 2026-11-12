@@ -168,6 +168,66 @@ test('sendGrokWebhook redacts bearer tokens from upstream error bodies, thrown e
   assert.equal(receiver.received.at(-1)!.headers.authorization, `Bearer ${DUMMY_TOKEN}`);
 });
 
+test('transport redacts overlapping raw and encoded credentials without exposing URL secrets', async (t) => {
+  const receiver = await startWebhookReceiver(t);
+  for (const token of ['abc123', 'a+b?c']) {
+    const url = `${receiver.url}?token=${encodeURIComponent(token)}&key=other-secret`;
+    const payload = buildGrokWebhookPayload({ id: 'remote-1', name: 'grokbot' }, [
+      {
+        id: 'test-1',
+        kind: 'test',
+        at: new Date(1000).toISOString(),
+        text: `${url} ${encodeURIComponent(url)} ${token}`,
+        actionHint: 'No action needed.',
+        result: { status: 'ok', summary: 'Connectivity check', artifacts: { commits: [token] } },
+      },
+    ]);
+    const sent = await sendGrokWebhook({ webhookUrl: url, webhookToken: token }, payload);
+    assert.equal(sent.ok, true);
+    assert.equal(receiver.received.at(-1)!.body.items[0].text, '[redacted] [redacted] [redacted]');
+    assert.deepEqual(receiver.received.at(-1)!.body.items[0].result?.artifacts?.commits, ['[redacted]'], 'non-commit prose cannot bypass redaction through the commits field');
+    assert.equal(JSON.stringify(receiver.received.at(-1)!.body).includes('other-secret'), false);
+  }
+});
+
+test('custom short tokens leave event discriminators and report identifiers usable', async (t) => {
+  const receiver = await startWebhookReceiver(t);
+  for (const token of ['test', 'team', 'a', 'ok', 'progress', 'droid-office']) {
+    const report = buildTeamWebhookItem({
+      event: { seq: 1, lead: 'remote-1', worker: 'worker-1', name: 'Byte', kind: 'report', at: 1000, pushedSha: 'a'.repeat(40), result: { status: 'ok', summary: `Do not echo ${token}`, artifacts: { commits: ['a'.repeat(40)] } } },
+      floor: { id: 'alpha', name: 'Droid Office', cwd: '/project' },
+    });
+    const payload = buildGrokWebhookPayload({ id: 'remote-1', name: 'grokbot' }, [report, { id: 'test-1', kind: 'test', at: report.at, actionHint: `Do not echo ${token}` }], 1000);
+    assert.equal((await sendGrokWebhook({ webhookUrl: receiver.url, webhookToken: token }, payload)).ok, true);
+    const delivered = receiver.received.at(-1)!.body;
+    assert.equal(delivered.source, 'droid-office');
+    assert.equal(delivered.event, 'report');
+    assert.equal(delivered.items[1].kind, 'test');
+    for (const field of ['id', 'ackId', 'reportId', 'reportPhase', 'pushedSha', 'at'] as const) assert.equal(delivered.items[0][field], report[field]);
+    assert.deepEqual(delivered.items[0].floor, report.floor);
+    assert.equal(delivered.items[0].worker?.id, 'worker-1');
+    assert.equal(delivered.items[0].result?.status, 'ok');
+    assert.deepEqual(delivered.items[0].result?.artifacts?.commits, ['a'.repeat(40)]);
+    assert.equal(delivered.items[0].result?.summary, 'Do not echo [redacted]');
+    const ping = buildGrokWebhookPayload(payload.lead, [payload.items[1]], 1000);
+    assert.equal((await sendGrokWebhook({ webhookUrl: receiver.url, webhookToken: token }, ping)).ok, true);
+    assert.equal(receiver.received.at(-1)!.body.event, 'test', 'Settings test discriminator stays usable with a token of test');
+  }
+});
+
+test('error response URL redaction happens before clipping even across the old 2048-character boundary', async (t) => {
+  const receiver = await startWebhookReceiver(t);
+  const url = `${receiver.url}/private-hook-key/`.padEnd(1990, 'x');
+  assert.equal('url' in validateGrokWebhookUrl(url), true);
+  receiver.setResponder(() => ({ status: 401, body: `${'x'.repeat(100)}${url}` }));
+  const payload = buildGrokWebhookPayload({ id: 'remote-1', name: 'grokbot' }, [{ id: 'test-1', kind: 'test', at: new Date(1000).toISOString(), actionHint: 'No action needed.' }]);
+  const sent = await sendGrokWebhook({ webhookUrl: url, webhookToken: DUMMY_TOKEN }, payload);
+  assert.equal(sent.ok, false);
+  assert.equal(sent.error?.includes('private-hook-key'), false);
+  assert.match(sent.error ?? '', /\[redacted\]/);
+  assert.ok((sent.error?.length ?? 0) <= 250);
+});
+
 test('worker webhook payloads distinguish reported completion from live runtime status without repeating report prose', () => {
   const event: TeamEvent = {
     seq: 1,

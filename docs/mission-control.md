@@ -40,7 +40,7 @@ The version-1 envelope and existing `report`, `question`, `blocker`, and `test` 
 
 Structured reports carry content in `result.summary`, `result.artifacts`, `result.remaining`, and `result.conflicts`, without repeating the original prose in `text`. `reportId` retrieves that original report through `team_report_get`; the inbox also retains it. Questions keep `text` and `options`. Legacy reports without a structured result retain `text`. The existing `prUrl`, `pushedSha`, and artifact aliases remain for compatibility. `actionHint` describes intent in plain words; use the structured worker id, floor id, question id, and acknowledgment id rather than parsing tool syntax out of prose. Permission prompts remain owner-only.
 
-Bearer credentials and the destination webhook URL are scrubbed from all outgoing string values, including nested results. Credentials are only sent in the HTTP authorization header, never in payload examples.
+Bearer credentials and the destination webhook URL are scrubbed from outgoing prose and nested result content. Fixed protocol values, timestamps, and opaque ids (including commit ids) stay intact even when a custom token coincides with a protocol word such as `test` or `team`. Raw and encoded credentials are matched longest-first in one pass, and error text is scrubbed before clipping. Credentials are only sent in the HTTP authorization header, never copied from connection settings into the payload.
 
 #### Example event payloads
 

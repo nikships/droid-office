@@ -102,14 +102,22 @@ const PRIORITY: Record<GrokWebhookItemKind, number> = {
 
 /** Scrubs bearer credentials so tokens never appear in logs, UI status or tool errors. */
 function scrubWebhookText(text: string, secrets: (string | undefined)[]): string {
-  let out = text;
-  for (const secret of secrets) {
-    for (const token of [secret, secret ? encodeURIComponent(secret) : undefined]) {
-      if (token) out = out.split(token).join('[redacted]');
-    }
-  }
+  const variants = [...new Set(secrets.flatMap((secret) => (secret ? [secret, encodeURIComponent(secret)] : [])))].sort((a, b) => b.length - a.length);
+  // Match once, longest first: replacing a token inside a URL must not hide the URL from redaction.
+  const pattern = variants.map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  let out = pattern ? text.replace(new RegExp(pattern, 'g'), '[redacted]') : text;
   out = out.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
   return out.replace(/\bcrsr_[A-Za-z0-9_-]+/g, '[redacted]');
+}
+
+/** Fixed protocol values and opaque references are not credential-bearing prose. */
+const PROTOCOL_FIELDS = new Set(['source', 'event', 'kind', 'status', 'state', 'reportPhase', 'id', 'ackId', 'reportId', 'questionId', 'at', 'sentAt', 'pushedSha', 'mergeCommit']);
+
+function scrubWebhookPayload(value: unknown, secrets: string[], field = ''): unknown {
+  if (typeof value === 'string') return PROTOCOL_FIELDS.has(field) || (field === 'commits' && /^[0-9a-f]{7,64}$/i.test(value)) ? value : scrubWebhookText(value, secrets);
+  if (Array.isArray(value)) return value.map((entry) => scrubWebhookPayload(entry, secrets, field));
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, scrubWebhookPayload(entry, secrets, key)]));
+  return value;
 }
 
 export function redactWebhookSecret(text: string, secret?: string): string {
@@ -176,9 +184,16 @@ function teamActionHint(item: { kind: GrokWebhookItemKind; questionId?: string; 
 export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhookFloor; member?: TeamMember; worker?: WorkerInfo; openQuestion?: OpenQuestion }): GrokWebhookItem {
   const { event, floor, member, worker, openQuestion } = args;
   const id = `team:${floor.id}:${event.seq}`;
-  const kind: GrokWebhookItemKind = event.kind === 'report' ? (event.result?.status === 'blocked' || event.result?.status === 'failed' ? 'blocker' : event.progress || event.result?.status === 'partial' ? 'progress' : 'report') : event.kind;
+  let kind: GrokWebhookItemKind = event.kind;
+  if (event.kind === 'report') {
+    if (event.result?.status === 'blocked' || event.result?.status === 'failed') kind = 'blocker';
+    else if (event.progress || event.result?.status === 'partial') kind = 'progress';
+  }
   const isReport = event.kind === 'report' || event.kind === 'question';
-  const reportPhase = kind === 'question' ? 'question' : kind === 'blocker' ? 'blocked' : kind === 'progress' ? 'progress' : 'final';
+  let reportPhase: GrokWebhookItem['reportPhase'] = 'final';
+  if (kind === 'question') reportPhase = 'question';
+  else if (kind === 'blocker') reportPhase = 'blocked';
+  else if (kind === 'progress') reportPhase = 'progress';
   const terminalAsk: GrokWebhookTerminalAsk | undefined =
     openQuestion && (openQuestion.kind === 'terminal' || openQuestion.kind === 'permission')
       ? {
@@ -279,8 +294,7 @@ export async function sendGrokWebhook(target: GrokBotCredentials, payload: GrokW
         Accept: 'application/json',
         'User-Agent': 'droid-office/1.0',
       },
-      // Scrub every string, including nested summaries/artifacts, without changing payload structure.
-      body: JSON.stringify(payload, (_key, value: unknown) => (typeof value === 'string' ? scrubWebhookText(value, [target.webhookToken, target.webhookUrl]) : value)),
+      body: JSON.stringify(scrubWebhookPayload(payload, [target.webhookToken, target.webhookUrl])),
       redirect: 'error',
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -288,7 +302,7 @@ export async function sendGrokWebhook(target: GrokBotCredentials, payload: GrokW
       await res.arrayBuffer().catch(() => undefined);
       return { ok: true, status: res.status };
     }
-    const raw = (await res.text().catch(() => '')).slice(0, 2048);
+    const raw = await res.text().catch(() => '');
     const clean = redactWebhookSecret(scrubWebhookText(raw, [target.webhookUrl]), target.webhookToken);
     return { ok: false, status: res.status, error: clean ? `HTTP ${res.status}: ${clean}` : `HTTP ${res.status}` };
   } catch (err) {
