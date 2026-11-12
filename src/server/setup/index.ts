@@ -143,7 +143,13 @@ export function mountSetup(opts: SetupOptions): Setup {
   let saving = Promise.resolve();
   const save = () => {
     const { onboarded, airgapped } = state;
-    saving = saving.then(() => writeSetupFile(opts.dataDir, onboarded, !!airgapped)).catch((err) => opts.toast(`Couldn't save setup.json: ${(err as Error).message}`, 'error'));
+    saving = saving
+      .then(() => {
+        if (!stopped) return writeSetupFile(opts.dataDir, onboarded, !!airgapped);
+      })
+      .catch((err) => {
+        if (!stopped) opts.toast(`Couldn't save setup.json: ${(err as Error).message}`, 'error');
+      });
     return saving;
   };
   const customModels =
@@ -169,7 +175,7 @@ export function mountSetup(opts: SetupOptions): Setup {
    * reloads and restarts until the owner finishes it.
    */
   const settleOnboarded = async () => {
-    if (decided || (!state.airgapped && state.droid.path && state.droid.signedIn === null)) return;
+    if (stopped || decided || (!state.airgapped && state.droid.path && state.droid.signedIn === null)) return;
     decided = true;
     state.onboarded = droidReady(state);
     await save();
@@ -177,6 +183,7 @@ export function mountSetup(opts: SetupOptions): Setup {
 
   const look = async (first: boolean) => {
     const found = (installed && (await find(installed))) || (await find(opts.agentCmd));
+    if (stopped) return;
     state.customModels = customModels();
     if (found !== state.droid.path) {
       state.droid.path = found;
@@ -188,6 +195,7 @@ export function mountSetup(opts: SetupOptions): Setup {
       state.droid.account = null;
     } else {
       const [version, auth] = await Promise.all([droidVersion(found, run, env()), state.airgapped ? null : doctorAuth(found, run, env())]);
+      if (stopped) return;
       state.droid.version = version;
       if (auth && !state.airgapped && state.droid.busy !== 'signing-in') applyAuth(auth);
     }

@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import test, { type TestContext } from 'node:test';
+import test from 'node:test';
 import { WebSocket } from 'ws';
 import { Store } from '../src/client/state.js';
 import { loadConfig } from '../src/server/config.js';
@@ -56,7 +56,7 @@ function initGitRepo(dir: string) {
   execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-q', '-m', 'init'], { cwd: dir });
 }
 
-function socket(t: TestContext, base: string, query: string) {
+function socket(t: { after(fn: () => void): void }, base: string, query: string) {
   const ws = new WebSocket(`${base.replace('http:', 'ws:')}/ws?${query}`, { origin: base });
   t.after(() => ws.terminate());
   const messages: ServerMsg[] = [];
@@ -88,7 +88,15 @@ function socket(t: TestContext, base: string, query: string) {
 
 test('companions receive the full building roster, off-floor AskUser screens, and cross-floor answer/fork/dismiss/thread actions', { skip: process.platform === 'win32' }, async (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'building-roster-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cleanups: (() => void | Promise<void>)[] = [];
+  const rig = { after: (fn: () => void | Promise<void>) => void cleanups.push(fn) };
+  t.after(async () => {
+    try {
+      for (const fn of cleanups.reverse()) await fn();
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
   const repoA = path.join(root, 'alpha');
   const repoB = path.join(root, 'beta');
   initGitRepo(repoA);
@@ -105,7 +113,7 @@ test('companions receive the full building roster, off-floor AskUser screens, an
   const prevMenu = process.env.FAKE_ASK_MENU_FILE;
   process.env.FAKE_AGENT_LOG = log;
   process.env.FAKE_ASK_MENU_FILE = menuFile;
-  t.after(() => {
+  rig.after(() => {
     if (prevLog === undefined) delete process.env.FAKE_AGENT_LOG;
     else process.env.FAKE_AGENT_LOG = prevLog;
     if (prevMenu === undefined) delete process.env.FAKE_ASK_MENU_FILE;
@@ -115,7 +123,7 @@ test('companions receive the full building roster, off-floor AskUser screens, an
   const cfg = loadConfig(['--home', root, '--projects', root, repoA, '--weather', 'clear', '--host', '127.0.0.1', '--agent', agent]);
   cfg.port = 0;
   const server = await startServer(cfg);
-  t.after(async () => {
+  rig.after(async () => {
     const closing = once(server.server, 'close');
     server.shutdown();
     server.server.closeAllConnections();
@@ -148,7 +156,7 @@ test('companions receive the full building roster, off-floor AskUser screens, an
   };
 
   const pair = (await (await fetch(`${base}/api/mobile/pair`, { method: 'POST', body: '{"device":"Pixel"}' })).json()) as { token: string };
-  const phoneA = socket(t, base, `d=${pair.token}`);
+  const phoneA = socket(rig, base, `d=${pair.token}`);
   const welcomeA = await phoneA.wait('welcome');
   const floorA = welcomeA.floor!;
   assert.ok(Array.isArray(welcomeA.building));
@@ -158,7 +166,7 @@ test('companions receive the full building roster, off-floor AskUser screens, an
   );
 
   // Open a second floor for repoB; phoneB rides there while phoneA stays on floorA.
-  const phoneB = socket(t, base, `d=${pair.token}`);
+  const phoneB = socket(rig, base, `d=${pair.token}`);
   await phoneB.wait('welcome');
   phoneB.send({ t: 'floor.add', dir: repoB });
   const addedB = await phoneB.wait('floor.added', (m) => m.dir === repoB);
@@ -197,7 +205,7 @@ test('companions receive the full building roster, off-floor AskUser screens, an
   assert.equal(parsedMenu?.question, 'Which greeting should I write into HELLO.md?');
 
   // A brand-new connection landing on floorA immediately receives both floors in welcome.building and the off-floor needs_input screen.
-  const freshPhone = socket(t, base, `d=${pair.token}`);
+  const freshPhone = socket(rig, base, `d=${pair.token}`);
   const freshWelcome = await freshPhone.wait('welcome');
   assert.equal(freshWelcome.floor, floorA);
   assert.equal(freshWelcome.building?.find((r) => r.floor === floorB)?.workers.find((w) => w.id === workerB)?.status, 'needs_input');

@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { execFileSync } from 'node:child_process';
 import { createServer, request } from 'node:http';
 import { Readable } from 'node:stream';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { AddressInfo } from 'node:net';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
@@ -120,11 +121,18 @@ test('floors resolve by id, elevator number or name; workers by id or name, refu
 /** An external worker on a real Office MCP listener, with the owner's window faked so each call is recorded. */
 async function remoteRig(t: TestContext) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'owner-mcp-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const cleanups: (() => void | Promise<void>)[] = [];
+  t.after(async () => {
+    try {
+      for (const fn of cleanups.reverse()) await fn();
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
   const store = new RemoteWorkers(dir);
   const people = new Map<string, WorkerInfo>();
   const whiteboard = new WhiteboardStore(dir);
-  t.after(() => whiteboard.stop());
+  cleanups.push(() => whiteboard.stop());
   const team = { handle: async () => ({ status: 200, body: { canHire: true, subagents: 0, max: 4, wakeLead: true } }), cannotHire: () => undefined, hasNews: () => false, inbox: () => [], onWorkerGone() {} };
   const visits = { handle: () => ({ status: 403, body: { error: 'off' } }), cannotVisit: () => 'Visits are off', onWorkerGone() {} };
   const floor = {
@@ -146,6 +154,7 @@ async function remoteRig(t: TestContext) {
     whiteboard,
   } as unknown as RemoteFloor;
   const office = new RemoteOffice(store, () => [floor]);
+  cleanups.push(() => office.stop());
   const grok = office.add('Grok');
   people.set('b-1', worker('b-1', 'Byte', { lead: grok.worker.id, deskId: 'desk-2', createdAt: Number.MAX_SAFE_INTEGER }));
   const calls: { msg: Record<string, unknown>; floor?: string; by: string }[] = [];
@@ -170,12 +179,12 @@ async function remoteRig(t: TestContext) {
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
-  t.after(async () => {
+  cleanups.push(async () => {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
   const client = new Client({ name: 'owner-test', version: '1' });
-  t.after(() => client.close());
+  cleanups.push(() => client.close());
   const url = new URL('/office/mcp', `http://127.0.0.1:${(server.address() as AddressInfo).port}`);
   await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers: { host: `${hostname}:8443`, Authorization: `Bearer ${grok.token}`, 'x-droid-office-worker-id': grok.worker.id } } }));
   const call = async (name: string, args: Record<string, unknown> = {}) => {
@@ -456,9 +465,16 @@ test('send-home preserves cloud deletion capability and never claims uncertain d
 
 test('local workers never get owner access', async (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'owner-local-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const cleanups: (() => void | Promise<void>)[] = [];
+  t.after(async () => {
+    try {
+      for (const fn of cleanups.reverse()) await fn();
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
   const whiteboard = new WhiteboardStore(dir);
-  t.after(() => whiteboard.stop());
+  cleanups.push(() => whiteboard.stop());
   const me = worker('local', 'Ada');
   const acted: string[] = [];
   const owner: OwnerOffice = { floors: building, mission: () => [], tail: () => 'x', act: async (_by, msg) => (acted.push(msg.t), { notes: [] }) };
@@ -475,12 +491,12 @@ test('local workers never get owner access', async (t) => {
   const server = createServer((req, res) => void mcp.handle(req, res));
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
-  t.after(async () => {
+  cleanups.push(async () => {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
   const client = new Client({ name: 'local-test', version: '1' });
-  t.after(() => client.close());
+  cleanups.push(() => client.close());
   await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}/office/mcp`), { requestInit: { headers: { Authorization: 'Bearer tok', 'x-droid-office-worker-id': 'local' } } }));
   const names = (await client.listTools()).tools.map((x) => x.name);
   for (const name of ['office_roster', 'office_look', 'office_send_home', ...OWNER_TOOLS.map((tool) => tool.name)]) {
@@ -498,7 +514,22 @@ test('local workers never get owner access', async (t) => {
 
 test('owner actions from an external worker run through the owner’s own handler on any floor, attributed to it', { timeout: 60_000 }, async (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'owner-office-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  let office: Awaited<ReturnType<typeof startServer>> | undefined;
+  let ws: WebSocket | undefined;
+  t.after(async () => {
+    try {
+      ws?.terminate();
+      if (office) {
+        const closed = once(office.server, 'close');
+        office.shutdown();
+        office.server.closeAllConnections();
+        await closed;
+        await delay(100);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
   const project = path.join(root, 'project');
   const home = path.join(root, 'home');
   for (const d of [project, home]) {
@@ -507,18 +538,12 @@ test('owner actions from an external worker run through the owner’s own handle
   }
   const cfg = loadConfig([project, '--home', home, '--projects', root, '--weather', 'clear', '--host', '127.0.0.1']);
   cfg.port = 0;
-  const office = await startServer(cfg);
-  t.after(async () => {
-    const closed = once(office.server, 'close');
-    office.shutdown();
-    await closed;
-  });
+  office = await startServer(cfg);
   const grok = worker('remote-grok', 'Grok', { remote: true, color: '#123456' });
   const first = office.owner.floors()[0];
   const base = `ws://127.0.0.1:${(office.server.address() as AddressInfo).port}/ws?name=Owner&floor=${first.id}`;
   const msgs: ServerMsg[] = [];
-  const ws = new WebSocket(base, { origin: base.replace('ws:', 'http:').split('/ws')[0] });
-  t.after(() => ws.terminate());
+  ws = new WebSocket(base, { origin: base.replace('ws:', 'http:').split('/ws')[0] });
   ws.on('message', (raw) => msgs.push(JSON.parse(String(raw))));
   await once(ws, 'open');
 

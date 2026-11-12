@@ -22,24 +22,33 @@ import { reachableLan } from './lan-probe.js';
 
 async function office(t: TestContext, home?: string, agent?: string) {
   const dir = home ?? mkdtempSync(path.join(os.tmpdir(), 'dashboard-'));
-  if (!home) {
-    t.after(() => rmSync(dir, { recursive: true, force: true }));
-    execFileSync('git', ['init', '-q'], { cwd: dir });
-  }
-  const cfg = loadConfig(['--home', dir, '--projects', dir, dir, '--weather', 'clear', '--host', '0.0.0.0', ...(agent ? ['--agent', agent] : [])]);
-  cfg.port = 0;
-  const server = await startServer(cfg);
-  const port = (server.server.address() as AddressInfo).port;
+  let server: Awaited<ReturnType<typeof startServer>> | undefined;
   let stopped = false;
   /** With `keep`, as a restart does: workers' terminals stay up for the next office. */
   const stop = async (keep = false) => {
-    if (stopped) return;
+    if (stopped || !server) return;
     stopped = true;
     const closing = once(server.server, 'close');
     server.shutdown(keep);
+    server.server.closeAllConnections();
     await closing;
   };
-  t.after(() => stop());
+  if (!home) {
+    t.after(async () => {
+      try {
+        await stop();
+      } finally {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      }
+    });
+    execFileSync('git', ['init', '-q'], { cwd: dir });
+  } else {
+    t.after(() => stop());
+  }
+  const cfg = loadConfig(['--home', dir, '--projects', dir, dir, '--weather', 'clear', '--host', '0.0.0.0', ...(agent ? ['--agent', agent] : [])]);
+  cfg.port = 0;
+  server = await startServer(cfg);
+  const port = (server.server.address() as AddressInfo).port;
   return { server, dir, stop, base: `http://127.0.0.1:${port}`, port };
 }
 
@@ -148,18 +157,25 @@ type Launch = { workerId: string; hookToken: string; hookUrl: string; stdin?: st
 /** An office whose Droid is `signedInDroid`, so the Orchestrator can start, with each launch it made. */
 async function missionOffice(t: TestContext) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'mission-office-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const clients: Client[] = [];
+  let running: Awaited<ReturnType<typeof office>> | undefined;
+  const before = process.env.FAKE_AGENT_LOG;
+  t.after(async () => {
+    try {
+      await Promise.allSettled(clients.map((c) => c.close()));
+      await running?.stop();
+    } finally {
+      if (before === undefined) delete process.env.FAKE_AGENT_LOG;
+      else process.env.FAKE_AGENT_LOG = before;
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
   execFileSync('git', ['init', '-q'], { cwd: dir });
   const agent = path.join(dir, 'droid');
   writeFileSync(agent, signedInDroid, { mode: 0o700 });
   const log = path.join(dir, 'launches.jsonl');
   writeFileSync(log, '');
-  const before = process.env.FAKE_AGENT_LOG;
   process.env.FAKE_AGENT_LOG = log;
-  t.after(() => {
-    if (before === undefined) delete process.env.FAKE_AGENT_LOG;
-    else process.env.FAKE_AGENT_LOG = before;
-  });
   const records = (): Launch[] =>
     readFileSync(log, 'utf8')
       .split('\n')
@@ -189,7 +205,7 @@ async function missionOffice(t: TestContext) {
   /** The Office MCP as one launched session reaches it: the loopback listener, with its hook credential. */
   const mcp = async (launch: Launch) => {
     const client = new Client({ name: 'mission-office', version: '1' });
-    t.after(() => client.close());
+    clients.push(client);
     await client.connect(new StreamableHTTPClientTransport(new URL(OFFICE_MCP_PATH, launch.hookUrl), { requestInit: { headers: { [OFFICE_MCP_WORKER_HEADER]: launch.workerId, Authorization: `Bearer ${launch.hookToken}` } } }));
     return async (name: string, args: Record<string, unknown> = {}) => {
       const r = await client.callTool({ name, arguments: args });
@@ -206,7 +222,7 @@ async function missionOffice(t: TestContext) {
     assert.equal(res.status, 200, event);
     return res.text();
   };
-  let running = await office(t, dir, agent);
+  running = await office(t, dir, agent);
   return {
     dir,
     launched,
@@ -214,14 +230,14 @@ async function missionOffice(t: TestContext) {
     mcp,
     hook,
     get base() {
-      return running.base;
+      return running!.base;
     },
     get server() {
-      return running.server;
+      return running!.server;
     },
     /** The office goes down keeping its terminals, and a new one opens on the same folder. */
     async restart() {
-      await running.stop(true);
+      await running!.stop(true);
       running = await office(t, dir, agent);
     },
   };

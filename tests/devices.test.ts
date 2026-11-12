@@ -219,6 +219,19 @@ test('AUTO_DESK takes the first free desk in DESKS order', () => {
 
 // --- Through the office ------------------------------------------------------------------------------
 
+function tempRig(t: { after(fn: () => unknown): unknown }, prefix: string) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
+  const cleanups: (() => unknown)[] = [];
+  t.after(async () => {
+    try {
+      for (const fn of cleanups.reverse()) await fn();
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+  return { dir, after: (fn: () => unknown) => void cleanups.push(fn) };
+}
+
 async function startOffice(t: { after(fn: () => unknown): unknown }, home: string, ...argv: string[]) {
   const cfg = loadConfig(['--home', home, '--projects', home, '--weather', 'clear', ...argv]);
   cfg.port = 0;
@@ -229,6 +242,7 @@ async function startOffice(t: { after(fn: () => unknown): unknown }, home: strin
     closed = true;
     const done = once(office.server, 'close');
     office.shutdown();
+    office.server.closeAllConnections();
     await done;
     await delay(100);
   };
@@ -248,9 +262,8 @@ const socket = (url: string, headers: Record<string, string>) =>
   });
 
 test('external workers are set up only from the office’s own page, and an office started without them says so', { timeout: 60_000 }, async (t) => {
-  const home = mkdtempSync(path.join(os.tmpdir(), 'devices-office-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  const { port } = await startOffice(t, home, '--host', '127.0.0.1');
+  const rig = tempRig(t, 'devices-office-');
+  const { port } = await startOffice(rig, rig.dir, '--host', '127.0.0.1');
   const url = `http://127.0.0.1:${port}/api/remote-mcp`;
   const own = { 'sec-fetch-site': 'same-origin' };
   const res = await fetch(url, { headers: own });
@@ -263,9 +276,9 @@ test('external workers are set up only from the office’s own page, and an offi
 });
 
 test('pairing over the LAN: the token pairs, the bearer opens HTTP and the socket, forgetting refuses it', { timeout: 60_000 }, async (t) => {
-  const home = mkdtempSync(path.join(os.tmpdir(), 'devices-office-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  const { office, port, stop } = await startOffice(t, home, '--host', '0.0.0.0');
+  const rig = tempRig(t, 'devices-office-');
+  const home = rig.dir;
+  const { office, port, stop } = await startOffice(rig, home, '--host', '0.0.0.0');
   const ip = await reachableLan(t, office.server);
   if (!ip) return;
   const lan = `http://${ip}:${port}`;
@@ -301,11 +314,11 @@ test('pairing over the LAN: the token pairs, the bearer opens HTTP and the socke
 
   // The socket: the bearer header needs no Origin; ?d= can come from a web page, so it needs a matching one.
   const viaHeader = await socket(`${wsLan}/ws?name=Pixel`, bearer);
-  t.after(() => viaHeader.ws.terminate());
+  rig.after(() => viaHeader.ws.terminate());
   assert.equal(viaHeader.first?.t, 'welcome');
   assert.equal((await socket(`${wsLan}/ws?name=Pixel&d=${paired.token}`, {})).status, 401);
   const viaQuery = await socket(`${wsLan}/ws?name=Pixel&d=${paired.token}`, { origin: lan });
-  t.after(() => viaQuery.ws.terminate());
+  rig.after(() => viaQuery.ws.terminate());
   assert.equal(viaQuery.first?.t, 'welcome');
 
   // The Phone window's routes answer only the office's own page on its own machine.
@@ -336,7 +349,7 @@ test('pairing over the LAN: the token pairs, the bearer opens HTTP and the socke
 
   // It survives a restart: a new office on the same folder, a new LAN token, the same device token.
   await stop();
-  const second = await startOffice(t, home, '--host', '0.0.0.0');
+  const second = await startOffice(rig, home, '--host', '0.0.0.0');
   const lan2 = `http://${ip}:${second.port}`;
   assert.notEqual(second.office.lanToken, t0);
   assert.equal((await fetch(`${lan2}/api/mobile/hello`, { headers: bearer })).status, 200);
@@ -358,9 +371,8 @@ test('pairing over the LAN: the token pairs, the bearer opens HTTP and the socke
 });
 
 test('the phone unpairs itself with DELETE /api/mobile/pair', { timeout: 60_000 }, async (t) => {
-  const home = mkdtempSync(path.join(os.tmpdir(), 'devices-office-'));
-  t.after(() => rmSync(home, { recursive: true, force: true }));
-  const { port } = await startOffice(t, home, '--host', '127.0.0.1');
+  const rig = tempRig(t, 'devices-office-');
+  const { port } = await startOffice(rig, rig.dir, '--host', '127.0.0.1');
   const base = `http://127.0.0.1:${port}`;
   const paired = (await (await fetch(`${base}/api/mobile/pair`, { method: 'POST', body: '{"device":"Pixel"}' })).json()) as { deviceId: string; token: string };
   assert.equal((await fetch(`${base}/api/mobile/pair`, { method: 'DELETE' })).status, 400);
@@ -375,14 +387,14 @@ test('the phone unpairs itself with DELETE /api/mobile/pair', { timeout: 60_000 
 });
 
 test('worker.spawn with deskId "auto" takes the first free desk on the floor', { timeout: 60_000, skip: process.platform === 'win32' }, async (t) => {
-  const project = mkdtempSync(path.join(os.tmpdir(), 'devices-auto-'));
-  t.after(() => rmSync(project, { recursive: true, force: true }));
+  const rig = tempRig(t, 'devices-auto-');
+  const project = rig.dir;
   execFileSync('git', ['init', '-q'], { cwd: project });
-  const { port } = await startOffice(t, project, project, '--host', '127.0.0.1');
+  const { port } = await startOffice(rig, project, project, '--host', '127.0.0.1');
   const base = `http://127.0.0.1:${port}`;
   const paired = (await (await fetch(`${base}/api/mobile/pair`, { method: 'POST', body: '{"device":"Pixel"}' })).json()) as { token: string };
   const { ws, first } = await socket(`${base.replace('http:', 'ws:')}/ws?name=Pixel`, { authorization: `Bearer ${paired.token}` });
-  t.after(() => ws.terminate());
+  rig.after(() => ws.terminate());
   const floors = (first as { floors: { id: string }[] }).floors;
   const messages: { t: string; worker?: { id: string; deskId: string } }[] = [];
   ws.on('message', (raw) => messages.push(JSON.parse(String(raw))));

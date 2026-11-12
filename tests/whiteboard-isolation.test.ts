@@ -155,7 +155,14 @@ test('hostile artifacts reach nothing of the office, in a window, in the rendere
   const project = path.join(root, 'project');
   const home = path.join(root, 'home');
   for (const d of [project, home]) mkdirSync(d, { recursive: true });
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const cleanups: (() => void | Promise<void>)[] = [];
+  t.after(async () => {
+    try {
+      for (const fn of cleanups.reverse()) await fn();
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
 
   // What the cards report.
   const reports: Record<string, unknown>[] = [];
@@ -172,16 +179,20 @@ test('hostile artifacts reach nothing of the office, in a window, in the rendere
     });
   });
   await new Promise<void>((r) => collector.listen(0, '127.0.0.1', r));
-  t.after(() => collector.close());
+  cleanups.push(async () => {
+    collector.closeAllConnections();
+    await new Promise<void>((resolve) => collector.close(() => resolve()));
+  });
   const collectorUrl = `http://127.0.0.1:${(collector.address() as AddressInfo).port}`;
 
   const cfg = loadConfig([project, '--home', home, '--weather', 'clear', '--host', '127.0.0.1']);
   cfg.port = 0;
   cfg.renders = true;
   const office = await startServer(cfg);
-  t.after(async () => {
+  cleanups.push(async () => {
     const closed = once(office.server, 'close');
     office.shutdown();
+    office.server.closeAllConnections();
     await closed;
     await closeBrowser();
   });
@@ -189,7 +200,7 @@ test('hostile artifacts reach nothing of the office, in a window, in the rendere
 
   const msgs: ServerMsg[] = [];
   const ws = new WebSocket(`${base.replace('http:', 'ws:')}/ws?name=Owner`, { headers: { origin: base } });
-  t.after(() => ws.terminate());
+  cleanups.push(() => ws.terminate());
   ws.on('message', (raw) => msgs.push(JSON.parse(String(raw))));
   const welcome = await waitFor(() => msgs.find((m) => m.t === 'welcome') as Extract<ServerMsg, { t: 'welcome' }> | undefined, 'welcome');
   const floor = welcome.floor!;
@@ -225,7 +236,7 @@ test('hostile artifacts reach nothing of the office, in a window, in the rendere
   // ---- The window ----
   const browser = await launchBrowser();
   const context = await newIsolatedContext(browser, { viewport: { width: 1300, height: 700 } });
-  t.after(() => context.close().catch(() => {}));
+  cleanups.push(() => context.close().catch(() => {}));
   const frames = [
     { card: 'hostile', cap: caps.hostile, nonce: 'n'.repeat(8) + Math.random().toString(36).slice(2).padEnd(16, 'x') },
     { card: 'plain', cap: caps.plain, nonce: 'm'.repeat(8) + Math.random().toString(36).slice(2).padEnd(16, 'y') },
@@ -307,7 +318,7 @@ test('hostile artifacts reach nothing of the office, in a window, in the rendere
   // A new connection's snapshot is followed by each rendered card's info.
   const late: ServerMsg[] = [];
   const ws2 = new WebSocket(`${base.replace('http:', 'ws:')}/ws?name=Owner`, { headers: { origin: base } });
-  t.after(() => ws2.terminate());
+  cleanups.push(() => ws2.terminate());
   ws2.on('message', (raw) => late.push(JSON.parse(String(raw))));
   await waitFor(() => late.find((m) => m.t === 'whiteboard.rendered' && m.card === 'plain'), 'whiteboard.rendered after a snapshot');
   // The renderer's writes were dropped: nothing in the board came from a render.
