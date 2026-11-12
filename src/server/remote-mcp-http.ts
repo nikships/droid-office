@@ -5,6 +5,8 @@ import path from 'node:path';
 import { isLoopback } from './lan.js';
 import { createOfficeMcp, OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER, type OfficeMcpDeps } from './office-mcp/index.js';
 import type { RemoteOffice } from './remote-office.js';
+import type { GrokBotInput } from './remote-workers.js';
+import type { GrokWebhookResult } from './grok-webhook.js';
 import { planServe, TailscaleCli } from './tailscale.js';
 import type { RemoteMcpBot, RemoteMcpConnection, RemoteMcpState, RemoteMcpStatus } from '../shared/remote-mcp.js';
 
@@ -117,9 +119,19 @@ export class RemoteMcp {
     return this.start();
   }
 
-  add(name: string): RemoteMcpState {
-    this.opts.office.add(name);
+  add(name: string, grokBot?: GrokBotInput): RemoteMcpState {
+    this.opts.office.add(name, grokBot);
     return this.state();
+  }
+
+  setGrokBot(id: string, grokBot: GrokBotInput | null): RemoteMcpState {
+    this.opts.office.setGrokBot(id, grokBot);
+    return this.state();
+  }
+
+  async testWebhook(id: string): Promise<{ state: RemoteMcpState; result: GrokWebhookResult }> {
+    const result = await this.opts.office.testWebhook(id);
+    return { state: this.state(), result };
   }
 
   rotate(id: string): RemoteMcpState {
@@ -159,6 +171,7 @@ export class RemoteMcp {
         ...(r.lastUsedAt ? { lastUsedAt: r.lastUsedAt } : {}),
         ...(worker ? { status: worker.status, activity: worker.activity } : {}),
         ...(main ? { connection: main } : {}),
+        ...(r.grokBot ? { grokBot: r.grokBot } : {}),
         keys: r.keys.map((k) => {
           const c = connection(k.id);
           return { ...k, ...(c ? { connection: c } : {}) };

@@ -670,7 +670,7 @@ private fun BuildingWorkerCard(
                         )
                         if (w.isShell) MicroTag("SHELL")
                         if (w.isCloud) MicroTag("CLOUD")
-                        if (isBot) MicroTag("EXTERNAL")
+                        if (isBot) MicroTag(if (row.grokBot) "GROK BOT" else "EXTERNAL")
                         val subCount = if (row.subagents > 0) row.subagents else row.teamCount
                         if (subCount > 0) MicroTag("+$subCount")
                         Spacer(Modifier.width(6.dp))

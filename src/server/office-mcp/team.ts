@@ -10,7 +10,7 @@ import { compactEvent, compactEventText, compactWorker, compactWorkerText, curso
 export const instructions = `Subagents are real workers with their own terminals and (by default) git worktrees reporting to you, their lead. Subagents cannot hire.
 Have task-authored prerequisites committed BEFORE hiring (worktrees see committed state only; leave unrelated changes untouched). Read team_models once per hiring batch, then hire one fresh subagent per task, only as many as independent scopes need. Independent scopes touch separate files: assign single-writer edit ownership in each brief, plus goal, dependency context, boundaries, checks and delivery; sibling files can be referenced as read-only context. Subagents share areas/findings via team_board and team_note. Continue a subagent's committed work via from / task.baseBranch set to worker:<name/id> or its absolute worktree path; floor leads omit from for their own current HEAD.
 Owner notes take priority when picking an exact model id from team_models. Multipliers show relative cost (custom/subscription models use no Factory credits; prefer subscriptions with ample quota and keep a nearly spent one off long tasks). Pick <=x0.5 for mechanical work, ~x1 for standard tasks, and top models for hard design, security, or concurrency; never give visual tasks to a no-images model.
-Hiring and waiting is not enough: run the team as its connective tissue. On wakes/check-ins read team_status and questions_list, inspect relevant worker_diff/worker_log and full reports with team_report_get. Steer drift and relay contract changes via team_message (queue: true steers at the next step; workers/all: true broadcasts; inspect per-recipient errors). Answer technical questions within the owner's intent; escalate unclear decisions and leave workers at permission prompts untouched for the owner. Record team_review approve before merging (a lead workflow gate, not a server-enforced lock; request_changes routes fixes back). Integrate via team_merge (building agents name target), land foundations first, then have dependent siblings rebase/align and re-verify. Resolve returned conflict hunks in the reported worktree and run combined target checks after review and integration, before team_dismiss. team_pr requires authorization and a pushed branch. With Wake the lead on, end your turn when nothing else remains; otherwise use team_wait.`;
+Hiring and waiting is not enough: run the team as its connective tissue. On wakes/check-ins read team_status and questions_list, inspect relevant worker_diff/worker_log and full reports with team_report_get. Steer drift and relay contract changes via team_message (queue: true steers at the next step; workers/all: true broadcasts; inspect per-recipient errors). Answer technical questions within the owner's intent; escalate unclear decisions and leave workers at permission prompts untouched for the owner. Record team_review approve before merging (a lead workflow gate, not a server-enforced lock; request_changes routes fixes back). Integrate via team_merge (building agents name target), land foundations first, then have dependent siblings rebase/align and re-verify. Resolve returned conflict hunks in the reported worktree and run combined target checks after review and integration, before team_dismiss. team_pr requires authorization and a pushed branch. With Wake the lead on, end your turn when nothing else remains; otherwise use team_wait. When your lead is a Grok Bot (office_whoami shows leadPush: true), team_report pushes straight to its webhook on turn end and lead_notify sends immediate mid-turn updates, questions, blockers, or test pings without ending your turn.`;
 
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const changesState = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
@@ -296,13 +296,23 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const floor = ownFloor(caller);
       const { body } = await floor.team.handle(caller.worker, { action: 'whoami' });
       const visitRefusal = floor.visits.cannotVisit(caller.worker);
-      const identity = { ...body, floor: { id: floor.id, name: floor.name }, cwd: caller.cwd, canVisit: !visitRefusal, ...(visitRefusal ? { visitRefusal } : {}), ownerAccess: false };
-      const lead = caller.worker.lead ? (floor.workers.get(caller.worker.lead)?.name ?? caller.worker.lead) : undefined;
+      const leadPush = Boolean(caller.worker.lead && deps.remote?.store.isGrokBot(caller.worker.lead));
+      const identity = {
+        ...body,
+        floor: { id: floor.id, name: floor.name },
+        cwd: caller.cwd,
+        canVisit: !visitRefusal,
+        ...(visitRefusal ? { visitRefusal } : {}),
+        ...(leadPush ? { leadPush: true } : {}),
+        ownerAccess: false,
+      };
+      const lead = caller.worker.lead ? (floor.workers.get(caller.worker.lead)?.name ?? deps.remote?.store.identity(caller.worker.lead)?.name ?? caller.worker.lead) : undefined;
       return officeResult(
         [
           `${caller.worker.name} (${caller.worker.id}), ${floor.name}, ${lead ? `subagent of ${lead}` : 'independent worker'}.`,
           `Working folder: ${caller.cwd}`,
           `May hire: ${body.canHire ? 'yes' : 'no'}. Subagents: ${body.subagents ?? 0}${typeof body.max === 'number' ? `/${body.max}` : ', no limit'}. Wake the lead: ${body.wakeLead ? 'on' : 'off'}.`,
+          ...(leadPush ? [`Grok Bot push: on (team_report and lead_notify wake ${lead} immediately by webhook).`] : []),
           ...(typeof body.why === 'string' ? [body.why] : []),
           `May visit: ${visitRefusal ? `no. ${visitRefusal}` : 'yes'}.`,
         ].join('\n'),
@@ -318,6 +328,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     const subagents = teams.reduce((n, t) => n + t.subagents, 0);
     const owner = hasOwnerAccess(caller, deps.owner);
     const kind = caller.worker.remote ? 'external' : 'orchestrator';
+    const grokBot = Boolean(caller.worker.remote && deps.remote?.store.isGrokBot(caller.worker.id));
     const identity = {
       you: { id: caller.worker.id, name: caller.worker.name, role: subagents ? 'lead' : 'worker', building: kind },
       room: 'Mission Control',
@@ -327,16 +338,21 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       subagents,
       teams,
       worktree: s.worktree,
-      wakeLead: !caller.worker.remote && s.wakeLead,
+      wakeLead: (!caller.worker.remote && s.wakeLead) || grokBot,
+      ...(grokBot ? { grokBot: true } : {}),
       canVisit: false,
       ownerAccess: owner,
     };
     return officeResult(
       [
-        `${caller.worker.name} (${caller.worker.id}), ${kind === 'external' ? 'an external bot' : "the office's Orchestrator"} in Mission Control: no floor or desk.`,
+        `${caller.worker.name} (${caller.worker.id}), ${kind === 'external' ? (grokBot ? 'a Grok Bot' : 'an external bot') : "the office's Orchestrator"} in Mission Control: no floor or desk.`,
         ...(caller.cwd ? [`Working folder: ${caller.cwd} (scratch space, not a checkout).`] : []),
         `May hire: yes, on any open floor, with no team size limit. Subagents: ${subagents}${teams.length ? ` (${teams.map((t) => `${t.subagents} on ${t.name}`).join(', ')})` : ''}.`,
-        caller.worker.remote ? 'Wake notes: none; poll office_inbox or team_wait.' : `Wake notes: ${s.wakeLead ? 'on' : 'off'}.`,
+        caller.worker.remote
+          ? grokBot
+            ? 'Wake webhook: on (subagent reports, questions, terminal blockers and lead_notify push JSON to your webhook and remain in office_inbox until acknowledged).'
+            : 'Wake notes: none; poll office_inbox or team_wait.'
+          : `Wake notes: ${s.wakeLead ? 'on' : 'off'}.`,
         'May visit: no. Reach any worker with office_worker_prompt.',
         ...(owner ? ['Owner access: yes. Focused office_* tools act across the building as the owner does. Use team_* for your subagents.'] : []),
       ].join('\n'),
@@ -519,6 +535,54 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       });
     },
   );
+  const grokSubagent = (caller: OfficeMcpCaller): string | undefined => {
+    const why = officeAccess.subagent(caller);
+    if (why) return why;
+    if (!caller.worker.lead || !deps.remote?.store.isGrokBot(caller.worker.lead)) {
+      return 'Only subagents whose lead is a Grok Bot with webhook push enabled use lead_notify; report with team_report instead.';
+    }
+    return undefined;
+  };
+  server.tool(
+    {
+      name: 'lead_notify',
+      description:
+        'Grok Bot subagents only: push a direct JSON notification to your Grok Bot lead’s webhook immediately without ending your turn (mid-turn checkpoints, early artifact links, blockers, questions, or a clearly marked test ping). Use team_report for your turn-ending final report or blocking question.',
+      inputSchema: z.strictObject({
+        text: text.describe('Message, blocker details, question, or test note pushed directly to your Grok Bot lead.'),
+        kind: z
+          .enum(['update', 'question', 'blocker', 'test'])
+          .default('update')
+          .describe('update: mid-turn heads-up or artifact; question: non-stopping question; blocker: urgent obstacle; test: connectivity check (not saved in office_inbox).'),
+        options: z.array(z.string().trim().min(1).max(200)).min(2).max(9).optional().describe('For kind "question" only: ordered answer choices.'),
+        pushedSha: z
+          .string()
+          .regex(/^[0-9a-f]{40,64}$/)
+          .optional()
+          .describe('Optional full pushed commit SHA.'),
+        prUrl: z.url().max(2000).optional().describe('Optional pull request URL.'),
+      }),
+      annotations: changesState,
+    },
+    grokSubagent,
+    async (args, caller) => {
+      if (args.options !== undefined && args.kind !== 'question') return officeError('options are only for kind "question": set kind: "question" or omit options.');
+      const floor = ownFloor(caller);
+      const sent = await deps.remote!.notifyLead({ worker: caller.worker, floor: { id: floor.id, name: floor.name, dir: floor.dir } }, args);
+      if (!sent.ok) {
+        const saved = sent.ackId ? ` Saved in ${sent.lead}'s office_inbox (${sent.ackId}), so nothing was lost.` : '';
+        return officeError(`Webhook push to ${sent.lead} failed (${sent.error ?? 'delivery failed'}).${saved}`, 'webhook_failed');
+      }
+      const statusPart = sent.status !== undefined ? ` (HTTP ${sent.status})` : '';
+      return officeResult(args.kind === 'test' ? `Sent [TEST] webhook ping to ${sent.lead}${statusPart}.` : `Pushed ${args.kind} to ${sent.lead}'s webhook${statusPart}${sent.ackId ? ` and saved in office_inbox (${sent.ackId})` : ''}.`, {
+        lead: sent.lead,
+        kind: args.kind,
+        pushed: true,
+        ...(sent.status !== undefined ? { status: sent.status } : {}),
+        ...(sent.ackId ? { ackId: sent.ackId } : {}),
+      });
+    },
+  );
   server.tool(
     {
       name: 'team_report',
@@ -540,13 +604,31 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       annotations: changesState,
     },
     officeAccess.subagent,
-    async (args, caller) =>
-      reply(await ownFloor(caller).team.handle(caller.worker, { action: 'report', ...args }), (body) =>
+    async (args, caller) => {
+      const floor = ownFloor(caller);
+      const result = await floor.team.handle(caller.worker, { action: 'report', ...args });
+      if (result.status >= 400) return reply(result, () => '');
+      const leadId = caller.worker.lead;
+      let webhookNote = '';
+      if (leadId && !args.progress && deps.remote?.store.isGrokBot(leadId)) {
+        const latest = floor.team.reports(leadId, caller.worker.id).at(-1);
+        const receipt = await deps.remote.pushTeamReport(floor.id, leadId, latest);
+        if (receipt) {
+          result.body.webhook = {
+            pushed: receipt.ok,
+            ...(receipt.status !== undefined ? { status: receipt.status } : {}),
+            ...(receipt.error ? { error: receipt.error } : {}),
+          };
+          webhookNote = receipt.ok ? ' Pushed to its Grok Bot webhook.' : ` Saved in its inbox (webhook push failed: ${receipt.error ?? 'delivery failed'}).`;
+        }
+      }
+      return reply(result, (body) =>
         args.question
-          ? `Asked ${body.lead}. End your turn now; the answer arrives as a later message.`
+          ? `Asked ${body.lead}.${webhookNote} End your turn now; the answer arrives as a later message.`
           : args.progress
             ? `Sent ${body.lead} a progress report: ${body.lead} sees you are not finished. End your turn now; your background job wakes you when it exits. Then check its result, carry on, and finish with a final report (progress left out).`
-            : `Reported to ${body.lead}. End your turn now; any reply arrives as a later message.`,
-      ),
+            : `Reported to ${body.lead}.${webhookNote} End your turn now; any reply arrives as a later message.`,
+      );
+    },
   );
 }

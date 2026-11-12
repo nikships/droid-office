@@ -3,15 +3,21 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import path from 'node:path';
 import { z } from 'zod';
 import type { WorkerInfo } from '../shared/protocol.js';
-import type { RemoteMcpKey } from '../shared/remote-mcp.js';
+import { validateGrokWebhookUrl, type RemoteMcpGrokBot, type RemoteMcpKey, type RemoteMcpWebhookDelivery } from '../shared/remote-mcp.js';
+import type { GrokBotCredentials } from './grok-webhook.js';
 
 /** Named keys a bot may hold besides its main key. */
 export const MAX_KEYS = 10;
+export const GROK_BOTS_FILE = 'remote-grok-bots.json';
 const TOUCH_MS = 60_000;
 
 const messageSchema = z.object({ id: z.string(), at: z.number(), text: z.string().max(24_000), floor: z.string().optional() });
 const tokenSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const keySchema = z.object({ id: z.string(), name: z.string().min(1).max(60), token: tokenSchema, createdAt: z.number(), lastUsedAt: z.number().optional() });
+const grokBotSchema = z.object({
+  webhookUrl: z.string().min(1).max(2000),
+  webhookToken: z.string().min(1).max(1000),
+});
 const savedSchema = z.object({
   id: z.string(),
   name: z.string().min(1).max(60),
@@ -21,6 +27,8 @@ const savedSchema = z.object({
   lastUsedAt: z.number().optional(),
   /** Extra named keys for the same identity, one per client, each revocable on its own. */
   keys: z.array(keySchema).max(MAX_KEYS).optional(),
+  /** Present when this bot's MCP key is marked as a Grok Bot with push webhook delivery. */
+  grokBot: grokBotSchema.optional(),
   inbox: z.array(messageSchema).max(500),
 });
 type SavedRemote = z.infer<typeof savedSchema>;
@@ -31,6 +39,28 @@ export type RemoteMessage = z.infer<typeof messageSchema>;
 export type RemoteKeyId = 'main' | (string & {});
 export type RemoteKey = Omit<RemoteMcpKey, 'connection'>;
 
+export interface GrokBotInput {
+  webhookUrl: string;
+  /** Required when enabling Grok Bot on a bot with no saved token; optional when updating an existing Grok Bot's URL. */
+  webhookToken?: string;
+}
+
+function parseWebhookToken(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length > 1000 || /[\r\n]/.test(trimmed)) throw new Error('Invalid webhook bearer token');
+  return trimmed;
+}
+
+function parseGrokBot(input: GrokBotInput, existingToken?: string): GrokBotCredentials {
+  const checked = validateGrokWebhookUrl(input.webhookUrl);
+  if ('error' in checked) throw new Error(checked.error);
+  const token = parseWebhookToken(input.webhookToken) ?? existingToken;
+  if (!token) throw new Error('Enter the Grok Bot webhook bearer token');
+  return { webhookUrl: checked.url, webhookToken: token };
+}
+
 /**
  * One authoritative file for external bots, the building agents that run elsewhere. They have no floor or desk
  * (see docs/mission-control.md): a record saved with one loads without it. It keeps each bot's credential
@@ -39,7 +69,9 @@ export type RemoteKey = Omit<RemoteMcpKey, 'connection'>;
 export class RemoteWorkers {
   private records: SavedRemote[];
   private readonly file: string;
+  private readonly grokFile: string;
   private reported = new Map<string, Reported>();
+  private deliveries = new Map<string, RemoteMcpWebhookDelivery>();
 
   constructor(
     dataDir: string,
@@ -47,6 +79,7 @@ export class RemoteWorkers {
     private readonly changed: () => void = () => {},
   ) {
     this.file = path.join(dataDir, 'remote-workers.json');
+    this.grokFile = path.join(dataDir, GROK_BOTS_FILE);
     try {
       // zod drops the floor and desk an office from before Mission Control saved, so their desks are free.
       this.records = z.array(savedSchema).parse(JSON.parse(readFileSync(this.file, 'utf8')));
@@ -55,10 +88,45 @@ export class RemoteWorkers {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Cannot read remote-workers.json; remote identities were not reset', { cause: err });
       this.records = [];
     }
+    try {
+      const sidecar = z.record(z.string(), grokBotSchema).parse(JSON.parse(readFileSync(this.grokFile, 'utf8')));
+      this.records = this.records.map((r) => (!r.grokBot && sidecar[r.id] ? { ...r, grokBot: sidecar[r.id] } : r));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`Cannot read ${GROK_BOTS_FILE}; Grok Bot webhooks were not reset`, { cause: err });
+    }
   }
 
   list() {
-    return this.records.map(({ token: _token, keys, inbox, ...r }) => ({ ...r, keys: (keys ?? []).map(({ token: _t, ...k }): RemoteKey => k), unread: inbox.length }));
+    return this.records.map(({ token: _token, keys, grokBot, inbox, ...r }) => {
+      const lastDelivery = this.deliveries.get(r.id);
+      const safeGrokBot: RemoteMcpGrokBot | undefined = grokBot ? { webhookUrl: grokBot.webhookUrl, hasToken: Boolean(grokBot.webhookToken), ...(lastDelivery ? { lastDelivery } : {}) } : undefined;
+      return {
+        ...r,
+        keys: (keys ?? []).map(({ token: _t, ...k }): RemoteKey => k),
+        ...(safeGrokBot ? { grokBot: safeGrokBot } : {}),
+        unread: inbox.length,
+      };
+    });
+  }
+
+  isGrokBot(id: string): boolean {
+    return Boolean(this.records.find((r) => r.id === id)?.grokBot);
+  }
+
+  hasGrokBots(): boolean {
+    return this.records.some((r) => Boolean(r.grokBot));
+  }
+
+  /** Server-only credentials for pushing to a Grok Bot's webhook; never exposed in list() or HTTP state. */
+  grokWebhook(id: string): GrokBotCredentials | undefined {
+    const g = this.records.find((r) => r.id === id)?.grokBot;
+    return g ? { webhookUrl: g.webhookUrl, webhookToken: g.webhookToken } : undefined;
+  }
+
+  recordDelivery(id: string, delivery: RemoteMcpWebhookDelivery) {
+    if (!this.records.some((r) => r.id === id)) return;
+    this.deliveries.set(id, delivery);
+    this.changed();
   }
 
   token(id: string, key: RemoteKeyId = 'main'): string | undefined {
@@ -107,7 +175,7 @@ export class RemoteWorkers {
       cols: 100,
       rows: 30,
       open: false,
-      activity: said?.activity ?? 'External bot, polls the MCP inbox',
+      activity: said?.activity ?? (r.grokBot ? 'Grok Bot, woken by webhook' : 'External bot, polls the MCP inbox'),
     };
   }
 
@@ -152,14 +220,34 @@ export class RemoteWorkers {
     this.change(id, (r) => ({ ...r, keys: r.keys?.filter((k) => k.id !== key) }));
   }
 
-  add(name: string): { worker: WorkerInfo; token: string } {
+  add(name: string, grokBot?: GrokBotInput): { worker: WorkerInfo; token: string } {
     const label = name.trim();
     if (!label || label.length > 60) throw new Error('Give the bot a name of up to 60 characters');
     if (this.records.some((r) => r.name.toLowerCase() === label.toLowerCase())) throw new Error('A bot already has that name');
+    const parsedGrok = grokBot ? parseGrokBot(grokBot) : undefined;
     const token = randomBytes(32).toString('hex');
-    const row: SavedRemote = { id: `remote-${randomBytes(12).toString('hex')}`, name: label, createdAt: Date.now(), token, inbox: [] };
+    const row: SavedRemote = {
+      id: `remote-${randomBytes(12).toString('hex')}`,
+      name: label,
+      createdAt: Date.now(),
+      token,
+      ...(parsedGrok ? { grokBot: parsedGrok } : {}),
+      inbox: [],
+    };
     this.commit([...this.records, row]);
     return { worker: this.info(row), token };
+  }
+
+  setGrokBot(id: string, grokBot: GrokBotInput | null) {
+    const row = this.records.find((r) => r.id === id);
+    if (!row) throw new Error('Remote worker was revoked');
+    if (grokBot === null) {
+      this.deliveries.delete(id);
+      this.change(id, ({ grokBot: _removed, ...rest }) => rest);
+      return;
+    }
+    const next = parseGrokBot(grokBot, row.grokBot?.webhookToken);
+    this.change(id, (r) => ({ ...r, grokBot: next }));
   }
 
   rotate(id: string): string {
@@ -170,21 +258,27 @@ export class RemoteWorkers {
 
   remove(id: string) {
     this.reported.delete(id);
+    this.deliveries.delete(id);
     this.commit(this.records.filter((r) => r.id !== id));
   }
 
-  enqueue(id: string, text: string, floor?: string): string | undefined {
+  enqueueMessage(id: string, text: string, floor?: string): { message?: RemoteMessage; error?: string } {
     const row = this.records.find((r) => r.id === id);
-    if (!row) return 'Remote worker was revoked';
-    if (!text.trim()) return 'Empty message';
-    if (text.length > 24_000) return 'Remote message is too long';
-    if (row.inbox.length >= 500) return 'Remote inbox is full; the worker must acknowledge messages first';
+    if (!row) return { error: 'Remote worker was revoked' };
+    if (!text.trim()) return { error: 'Empty message' };
+    if (text.length > 24_000) return { error: 'Remote message is too long' };
+    if (row.inbox.length >= 500) return { error: 'Remote inbox is full; the worker must acknowledge messages first' };
+    const message: RemoteMessage = { id: randomBytes(12).toString('hex'), at: Date.now(), text, ...(floor ? { floor } : {}) };
     try {
-      this.change(id, (r) => ({ ...r, inbox: [...r.inbox, { id: randomBytes(12).toString('hex'), at: Date.now(), text, floor }] }));
-      return undefined;
+      this.change(id, (r) => ({ ...r, inbox: [...r.inbox, message] }));
+      return { message };
     } catch {
-      return 'Could not save the remote message; it was not delivered';
+      return { error: 'Could not save the remote message; it was not delivered' };
     }
+  }
+
+  enqueue(id: string, text: string, floor?: string): string | undefined {
+    return this.enqueueMessage(id, text, floor).error;
   }
 
   /** Reads never consume messages. Acknowledgments name exact messages, not a high-water mark. */
@@ -207,12 +301,21 @@ export class RemoteWorkers {
   private commit(records: SavedRemote[]) {
     mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
     const temporary = `${this.file}.${randomBytes(8).toString('hex')}.tmp`;
+    const grokTmp = `${this.grokFile}.${randomBytes(8).toString('hex')}.tmp`;
+    const grokMap = Object.fromEntries(records.flatMap((r) => (r.grokBot ? [[r.id, r.grokBot] as const] : [])));
     try {
       writeFileSync(temporary, `${JSON.stringify(records)}\n`, { mode: 0o600 });
       renameSync(temporary, this.file);
+      if (Object.keys(grokMap).length) {
+        writeFileSync(grokTmp, `${JSON.stringify(grokMap)}\n`, { mode: 0o600 });
+        renameSync(grokTmp, this.grokFile);
+      } else {
+        rmSync(this.grokFile, { force: true });
+      }
       this.records = records;
     } finally {
       rmSync(temporary, { force: true });
+      rmSync(grokTmp, { force: true });
     }
     this.changed();
   }

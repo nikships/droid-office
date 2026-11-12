@@ -161,11 +161,11 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     const status = blocked ? 'blocked' : (STATUS_LABEL[w.status] ?? w.status);
     const lastUsed = !orchestrator && agent.lastUsedAt ? `used ${timeAgo(agent.lastUsedAt)}` : '';
     const todos = orchestrator ? w.todos : undefined;
-    const key = JSON.stringify([w.name, w.color, w.status, w.acked, line, status, model, effort, team.length, lastUsed, s.pane(w.id), todos, waits, s.shortcut]);
+    const key = JSON.stringify([w.name, w.color, w.status, w.acked, line, status, model, effort, team.length, lastUsed, agent.grokBot, s.pane(w.id), todos, waits, s.shortcut]);
     if (key !== r.key) {
       r.key = key;
-      const role = orchestrator ? 'Orchestrator' : 'External bot';
-      const meta = orchestrator ? [modelBadgeLabel(model, effort) ?? 'Office default model', team.length ? plural(team.length, 'subagent') : ''] : ['Runs externally', lastUsed];
+      const role = orchestrator ? 'Orchestrator' : agent.grokBot ? 'Grok Bot' : 'External bot';
+      const meta = orchestrator ? [modelBadgeLabel(model, effort) ?? 'Office default model', team.length ? plural(team.length, 'subagent') : ''] : [agent.grokBot ? 'Webhook push' : 'Runs externally', lastUsed];
       r.open.title = [w.name, role, status, line, ...meta].filter(Boolean).join(' · ');
       r.open.setAttribute('aria-label', `Open ${w.name}, ${role}, ${status}: ${line}`);
       r.split?.setAttribute('aria-label', `Open ${w.name} in a new pane`);
@@ -178,7 +178,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
             'span.dash-row-top',
             {},
             h('span.dash-row-name', {}, w.name),
-            orchestrator ? null : h('span.dash-row-role', {}, 'Bot'),
+            orchestrator ? null : h('span.dash-row-role', {}, agent.grokBot ? 'Grok Bot' : 'Bot'),
             s.pane(w.id) >= 0 ? h('span.dash-row-pane', { title: `In pane ${s.pane(w.id) + 1}` }, `P${s.pane(w.id) + 1}`) : null,
             orchestrator && s.shortcut && s.pane(w.id) < 0 && !waits && !blocked && !isBusy(w.status) ? h('span.key.dash-mission-key', { title: `Open the Orchestrator (${s.shortcut})` }, s.shortcut) : null,
             h(
@@ -195,7 +195,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
             {},
             ...(orchestrator
               ? [modelBadgeNode(model, effort) ?? 'Office default', ...(team.length ? [h('span.dash-row-meta-sep', { 'aria-hidden': 'true' }, '·'), plural(team.length, 'subagent')] : [])]
-              : ['Runs externally', ...(lastUsed ? [h('span.dash-row-meta-sep', { 'aria-hidden': 'true' }, '·'), lastUsed] : [])]),
+              : [agent.grokBot ? 'Webhook push' : 'Runs externally', ...(lastUsed ? [h('span.dash-row-meta-sep', { 'aria-hidden': 'true' }, '·'), lastUsed] : [])]),
           ),
         ),
       );

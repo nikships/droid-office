@@ -68,7 +68,7 @@ fun BotScreen(bot: MissionAgent, embedded: Boolean, onBack: () -> Unit, onOpenWo
             AgentTile(OfficeIcons.Antenna, if (w.state.asleep) Palette.TextSecondary else look.color, small = true)
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Bot.NAME))
-                Text("Mission Control · runs externally", style = LocalOfficeType.current.monoBody.copy(color = Palette.TextSecondary, fontSize = MaterialTheme.typography.bodySmall.fontSize))
+                Text(if (bot.grokBot) "Mission Control · Grok Bot" else "Mission Control · runs externally", style = LocalOfficeType.current.monoBody.copy(color = Palette.TextSecondary, fontSize = MaterialTheme.typography.bodySmall.fontSize))
             }
         }
         Column(
@@ -93,7 +93,8 @@ fun BotScreen(bot: MissionAgent, embedded: Boolean, onBack: () -> Unit, onOpenWo
                     )
                 }
                 Text(
-                    "This bot runs elsewhere and reaches the office over your tailnet. It hires and directs workers on any floor through the Office MCP; messages to it wait in its inbox. Manage it in the office's Settings → Phone & web → Tailscale MCP.",
+                    if (bot.grokBot) "This Grok Bot runs elsewhere and reaches the office over your tailnet. Subagent reports, questions, blockers and messages push straight to its webhook and wait in its inbox. Manage it in the office's Settings → Phone & web → Tailscale MCP."
+                    else "This bot runs elsewhere and reaches the office over your tailnet. It hires and directs workers on any floor through the Office MCP; messages to it wait in its inbox. Manage it in the office's Settings → Phone & web → Tailscale MCP.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Palette.TextSecondary,
                     modifier = Modifier.padding(horizontal = 4.dp),

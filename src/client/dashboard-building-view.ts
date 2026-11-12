@@ -158,7 +158,7 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
       const blocked = row.kind === 'orchestrator' && !!orchestratorBlocked(state.mission);
       let status: string;
       if (blocked) status = 'Blocked';
-      else if (row.kind === 'bot') status = isAsleep(w.status) ? 'Offline' : 'External bot';
+      else if (row.kind === 'bot') status = isAsleep(w.status) ? 'Offline' : row.grokBot ? 'Grok Bot' : 'External bot';
       else if (isAsleep(w.status)) status = 'Asleep';
       else {
         switch (w.status) {
@@ -182,7 +182,7 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
       const model = w.activeModel ?? w.model;
       const effort = w.activeEffort ?? w.effort;
       const branch = w.worktree?.branch;
-      const rowKey = JSON.stringify([w.name, w.color, w.status, status, detail, model, effort, w.kind, w.cloud?.computerName, w.todos, branch, row.floorName, row.repo, row.leadName, row.depth, row.kind]);
+      const rowKey = JSON.stringify([w.name, w.color, w.status, status, detail, model, effort, w.kind, w.cloud?.computerName, w.todos, branch, row.floorName, row.repo, row.leadName, row.grokBot, row.depth, row.kind]);
       if (rowKey !== node.key) {
         node.key = rowKey;
         button.setAttribute('aria-label', `Open ${w.name}, ${row.floorName}, ${status}${row.leadName ? `, subworker of ${row.leadName}` : ''}: ${detail}`);
@@ -191,7 +191,7 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
         if (row.leadName) sub = `Subworker of ${row.leadName}`;
         let engine: HTMLElement | string | undefined;
         if (w.kind === 'shell') engine = 'Shell';
-        else if (row.kind === 'bot') engine = 'Runs externally';
+        else if (row.kind === 'bot') engine = row.grokBot ? 'Webhook push' : 'Runs externally';
         else engine = modelBadgeNode(model, effort);
         let statusKind: string = w.status;
         if (row.kind === 'bot') statusKind = 'external';

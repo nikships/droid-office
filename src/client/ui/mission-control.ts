@@ -135,7 +135,7 @@ export function openBot(id: string, actions: BotActions) {
       return;
     }
     const w = b.worker;
-    sub.textContent = `Runs externally · last used ${lastUsedWords(b.lastUsedAt, Date.now())}`;
+    sub.textContent = `${b.grokBot ? 'Grok Bot · runs externally' : 'Runs externally'} · last used ${lastUsedWords(b.lastUsedAt, Date.now())}`;
     const status = h('div.row', {}, h('span.pill', { class: w.status }, STATUS_LABEL[w.status] ?? w.status), h('span.grow', {}, botLine(b)));
     const team = b.team.length
       ? h(
@@ -157,7 +157,13 @@ export function openBot(id: string, actions: BotActions) {
       : emptyState('🧭', 'No team', 'Subagents it hires show here, with their floors.');
     body.replaceChildren(
       status,
-      h('p.note.info', {}, 'This bot runs elsewhere and reaches the office over Tailscale MCP. It has no terminal or conversation here: messages reach it through its inbox.'),
+      h(
+        'p.note.info',
+        {},
+        b.grokBot
+          ? 'This Grok Bot runs elsewhere and reaches the office over Tailscale MCP. Subagent reports, questions, blockers and messages push straight to its webhook and wait in its inbox.'
+          : 'This bot runs elsewhere and reaches the office over Tailscale MCP. It has no terminal or conversation here: messages reach it through its inbox.',
+      ),
       h('div.section', {}, h('div.eyebrow', {}, missionTeamLine(b.team) ?? 'Team'), team),
     );
   };

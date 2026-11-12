@@ -665,10 +665,10 @@ export function createPane(host: PaneHost, index: number): Pane {
     const team = bot?.team ?? [];
     const here = host.floor();
     const lastUsed = bot?.lastUsedAt ? timeAgo(bot.lastUsedAt) : 'Not since it was added';
-    const key = JSON.stringify([w.name, w.color, w.status, w.activity, w.title, lastUsed, here, host.live(), team, team.map((m) => store.workers.get(m.id)?.color)]);
+    const key = JSON.stringify([w.name, w.color, w.status, w.activity, w.title, lastUsed, bot?.grokBot, here, host.live(), team, team.map((m) => store.workers.get(m.id)?.color)]);
     if (key === info.key) return;
     info.key = key;
-    info.who.replaceChildren(workerDot(w), h('div', {}, h('div.dash-info-name', {}, info.name), h('div.dash-info-kind', {}, kind(w))));
+    info.who.replaceChildren(workerDot(w), h('div', {}, h('div.dash-info-name', {}, info.name), h('div.dash-info-kind', {}, bot?.grokBot ? 'Grok Bot' : kind(w))));
     info.name.textContent = w.name;
     info.activity.textContent = bot ? botLine(bot) : (w.activity ?? 'Hasn’t reported yet');
     // Offline, that line is what the Status row already says.
@@ -676,6 +676,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     const rows: [string, string | undefined][] = [
       ['Status', w.status === 'offline' ? 'Hasn’t reported since the office started' : (STATUS_LABEL[w.status] ?? w.status)],
       ['Doing', w.title],
+      ['Delivery', bot?.grokBot ? 'Webhook push + inbox' : 'Polls its inbox'],
       ['Last used', lastUsed],
       ['Keys', 'Settings → Tailscale MCP'],
     ];

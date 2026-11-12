@@ -2,7 +2,7 @@ import { remoteMcpConfig, type RemoteMcpBot, type RemoteMcpKey, type RemoteMcpSt
 import { withToken } from '../token';
 import { copyButton } from './clipboard';
 import { h, timeAgo, toast } from './dom';
-import { disclosure, toggle } from './kit';
+import { disclosure, field, toggle } from './kit';
 import { confirmDialog } from './prompt';
 
 // Settings → Phone & web → Tailscale MCP: external bots on the owner's own Tailscale devices join the
@@ -45,6 +45,7 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
   const sw = toggle({ label: 'Tailscale MCP', bare: true, disabled: true, onChange: (on) => void act('PUT', { on }) });
   const meta = h('span.setting-meta', {}, 'Checking Tailscale…');
   const panel = h('div.stack.tight.rmcp');
+  const openBots = new Set<string>();
   let busy = false;
 
   const paint = (s: Answer) => {
@@ -94,7 +95,9 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
   }
 
   function botRow(b: RemoteMcpBot): Node {
-    const where = ['Mission Control', b.status ? `${b.status}${b.activity ? `: ${b.activity}` : ''}` : undefined, `added ${timeAgo(b.createdAt)}`, lastUsed(b.lastUsedAt, 'main key')].filter(Boolean).join(' · ');
+    const where = ['Mission Control', b.grokBot ? 'Grok Bot webhook' : undefined, b.status ? `${b.status}${b.activity ? `: ${b.activity}` : ''}` : undefined, `added ${timeAgo(b.createdAt)}`, lastUsed(b.lastUsedAt, 'main key')]
+      .filter(Boolean)
+      .join(' · ');
     const rotate = h('button.btn.sm.ghost', { type: 'button', title: 'Give this bot a new key. The old one stops working at once.' }, 'New key');
     rotate.addEventListener('click', () =>
       confirmDialog(`New key for ${b.name}?`, 'Its old main key stops working at once; its named keys keep working. Give the bot the new connection afterwards.', 'New key', () => void act('POST', { action: 'rotate', id: b.id })),
@@ -119,11 +122,98 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
               remove,
             ),
             keys(b),
+            h('hr.divider'),
+            grokSection(b),
           )
-        : h('div.stack.tight', {}, h('p.note', {}, 'Its connection shows here once the office is on your tailnet.'), h('div.row.wrap', {}, rotate, remove), keys(b)),
+        : h('div.stack.tight', {}, h('p.note', {}, 'Its connection shows here once the office is on your tailnet.'), h('div.row.wrap', {}, rotate, remove), keys(b), h('hr.divider'), grokSection(b)),
     );
-    details.meta.textContent = b.status ?? '';
+    details.open = openBots.has(b.id);
+    details.addEventListener('toggle', () => {
+      if (details.open) openBots.add(b.id);
+      else openBots.delete(b.id);
+    });
+    details.meta.textContent = [b.grokBot ? 'Grok Bot' : undefined, b.status].filter(Boolean).join(' · ');
     return details;
+  }
+
+  /** Per-bot Grok Bot push webhook configuration: wakes this one bot when its subagents report, ask or block. */
+  function grokSection(b: RemoteMcpBot): Node {
+    const saved = b.grokBot;
+    const urlInput = h('input.input', {
+      type: 'url',
+      value: saved?.webhookUrl ?? '',
+      placeholder: 'https://api2.cursor.sh/automations/webhook/…',
+      'aria-label': `Grok Bot webhook URL for ${b.name}`,
+    });
+    const tokenInput = h('input.input', {
+      type: 'password',
+      autocomplete: 'new-password',
+      placeholder: saved?.hasToken ? 'Saved — leave blank to keep current token' : 'crsr_…',
+      'aria-label': `Grok Bot bearer token for ${b.name}`,
+    });
+    const saveBtn = h('button.btn.sm', { type: 'button' }, saved ? 'Save webhook' : 'Enable Grok Bot');
+    const testBtn = saved ? h('button.btn.sm.ghost', { type: 'button', title: 'POST one clearly marked test event to wake and verify this webhook.' }, 'Send test') : null;
+    const form = h(
+      'div.stack.tight',
+      {},
+      field('Webhook URL', urlInput, 'HTTPS JSON endpoint woken for this bot and its named keys.'),
+      field('Bearer token', tokenInput, saved?.hasToken ? 'Stored only on this Mac. Leave blank to keep the saved token.' : 'Sent in Authorization: Bearer. Stored only on this Mac and never shown again.'),
+      h('div.row.wrap', {}, saveBtn, testBtn),
+    );
+    form.hidden = !saved;
+
+    const swGrok = toggle({
+      label: 'Grok Bot',
+      description: 'Push subagent reports, questions, blockers and messages directly to this bot’s webhook instead of waiting for polling.',
+      checked: !!saved,
+      onChange: (on) => {
+        if (on) {
+          form.hidden = false;
+          if (!urlInput.value) urlInput.focus();
+          return;
+        }
+        if (!saved) {
+          form.hidden = true;
+          return;
+        }
+        swGrok.input.checked = true;
+        confirmDialog(`Turn off Grok Bot push for ${b.name}?`, 'Its saved webhook URL and bearer token will be removed, and it will go back to polling its inbox.', 'Turn off', () => {
+          openBots.add(b.id);
+          void act('POST', { action: 'set-grok-bot', id: b.id, grokBot: null }, () => toast(`${b.name} is back to inbox polling.`));
+        });
+      },
+    });
+
+    const save = () => {
+      const webhookUrl = urlInput.value.trim();
+      const webhookToken = tokenInput.value.trim();
+      if (!webhookUrl) return urlInput.focus();
+      if (!saved?.hasToken && !webhookToken) return tokenInput.focus();
+      openBots.add(b.id);
+      void act('POST', { action: 'set-grok-bot', id: b.id, grokBot: { webhookUrl, ...(webhookToken ? { webhookToken } : {}) } }, () => toast(`${b.name}’s Grok Bot webhook is saved.`));
+    };
+    saveBtn.addEventListener('click', save);
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') save();
+    });
+    tokenInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') save();
+    });
+    testBtn?.addEventListener('click', () => {
+      openBots.add(b.id);
+      void act('POST', { action: 'test-webhook', id: b.id }, () => toast(`Sent a test event to ${b.name}’s webhook.`));
+    });
+
+    const last = saved?.lastDelivery;
+    const delivery = last
+      ? h(
+          'p.note',
+          { class: last.ok ? 'good' : 'bad' },
+          last.ok ? `Last push succeeded ${timeAgo(last.at)} (${last.event}${last.status ? `, HTTP ${last.status}` : ''}).` : `Last push failed ${timeAgo(last.at)} (${last.event}): ${last.error ?? 'delivery failed'}.`,
+        )
+      : null;
+
+    return h('div.stack.tight', {}, swGrok, delivery, form);
   }
 
   /** Extra keys for one bot, one per client it runs on, so a lost laptop's key goes without the bot's other clients. */
@@ -135,6 +225,7 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
     const submit = () => {
       const n = name.value.trim();
       if (!n) return name.focus();
+      openBots.add(b.id);
       void act('POST', { action: 'add-key', id: b.id, name: n }, (s) => {
         const key = s.bots.find((x) => x.id === b.id)?.keys?.find((k) => k.name === n);
         toast(key?.connection ? `${b.name} has a new key, ${n}. Copy its config below.` : `${b.name} has a new key, ${n}. Its config shows here once the office is on your tailnet.`);
@@ -156,7 +247,10 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
   function keyRow(b: RemoteMcpBot, k: RemoteMcpKey): Node {
     const revoke = h('button.btn.sm.danger', { type: 'button' }, 'Revoke');
     revoke.addEventListener('click', () =>
-      confirmDialog(`Revoke ${k.name}?`, `The client using this key loses access at once. ${b.name}'s other keys keep working.`, 'Revoke', () => void act('POST', { action: 'revoke-key', id: b.id, key: k.id })),
+      confirmDialog(`Revoke ${k.name}?`, `The client using this key loses access at once. ${b.name}'s other keys keep working.`, 'Revoke', () => {
+        openBots.add(b.id);
+        void act('POST', { action: 'revoke-key', id: b.id, key: k.id });
+      }),
     );
     const connection = k.connection;
     const meta = [`added ${timeAgo(k.createdAt)}`, lastUsed(k.lastUsedAt) ?? 'never used'].join(' · ');
@@ -177,19 +271,42 @@ export function remoteMcpSettings(): { control: HTMLElement; meta: HTMLElement; 
   function addForm(s: RemoteMcpState): Node {
     const name = h('input.input', { type: 'text', maxlength: 60, placeholder: 'Bot name, like Grok', 'aria-label': 'Bot name' });
     const add = h('button.btn.primary', { type: 'button' }, 'Add bot');
+    const urlInput = h('input.input', { type: 'url', placeholder: 'https://api2.cursor.sh/automations/webhook/…', 'aria-label': 'Grok Bot webhook URL' });
+    const tokenInput = h('input.input', { type: 'password', autocomplete: 'new-password', placeholder: 'crsr_…', 'aria-label': 'Grok Bot bearer token' });
+    const grokFields = h('div.stack.tight', {}, field('Webhook URL', urlInput, 'HTTPS JSON endpoint woken for this bot.'), field('Bearer token', tokenInput, 'Sent in Authorization: Bearer. Stored only on this Mac and never shown again.'));
+    grokFields.hidden = true;
+    const grokToggle = toggle({
+      label: 'Grok Bot',
+      description: 'Attach a push webhook now so subagents wake this bot directly instead of waiting for polling.',
+      onChange: (on) => {
+        grokFields.hidden = !on;
+        if (on && name.value.trim()) urlInput.focus();
+      },
+    });
     const submit = () => {
       const n = name.value.trim();
       if (!n) return name.focus();
-      void act('POST', { action: 'add', name: n }, (next) => {
+      let grokBot: { webhookUrl: string; webhookToken: string } | undefined;
+      if (grokToggle.input.checked) {
+        const webhookUrl = urlInput.value.trim();
+        const webhookToken = tokenInput.value.trim();
+        if (!webhookUrl) return urlInput.focus();
+        if (!webhookToken) return tokenInput.focus();
+        grokBot = { webhookUrl, webhookToken };
+      }
+      void act('POST', { action: 'add', name: n, ...(grokBot ? { grokBot } : {}) }, (next) => {
         const bot = next.bots.find((b) => b.name === n && !s.bots.some((old) => old.id === b.id));
-        toast(bot?.connection ? `${n} joined Mission Control. Open it below and copy its config into the bot’s MCP client.` : `${n} joined Mission Control. Its config shows here once the office is on your tailnet.`);
+        if (bot) openBots.add(bot.id);
+        toast(bot?.connection ? `${n} joined Mission Control. Copy its config below into the bot’s MCP client.` : `${n} joined Mission Control. Its config shows here once the office is on your tailnet.`);
       });
     };
     add.addEventListener('click', submit);
-    name.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') submit();
-    });
-    return h('div.input-group', {}, name, add);
+    for (const el of [name, urlInput, tokenInput]) {
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submit();
+      });
+    }
+    return h('div.stack.tight', {}, h('div.input-group', {}, name, add), grokToggle, grokFields);
   }
 
   void call('GET').then(paint);

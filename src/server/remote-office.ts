@@ -1,8 +1,12 @@
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import type { WorkerInfo } from '../shared/protocol.js';
-import { teamDeliveryReply, type Team, type TeamDelivery, type TeamReply, type TeamViews } from './team.js';
+import { buildGrokWebhookPayload, buildTeamWebhookItem, sendGrokWebhook, webhookWorkerFromMember, type GrokWebhookItem, type GrokWebhookResult } from './grok-webhook.js';
+import { terminalQuestion } from './office-mcp/team-events.js';
+import { pushedSha } from './team-inspect.js';
+import { teamDeliveryReply, type Team, type TeamDelivery, type TeamEvent, type TeamReply, type TeamViews } from './team.js';
 import type { Visits } from './visits.js';
-import type { RemoteWorkers } from './remote-workers.js';
+import type { GrokBotInput, RemoteMessage, RemoteWorkers } from './remote-workers.js';
 import type { WorkerManager } from './workers.js';
 import type { WhiteboardStore } from './whiteboard.js';
 
@@ -27,16 +31,316 @@ export function floorNamed<F extends { id: string; def: { name: string }; dir: s
   return `No open floor ${want}. office_floors lists them: ${floors.map((f) => `${f.def.name} (${f.id})`).join(', ') || 'none open'}.`;
 }
 
+export interface RemoteOfficeOptions {
+  fetchImpl?: typeof fetch;
+  /** Debounce window (ms) for coalescing automatic floor hook events before POSTing to a Grok Bot's webhook. */
+  webhookDelayMs?: number;
+  webhookTimeoutMs?: number;
+  now?: () => number;
+}
+
+type PendingPush = { type: 'team'; id: string; floor: RemoteFloor; event: TeamEvent } | { type: 'inbox'; id: string; message: RemoteMessage } | { type: 'direct'; id: string; item: GrokWebhookItem };
+
+const WEBHOOK_DELAY_MS = 1500;
+const PUSHED_HISTORY_MAX = 1000;
+
 /**
  * The building agents' side of every floor: Mission Control has no desks, so a building agent's teams,
  * inbox and hires span every open floor, and each hire names its floor.
  */
 export class RemoteOffice {
+  private readonly unsubs = new Map<RemoteFloor, () => void>();
+  private readonly pending = new Map<string, Map<string, PendingPush>>();
+  private readonly timers = new Map<string, NodeJS.Timeout>();
+  private readonly inFlight = new Map<string, Promise<GrokWebhookResult | undefined>>();
+  private readonly pushedIds = new Set<string>();
+  private stopped = false;
+
   constructor(
     readonly store: RemoteWorkers,
     /** Every open floor, where a building agent's teams may be. */
     readonly floors: () => RemoteFloor[],
-  ) {}
+    private readonly opts: RemoteOfficeOptions = {},
+  ) {
+    if (this.store.hasGrokBots()) this.syncWatches();
+  }
+
+  /** Keeps floor team subscriptions aligned with open floors whenever at least one Grok Bot is configured. */
+  syncWatches() {
+    if (this.stopped || !this.store.hasGrokBots()) {
+      for (const unsub of this.unsubs.values()) unsub();
+      this.unsubs.clear();
+      return;
+    }
+    const open = new Set(this.floors());
+    for (const [floor, unsub] of this.unsubs) {
+      if (!open.has(floor)) {
+        unsub();
+        this.unsubs.delete(floor);
+      }
+    }
+    for (const floor of open) {
+      if (this.unsubs.has(floor)) continue;
+      this.unsubs.set(
+        floor,
+        floor.team.subscribe((signal) => {
+          if (signal.type === 'event') this.onTeamEvent(floor, signal.event);
+        }),
+      );
+    }
+  }
+
+  stop() {
+    this.stopped = true;
+    for (const unsub of this.unsubs.values()) unsub();
+    this.unsubs.clear();
+    for (const timer of this.timers.values()) clearTimeout(timer);
+    this.timers.clear();
+    this.pending.clear();
+  }
+
+  add(name: string, grokBot?: GrokBotInput) {
+    const added = this.store.add(name, grokBot);
+    this.syncWatches();
+    return added;
+  }
+
+  setGrokBot(id: string, grokBot: GrokBotInput | null) {
+    this.store.setGrokBot(id, grokBot);
+    if (grokBot === null) this.clearLeadQueue(id);
+    this.syncWatches();
+  }
+
+  /** The bot's key stops working, and its subagents carry on as independent workers. */
+  revoke(id: string) {
+    this.clearLeadQueue(id);
+    this.store.remove(id);
+    this.syncWatches();
+    for (const floor of this.floors()) {
+      floor.workers.releaseLead(id);
+      floor.team.onWorkerGone(id);
+      floor.visits.onWorkerGone(id);
+      floor.whiteboard.forgetReader(id);
+    }
+  }
+
+  /** Queues a message in an external bot's inbox and, if it is a Grok Bot, schedules a webhook push. */
+  tell(id: string, text: string, floor?: string): string | undefined {
+    const { message, error } = this.store.enqueueMessage(id, text, floor);
+    if (error || !message) return error;
+    if (this.store.isGrokBot(id)) {
+      this.syncWatches();
+      this.queuePush(id, { type: 'inbox', id: message.id, message });
+      this.scheduleFlush(id);
+    }
+    return undefined;
+  }
+
+  /** Flushes a subagent's non-progress team_report immediately to its Grok Bot lead's webhook. */
+  async pushTeamReport(floorId: string, leadId: string, event?: TeamEvent): Promise<GrokWebhookResult | undefined> {
+    if (!this.store.isGrokBot(leadId) || event?.progress) return undefined;
+    this.syncWatches();
+    if (event) {
+      const floor = this.floors().find((f) => f.id === floorId);
+      const id = `team:${floorId}:${event.seq}`;
+      if (floor && !this.pushedIds.has(id)) this.queuePush(leadId, { type: 'team', id, floor, event });
+    }
+    return this.flushLeadPush(leadId);
+  }
+
+  /** Sends a direct mid-turn update, question, blocker or connectivity test from a subagent to its Grok Bot lead. */
+  async notifyLead(
+    caller: { worker: WorkerInfo; floor: { id: string; name: string; dir: string } },
+    input: { kind: 'update' | 'question' | 'blocker' | 'test'; text: string; options?: string[]; prUrl?: string; pushedSha?: string },
+  ): Promise<{ ok: boolean; status?: number; error?: string; ackId?: string; lead: string }> {
+    const leadId = caller.worker.lead;
+    const lead = leadId ? this.store.identity(leadId) : undefined;
+    if (!leadId || !lead || !this.store.isGrokBot(leadId)) {
+      return { ok: false, error: 'Your lead does not have a Grok Bot push webhook configured.', lead: lead?.name ?? leadId ?? 'unknown' };
+    }
+    this.syncWatches();
+    const now = (this.opts.now ?? Date.now)();
+    const floor = this.floors().find((f) => f.id === caller.floor.id);
+    const member = floor?.team.roster(leadId).find((m) => m.id === caller.worker.id);
+    const sha = input.pushedSha ?? (input.kind === 'test' ? undefined : await pushedSha(caller.floor.dir, caller.worker));
+    const prUrl = input.prUrl ?? caller.worker.pr?.url ?? /https:\/\/(?:github\.com|gitlab\.com)\/[^\s)<>]+\/(?:pull|merge_requests)\/\d+/.exec(input.text)?.[0];
+    let ackId: string | undefined;
+    if (input.kind !== 'test') {
+      const formatted = [
+        `${caller.worker.name}: ${input.kind}`,
+        input.text,
+        ...(input.options?.length ? [`Options: ${input.options.map((o, i) => `${i + 1}. ${o}`).join(' | ')}`] : []),
+        ...(prUrl ? [`PR: ${prUrl}`] : []),
+        ...(sha ? [`Commit: ${sha}`] : []),
+      ].join('\n');
+      const enqueued = this.store.enqueueMessage(leadId, formatted.slice(0, 24_000), caller.floor.id);
+      if (enqueued.message) ackId = enqueued.message.id;
+    }
+    const id = ackId ?? `test-${randomBytes(8).toString('hex')}`;
+    const ackNote = ackId ? ` Acknowledge "${ackId}" via office_inbox({ ack: ["${ackId}"] }) once handled.` : '';
+    const item: GrokWebhookItem = {
+      id,
+      ...(ackId ? { ackId } : {}),
+      kind: input.kind,
+      at: new Date(now).toISOString(),
+      floor: { id: caller.floor.id, name: caller.floor.name, cwd: caller.floor.dir },
+      worker: webhookWorkerFromMember(member, caller.worker),
+      text: input.text,
+      ...(input.options?.length ? { options: [...input.options] } : {}),
+      ...(prUrl ? { prUrl } : {}),
+      ...(sha ? { pushedSha: sha } : {}),
+      actionHint:
+        input.kind === 'test'
+          ? 'Connectivity verification ping from Droid Office; no action or acknowledgment required.'
+          : input.kind === 'question'
+            ? `Reply to ${caller.worker.name} with team_message({ worker: "${caller.worker.id}", floor: "${caller.floor.id}", text: "..." }).${ackNote}`
+            : `Inspect team_status or reply with team_message({ worker: "${caller.worker.id}", floor: "${caller.floor.id}", text: "..." }) if needed.${ackNote}`,
+    };
+    this.queuePush(leadId, { type: 'direct', id, item });
+    const receipt = await this.flushLeadPush(leadId);
+    return {
+      ok: Boolean(receipt?.ok),
+      ...(receipt?.status !== undefined ? { status: receipt.status } : {}),
+      ...(receipt?.error ? { error: receipt.error } : {}),
+      ...(ackId ? { ackId } : {}),
+      lead: lead.name,
+    };
+  }
+
+  /** Sends a clearly marked test event from Settings → Tailscale MCP to verify a Grok Bot's webhook. */
+  async testWebhook(id: string, note = 'Connectivity test from Droid Office Settings.'): Promise<GrokWebhookResult> {
+    const bot = this.store.identity(id);
+    const target = this.store.grokWebhook(id);
+    if (!bot || !target) throw new Error('Configure a Grok Bot webhook on this bot first');
+    const now = (this.opts.now ?? Date.now)();
+    const payload = buildGrokWebhookPayload(
+      { id: bot.id, name: bot.name },
+      [
+        {
+          id: `test-${randomBytes(8).toString('hex')}`,
+          kind: 'test',
+          at: new Date(now).toISOString(),
+          text: note,
+          actionHint: 'Connectivity verification ping from Droid Office; no action required.',
+        },
+      ],
+      now,
+    );
+    const result = await sendGrokWebhook(target, payload, { fetchImpl: this.opts.fetchImpl, timeoutMs: this.opts.webhookTimeoutMs });
+    this.store.recordDelivery(id, { at: now, ok: result.ok, ...(result.status !== undefined ? { status: result.status } : {}), event: 'test', ...(result.error ? { error: result.error } : {}) });
+    return result;
+  }
+
+  flushLeadPush(leadId: string): Promise<GrokWebhookResult | undefined> {
+    const timer = this.timers.get(leadId);
+    if (timer) {
+      clearTimeout(timer);
+      this.timers.delete(leadId);
+    }
+    const prev = this.inFlight.get(leadId) ?? Promise.resolve(undefined);
+    const next = prev.catch(() => undefined).then(() => this.deliverPending(leadId));
+    this.inFlight.set(leadId, next);
+    void next.finally(() => {
+      if (this.inFlight.get(leadId) === next) this.inFlight.delete(leadId);
+    });
+    return next;
+  }
+
+  private onTeamEvent(floor: RemoteFloor, event: TeamEvent) {
+    if (this.stopped || !this.store.isGrokBot(event.lead) || event.progress) return;
+    if (event.kind === 'done') {
+      const member = floor.team.roster(event.lead).find((m) => m.id === event.worker);
+      if (member && (member.openQuestion !== undefined || member.awaitingJob)) return;
+    }
+    const id = `team:${floor.id}:${event.seq}`;
+    if (this.pushedIds.has(id)) return;
+    this.queuePush(event.lead, { type: 'team', id, floor, event });
+    this.scheduleFlush(event.lead);
+  }
+
+  private queuePush(leadId: string, entry: PendingPush) {
+    let map = this.pending.get(leadId);
+    if (!map) {
+      map = new Map();
+      this.pending.set(leadId, map);
+    }
+    if (!map.has(entry.id)) map.set(entry.id, entry);
+  }
+
+  private scheduleFlush(leadId: string) {
+    if (this.stopped || this.timers.has(leadId)) return;
+    const delay = this.opts.webhookDelayMs ?? WEBHOOK_DELAY_MS;
+    const timer = setTimeout(() => {
+      this.timers.delete(leadId);
+      void this.flushLeadPush(leadId);
+    }, delay);
+    timer.unref?.();
+    this.timers.set(leadId, timer);
+  }
+
+  private clearLeadQueue(leadId: string) {
+    const timer = this.timers.get(leadId);
+    if (timer) clearTimeout(timer);
+    this.timers.delete(leadId);
+    this.pending.delete(leadId);
+  }
+
+  private async deliverPending(leadId: string): Promise<GrokWebhookResult | undefined> {
+    const queued = this.pending.get(leadId);
+    if (!queued?.size) return undefined;
+    const entries = [...queued.values()];
+    this.pending.delete(leadId);
+    const bot = this.store.identity(leadId);
+    const target = this.store.grokWebhook(leadId);
+    if (!bot || !target) return undefined;
+    for (const entry of entries) {
+      this.pushedIds.add(entry.id);
+      if (this.pushedIds.size > PUSHED_HISTORY_MAX) {
+        const oldest = this.pushedIds.values().next().value;
+        if (oldest) this.pushedIds.delete(oldest);
+      }
+    }
+    const items = entries.map((entry) => this.materializeItem(leadId, entry));
+    const now = (this.opts.now ?? Date.now)();
+    const payload = buildGrokWebhookPayload({ id: bot.id, name: bot.name }, items, now);
+    const result = await sendGrokWebhook(target, payload, { fetchImpl: this.opts.fetchImpl, timeoutMs: this.opts.webhookTimeoutMs });
+    this.store.recordDelivery(leadId, {
+      at: now,
+      ok: result.ok,
+      ...(result.status !== undefined ? { status: result.status } : {}),
+      event: payload.event,
+      ...(result.error ? { error: result.error } : {}),
+    });
+    return result;
+  }
+
+  private materializeItem(leadId: string, entry: PendingPush): GrokWebhookItem {
+    if (entry.type === 'direct') return entry.item;
+    if (entry.type === 'inbox') {
+      const m = entry.message;
+      const f = m.floor ? this.floors().find((x) => x.id === m.floor) : undefined;
+      return {
+        id: m.id,
+        ackId: m.id,
+        kind: 'message',
+        at: new Date(m.at).toISOString(),
+        ...(f ? { floor: { id: f.id, name: f.def.name, cwd: f.dir } } : {}),
+        text: m.text,
+        actionHint: `Acknowledge "${m.id}" via office_inbox({ ack: ["${m.id}"] }) after handling.`,
+      };
+    }
+    const { floor, event } = entry;
+    const member = floor.team.roster(leadId).find((m) => m.id === event.worker);
+    const worker = floor.workers.get(event.worker);
+    const openQuestion = event.kind === 'needs_input' && worker ? terminalQuestion(floor, worker) : undefined;
+    return buildTeamWebhookItem({
+      event,
+      floor: { id: floor.id, name: floor.def.name, cwd: floor.dir },
+      member,
+      worker,
+      openQuestion,
+    });
+  }
 
   list(id: string) {
     return this.floors().map((f) => ({
@@ -46,21 +350,6 @@ export class RemoteOffice {
       subagents: f.workers.list().filter((w) => w.lead === id).length,
       unreadTeam: f.team.inbox(id).length,
     }));
-  }
-
-  add(name: string) {
-    return this.store.add(name);
-  }
-
-  /** The bot's key stops working, and its subagents carry on as independent workers. */
-  revoke(id: string) {
-    this.store.remove(id);
-    for (const floor of this.floors()) {
-      floor.workers.releaseLead(id);
-      floor.team.onWorkerGone(id);
-      floor.visits.onWorkerGone(id);
-      floor.whiteboard.forgetReader(id);
-    }
   }
 
   inbox(id: string, ack: readonly string[] = [], limit = 50, own = true) {

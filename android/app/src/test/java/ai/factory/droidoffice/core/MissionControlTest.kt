@@ -53,7 +53,11 @@ class MissionControlTest {
         // A bot that can't be read is skipped, not the whole state.
         assertEquals(listOf("bot-1"), m.bots.map { it.worker.id })
         assertEquals(1700000000000, m.bots.single().lastUsedAt)
+        assertFalse(m.bots.single().grokBot)
         assertTrue(m.bots.single().worker.remote)
+
+        val withGrok = Protocol.decode("""{"t":"missionControl","state":{"orchestrator":{"settings":{"on":false}},"bots":[{"worker":{"id":"bot-g","remote":true,"deskId":"","name":"grokbot","status":"working"},"team":[],"grokBot":true}]}}""") as ServerMsg.MissionControl
+        assertTrue(withGrok.state.bots.single().grokBot)
     }
 
     @Test

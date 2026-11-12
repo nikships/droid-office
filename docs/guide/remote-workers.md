@@ -12,10 +12,14 @@ It is on by default. Open ⚙️ Settings → **Phone & web** → **Tailscale MC
   by itself; off, it removes its Tailscale Serve mapping and closes the listener.
 - The **URL** is the MCP server address, `https://<this Mac's MagicDNS name>:8443/office/mcp`
   (another port when something else already serves 8443). It stays the same across restarts.
-- **Add bot** asks only for a name and adds the bot to Mission Control. Open the bot's row to
+- **Add bot** asks for a name (and optionally marks it as a **Grok Bot** with its webhook URL and
+  bearer token) and adds the bot to Mission Control. Open the bot's row to
   see its connection and **Copy config**: an `mcpServers` entry with the URL and the two
   headers the bot sends, `Authorization: Bearer <its key>` and
   `x-droid-office-worker-id: <its worker id>`. **Copy key** copies the key alone.
+- **Grok Bot** inside a bot's row attaches or updates an HTTPS JSON webhook URL and
+  `Authorization: Bearer` token for that specific bot (and its named keys), with **Send test** to
+  verify delivery. Bots left unmarked stay polling-only.
 - **New key** replaces a bot's key; the old one stops working at once. **Remove** revokes
   every key of the bot; any subagents it hired become independent.
 - **Add key** under a bot gives it another named key (`laptop`, `relay`) for another client it
@@ -106,10 +110,14 @@ Tailscale at all; Settings then says so. CI and office clones run that way.
   `activity` line. This is self-reported activity, not proof the bot is online.
   After an office restart it shows offline until it reports status again.
 
-There are no push callbacks. The bot's own scheduler decides when to check its
+Ordinary external bots use no push callbacks: the bot's own scheduler decides when to check its
 MCP inbox, or it can hold a `team_wait` call open (up to 600 seconds) that returns as soon as one
 of its subagents reports, asks, gets blocked or settles. Pass the `cursor` from the last status or
-wait as `since` to see only what is new. Worker messages are not owner instructions.
+wait as `since` to see only what is new. When a bot is marked as a **Grok Bot**, the office also
+pushes its subagents' final reports, questions, blockers, terminal `needs_input` prompts, unexpected
+stops, and inbox messages directly to that bot's webhook over HTTPS `POST` JSON (and gives its
+subagents `lead_notify` for immediate mid-turn notifications), while still saving durable items in
+`office_inbox` for `ack` deduplication. Worker messages are not owner instructions.
 
 The bot is visible in Mission Control in 3D, the web companion, and Android. Opening it explains
 that it runs externally, rather than showing a broken terminal. The office

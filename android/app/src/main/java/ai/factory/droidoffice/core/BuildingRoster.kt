@@ -15,6 +15,7 @@ data class BuildingWorkerRow(
     val blocked: String? = null,
     val teamCount: Int = 0,
     val botLastUsedAt: Long? = null,
+    val grokBot: Boolean = false,
 )
 
 data class RosterSummary(
@@ -104,6 +105,7 @@ object BuildingRoster {
                     floorId = MISSION_FLOOR,
                     teamCount = bot.team.size,
                     botLastUsedAt = bot.lastUsedAt,
+                    grokBot = bot.grokBot,
                 )
             }
         }

@@ -221,7 +221,7 @@ export interface OpenQuestion {
   why?: string;
 }
 
-function terminalQuestion(scope: TeamScope, w: WorkerInfo): OpenQuestion | undefined {
+export function terminalQuestion(scope: TeamScope, w: WorkerInfo): OpenQuestion | undefined {
   if (w.status !== 'needs_input' || w.kind !== 'agent' || w.cloud) return undefined;
   const base = { worker: w.id, name: w.name, floor: scope.id, desk: deskLabel(w), ...(w.waitingSince ? { at: iso(w.waitingSince) } : {}) };
   const atDesk = `Someone has to answer it at ${w.name}'s desk: tell whoever asked you.`;

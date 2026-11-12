@@ -207,7 +207,7 @@ private fun BotRow(bot: MissionAgent, selected: Boolean, onOpen: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 Spacer(Modifier.width(6.dp))
-                MissionTag("EXTERNAL")
+                MissionTag(if (bot.grokBot) "GROK BOT" else "EXTERNAL")
             }
             val line = listOfNotNull(MissionControl.botLine(bot), MissionControl.teamLine(bot.team)).joinToString(" · ")
             Text(line, style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -14,6 +14,7 @@ export interface BuildingWorkerRow {
   floorName: string;
   repo?: string;
   leadName?: string;
+  grokBot?: boolean;
   depth: number;
 }
 
@@ -68,12 +69,12 @@ export function buildingRoster(input: { floors: readonly FloorInfo[]; building: 
   const floorRank = new Map(floors.map((floor, index) => [floor.id, index]));
   const live = new Map([...input.workers].map((w) => [w.id, w]));
   const rows = new Map<string, BuildingWorkerRow>();
-  const addMission = (worker: WorkerInfo, kind: 'orchestrator' | 'bot', navigationFloor?: string) => {
-    if (!rows.has(worker.id)) rows.set(worker.id, { worker, kind, floorId: MISSION_FLOOR, navigationFloor, floorName: 'Mission Control', depth: 0 });
+  const addMission = (worker: WorkerInfo, kind: 'orchestrator' | 'bot', navigationFloor?: string, grokBot?: boolean) => {
+    if (!rows.has(worker.id)) rows.set(worker.id, { worker, kind, floorId: MISSION_FLOOR, navigationFloor, floorName: 'Mission Control', ...(grokBot ? { grokBot: true } : {}), depth: 0 });
   };
   const orchestrator = orchestratorWorker(mission);
   if (orchestrator) addMission(orchestrator, 'orchestrator');
-  for (const bot of mission?.bots ?? []) addMission(bot.worker, 'bot');
+  for (const bot of mission?.bots ?? []) addMission(bot.worker, 'bot', undefined, bot.grokBot);
 
   const floorIds = [...new Set([...floorMap.keys(), ...[...building.keys()].sort(), ...(currentFloor === null ? [] : [currentFloor])])];
   for (const floorId of floorIds) {

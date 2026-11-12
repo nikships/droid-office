@@ -47,6 +47,8 @@ data class MissionAgent(
     val team: List<MissionTeamMember> = emptyList(),
     /** External bots: when any of its keys last authenticated. */
     val lastUsedAt: Long? = null,
+    /** External bots: whether this bot is configured as a Grok Bot with webhook push delivery. */
+    val grokBot: Boolean = false,
 )
 
 @Serializable
