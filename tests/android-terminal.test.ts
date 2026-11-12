@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { coast, fitGrid, fitScale, MAX_STEPS, nextEncoding, RowAccumulator, SGR, swipeGoesToProgram, swipeInput, URXVT, UTF8 } from '../android/app/src/main/assets/terminal/input.js';
+import { coast, fitGrid, fitScale, hitTestKittyTap, isKittyTap, MAX_STEPS, nextEncoding, RowAccumulator, SGR, swipeGoesToProgram, swipeInput, URXVT, UTF8 } from '../android/app/src/main/assets/terminal/input.js';
 import {
   decodeBase64 as androidDecodeBase64,
   decodePlaceholderCell as androidDecodePlaceholder,
@@ -95,6 +95,27 @@ test('coast slows a flick until it stops', () => {
   assert.ok(later > 0 && later < 2);
   assert.equal(coast(2, 5000), 0);
   assert.ok(coast(-2, 100) < 0);
+});
+
+test('isKittyTap distinguishes stationary single taps from drags, long holds, multi-touch and flick stops', () => {
+  assert.equal(isKittyTap({ movedPx: 3, durationMs: 120, wasFlicking: false, multiTouch: false }), true);
+  assert.equal(isKittyTap({ movedPx: 14, durationMs: 120, wasFlicking: false, multiTouch: false }), false);
+  assert.equal(isKittyTap({ movedPx: 2, durationMs: 500, wasFlicking: false, multiTouch: false }), false);
+  assert.equal(isKittyTap({ movedPx: 1, durationMs: 80, wasFlicking: true, multiTouch: false }), false);
+  assert.equal(isKittyTap({ movedPx: 1, durationMs: 80, wasFlicking: false, multiTouch: true }), false);
+});
+
+test('hitTestKittyTap maps scaled Desktop and Phone terminal taps to the topmost Kitty placement', () => {
+  const rects = [
+    { imageId: 11, placementId: 0, x: 4, y: 2, cols: 10, rows: 5, z: 0 },
+    { imageId: 22, placementId: 0, x: 8, y: 3, cols: 4, rows: 3, z: 2 },
+  ];
+  // 80x20 grid shrunk to 320x160 (`4px` wide x `8px` high per cell) at offset `(8, 8)`.
+  const grid = { left: 8, top: 8, width: 320, height: 160 };
+  assert.equal(hitTestKittyTap(rects, grid, 80, 20, 8 + 5 * 4, 8 + 3 * 8)?.imageId, 11);
+  assert.equal(hitTestKittyTap(rects, grid, 80, 20, 8 + 9 * 4, 8 + 4 * 8)?.imageId, 22, 'higher z placement wins');
+  assert.equal(hitTestKittyTap(rects, grid, 80, 20, 8 + 20 * 4, 8 + 3 * 8), null, 'cell outside placement');
+  assert.equal(hitTestKittyTap(rects, grid, 80, 20, 4, 20), null, 'tap in outer padding misses grid');
 });
 
 test("the phone's Kitty graphics and keyboard helpers match src/shared/kitty.ts", () => {

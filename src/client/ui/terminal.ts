@@ -20,9 +20,25 @@ import { creditsNote } from '../../shared/factory-sessions';
 import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { loadFonts, TERM_FONT } from '../fonts';
-import { attachKittyTerminal } from '../term-kitty';
+import { attachKittyTerminal, type ExpandedKittyImage } from '../term-kitty';
 import { wantsCsiEnter } from '../term-keys';
+import { viewPicture } from './picture-viewer';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
+
+function openKittyPicture(img: ExpandedKittyImage, about: string, isAlive: () => boolean, focusTerm: () => void, state: { modal: Modal | null }) {
+  if (state.modal || !isAlive()) return;
+  const url = URL.createObjectURL(img.blob);
+  state.modal = viewPicture(url, 'Terminal image', {
+    width: img.width,
+    height: img.height,
+    about,
+    onClose: () => {
+      state.modal = null;
+      URL.revokeObjectURL(url);
+      if (isAlive()) focusTerm();
+    },
+  });
+}
 
 /** A line to scroll to once the terminal has loaded: a search hit (see search.ts). */
 export interface TerminalFind {
@@ -255,11 +271,21 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const unicode = new Unicode11Addon();
   term.loadAddon(unicode);
   term.unicode.activeVersion = '11';
-  const kitty = attachKittyTerminal(term);
-
-  const offQueries = suppressMirrorQueries(term);
   let opened = false;
   let alive = true;
+  const expanded = { modal: null as Modal | null };
+  const kitty = attachKittyTerminal(term, {
+    onExpandImage: (img) =>
+      openKittyPicture(
+        img,
+        store.worker(workerId)?.name ?? info.name,
+        () => alive,
+        () => term.focus(),
+        expanded,
+      ),
+  });
+
+  const offQueries = suppressMirrorQueries(term);
   let lastSentSize = '';
   let lastPtySize = '';
   const pendingSizes: string[] = [];
@@ -611,7 +637,18 @@ export function openOfficeShell(net: Net) {
   const unicode = new Unicode11Addon();
   term.loadAddon(unicode);
   term.unicode.activeVersion = '11';
-  const kitty = attachKittyTerminal(term);
+  let shellAlive = true;
+  const expanded = { modal: null as Modal | null };
+  const kitty = attachKittyTerminal(term, {
+    onExpandImage: (img) =>
+      openKittyPicture(
+        img,
+        'Shell',
+        () => shellAlive,
+        () => term.focus(),
+        expanded,
+      ),
+  });
 
   let opened = false;
   let shared = false;
@@ -687,6 +724,7 @@ export function openOfficeShell(net: Net) {
     },
     doing: '💻 in the shell',
     onClose: () => {
+      shellAlive = false;
       listeners.delete(onMsg);
       unsub();
       offQueries();

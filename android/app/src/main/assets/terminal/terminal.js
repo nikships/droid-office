@@ -5,7 +5,7 @@
 
 import { Unicode11Addon } from './vendor/addon-unicode11.mjs';
 import { Terminal } from './vendor/xterm.mjs';
-import { coast, fitGrid, fitScale, nextEncoding, RowAccumulator, swipeGoesToProgram, swipeInput } from './input.js';
+import { coast, fitGrid, fitScale, hitTestKittyTap, isKittyTap, nextEncoding, RowAccumulator, swipeGoesToProgram, swipeInput, TAP_SLOP_PX } from './input.js';
 import { ALT_BUFFER_MODES, cellUnderlineId, decodeBase64, decodePlaceholderCell, isKittyPlaceholderCell, KITTY_PLACEHOLDER_CHAR, KittyApcSplitter, KittyGraphicsStore, kittyImageSignature, KittyKeyboardState } from './kitty.js';
 import { THEME } from './theme.js';
 
@@ -108,10 +108,14 @@ kittyCanvas.setAttribute('aria-hidden', 'true');
 screenEl.appendChild(kittyCanvas);
 const kittyCtx = kittyCanvas.getContext('2d');
 
+const MAX_EXPORT_SIDE = 2048;
+const PNG_DATA_PREFIX = 'data:image/png;base64,';
+
 let view = 'desktop';
 let scale = 1;
 let lastFit = '';
 let paintRaf = 0;
+let drawnKittyRects = [];
 
 function closeDecodedEntry(entry) {
   if (entry.timer !== undefined) clearTimeout(entry.timer);
@@ -135,6 +139,7 @@ function resetKitty() {
   clearDirectPlacements();
   for (const e of kittyDecoded.values()) closeDecodedEntry(e);
   kittyDecoded.clear();
+  drawnKittyRects = [];
   scannedLength = 0;
   reportKittyFlags();
   scheduleKittyPaint();
@@ -422,6 +427,7 @@ function paintKittyOverlay() {
   }
   kittyCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
   kittyCtx.clearRect(0, 0, w, h);
+  drawnKittyRects = [];
   if (!visibleRects.length) return;
 
   const observed = new Map();
@@ -435,7 +441,8 @@ function paintKittyOverlay() {
       if (mr > prev.rows) prev.rows = mr;
     }
   }
-  for (const r of visibleRects) {
+  const ordered = visibleRects.some((r) => r.z !== 0) ? [...visibleRects].sort((a, b) => a.z - b.z) : visibleRects;
+  for (const r of ordered) {
     const rec = kittyGraphics.get(r.imageId);
     if (!rec) continue;
     const entry = kittyDecoded.get(r.imageId);
@@ -444,7 +451,7 @@ function paintKittyOverlay() {
       continue;
     }
     const bmp = entry.frameIdx === 0 || !entry.frames.length ? entry.root : (entry.frames[entry.frameIdx - 1] ?? entry.root);
-    if (!bmp) continue;
+    if (!bmp || !entry.root) continue;
     const obs = observed.get(r.imageId);
     const totalCols = Math.max(obs?.cols ?? r.cols, rec.cols ?? Math.ceil(bmp.width / cellW));
     const totalRows = Math.max(obs?.rows ?? r.rows, rec.rows ?? Math.ceil(bmp.height / cellH));
@@ -456,8 +463,32 @@ function paintKittyOverlay() {
     const dh = r.rows * cellH;
     if (sw > 0 && sh > 0 && dw > 0 && dh > 0) {
       kittyCtx.drawImage(bmp, sx, sy, sw, sh, r.x * cellW, r.y * cellH, dw, dh);
+      drawnKittyRects.push({ imageId: r.imageId, placementId: r.placementId, x: r.x, y: r.y, cols: r.cols, rows: r.rows, z: r.z });
     }
   }
+}
+
+function openTappedKittyImage(imageId) {
+  const rec = kittyGraphics.get(imageId);
+  const root = kittyDecoded.get(imageId)?.root;
+  if (!rec || !root || root.width <= 0 || root.height <= 0) return;
+  if (rec.format === 100 && !rec.compression && Math.max(root.width, root.height) <= MAX_EXPORT_SIDE && rec.data) {
+    post({ t: 'image', width: root.width, height: root.height, data: rec.data });
+    return;
+  }
+  const maxSide = Math.max(root.width, root.height);
+  const k = maxSide > MAX_EXPORT_SIDE ? MAX_EXPORT_SIDE / maxSide : 1;
+  const outW = Math.max(1, Math.round(root.width * k));
+  const outH = Math.max(1, Math.round(root.height * k));
+  const off = document.createElement('canvas');
+  off.width = outW;
+  off.height = outH;
+  const g = off.getContext('2d');
+  if (!g) return;
+  g.drawImage(root, 0, 0, outW, outH);
+  const url = off.toDataURL('image/png');
+  if (!url.startsWith(PNG_DATA_PREFIX)) return;
+  post({ t: 'image', width: root.width, height: root.height, data: url.slice(PNG_DATA_PREFIX.length) });
 }
 
 function scheduleKittyPaint() {
@@ -655,16 +686,35 @@ const stopFlick = () => {
   flick = 0;
 };
 
-// Captured before xterm sees them: one finger scrolls, and nothing focuses or selects.
+// Captured before xterm sees them: one finger scrolls (or taps a Kitty image), and nothing focuses or selects.
 const opts = { passive: false, capture: true };
 document.addEventListener(
   'touchstart',
   (e) => {
     e.preventDefault();
+    const wasFlicking = flick !== 0;
     stopFlick();
     rows.reset();
-    const p = e.touches.length === 1 ? e.touches[0] : undefined;
-    touch = p ? { x: p.clientX, y: p.clientY, t: e.timeStamp, v: 0 } : null;
+    if (e.touches.length === 1) {
+      const p = e.touches[0];
+      touch = {
+        x: p.clientX,
+        y: p.clientY,
+        startX: p.clientX,
+        startY: p.clientY,
+        startTime: e.timeStamp,
+        maxMove: 0,
+        dragging: false,
+        wasFlicking,
+        multiTouch: false,
+        t: e.timeStamp,
+        v: 0,
+      };
+    } else if (touch) {
+      touch.multiTouch = true;
+    } else {
+      touch = null;
+    }
   },
   opts,
 );
@@ -672,8 +722,22 @@ document.addEventListener(
   'touchmove',
   (e) => {
     e.preventDefault();
-    if (!touch || e.touches.length !== 1) return;
+    if (!touch) return;
+    if (e.touches.length !== 1) {
+      touch.multiTouch = true;
+      return;
+    }
     const p = e.touches[0];
+    const totalMove = Math.hypot(p.clientX - touch.startX, p.clientY - touch.startY);
+    if (totalMove > touch.maxMove) touch.maxMove = totalMove;
+    if (!touch.dragging) {
+      if (totalMove <= TAP_SLOP_PX) return;
+      touch.dragging = true;
+      touch.x = p.clientX;
+      touch.y = p.clientY;
+      touch.t = e.timeStamp;
+      return;
+    }
     const dy = touch.y - p.clientY;
     const dt = Math.max(1, e.timeStamp - touch.t);
     touch.v = 0.8 * (dy / dt) + 0.2 * touch.v;
@@ -687,10 +751,28 @@ document.addEventListener(
   'touchend',
   (e) => {
     e.preventDefault();
+    if (e.touches.length > 0) {
+      if (touch) touch.multiTouch = true;
+      return;
+    }
     const t = touch;
     touch = null;
+    if (!t) return;
+    if (
+      !t.dragging &&
+      isKittyTap({
+        movedPx: t.maxMove,
+        durationMs: e.timeStamp - t.startTime,
+        wasFlicking: t.wasFlicking,
+        multiTouch: t.multiTouch,
+      })
+    ) {
+      const hit = hitTestKittyTap(drawnKittyRects, host.getBoundingClientRect(), term.cols, term.rows, t.startX, t.startY);
+      if (hit) openTappedKittyImage(hit.imageId);
+      return;
+    }
     // A flick coasts through history; a full-screen program gets only what the finger moved.
-    if (!t || e.timeStamp - t.t > 80 || swipeGoesToProgram(programState())) return;
+    if (!t.dragging || e.timeStamp - t.t > 80 || swipeGoesToProgram(programState())) return;
     let speed = t.v;
     let last = performance.now();
     const step = (now) => {

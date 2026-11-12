@@ -102,8 +102,38 @@ export const FRICTION = 0.996;
 /** Below this many pixels per millisecond, a flick has stopped. */
 export const MIN_SPEED = 0.02;
 
+/** Maximum pointer movement (in CSS pixels) and duration (ms) for a stationary single-finger tap. */
+export const TAP_SLOP_PX = 8;
+export const TAP_MAX_MS = 350;
+
 /** The speed left after `ms` of coasting from `speed` (px/ms). */
 export function coast(speed, ms) {
   const v = speed * FRICTION ** ms;
   return Math.abs(v) < MIN_SPEED ? 0 : v;
+}
+
+/** Whether a completed touch gesture is a clean single-finger tap rather than a scroll, multi-touch or flick stop. */
+export function isKittyTap({ movedPx, durationMs, wasFlicking, multiTouch }) {
+  return !multiTouch && !wasFlicking && movedPx >= 0 && movedPx <= TAP_SLOP_PX && durationMs >= 0 && durationMs <= TAP_MAX_MS;
+}
+
+/**
+ * Hit-tests a page tap `(clientX, clientY)` against visible Kitty image cell rects inside `gridRect`
+ * (`host.getBoundingClientRect()`, which already includes any `Desktop` view CSS `scale(...)`).
+ * Picks the topmost rect: highest `z`, breaking ties by later draw order.
+ */
+export function hitTestKittyTap(rects, gridRect, cols, rows, clientX, clientY) {
+  if (!rects?.length || !(gridRect?.width > 0 && gridRect?.height > 0 && cols > 0 && rows > 0)) return null;
+  const rx = clientX - gridRect.left;
+  const ry = clientY - gridRect.top;
+  if (rx < 0 || ry < 0 || rx >= gridRect.width || ry >= gridRect.height) return null;
+  const fx = (rx / gridRect.width) * cols;
+  const fy = (ry / gridRect.height) * rows;
+  let hit = null;
+  for (const r of rects) {
+    if (fx >= r.x && fx < r.x + r.cols && fy >= r.y && fy < r.y + r.rows) {
+      if (!hit || r.z >= hit.z) hit = r;
+    }
+  }
+  return hit;
 }

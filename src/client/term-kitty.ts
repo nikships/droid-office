@@ -18,6 +18,7 @@ import {
 } from '../shared/kitty';
 import type { KeyAction } from '../shared/csi-enter';
 import type { ScreenImage } from '../shared/protocol';
+import { icon } from './ui/icons';
 
 const ALT_BUFFER_MODES = [47, 1047, 1049];
 const MAX_DIRECT_PLACEMENTS = 128;
@@ -134,6 +135,95 @@ export function decodeScreenBitmap(img: ScreenImage): Promise<ImageBitmap | null
   return decodeKittyImageBitmap(img.format, img.compression, img.width, img.height, img.data);
 }
 
+export interface DrawnKittyRect {
+  imageId: number;
+  placementId: number;
+  dx: number;
+  dy: number;
+  dw: number;
+  dh: number;
+  z: number;
+}
+
+export interface KittyShellState {
+  mouseTrackingMode: string;
+  bufferType: string;
+}
+
+export interface KittyClickInput {
+  button: number;
+  detail: number;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  movedPx: number;
+  hadSelection: boolean;
+  hasSelection: boolean;
+  shell: KittyShellState;
+}
+
+export interface ExpandedKittyImage {
+  imageId: number;
+  blob: Blob;
+  width: number;
+  height: number;
+}
+
+export interface KittyTerminalOptions {
+  onExpandImage?: (img: ExpandedKittyImage) => void;
+}
+
+/** Plain click expands only in a normal shell (normal screen buffer with no mouse reporting). */
+export function isNormalKittyShell(state: KittyShellState): boolean {
+  return state.bufferType === 'normal' && state.mouseTrackingMode === 'none';
+}
+
+export function isKittyModClick(e: Pick<KittyClickInput, 'button' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>): boolean {
+  return e.button === 0 && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+}
+
+export function isKittyPlainPress(e: Pick<KittyClickInput, 'button' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>, shell: KittyShellState): boolean {
+  return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && isNormalKittyShell(shell);
+}
+
+export function shouldExpandKittyClick(input: KittyClickInput): boolean {
+  if (isKittyModClick(input)) return input.movedPx < 6;
+  if (!isKittyPlainPress(input, input.shell)) return false;
+  return input.detail === 1 && input.movedPx < 5 && !input.hadSelection && !input.hasSelection;
+}
+
+/**
+ * Hit-tests `(px, py)` (in CSS pixels relative to `.xterm-screen`) against drawn Kitty image rects.
+ * Picks the topmost rect: highest `z`, breaking ties by later draw order.
+ */
+export function hitTestKittyRect(rects: readonly DrawnKittyRect[], px: number, py: number): DrawnKittyRect | undefined {
+  let hit: DrawnKittyRect | undefined;
+  for (const r of rects) {
+    if (px >= r.dx && px < r.dx + r.dw && py >= r.dy && py < r.dy + r.dh) {
+      if (!hit || r.z >= hit.z) hit = r;
+    }
+  }
+  return hit;
+}
+
+/** Union bounding box (in CSS pixels) of all visible rects belonging to `(imageId, placementId)`. */
+export function kittyPlacementBounds(rects: readonly DrawnKittyRect[], imageId: number, placementId: number): { x: number; y: number; width: number; height: number } | undefined {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const r of rects) {
+    if (r.imageId !== imageId || r.placementId !== placementId) continue;
+    if (r.dx < minX) minX = r.dx;
+    if (r.dy < minY) minY = r.dy;
+    if (r.dx + r.dw > maxX) maxX = r.dx + r.dw;
+    if (r.dy + r.dh > maxY) maxY = r.dy + r.dh;
+  }
+  if (!Number.isFinite(minX)) return undefined;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
 export interface KittyTerminalAttachment {
   readonly keyboard: KittyKeyboardState;
   readonly graphics: KittyGraphicsStore;
@@ -232,7 +322,7 @@ function hideBufferPlaceholders(term: Terminal, fromY: number, toY: number, cach
  * Attaches Kitty keyboard (`CSI u`) and Kitty graphics (`APC G` + `U=1` Unicode placeholders +
  * direct placements + GIF animation) to a browser `@xterm/xterm` instance.
  */
-export function attachKittyTerminal(term: Terminal): KittyTerminalAttachment {
+export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions = {}): KittyTerminalAttachment {
   const keyboard = new KittyKeyboardState();
   const graphics = new KittyGraphicsStore();
   const splitter = new KittyApcSplitter();
@@ -242,10 +332,35 @@ export function attachKittyTerminal(term: Terminal): KittyTerminalAttachment {
 
   let canvas: HTMLCanvasElement | null = null;
   let ctx: CanvasRenderingContext2D | null = null;
+  let expandBtn: HTMLButtonElement | null = null;
+  let cleanupScreenListeners: (() => void) | null = null;
   let screenEl: HTMLElement | null = null;
+  let drawnRects: DrawnKittyRect[] = [];
+  let hoveredHit: { imageId: number; placementId: number } | null = null;
+  let pointerClient: { x: number; y: number } | null = null;
+  let overExpandBtn = false;
+  let modHeld = false;
+  let expanding = false;
   let rafId = 0;
   let disposed = false;
   let scannedLength = 0;
+
+  const shellState = (): KittyShellState => ({
+    mouseTrackingMode: term.modes.mouseTrackingMode,
+    bufferType: term.buffer.active.type,
+  });
+
+  const updateCursor = () => {
+    if (!screenEl) return;
+    const clickable = !!opts.onExpandImage && !!hoveredHit && !overExpandBtn && (isNormalKittyShell(shellState()) || modHeld);
+    screenEl.classList.toggle('term-kitty-clickable', clickable);
+  };
+
+  const hideHover = () => {
+    hoveredHit = null;
+    if (expandBtn) expandBtn.hidden = true;
+    updateCursor();
+  };
 
   const closeEntry = (entry: DecodedEntry) => {
     if (entry.timer !== undefined) clearTimeout(entry.timer);
@@ -464,6 +579,94 @@ export function attachKittyTerminal(term: Terminal): KittyTerminalAttachment {
     return { rects, mutated };
   };
 
+  const positionExpandButton = (imageId: number, placementId: number): boolean => {
+    if (!expandBtn || !opts.onExpandImage) return false;
+    const geom = cellGeometry();
+    const bounds = geom ? kittyPlacementBounds(drawnRects, imageId, placementId) : undefined;
+    if (!geom || !bounds || !graphics.get(imageId) || !decoded.get(imageId)?.root) {
+      hideHover();
+      return false;
+    }
+    const size = 26;
+    const inset = 6;
+    const left = Math.max(2, Math.min(geom.cssW - size - 2, bounds.x + bounds.width - size - inset));
+    const top = Math.max(2, Math.min(geom.cssH - size - 2, bounds.y + inset));
+    expandBtn.style.left = `${Math.round(left)}px`;
+    expandBtn.style.top = `${Math.round(top)}px`;
+    const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+    expandBtn.title = isNormalKittyShell(shellState()) ? 'Expand image (Click)' : isMac ? 'Expand image (⌘+Click)' : 'Expand image (Ctrl+Click)';
+    expandBtn.hidden = false;
+    updateCursor();
+    return true;
+  };
+
+  const hitAtClient = (clientX: number, clientY: number): DrawnKittyRect | undefined => {
+    if (!screenEl || !drawnRects.length) return undefined;
+    const r = screenEl.getBoundingClientRect();
+    const px = clientX - r.left;
+    const py = clientY - r.top;
+    if (px < 0 || py < 0 || px >= r.width || py >= r.height) return undefined;
+    const hit = hitTestKittyRect(drawnRects, px, py);
+    if (!hit || !graphics.get(hit.imageId) || !decoded.get(hit.imageId)?.root) return undefined;
+    return hit;
+  };
+
+  const syncHoverAt = (clientX: number, clientY: number) => {
+    if (!opts.onExpandImage) return;
+    const hit = hitAtClient(clientX, clientY);
+    if (!hit) {
+      hideHover();
+      return;
+    }
+    hoveredHit = { imageId: hit.imageId, placementId: hit.placementId };
+    positionExpandButton(hit.imageId, hit.placementId);
+  };
+
+  const syncHoverAfterPaint = () => {
+    if (!opts.onExpandImage || !drawnRects.length) {
+      hideHover();
+      return;
+    }
+    if (overExpandBtn && hoveredHit) {
+      positionExpandButton(hoveredHit.imageId, hoveredHit.placementId);
+    } else if (pointerClient) {
+      syncHoverAt(pointerClient.x, pointerClient.y);
+    } else if (hoveredHit) {
+      hideHover();
+    }
+  };
+
+  const expandImage = async (imageId: number): Promise<void> => {
+    if (!opts.onExpandImage || expanding || disposed) return;
+    const rec = graphics.get(imageId);
+    const root = decoded.get(imageId)?.root;
+    if (!rec || !root) return;
+    expanding = true;
+    try {
+      let blob: Blob | null = null;
+      if (rec.format === 100) {
+        let bytes = decodeBase64(rec.data);
+        if (rec.compression === 'z') bytes = await inflateBytes(bytes);
+        blob = new Blob([bytes as unknown as BlobPart], { type: 'image/png' });
+      } else if (typeof document !== 'undefined') {
+        const off = document.createElement('canvas');
+        off.width = root.width;
+        off.height = root.height;
+        const g = off.getContext('2d');
+        if (g) {
+          g.drawImage(root, 0, 0);
+          blob = await new Promise<Blob | null>((resolve) => off.toBlob(resolve, 'image/png'));
+        }
+      }
+      if (!blob || disposed || graphics.get(imageId) !== rec) return;
+      opts.onExpandImage({ imageId, blob, width: root.width, height: root.height });
+    } catch {
+      // Ignore corrupt payloads gracefully.
+    } finally {
+      expanding = false;
+    }
+  };
+
   const paintOverlay = () => {
     if (disposed || !canvas || !ctx || !screenEl) return;
     const geom = cellGeometry();
@@ -483,7 +686,11 @@ export function attachKittyTerminal(term: Terminal): KittyTerminalAttachment {
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, geom.cssW, geom.cssH);
-    if (!visibleRects.length) return;
+    drawnRects = [];
+    if (!visibleRects.length) {
+      syncHoverAfterPaint();
+      return;
+    }
 
     // Max observed dimensions for virtual placements that omitted `c`/`r` on `a=T`.
     const observed = new Map<number, { cols: number; rows: number }>();
@@ -498,7 +705,8 @@ export function attachKittyTerminal(term: Terminal): KittyTerminalAttachment {
       }
     }
 
-    for (const r of visibleRects) {
+    const ordered = visibleRects.some((r) => r.z !== 0) ? [...visibleRects].sort((a, b) => a.z - b.z) : visibleRects;
+    for (const r of ordered) {
       const rec = graphics.get(r.imageId);
       if (!rec) continue;
       const entry = decoded.get(r.imageId);
@@ -507,7 +715,7 @@ export function attachKittyTerminal(term: Terminal): KittyTerminalAttachment {
         continue;
       }
       const bmp = entry.frameIdx === 0 || !entry.frames.length ? entry.root : (entry.frames[entry.frameIdx - 1] ?? entry.root);
-      if (!bmp) continue;
+      if (!bmp || !entry.root) continue;
 
       const obs = observed.get(r.imageId);
       const totalCols = Math.max(obs?.cols ?? r.cols, rec.cols ?? Math.ceil(bmp.width / geom.cellW));
@@ -523,8 +731,10 @@ export function attachKittyTerminal(term: Terminal): KittyTerminalAttachment {
       const dh = r.rows * geom.cellH;
       if (sw > 0 && sh > 0 && dw > 0 && dh > 0) {
         ctx.drawImage(bmp, sx, sy, sw, sh, dx, dy, dw, dh);
+        drawnRects.push({ imageId: r.imageId, placementId: r.placementId, dx, dy, dw, dh, z: r.z });
       }
     }
+    syncHoverAfterPaint();
   };
 
   // Wrap `term.write` to intercept APC G sequences in strict FIFO stream order.
@@ -648,18 +858,156 @@ export function attachKittyTerminal(term: Terminal): KittyTerminalAttachment {
     schedulePaint();
   };
 
-  // Wrap `term.open` to mount the overlay `<canvas>` inside `.xterm-screen`.
+  // Wrap `term.open` to mount the overlay `<canvas>` (and optional expand control) inside `.xterm-screen`.
   const origOpen = term.open.bind(term);
   term.open = (parent: HTMLElement) => {
     origOpen(parent);
+    cleanupScreenListeners?.();
+    cleanupScreenListeners = null;
     screenEl = term.element?.querySelector<HTMLElement>('.xterm-screen') ?? parent;
     canvas?.remove();
+    expandBtn?.remove();
     const c = document.createElement('canvas');
     c.className = 'term-kitty-layer';
     c.setAttribute('aria-hidden', 'true');
     screenEl.appendChild(c);
     canvas = c;
     ctx = c.getContext('2d');
+
+    if (opts.onExpandImage) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'term-kitty-expand';
+      btn.hidden = true;
+      btn.setAttribute('aria-label', 'Expand image');
+      btn.appendChild(icon('maximize', 13));
+      btn.addEventListener('mouseenter', () => {
+        overExpandBtn = true;
+        updateCursor();
+      });
+      btn.addEventListener('mouseleave', () => {
+        overExpandBtn = false;
+        updateCursor();
+      });
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      btn.addEventListener('mouseup', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (hoveredHit) void expandImage(hoveredHit.imageId);
+      });
+      screenEl.appendChild(btn);
+      expandBtn = btn;
+
+      let pendingPress: { imageId: number; x: number; y: number; mod: boolean; hadSelection: boolean } | null = null;
+      let swallowNextClick = false;
+      const targetEl = screenEl;
+
+      const onMouseMove = (e: MouseEvent) => {
+        modHeld = e.metaKey || e.ctrlKey;
+        pointerClient = { x: e.clientX, y: e.clientY };
+        if (btn.contains(e.target as Node)) return;
+        syncHoverAt(e.clientX, e.clientY);
+      };
+      const onMouseLeave = () => {
+        pointerClient = null;
+        overExpandBtn = false;
+        hideHover();
+      };
+      const onMouseDown = (e: MouseEvent) => {
+        if (btn.contains(e.target as Node)) return;
+        swallowNextClick = false;
+        modHeld = e.metaKey || e.ctrlKey;
+        const hit = hitAtClient(e.clientX, e.clientY);
+        if (!hit) {
+          pendingPress = null;
+          return;
+        }
+        if (isKittyModClick(e)) {
+          pendingPress = { imageId: hit.imageId, x: e.clientX, y: e.clientY, mod: true, hadSelection: false };
+          e.preventDefault();
+          e.stopPropagation();
+          term.focus();
+        } else if (isKittyPlainPress(e, shellState())) {
+          pendingPress = { imageId: hit.imageId, x: e.clientX, y: e.clientY, mod: false, hadSelection: term.hasSelection() };
+        } else {
+          pendingPress = null;
+        }
+      };
+      const onMouseUp = (e: MouseEvent) => {
+        if (!pendingPress) return;
+        const press = pendingPress;
+        pendingPress = null;
+        const movedPx = Math.hypot(e.clientX - press.x, e.clientY - press.y);
+        const sameHit = hitAtClient(e.clientX, e.clientY)?.imageId === press.imageId;
+        if (press.mod) {
+          e.preventDefault();
+          e.stopPropagation();
+          swallowNextClick = true;
+        }
+        if (
+          sameHit &&
+          shouldExpandKittyClick({
+            button: e.button,
+            detail: e.detail || 1,
+            metaKey: press.mod || e.metaKey,
+            ctrlKey: press.mod || e.ctrlKey,
+            altKey: e.altKey,
+            shiftKey: e.shiftKey,
+            movedPx,
+            hadSelection: press.hadSelection,
+            hasSelection: term.hasSelection(),
+            shell: shellState(),
+          })
+        ) {
+          swallowNextClick = true;
+          void expandImage(press.imageId);
+        }
+      };
+      const onClick = (e: MouseEvent) => {
+        if (!swallowNextClick || btn.contains(e.target as Node)) return;
+        swallowNextClick = false;
+        e.preventDefault();
+        e.stopPropagation();
+      };
+      const onModKey = (e: KeyboardEvent) => {
+        const next = e.metaKey || e.ctrlKey;
+        if (next === modHeld) return;
+        modHeld = next;
+        updateCursor();
+      };
+      const onWindowBlur = () => {
+        if (!modHeld) return;
+        modHeld = false;
+        updateCursor();
+      };
+
+      targetEl.addEventListener('mousemove', onMouseMove);
+      targetEl.addEventListener('mouseleave', onMouseLeave);
+      targetEl.addEventListener('mousedown', onMouseDown, true);
+      targetEl.addEventListener('click', onClick, true);
+      window.addEventListener('mouseup', onMouseUp, true);
+      window.addEventListener('keydown', onModKey, true);
+      window.addEventListener('keyup', onModKey, true);
+      window.addEventListener('blur', onWindowBlur);
+      cleanupScreenListeners = () => {
+        targetEl.removeEventListener('mousemove', onMouseMove);
+        targetEl.removeEventListener('mouseleave', onMouseLeave);
+        targetEl.removeEventListener('mousedown', onMouseDown, true);
+        targetEl.removeEventListener('click', onClick, true);
+        window.removeEventListener('mouseup', onMouseUp, true);
+        window.removeEventListener('keydown', onModKey, true);
+        window.removeEventListener('keyup', onModKey, true);
+        window.removeEventListener('blur', onWindowBlur);
+      };
+    }
+
     schedulePaint();
   };
 
@@ -714,12 +1062,20 @@ export function attachKittyTerminal(term: Terminal): KittyTerminalAttachment {
     disposed = true;
     if (rafId) cancelAnimationFrame(rafId);
     rafId = 0;
+    cleanupScreenListeners?.();
+    cleanupScreenListeners = null;
     for (const d of parserDisposables) d.dispose();
     clearPlacements();
     clearDecoded();
+    drawnRects = [];
+    hoveredHit = null;
+    pointerClient = null;
+    expandBtn?.remove();
+    expandBtn = null;
     canvas?.remove();
     canvas = null;
     ctx = null;
+    screenEl?.classList.remove('term-kitty-clickable');
     screenEl = null;
   };
 

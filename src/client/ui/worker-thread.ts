@@ -1,7 +1,7 @@
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { isAsleep, isBusy, needsOwnerInput } from '../../shared/status';
 import { threadArgumentsText, threadOutputText, type ThreadBlock, type ThreadModelAction, type ThreadRow } from '../../shared/thread-presentation';
-import type { ThreadEntry, ThreadImage } from '../../shared/worker-thread';
+import type { ThreadEntry } from '../../shared/worker-thread';
 import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
 import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { ThreadQueue } from '../../shared/thread-queue';
@@ -9,9 +9,9 @@ import type { Net } from '../net';
 import { ThreadHistory } from '../thread-history';
 import { cloudStarting, threadSnapshotError, threadStarting } from '../thread-startup';
 import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
-import { h, openModal, STATUS_LABEL } from './dom';
-import { windowHeader } from './kit';
+import { h, STATUS_LABEL } from './dom';
 import { icon } from './icons';
+import { viewPicture } from './picture-viewer';
 import { markdown } from './markdown';
 import { promptImages } from './images';
 import { withToken } from '../token';
@@ -85,13 +85,6 @@ const rowContent = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>) =>
 const localQueues = new Map<string, ThreadQueue>();
 
 const shortcut = (key: string, label: string) => h('span.wt-shortcut', {}, h('span.key', {}, key), label);
-
-/** A picture at full size, over everything, until Esc, a click outside it or ✕. */
-function viewPicture(src: string, title: string, image: ThreadImage, about?: string) {
-  const full = h('img.wt-picture-full', { src, alt: title, width: image.width, height: image.height, draggable: 'false' });
-  const sub = [about, image.width && image.height ? `${image.width} × ${image.height}` : ''].filter(Boolean).join(' · ') || undefined;
-  openModal(h('div.modal.wt-picture-window', { 'aria-label': title }, windowHeader(title, sub), h('div.body.flush.wt-picture-body', {}, full)), { size: 'full', backdropCloses: true });
-}
 
 /**
  * A worker's conversation: a local session's JSONL, or a cloud worker's Factory session, which the
@@ -455,7 +448,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         const name = images.length > 1 ? `${title} · ${i + 1} of ${images.length}` : title;
         return h(
           'button.wt-image',
-          { type: 'button', title: 'Open the picture', 'aria-label': `Open ${name}`, onclick: () => viewPicture(src, name, image, about) },
+          { type: 'button', title: 'Open the picture', 'aria-label': `Open ${name}`, onclick: () => viewPicture(src, name, { width: image.width, height: image.height, about }) },
           h('img', { src, alt: name, loading: 'lazy', decoding: 'async', width: image.width, height: image.height, draggable: 'false' }),
         );
       }),
