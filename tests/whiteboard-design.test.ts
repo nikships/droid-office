@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cardFormat } from '../src/shared/whiteboard.js';
 import { FACTORY_ARTIFACT_CSS, FACTORY_HTML_STARTER, FACTORY_LOGOS, FACTORY_TOKENS, GUIDE_TOPICS, formatWhiteboardGuide } from '../src/shared/whiteboard-design.js';
-import { extractMarkdownTitle, markdownReferences, parseTimecodeTokens, renderImageArtifact, renderMarkdownArtifact, renderVideoArtifact } from '../src/shared/whiteboard-markdown.js';
+import { extractMarkdownTitle, formatMediaTimestamp, markdownReferences, parseTimecodeTokens, renderImageArtifact, renderMarkdownArtifact, renderVideoArtifact } from '../src/shared/whiteboard-markdown.js';
 
 const HASH = 'a'.repeat(64);
 
@@ -76,11 +76,16 @@ const ready = true;
   assert.match(html, /02/);
   assert.match(html, /03/);
   assert.match(html, /class="md-rail"/);
-  // Callouts, aligned GFM tables, interactive task checkboxes, copyable code, and ping buttons.
+  // Callouts, aligned GFM tables, interactive task checkboxes with progress badge, copy Markdown, lightbox, and ping buttons.
   assert.match(html, /WARN/);
   assert.match(html, /text-align:\s*center/);
   assert.match(html, /text-align:\s*right/);
   assert.match(html, /type="checkbox"/);
+  assert.match(html, /id="wb-task-progress"[^>]*>1\/2 DONE</);
+  assert.match(html, /id="wb-copy-md"/);
+  assert.match(html, /id="wb-md-src"/);
+  assert.match(html, /id="wb-lightbox"/);
+  assert.match(html, /position:\s*sticky/);
   assert.match(html, /data-wb-action="approve"/);
   assert.match(html, /data-wb-ping="Approved RFC 042 — proceed with rollout\."/);
   // Raw script tags in Markdown prose are escaped, never injected.
@@ -88,17 +93,45 @@ const ready = true;
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
 });
 
-test('Video and Image artifact builders emit 1280px Factory surfaces with stable anchors and timecode parsing', () => {
+test('Markdown inline autolinking, <br> line breaks, and loose checklists render cleanly', () => {
+  const md = `# Links & Loose Lists
+
+Visit (https://factory.ai/docs) or https://en.wikipedia.org/wiki/Factory_(object-oriented_programming), and line one<br>line two.
+
+- [x] First loose task
+
+- [ ] Second loose task
+  with continuation text
+
+> Quoted note
+---
+`;
+  const html = renderMarkdownArtifact(md, { title: 'Links & Loose Lists' });
+  assert.match(html, /\(<a href="https:\/\/factory\.ai\/docs" target="_blank" rel="noopener noreferrer">https:\/\/factory\.ai\/docs<\/a>\)/);
+  assert.match(html, /<a href="https:\/\/en\.wikipedia\.org\/wiki\/Factory_\(object-oriented_programming\)" target="_blank" rel="noopener noreferrer">https:\/\/en\.wikipedia\.org\/wiki\/Factory_\(object-oriented_programming\)<\/a>,/);
+  assert.match(html, /line one<br>line two/);
+  assert.match(html, /Second loose task with continuation text/);
+  assert.match(html, /<hr class="wb-rule">/);
+});
+
+test('Video and Image artifact builders emit 1280px Factory surfaces with fullscreen controls, stable anchors and timecode helpers', () => {
   const videoHtml = renderVideoArtifact({
     title: 'Walkthrough clip',
     videoSrc: 'video.mp4',
     videoMime: 'video/mp4',
     posterSrc: 'poster.png',
     caption: '60 fps capture from isolated clone',
+    sizeBytes: 2 * 1024 * 1024,
   });
+  assert.match(videoHtml, /id="vid-player"/);
   assert.match(videoHtml, /data-wb-id="video"/);
   assert.match(videoHtml, /var SRC = "video\.mp4"/);
   assert.match(videoHtml, /poster="poster\.png"/);
+  assert.match(videoHtml, /id="v-fs"/);
+  assert.match(videoHtml, /requestFullscreen/);
+  assert.match(videoHtml, /id="v-hover-time"/);
+  assert.match(videoHtml, /id="vid-overlay"/);
+  assert.match(videoHtml, /id="v-dl"[^>]*download="Walkthrough clip\.mp4"/);
   assert.match(videoHtml, /PIN @TIME/);
   assert.match(videoHtml, /whiteboard\.on\('seek'/);
   assert.match(videoHtml, /60 fps capture from isolated clone/);
@@ -112,8 +145,18 @@ test('Video and Image artifact builders emit 1280px Factory surfaces with stable
   });
   assert.match(imageHtml, /data-theme="light"/);
   assert.match(imageHtml, /data-wb-id="image" src="image\.svg"/);
+  assert.match(imageHtml, /id="img-fs"/);
+  assert.match(imageHtml, /id="img-fs-exit"/);
+  assert.match(imageHtml, /LIGHT BG/);
   assert.match(imageHtml, /GRID BG/);
+  assert.match(imageHtml, /id="img-dl"[^>]*download="Diagram\.svg"/);
   assert.match(imageHtml, /System topology/);
+
+  assert.equal(formatMediaTimestamp(0), '@00:00.0');
+  assert.equal(formatMediaTimestamp(-4), '@00:00.0');
+  assert.equal(formatMediaTimestamp(0.999), '@00:01.0');
+  assert.equal(formatMediaTimestamp(59.96), '@01:00.0');
+  assert.equal(formatMediaTimestamp(3723.4), '@1:02:03.4');
 
   const parts = parseTimecodeTokens('See @01:24, (@12.5s), @1:02:03, and user@example.com').filter((p) => p.kind === 'timecode');
   assert.deepEqual(parts, [

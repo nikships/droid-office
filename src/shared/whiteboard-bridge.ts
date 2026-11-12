@@ -95,8 +95,8 @@ export type FrameMsg =
   | { type: 'write'; write: StateWrite }
   /** `whiteboard.action(name, data)`, or a `data-wb-action` button; `ping` when the button has `data-wb-ping`. */
   | { type: 'action'; name: string; data?: Json; ping?: ActionPing }
-  /** The answer to `anchorAt`; null when the point is outside the page. */
-  | { type: 'anchor'; req: number; anchor: Anchor | null }
+  /** The answer to `anchorAt`; null when the point is outside the page. `mediaTime` is the card media's current position in seconds when present. */
+  | { type: 'anchor'; req: number; anchor: Anchor | null; mediaTime?: number }
   /** The answer to `locate`: each anchor's page point, or detached when it can't be placed. */
   | { type: 'positions'; req: number; positions: { id: string; point: Point | null; detached: boolean }[] }
   /** The page's laid-out size and scroll, sent on load and whenever either changes. */
@@ -104,7 +104,7 @@ export type FrameMsg =
   /** Wheel deltas are device CSS pixels, but the pointer is in the frame's canonical coordinates. */
   | { type: 'wheel'; point: Point; dx: number; dy: number; deltaMode: number; zoom: boolean; shift: boolean }
   | { type: 'space'; pressed: boolean }
-  | { type: 'shortcut'; key: 'm' | 'h' | 'f' | '+' | '-' | '0' | '1' }
+  | { type: 'shortcut'; key: 'm' | 'h' | 'f' | '+' | '-' | '0' | '1' | '[' | ']' }
   /** Middle-button drag coordinates are screen pixels, unaffected by the frame's transform. */
   | { type: 'pan'; phase: 'start' | 'move' | 'end'; point: Point }
   /** What has focus in the frame now, sent whenever it, its caret or its unsaved value changes; null when nothing does. */
@@ -194,8 +194,11 @@ export function parseFrameMsg(data: unknown, nonce: string): FrameMsg | undefine
       if (d.ping !== undefined) msg.ping = d.ping.label === undefined ? { text: d.ping.text } : { text: d.ping.text, label: d.ping.label };
       return msg;
     }
-    case 'anchor':
-      return isReq(d.req) && (d.anchor === null || isAnchor(d.anchor)) ? { type: 'anchor', req: d.req, anchor: d.anchor } : undefined;
+    case 'anchor': {
+      if (!isReq(d.req) || !(d.anchor === null || isAnchor(d.anchor))) return undefined;
+      if (d.mediaTime !== undefined && !(isNum(d.mediaTime) && d.mediaTime >= 0)) return undefined;
+      return { type: 'anchor', req: d.req, anchor: d.anchor, ...(d.mediaTime === undefined ? {} : { mediaTime: d.mediaTime }) };
+    }
     case 'positions':
       if (!isReq(d.req) || !Array.isArray(d.positions)) return undefined;
       if (!d.positions.every((p: unknown) => isObject(p) && typeof p.id === 'string' && (p.point === null || isPoint(p.point)) && typeof p.detached === 'boolean')) return undefined;
@@ -211,7 +214,7 @@ export function parseFrameMsg(data: unknown, nonce: string): FrameMsg | undefine
     case 'space':
       return typeof d.pressed === 'boolean' ? { type: 'space', pressed: d.pressed } : undefined;
     case 'shortcut':
-      return ['m', 'h', 'f', '+', '-', '0', '1'].includes(d.key) ? { type: 'shortcut', key: d.key } : undefined;
+      return ['m', 'h', 'f', '+', '-', '0', '1', '[', ']'].includes(d.key) ? { type: 'shortcut', key: d.key } : undefined;
     case 'pan':
       return ['start', 'move', 'end'].includes(d.phase) && isPoint(d.point) ? { type: 'pan', phase: d.phase, point: d.point } : undefined;
     case 'focus': {

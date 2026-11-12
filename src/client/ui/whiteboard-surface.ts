@@ -19,6 +19,7 @@ import {
   STICKY_COLORS,
   STICKY_SIZE,
   applyOps,
+  cardFormat,
   emptyBoard,
   findCard,
   jsonEqual,
@@ -38,6 +39,7 @@ import {
   type StickyColor,
   type Thread,
 } from '../../shared/whiteboard';
+import { formatMediaTimestamp } from '../../shared/whiteboard-markdown';
 import { canvasBounds, dragBox, dragMarkOps, dragPreview, pictureSize, reattachMarkOps } from '../../shared/whiteboard-marks';
 import type { ButtonTarget } from '../../shared/whiteboard-ping';
 import { withToken } from '../token';
@@ -100,6 +102,8 @@ export interface SurfaceHost {
   changedMarks(): Set<string>;
   /** The latest render, for a placeholder while the frame loads. */
   render(): WhiteboardRenderInfo | undefined;
+  /** Switches to the previous (-1) or next (+1) card when `[` or `]` is pressed inside the frame. */
+  navigate?(dir: -1 | 1): void;
 }
 
 interface Slot {
@@ -280,8 +284,9 @@ export class Surface {
     this.offs.push(() => document.removeEventListener('fullscreenchange', onFs));
     this.offs.push(
       claimEscape(this.el, () => {
-        if (document.fullscreenElement === this.el) {
-          this.leaveFullscreen();
+        if (document.fullscreenElement && this.el.contains(document.fullscreenElement)) {
+          if (document.fullscreenElement === this.el) this.leaveFullscreen();
+          else void document.exitFullscreen().catch(() => {});
           return true;
         }
         // Esc inside the page makes the browser leave full screen before the frame can forward the key.
@@ -424,6 +429,8 @@ export class Surface {
   private leaveFullscreen() {
     if (document.fullscreenElement !== this.el) return;
     this.leavingFs = true;
+    this.swallowEsc = false;
+    clearTimeout(this.swallowTimer);
     void document.exitFullscreen();
   }
 
@@ -447,6 +454,13 @@ export class Surface {
     }
     if (this.nestedFs) {
       this.nestedFs = false;
+      if (!top) {
+        this.swallowEsc = true;
+        clearTimeout(this.swallowTimer);
+        this.swallowTimer = window.setTimeout(() => {
+          this.swallowEsc = false;
+        }, 350);
+      }
       if ((top === this.el) === this.el.classList.contains('fs')) return;
     }
     const on = top === this.el;
@@ -777,6 +791,7 @@ export class Surface {
         else if (msg.key === 'f') void this.toggleFullscreen();
         else if (msg.key === '0') this.fit();
         else if (msg.key === '1') this.actual();
+        else if (msg.key === '[' || msg.key === ']') this.host.navigate?.(msg.key === '[' ? -1 : 1);
         else this.zoomBy(msg.key === '+' ? 1 : -1);
         break;
       case 'pan':
@@ -867,20 +882,25 @@ export class Surface {
   }
 
   /** Which anchor a page point lands on: the frame's answer on an artifact, the point itself on a canvas. */
-  anchorAt(p: Point): Promise<Anchor> {
+  async anchorAt(p: Point): Promise<Anchor> {
+    return (await this.anchorWithMediaAt(p)).anchor;
+  }
+
+  private anchorWithMediaAt(p: Point): Promise<{ anchor: Anchor; mediaTime?: number }> {
     const point = { x: Math.round(p.x), y: Math.round(p.y) };
     const fallback: Anchor = { kind: 'point', point };
     const s = this.slot;
-    if (this.card.kind === 'canvas' || !s?.ready) return Promise.resolve(fallback);
+    if (this.card.kind === 'canvas' || !s?.ready) return Promise.resolve({ anchor: fallback });
     return new Promise((resolve) => {
       const req = ++this.reqSeq;
       const timer = setTimeout(() => {
         this.reqs.delete(req);
-        resolve(fallback);
+        resolve({ anchor: fallback });
       }, 1500);
       this.reqs.set(req, (msg) => {
         clearTimeout(timer);
-        resolve(msg.type === 'anchor' && msg.anchor ? msg.anchor : fallback);
+        if (msg.type === 'anchor') resolve({ anchor: msg.anchor ?? fallback, mediaTime: msg.mediaTime });
+        else resolve({ anchor: fallback });
       });
       this.post(s, { type: 'anchorAt', req, point });
     });
@@ -1334,6 +1354,10 @@ export class Surface {
     this.el.addEventListener(
       'pointerdown',
       (e) => {
+        if (this.swallowEsc) {
+          this.swallowEsc = false;
+          clearTimeout(this.swallowTimer);
+        }
         if (e.button !== 1 && !(e.button === 0 && (this.pan || this.spacePan))) return;
         if ((e.target as HTMLElement).closest('.wb-composer, .wb-navigation-hint, .wb-fs-exit')) return;
         e.stopImmediatePropagation();
@@ -1455,10 +1479,17 @@ export class Surface {
   }
 
   private openComposer(p: Point) {
-    const ta = h('textarea.input', { 'aria-label': 'Comment', placeholder: 'Comment…', rows: '3', maxlength: '10000' });
+    const isVideo = cardFormat(this.card) === 'video';
+    const ta = h('textarea.input', {
+      'aria-label': 'Comment',
+      placeholder: isVideo ? 'Comment (or click + @time below)…' : 'Comment…',
+      rows: '3',
+      maxlength: '10000',
+    });
     const send = h('button.btn.sm.accent', { type: 'button' }, 'Comment');
     const cancel = h('button.btn.sm.ghost', { type: 'button' }, 'Cancel');
-    const el = h('div.wb-composer', {}, ta, h('div.row', {}, h('span.grow', {}, h('span.key', {}, '⌘↵'), 'sends'), cancel, send));
+    const timeSlot = h('span.wb-composer-time');
+    const el = h('div.wb-composer', {}, ta, h('div.row', {}, timeSlot, h('span.grow', {}, h('span.key', {}, '⌘↵'), 'sends'), cancel, send));
     el.addEventListener('pointerdown', (e) => e.stopPropagation());
     this.place(el, p.x, p.y);
     this.marks.append(el);
@@ -1469,13 +1500,46 @@ export class Surface {
     const dx = Math.max(0, box.right - view.right + 8) / z;
     const dy = Math.max(0, box.bottom - view.bottom + 8) / z;
     if (dx || dy) this.place(el, p.x - dx, p.y - dy);
-    const anchorP = this.anchorAt(p);
+    const resolvedP = this.anchorWithMediaAt(p);
+    if (isVideo) {
+      void resolvedP.then(({ mediaTime }) => {
+        if (!this.composer || this.composer.el !== el) return;
+        const saved = this.card.state.selectedTime;
+        const fallbackSec = saved && typeof saved === 'object' && !Array.isArray(saved) && typeof saved.seconds === 'number' ? saved.seconds : undefined;
+        const sec = mediaTime ?? fallbackSec;
+        if (sec === undefined || !Number.isFinite(sec) || sec < 0) return;
+        const stamp = formatMediaTimestamp(sec);
+        const insertBtn = h(
+          'button.wb-timecode',
+          {
+            type: 'button',
+            title: `Insert video timestamp ${stamp}`,
+            onclick: () => {
+              if (!ta.value.includes(stamp)) {
+                const start = ta.selectionStart ?? ta.value.length;
+                const end = ta.selectionEnd ?? ta.value.length;
+                const padBefore = start > 0 && !/\s$/.test(ta.value.slice(0, start)) ? ' ' : '';
+                const padAfter = end < ta.value.length && !/^\s/.test(ta.value.slice(end)) ? ' ' : ' ';
+                const ins = `${padBefore}${stamp}${padAfter}`;
+                ta.value = ta.value.slice(0, start) + ins + ta.value.slice(end);
+                const caret = start + ins.length;
+                ta.setSelectionRange(caret, caret);
+              }
+              ta.focus();
+            },
+          },
+          `+ ${stamp}`,
+        );
+        timeSlot.replaceChildren(insertBtn);
+      });
+    }
     const submit = async () => {
       const text = ta.value.trim();
       if (!text) return ta.focus();
       this.closeComposer();
       const thread = newId('t');
-      void this.host.apply([{ op: 'comment.add', card: this.card.id, thread, message: newId('m'), anchor: await anchorP, text }], 'Adding the comment');
+      const { anchor } = await resolvedP;
+      void this.host.apply([{ op: 'comment.add', card: this.card.id, thread, message: newId('m'), anchor, text }], 'Adding the comment');
       this.selected = thread;
       this.host.selectMark('thread', thread);
     };

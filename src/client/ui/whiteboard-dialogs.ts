@@ -242,10 +242,17 @@ export function openAddCard(floor: string, create: (ops: Op[], card: string) => 
     'aria-label': 'Markdown',
   });
   const mdFile = h('input', { type: 'file', accept: '.md,.markdown,text/markdown,text/plain' });
-  const themeSelect = h('select.select', { 'aria-label': 'Factory theme' }, h('option', { value: 'dark', selected: true }, 'Factory Dark (product)'), h('option', { value: 'light' }, 'Factory Light (document)'));
-  themeSelect.addEventListener('change', () => {
-    theme = themeSelect.value === 'light' ? 'light' : 'dark';
-  });
+  const makeThemeSelect = () => {
+    const sel = h('select.select', { 'aria-label': 'Factory theme' }, h('option', { value: 'dark', selected: true }, 'Factory Dark (product)'), h('option', { value: 'light' }, 'Factory Light (document)'));
+    sel.addEventListener('change', () => {
+      theme = sel.value === 'light' ? 'light' : 'dark';
+      themeSelect.value = theme;
+      mediaThemeSelect.value = theme;
+    });
+    return sel;
+  };
+  const themeSelect = makeThemeSelect();
+  const mediaThemeSelect = makeThemeSelect();
 
   const mediaFile = h('input', {
     type: 'file',
@@ -290,7 +297,13 @@ export function openAddCard(floor: string, create: (ops: Op[], card: string) => 
       field('Markdown', mdArea, 'Rendered in 1280px Factory typography with numbered section eyebrows, tables, callouts, and interactive `- [ ]` task checkboxes.'),
       h('div.wb-add-split', {}, field('Or load a .md file', mdFile), field('Surface mood', themeSelect)),
     ),
-    media: h('div.stack.tight', {}, field('Video or image file', mediaFile, 'MP4, WebM, MOV, Ogg, PNG, JPEG, WebP, GIF, or SVG up to 100 MB.'), posterWrap, field('Caption (optional)', captionInput)),
+    media: h(
+      'div.stack.tight',
+      {},
+      h('div.wb-add-split', {}, field('Video or image file', mediaFile, 'MP4, WebM, MOV, Ogg, PNG, JPEG, WebP, GIF, or SVG up to 100 MB.'), field('Surface mood', mediaThemeSelect)),
+      posterWrap,
+      field('Caption (optional)', captionInput),
+    ),
     paste: h('div.stack.tight', {}, h('div.row.between', {}, h('span.field-hint', {}, '1280px wide HTML artifact. Scripts run in a sandboxed iframe with window.whiteboard.'), starterBtn), field('HTML', paste)),
     file: h('div.stack.tight', {}, field('Page', fileInput, 'One .html file. For a page with local images, styles or scripts, upload its folder instead.')),
     folder: h('div.stack.tight', {}, field('Folder', folderInput, 'Every file in it goes up with the page, so relative links, ES module imports and fetch() work.'), field('Open', entrySelect), summary),
@@ -391,13 +404,13 @@ export function openAddCard(floor: string, create: (ops: Op[], card: string) => 
           posterRel = `poster.${extForMime(pMime, pf.name)}`;
           list.push({ rel: posterRel, file: pf, mime: pMime });
         }
-        const html = renderVideoArtifact({ title: cardTitle, videoSrc: videoRel, videoMime: mime, posterSrc: posterRel, caption, sizeBytes: f.size });
+        const html = renderVideoArtifact({ title: cardTitle, videoSrc: videoRel, videoMime: mime, posterSrc: posterRel, caption, sizeBytes: f.size, theme });
         list.unshift({ rel: 'index.html', file: new Blob([html], { type: 'text/html' }), mime: 'text/html; charset=utf-8' });
         return { entry: 'index.html', format: 'video', files: list };
       }
       const dims = await measureImage(f);
       const imgRel = `image.${ext}`;
-      const html = renderImageArtifact({ title: cardTitle, imageSrc: imgRel, imageMime: mime, width: dims.w, height: dims.h, sizeBytes: f.size, caption });
+      const html = renderImageArtifact({ title: cardTitle, imageSrc: imgRel, imageMime: mime, width: dims.w, height: dims.h, sizeBytes: f.size, caption, theme });
       return {
         entry: 'index.html',
         format: 'image',
@@ -456,6 +469,13 @@ export function openAddCard(floor: string, create: (ops: Op[], card: string) => 
     progress.classList.add('hidden');
     if (ok) modal.close();
     else say('The board refused it. The reason is in the window.');
+  });
+
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !add.disabled) {
+      e.preventDefault();
+      add.click();
+    }
   });
 
   const modal = openModal(el, { size: 'lg' });
