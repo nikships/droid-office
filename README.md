@@ -156,6 +156,7 @@ Workers pin live HTML pages, screenshots and forms to the Whiteboard. Open one, 
 - **Separate checkouts for parallel work.** Give each worker its own git worktree and branch, with automatic project setup and the untracked files it needs copied in.
 - **A floor per project.** Ride the elevator between existing repositories, each with its own workers and boards. No re-cloning.
 - **Peer visits.** Independent workers walk over, read each other's screens, ask questions and hand over tasks.
+- **Linear.** Connect a workspace, hand tickets to workers or let autopilot pick them up, and follow their progress through merge.
 - **Jira Cloud.** Connect a read-only token, choose an epic and hand its tickets to workers. The office never writes to Jira.
 - **Cross-repository tasks.** One worker, several project worktrees, and a pull request for each.
 - **Celebrate a merge.** The brass gong rings, confetti falls and workers dance on their desks.
@@ -175,7 +176,7 @@ Workers pin live HTML pages, screenshots and forms to the Whiteboard. Open one, 
   &nbsp; <a href="https://docs.factory.com/model-independence/byok"><kbd>Custom models / BYOK</kbd></a>
 </p>
 <p align="center">
-  <kbd>GitHub</kbd> &nbsp; <kbd>GitLab + self-managed</kbd> &nbsp; <kbd>Jira Cloud</kbd>
+  <kbd>GitHub</kbd> &nbsp; <kbd>GitLab + self-managed</kbd> &nbsp; <kbd>Jira Cloud</kbd> &nbsp; <kbd>Linear</kbd>
 </p>
 
 Every hired worker runs **Factory Droid**, not a separate agent harness. Pick from [Droid's current model catalog](https://docs.factory.com/models) or your configured custom models, with the reasoning effort each supports. Availability follows your Droid configuration and account, not a hard-coded model list.

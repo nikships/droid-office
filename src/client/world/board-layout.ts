@@ -1,8 +1,8 @@
 // Where things sit on the issues wall board's canvas, and what a point on it lands on. Pure, so
 // tests can load it in Node (see world/boards.ts for the drawing).
 
-/** Which view the issues wall board shows: the forge's issues, or the floor's Jira epic. */
-export type WallTab = 'issues' | 'jira';
+/** Which view the issues wall board shows: the forge's issues, the floor's Jira epic or its Linear team. */
+export type WallTab = 'issues' | 'jira' | 'linear';
 
 /** Something on the wall board you can point at other than an issue note. */
 export type BoardSpot = { kind: 'tab'; tab: WallTab } | { kind: 'ticket'; key: string };
@@ -14,20 +14,21 @@ export interface Rect {
   h: number;
 }
 
-/** The tab strip across the top of the board, when the floor has a Jira epic. */
+/** The tab strip across the top of the board, when the floor has a Jira epic or a Linear team. */
 export const TAB_H = 64;
 const TAB_W = 360;
+/** Narrower with three tabs, so the "point at a tab" hint still fits on the right. */
+const TAB_W_3 = 280;
 const TAB_GAP = 12;
 const TAB_PAD = 20;
 
-export function tabRects(): Record<WallTab, Rect> {
-  return {
-    issues: { x: TAB_PAD, y: 8, w: TAB_W, h: TAB_H - 16 },
-    jira: { x: TAB_PAD + TAB_W + TAB_GAP, y: 8, w: TAB_W, h: TAB_H - 16 },
-  };
+/** Where each of `tabs` sits in the strip, left to right in the order given. */
+export function tabRects(tabs: readonly WallTab[] = ['issues', 'jira']): Partial<Record<WallTab, Rect>> {
+  const w = tabs.length > 2 ? TAB_W_3 : TAB_W;
+  return Object.fromEntries(tabs.map((tab, i) => [tab, { x: TAB_PAD + i * (w + TAB_GAP), y: 8, w, h: TAB_H - 16 }]));
 }
 
-/** The Jira view's three columns and the cards in them, top to bottom, with how many didn't fit. */
+/** A ticket view's columns (Jira's three, Linear's four) and the cards in them, top to bottom, with how many didn't fit. */
 export interface JiraLayout {
   columns: { rect: Rect; cards: Rect[]; hidden: number }[];
 }

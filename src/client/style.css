@@ -965,6 +965,19 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .card .num a:hover { text-decoration: underline; }
 .card .meta .pill { font-size: 9.5px; padding: 1px 6px; }
 .jira-form { display: flex; flex-direction: column; gap: 8px; }
+/* The Linear tab: a state chip dotted in the team's color for it, and priority bars as Linear draws them. */
+.linear-state { display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); font-size: 10px; white-space: nowrap; }
+.linear-state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--text-secondary)); flex: none; }
+.linear-prio { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+.linear-prio-mark { font-size: 8px; letter-spacing: -1px; color: var(--text-secondary); }
+.linear-prio.urgent .linear-prio-mark { display: inline-grid; place-items: center; width: 12px; height: 12px; border-radius: 2px; background: var(--accent); color: #111; font-weight: 700; letter-spacing: 0; }
+.linear-list { margin: 0; padding: 0 0 0 var(--space-4); display: flex; flex-direction: column; gap: var(--space-1); }
+.linear-list small { color: var(--text-secondary); }
+.linear-pilot { white-space: nowrap; }
+.linear-pilot.on { border-color: var(--accent); color: var(--accent); }
+.linear-desc { min-height: 140px; resize: vertical; font: inherit; }
+.linear-another { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: var(--text-small); }
+.board-status.bad { color: var(--danger); }
 .detail pre { white-space: pre-wrap; word-break: break-word; font: 13px/1.5 var(--font-mono); background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; max-height: 45vh; overflow: auto; margin: 10px 0 0; }
 .detail .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font: 400 12px var(--font-mono); color: var(--text-secondary); }
 .detail a { color: var(--info); font-weight: 600; }

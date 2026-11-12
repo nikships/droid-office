@@ -20,6 +20,7 @@ import { debounce, type ToolRefresh } from './hook-refresh.js';
 import { Decor } from './decor.js';
 import { Docs } from './docs.js';
 import { FloorJira, type JiraOffice } from './jira.js';
+import { FloorLinear, type LinearOffice } from './linear.js';
 import { landedWorkers } from './leave-on-merge.js';
 import type { Capacity } from './machine.js';
 import type { PromptSource } from './prompts.js';
@@ -58,6 +59,13 @@ export interface FloorContext {
   capacity: Capacity;
   /** The office's Jira connection, which every floor's epic goes through. */
   jira: JiraOffice;
+  /** The office's Linear workspace, which every floor's team goes through. */
+  linear: LinearOffice;
+  /**
+   * Hires a worker at the floor's first free desk for a Linear ticket, as the owner's Hand to a worker
+   * does (the ticket linked to it), for the floor's Linear autopilot. Resolves to its id, or why not.
+   */
+  linearHire(floor: Floor, prompt: string, identifier: string, model?: string): Promise<{ workerId?: string; error?: string }>;
   /** The office's prompts and the worker a new one starts on when nobody picks, as set in Settings. */
   prompts: PromptSource;
   /** To everyone on this floor. */
@@ -155,6 +163,8 @@ export class Floor {
   readonly board: Board;
   /** The floor's Jira epic, as the issue board's Jira tab (see jira.ts). */
   readonly jira: FloorJira;
+  /** The floor's Linear team, as the issue board's Linear tab, its workers' tickets and its autopilot (see linear.ts). */
+  readonly linear: FloorLinear;
   /** Its repository's GitHub Actions runs, or its GitLab project's pipelines (see pipelines.ts). */
   readonly pipelines: Pipelines;
   readonly changes: Changes;
@@ -219,12 +229,27 @@ export class Floor {
         this.merged(p.number);
       }
       this.sendLandedHome();
+      void this.linear.sync(state.items);
       ctx.pullsChanged(this);
     };
     this.jira = new FloorJira(dataDir, ctx.jira, {
       state: (state) => ctx.emit(this, { t: 'jira', state }),
       board: (state) => ctx.emit(this, { t: 'jira.board', state }),
     });
+    this.linear = new FloorLinear(
+      dataDir,
+      ctx.linear,
+      ctx.prompts,
+      {
+        state: (state) => ctx.emit(this, { t: 'linear', state }),
+        board: (state) => ctx.emit(this, { t: 'linear.board', state }),
+        toast: (text, level) => ctx.toast(this, text, level),
+        hire: (prompt, identifier, model) => ctx.linearHire(this, prompt, identifier, model),
+        workers: () => this.workers?.list() ?? [],
+        pullName: (n) => `${words.pr} ${words.ref(n)}`,
+      },
+      [def.name, def.repo, path.basename(def.dir)],
+    );
     this.board = this.plain ? new NoBoard() : forge === 'gitlab' && def.repo ? new GitLab(def.dir, def.repo, onIssues, onPulls) : new GitHub(def.dir, onIssues, onPulls);
 
     this.workers = new WorkerManager(
@@ -242,12 +267,17 @@ export class Floor {
           ctx.workerChanged(this, worker);
           // Its turn ended, or whoever had its terminal open closed it: it may be free to go now.
           this.sendLandedHome();
+          // Its pull request may have just opened: its Linear ticket moves to review.
+          this.linear?.workersChanged();
+          if (worker.pr && this.linear?.linkOf(worker.id)) void this.linear.sync(this.board.pulls.items);
         },
         remove: (workerId, shot) => {
           this.changes?.forget(workerId);
           ctx.emit(this, { t: 'worker.remove', workerId, ...(shot ? { shot } : {}) });
           workerLeft(workerId, ctx.building, this);
           ctx.workerChanged(this, workerId);
+          this.linear?.workersChanged();
+          void this.linear?.sync(this.board.pulls.items);
         },
         data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
         screen: (workerId, frame) => {
@@ -462,11 +492,14 @@ export class Floor {
 
     void this.board.refresh();
     void this.jira.refresh();
+    void this.linear.refresh();
     // A floor with an owner connection on it, or work under way, keeps its boards fresh; the others check in now and then.
+    // Linear autopilot keeps its floor's tickets fresh even with nobody there: it's what hands them out.
     this.timer = setInterval(() => {
       const active = this.active();
       if (active || Date.now() - this.board.issues.fetchedAt > IDLE_REFRESH_MS) void this.board.refresh();
       if (active || Date.now() - this.jira.fetchedAt > IDLE_REFRESH_MS) void this.jira.refresh();
+      if (active || this.linear.piloted || Date.now() - this.linear.fetchedAt > IDLE_REFRESH_MS) void this.linear.refresh();
     }, REFRESH_MS);
   }
 
@@ -533,6 +566,7 @@ export class Floor {
   arrived() {
     if (Date.now() - Math.max(this.board.issues.fetchedAt, this.board.pulls.fetchedAt) > REFRESH_MS) void this.board.refresh();
     if (Date.now() - this.jira.fetchedAt > REFRESH_MS) void this.jira.refresh();
+    if (Date.now() - this.linear.fetchedAt > REFRESH_MS) void this.linear.refresh();
     if (Date.now() - this.pipelines.state.fetchedAt > PIPELINES_STALE_MS) void this.pipelines.refresh();
   }
 

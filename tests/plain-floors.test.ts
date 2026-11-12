@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Building, isCheckout, originRepo, type FloorDef } from '../src/server/building.js';
 import { Floor, projectInfo, type FloorContext } from '../src/server/floor.js';
+import { LinearOffice } from '../src/server/linear.js';
 import { NoBoard } from '../src/server/forge.js';
 import { floorPipelines } from '../src/server/pipelines.js';
 import { Worktrees } from '../src/server/worktrees.js';
@@ -162,6 +163,12 @@ test('a floor removes leftover guests.json on load', (t) => {
     agentArgs: [],
     hook: { url: 'http://127.0.0.1:4600', token: '' },
     jira: { connected: false, client: () => undefined },
+    linear: new LinearOffice(
+      dataDir,
+      async () => new Response('{}'),
+      () => {},
+    ),
+    linearHire: async () => ({ error: 'no hiring in this test' }),
     prompts: new Map(),
     emit: () => {},
     toast: () => {},

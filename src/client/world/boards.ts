@@ -6,6 +6,7 @@ import type { Forge } from '../../shared/floors';
 import { pipelineGroups, pipelinePolicy, type PipelinesState, type RunState } from '../../shared/pipelines';
 import { runRows } from './pipeline-rows';
 import { ticketColumns, type JiraBoardState, type JiraCategory } from '../../shared/jira';
+import { linearColumns, PRIORITY_NAMES, type LinearBoardState } from '../../shared/linear';
 import { words, workerForPull } from '../state';
 import { SANS, MONO } from '../fonts';
 import { TAB_H, inRect, jiraLayout, tabRects, type BoardSpot, type Rect, type WallTab } from './board-layout';
@@ -127,6 +128,14 @@ interface DrawnNote {
 
 const CATEGORY_COLOR: Record<JiraCategory, string> = { new: MUTED, indeterminate: ORANGE, done: GREEN };
 
+/** A card on a ticket view (Jira or Linear): its key, title, what's on its right and its edge color. */
+interface WallTicket {
+  key: string;
+  title: string;
+  side: string;
+  color: string;
+}
+
 function spotKey(spot: BoardSpot | null): string {
   return !spot ? '' : spot.kind === 'tab' ? `tab:${spot.tab}` : `ticket:${spot.key}`;
 }
@@ -143,8 +152,9 @@ function reviewBadge(p: GhPull): [string, string] {
 
 /**
  * Renders a wall display onto a canvas texture: the issues as pinned cards, or the pull requests as a
- * code review table. The issues board of a floor with a Jira epic also draws a tab strip across its
- * top, and on its Jira tab the epic's tickets in To Do, In Progress and Done.
+ * code review table. The issues board of a floor with a Jira epic or a Linear team also draws a tab
+ * strip across its top: on the Jira tab the epic's tickets in To Do, In Progress and Done, and on the
+ * Linear tab the team's in Backlog, Todo, In Progress and Done.
  */
 export class BoardTexture {
   readonly texture: THREE.CanvasTexture;
@@ -158,6 +168,7 @@ export class BoardTexture {
   /** The tab or Jira card being pointed at, drawn outlined (see hover). */
   private hovered = '';
   private jira: JiraBoardState | null = null;
+  private linear: LinearBoardState | null = null;
   private shown: WallTab = 'issues';
   private last: [GhState<GhIssue> | GhState<GhPull>, Map<string, WorkerInfo> | undefined] | null = null;
 
@@ -215,20 +226,32 @@ export class BoardTexture {
     return this.spots.find((s) => inRect(s.rect, px, py))?.spot;
   }
 
-  /** Which view is up: the forge's issues, or the Jira epic's tickets. */
+  /** Which view is up: the forge's issues, the Jira epic's tickets or the Linear team's. */
   get tab(): WallTab {
     return this.shown;
   }
 
-  /** Takes effect on the next render. The Jira tab needs a Jira board (see setJira). */
+  /** Takes effect on the next render. The Jira and Linear tabs need their boards (see setJira, setLinear). */
   setTab(tab: WallTab) {
-    this.shown = tab === 'jira' && this.jira ? 'jira' : 'issues';
+    this.shown = (tab === 'jira' && this.jira) || (tab === 'linear' && this.linear) ? tab : 'issues';
+  }
+
+  /** The tabs the board has: none but the issues unless the floor has Jira or Linear. */
+  private tabs(): WallTab[] {
+    if (this.kind !== 'issues') return ['issues'];
+    return ['issues', ...(this.jira ? ['jira' as const] : []), ...(this.linear ? ['linear' as const] : [])];
   }
 
   /** The floor's Jira board, or null for none (no tabs then). Takes effect on the next render. */
   setJira(jira: JiraBoardState | null) {
     this.jira = jira;
-    if (!jira) this.shown = 'issues';
+    if (!jira && this.shown === 'jira') this.shown = 'issues';
+  }
+
+  /** The floor's Linear board, or null for none. Takes effect on the next render. */
+  setLinear(linear: LinearBoardState | null) {
+    this.linear = linear;
+    if (!linear && this.shown === 'linear') this.shown = 'issues';
   }
 
   /** `workers` lets PR rows name the desk they came from. */
@@ -239,11 +262,16 @@ export class BoardTexture {
     const g = this.ctx;
     backdrop(g);
     const open = (state.items as (GhIssue | GhPull)[]).filter((i) => i.state === 'OPEN');
-    const jira = this.kind === 'issues' ? this.jira : null;
-    const top = jira ? TAB_H : 0;
-    if (jira) this.drawTabs(jira, open.length);
-    if (jira && this.shown === 'jira') {
-      this.drawJira(jira, top);
+    const tabs = this.tabs();
+    const top = tabs.length > 1 ? TAB_H : 0;
+    if (tabs.length > 1) this.drawTabs(tabs, open.length);
+    if (this.jira && this.shown === 'jira' && tabs.includes('jira')) {
+      this.drawJira(this.jira, top);
+      this.texture.needsUpdate = true;
+      return;
+    }
+    if (this.linear && this.shown === 'linear' && tabs.includes('linear')) {
+      this.drawLinear(this.linear, top);
       this.texture.needsUpdate = true;
       return;
     }
@@ -458,13 +486,17 @@ export class BoardTexture {
     track(g, 0);
   }
 
-  /** The tab strip: the forge's issues and the Jira epic, the one showing underlined in orange. */
-  private drawTabs(jira: JiraBoardState, openIssues: number) {
+  /** The tab strip: the forge's issues, the Jira epic and the Linear team, the one showing underlined in orange. */
+  private drawTabs(tabs: WallTab[], openIssues: number) {
     const g = this.ctx;
-    const rects = tabRects();
-    const labels: Record<WallTab, string> = { issues: `${words().site} issues · ${openIssues}`, jira: `Jira · ${jira.epic} · ${jira.items.length}` };
-    for (const tab of ['issues', 'jira'] as WallTab[]) {
-      const r = rects[tab];
+    const rects = tabRects(tabs);
+    const labels: Record<WallTab, string> = {
+      issues: `${words().site} issues · ${openIssues}`,
+      jira: `Jira · ${this.jira?.epic ?? ''} · ${this.jira?.items.length ?? 0}`,
+      linear: `Linear · ${this.linear?.team ?? ''} · ${this.linear?.items.filter((t) => t.state.type !== 'completed').length ?? 0}`,
+    };
+    for (const tab of tabs) {
+      const r = rects[tab]!;
       const on = this.shown === tab;
       const hot = this.hovered === `tab:${tab}`;
       this.spots.push({ spot: { kind: 'tab', tab }, rect: r });
@@ -487,7 +519,7 @@ export class BoardTexture {
     g.textBaseline = 'middle';
     g.fillStyle = MUTED;
     mono(g, 500, 18, 0.06);
-    g.fillText('point at a tab to switch', BOARD_W - 24, rects.issues.y + rects.issues.h / 2);
+    g.fillText('point at a tab to switch', BOARD_W - 24, rects.issues!.y + rects.issues!.h / 2);
     g.textAlign = 'left';
     g.textBaseline = 'alphabetic';
     track(g, 0);
@@ -497,8 +529,34 @@ export class BoardTexture {
   private drawJira(jira: JiraBoardState, top: number) {
     if (jira.error && !jira.items.length) return this.centerNote(`Couldn't load ${jira.epic} from Jira: ${jira.error}`, top);
     if (!jira.fetchedAt) return this.centerNote(`Loading ${jira.epic} from Jira…`, top, 'SYNCING', MUTED);
+    const cols = ticketColumns(jira.items).map((c) => ({
+      name: c.name,
+      items: c.items.map((t): WallTicket => ({ key: t.key, title: t.summary, side: [t.type, t.assignee ?? 'unassigned'].filter(Boolean).join(' · '), color: CATEGORY_COLOR[t.category] })),
+    }));
+    this.drawTickets(cols, top);
+  }
+
+  /** The Linear tab: the team's tickets in Backlog, Todo, In Progress and Done, each edged in its state's color. */
+  private drawLinear(linear: LinearBoardState, top: number) {
+    if (linear.error && !linear.items.length) return this.centerNote(`Couldn't load ${linear.team} from Linear: ${linear.error}`, top);
+    if (!linear.fetchedAt) return this.centerNote(`Loading ${linear.team} from Linear…`, top, 'SYNCING', MUTED);
+    const cols = linearColumns(linear.items).map((c) => ({
+      name: c.name,
+      items: c.items.map(
+        (t): WallTicket => ({
+          key: t.identifier,
+          title: t.title,
+          side: [t.priority >= 1 && t.priority <= 2 ? PRIORITY_NAMES[t.priority] : '', t.worker?.name ?? t.assignee ?? 'unassigned'].filter(Boolean).join(' · '),
+          color: t.worker ? ORANGE : t.state.color || MUTED,
+        }),
+      ),
+    }));
+    this.drawTickets(cols, top);
+  }
+
+  /** Columns of ticket cards, numbered in orange, with "+N more" under a column that doesn't fit. */
+  private drawTickets(cols: { name: string; items: WallTicket[] }[], top: number) {
     const g = this.ctx;
-    const cols = ticketColumns(jira.items);
     const layout = jiraLayout(
       cols.map((c) => c.items.length),
       BOARD_W,
@@ -517,7 +575,7 @@ export class BoardTexture {
       g.fillText(`0${i + 1}`, rect.x + 14, rect.y + 34);
       const idxW = g.measureText(`0${i + 1}`).width;
       g.fillStyle = INK;
-      g.fillText(col.name.toUpperCase(), rect.x + 14 + idxW + 10, rect.y + 34);
+      g.fillText(clip(g, col.name.toUpperCase(), rect.w - idxW - 70), rect.x + 14 + idxW + 10, rect.y + 34);
       g.fillStyle = MUTED;
       g.textAlign = 'right';
       g.fillText(String(col.items.length), rect.x + rect.w - 14, rect.y + 34);
@@ -536,21 +594,20 @@ export class BoardTexture {
         g.lineWidth = hot ? 4 : 2;
         g.strokeStyle = hot ? ORANGE : HAIR_STRONG;
         g.strokeRect(r.x + g.lineWidth / 2, r.y + g.lineWidth / 2, r.w - g.lineWidth, r.h - g.lineWidth);
-        g.fillStyle = CATEGORY_COLOR[t.category];
+        g.fillStyle = t.color;
         g.fillRect(r.x, r.y, 4, r.h);
         g.fillStyle = ORANGE;
         mono(g, 700, 20, 0.02);
         g.fillText(t.key, r.x + 16, r.y + 26);
         const keyW = g.measureText(t.key).width;
-        const side = [t.type, t.assignee ?? 'unassigned'].filter(Boolean).join(' · ').toUpperCase();
         g.fillStyle = MUTED;
         mono(g, 500, 15, 0.06);
         g.textAlign = 'right';
-        g.fillText(clip(g, side, r.w - keyW - 44), r.x + r.w - 12, r.y + 26);
+        g.fillText(clip(g, t.side.toUpperCase(), r.w - keyW - 44), r.x + r.w - 12, r.y + 26);
         g.textAlign = 'left';
         g.fillStyle = INK;
         sans(g, 600, 20);
-        wrap(g, t.summary, r.w - 30, 2).forEach((line, li) => g.fillText(line, r.x + 16, r.y + 54 + li * 24));
+        wrap(g, t.title, r.w - 30, 2).forEach((line, li) => g.fillText(line, r.x + 16, r.y + 54 + li * 24));
       });
       if (hidden > 0) this.more(hidden, rect.x + rect.w - 14, rect.y + rect.h - 12);
     });

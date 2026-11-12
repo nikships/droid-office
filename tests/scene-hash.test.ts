@@ -26,6 +26,7 @@ const NOT_SCENE: Record<string, string> = {
   'src/shared/factory-computers': 'Factory data on screens',
   'src/shared/factory-sessions': 'Factory data on screens',
   'src/shared/jira': 'board data',
+  'src/shared/linear': 'board data',
   'src/shared/mission-control': 'building agents (hidden while baking)',
   'src/shared/nav': 'floor navigation',
   'src/shared/pipelines': 'board data',

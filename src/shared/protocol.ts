@@ -6,6 +6,7 @@ import type { DecorPlacement, Decoration } from './decor.js';
 import type { FactoryFeatureId, FactoryState } from './factory.js';
 import type { CloudHire, CloudWorker } from './factory-cloud.js';
 import type { JiraBoardState, JiraFloorState } from './jira.js';
+import type { LinearBoardState, LinearFloorState, LinearPickup } from './linear.js';
 import type { JukeboxState } from './jukebox.js';
 import type { PipelineDetail, PipelinesState } from './pipelines.js';
 import type { PromptId } from './prompts.js';
@@ -549,6 +550,10 @@ export interface FloorView {
   jira: JiraFloorState;
   /** The Jira tab of the issue board; null on a floor without an epic. */
   jiraBoard: JiraBoardState | null;
+  /** The office's Linear workspace, this floor's team and its autopilot. */
+  linear: LinearFloorState;
+  /** The Linear tab of the issue board; null on a floor without a Linear team. */
+  linearBoard: LinearBoardState | null;
 }
 
 /** Every desk and cloud worker on one floor, with its pull requests, for building-wide views. */
@@ -796,7 +801,7 @@ type ClientMessage =
    * With `issue`, the worker is there for that GitHub issue: it's assigned on GitHub (so it moves to In progress).
    * `deskId` is a seat's id, or AUTO_DESK (`"auto"`) for the first free desk on the sender's floor (then the first free bean bag).
    */
-  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; repos?: string[]; images?: string[]; cloud?: CloudHire }
+  | { t: 'worker.spawn'; deskId: string; prompt?: string; worktree?: boolean; kind?: WorkerKind; model?: string; effort?: AgentEffort; issue?: number; linear?: string; repos?: string[]; images?: string[]; cloud?: CloudHire }
   | { t: 'worker.resume'; workerId: string }
   /** Stops the turn a worker is in: Escape in a local agent's terminal, an interrupt of a cloud worker's Factory session. */
   | { t: 'worker.interrupt'; workerId: string }
@@ -816,7 +821,7 @@ type ClientMessage =
    * With `queue`, an agent's prompt is submitted with Ctrl+Enter instead of Enter, so Droid queues it
    * behind what it is doing rather than sending it now (a shell gets Enter either way).
    */
-  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; images?: string[]; queue?: boolean }
+  | { t: 'worker.prompt'; workerId: string; prompt: string; issue?: number; linear?: string; images?: string[]; queue?: boolean }
   /** Rechecks the current worker and screen on the server before answering the menu shown to the owner.
    * Send exactly one of `choice` or `text`. The server rejects neither and both. */
   | { t: 'worker.answer'; workerId: string; menu: Menu; choice?: number; choices?: number[]; text?: string }
@@ -864,6 +869,18 @@ type ClientMessage =
   | { t: 'jira.epic'; key: string }
   /** Read the floor's Jira tab again now. */
   | { t: 'jira.refresh' }
+  /** Connect the office to Linear with a personal API key; answered with `linear.setup`. */
+  | { t: 'linear.connect'; key: string }
+  /** Forget the office's Linear connection. */
+  | { t: 'linear.disconnect' }
+  /** Point the floor you're on at a Linear team (by id or key; '' takes Linear off it) and optionally one of its projects; answered with `linear.setup`. */
+  | { t: 'linear.team'; team: string; project?: string }
+  /** Change the floor's Linear autopilot; answered with `linear.setup`. */
+  | { t: 'linear.autopilot'; on?: boolean; pickup?: LinearPickup[]; max?: number; existing?: boolean; model?: string }
+  /** Read the floor's Linear tab (and the workspace's teams) again now. */
+  | { t: 'linear.refresh' }
+  /** Write a ticket in the floor's team (and project), in Todo unless `state` says Backlog; answered with `linear.setup`. */
+  | { t: 'linear.create'; title: string; description?: string; priority?: number; state?: 'backlog' | 'unstarted' }
   /** Connect the office to Factory with an API key (replacing the one it has); answered with `factory.setup`. */
   | { t: 'factory.connect'; key: string }
   /** Forget the office's Factory key, and everything read with it. */
@@ -1101,6 +1118,11 @@ export type ServerMsg =
   | { t: 'jira.board'; state: JiraBoardState | null }
   /** To whoever is setting Jira up: done, or why not. */
   | { t: 'jira.setup'; step: 'connect' | 'epic'; ok?: boolean; error?: string }
+  /** The office's Linear connection, this floor's team or its autopilot changed. */
+  | { t: 'linear'; state: LinearFloorState }
+  | { t: 'linear.board'; state: LinearBoardState | null }
+  /** To whoever is setting Linear up or writing a ticket: done (with the ticket `linear.create` made), or why not. */
+  | { t: 'linear.setup'; step: 'connect' | 'team' | 'autopilot' | 'create'; ok?: boolean; error?: string; identifier?: string }
   /** The Factory connection or a Factory feature's slice changed: all of it, to everyone. */
   | { t: 'factory'; state: FactoryState }
   /** To whoever sent `factory.connect`: connected, or why not. */

@@ -59,6 +59,14 @@ Floor workers retain their team, visit and Whiteboard contracts. External bots l
 | `office_worker_answer` | `worker.answer` | `workerId`, `floor?`, `menu`, `choice?`, `choices?`, `text?`; [full schema reference](guide/remote-mcp.md#office_worker_answer) | building agents; floor-worker targets only |
 | `office_worker_interrupt` | `worker.interrupt` | `workerId`, `floor?`; [full schema reference](guide/remote-mcp.md#office_worker_interrupt) | building agents; floor-worker targets only |
 | `office_worker_thread` | `thread.read` | `workerId`, `floor?`, `before?`; [full schema reference](guide/remote-mcp.md#office_worker_thread) | building agents; may read Orchestrator |
+| `linear_issues` | Linear ticket search | `query?`, `team?`, `state?`, `assignee?`, `project?`, `label?`, `priority?`, `includeDone?`, `limit?` | floor workers and building agents, while connected |
+| `linear_issue` | Linear ticket details | `issue?` (defaults to linked ticket) | same |
+| `linear_start` | take and link a ticket | `issue` (identifier, URL or id) | floor workers only, while connected |
+| `linear_create_issue` | create a ticket | `title`, `team?`, `description?`, `state?`, `priority?`, `assignee?`, `labels?`, `project?`, `parent?`, `estimate?`, `dueDate?`, `start?` | floor workers and building agents, while connected |
+| `linear_update_issue` | update a ticket | `issue?`, `title?`, `description?`, `state?`, `priority?`, `assignee?`, `labels?`, `addLabels?`, `removeLabels?`, `project?`, `parent?`, `estimate?`, `dueDate?`, `link?` | same |
+| `linear_comment` | comment on a ticket | `issue?`, `body` (Markdown) | same |
+| `linear_workspace` | workspace and team metadata | `team?` | same |
+| `linear_graphql` | arbitrary Linear GraphQL | `query`, `variables?` (object) | same; full connected-account access |
 | `team_models` | `office-workers models`; a subscription model also shows what its plan has left (`TeamModel.usage`, [docs/subscriptions.md](subscriptions.md)) | none | may hire |
 | `models_list` | full model discovery | none; includes `enabled: false` for switched-off/disallowed models | internal workers only, with existing permissions |
 | `team_hire` | `office-workers hire` | `title`, `brief`, `floor?` (building agents: id, name or checkout path), or `task: {title, brief, repo, baseBranch?, branch?, prNumber?, acceptanceCriteria?}`; `model?`, `effort?`, `from?`, `worktree?`. Returns `worktree` and `branch` immediately | may hire |

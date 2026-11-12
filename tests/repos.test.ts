@@ -359,6 +359,34 @@ test('desk O and the Changes window, given the same facts, open the pull request
   assert.deepEqual([bases[0], f.prs()[0]?.base], ['develop', 'develop']);
 });
 
+test('Linear tasks title pull requests and close the ticket only from the home repository', async (t) => {
+  const f = fixture(t);
+  const workers = manager(f, t);
+  const w = workers.spawn('desk-1', 'Cody', 'Work on Linear issue DOFF-12: "Sign in with passkeys".\n\nKeep the existing login.', true, 'agent', undefined, undefined, [source('floor-api', f.b)]);
+  assert.notEqual(typeof w, 'string');
+  if (typeof w === 'string') return;
+  await sessionStart(workers, path.join(f.a, '.droid-office'), w.id);
+  for (const rel of [w.worktree!.path, w.repos![0].path]) {
+    const cwd = path.join(f.a, rel);
+    writeFileSync(path.join(cwd, 'passkeys.js'), '// passkeys\n');
+    git(cwd, 'add', 'passkeys.js');
+    git(cwd, 'commit', '-qm', 'Add passkeys');
+  }
+  w.status = 'done';
+  const result = await workers.openPr(w.id, 'Cody');
+  assert.notEqual(typeof result, 'string', String(result));
+  if (typeof result === 'string') return;
+  assert.deepEqual(result.failed, []);
+  const home = f.prs().find((p) => p.repo === 'acme/web')!;
+  const other = f.prs().find((p) => p.repo === 'acme/api')!;
+  assert.equal(home.title, 'Sign in with passkeys');
+  assert.equal(other.title, home.title);
+  assert.match(home.body, /\nFixes DOFF-12\n/);
+  assert.match(other.body, /\nPart of DOFF-12\n/);
+  assert.doesNotMatch(other.body, /Fixes DOFF-12/);
+  assert.match(home.body, /Keep the existing login/);
+});
+
 test('O opens a pull request in each repository with commits, and each one lists them all', async (t) => {
   const f = fixture(t);
   const workers = manager(f, t);

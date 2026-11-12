@@ -56,7 +56,7 @@ How the API behaves, and what the office does about it:
 | `src/client/ui/factory-settings.ts` | ⚙️ Settings → Connections → *Factory API key*. |
 | `src/client/ui/factory-*.ts`, `src/client/world/factory-*.ts` | A feature's windows, and its wall textures and meshes. |
 
-The key is the building's, like the Jira connection: browsers never get it. They get `FactoryConnection`: whether it's connected, the fingerprint (`fk-…` and the last four), whose key it is (name and email), the organization's member count, who connected it and when, what it can reach, when it was last checked, and whether Factory has rejected it since. The key never goes into a worker's environment or a log, and error messages are scrubbed of it. The one process that gets it is an AutoWiki run the office starts (`droid exec "/wiki"`, as `FACTORY_API_KEY` in that child's environment only), so the wiki lands in the connected account; its output is scrubbed of the key before anyone sees a line.
+The key is the building's, like the Jira and Linear connections: browsers never get it. They get `FactoryConnection`: whether it's connected, the fingerprint (`fk-…` and the last four), whose key it is (name and email), the organization's member count, who connected it and when, what it can reach, when it was last checked, and whether Factory has rejected it since. The key never goes into a worker's environment or a log, and error messages are scrubbed of it. The one process that gets it is an AutoWiki run the office starts (`droid exec "/wiki"`, as `FACTORY_API_KEY` in that child's environment only), so the wiki lands in the connected account; its output is scrubbed of the key before anyone sees a line.
 
 ### The connection
 

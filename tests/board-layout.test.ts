@@ -3,13 +3,31 @@ import assert from 'node:assert/strict';
 import { TAB_H, inRect, jiraLayout, tabRects } from '../src/client/world/board-layout.js';
 
 test('the wall board tabs sit side by side inside the tab strip', () => {
-  const { issues, jira } = tabRects();
+  const { issues, jira } = tabRects() as Required<ReturnType<typeof tabRects>>;
   assert.ok(issues.x + issues.w < jira.x);
   for (const r of [issues, jira]) {
     assert.ok(r.y >= 0 && r.y + r.h <= TAB_H);
     assert.ok(inRect(r, r.x + r.w / 2, r.y + r.h / 2));
   }
   assert.ok(!inRect(issues, jira.x + 1, jira.y + 1));
+});
+
+test('three tabs (issues, Jira and Linear) leave room for the hint on the right', () => {
+  const rects = tabRects(['issues', 'jira', 'linear']);
+  const [issues, jira, linear] = [rects.issues!, rects.jira!, rects.linear!];
+  assert.ok(issues.x + issues.w < jira.x && jira.x + jira.w < linear.x);
+  // The hint ("point at a tab to switch", right-aligned at 1176) is about 270px wide at 18px mono.
+  assert.ok(linear.x + linear.w + 270 < 1176);
+  assert.deepEqual(Object.keys(tabRects(['issues', 'linear'])), ['issues', 'linear']);
+  assert.equal(tabRects(['issues', 'linear']).linear!.x, tabRects().jira!.x);
+});
+
+test('the Linear view lays out four columns inside the board', () => {
+  const layout = jiraLayout([3, 2, 1, 0], 1200, 600, TAB_H + 6);
+  assert.equal(layout.columns.length, 4);
+  for (let i = 1; i < 4; i++) assert.ok(layout.columns[i].rect.x >= layout.columns[i - 1].rect.x + layout.columns[i - 1].rect.w);
+  const last = layout.columns[3].rect;
+  assert.ok(last.x + last.w <= 1200);
 });
 
 test('the Jira view shows every ticket when they fit', () => {
