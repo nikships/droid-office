@@ -22,7 +22,9 @@ import type {
 } from '../shared/protocol';
 import { SUBAGENT_DEFAULTS } from '../shared/protocol';
 import { WORKER_LABEL_DEFAULTS, type WorkerLabelState } from '../shared/worker-labels';
-import type { ScreenState } from './world/laptop';
+import { kittyImageSignature } from '../shared/kitty';
+import { decodeScreenBitmap } from './term-kitty';
+import type { ScreenBitmap, ScreenState } from './world/laptop';
 import type { Sidearm } from './world/wand';
 import { randomLook, sanitizeLook, type Look } from '../shared/avatar';
 import type { Decoration } from '../shared/decor';
@@ -350,7 +352,9 @@ export class Store {
     this.project = v.project;
     this.workers = new Map(v.workers.map((w) => [w.id, w]));
     if (v.floor) this.building.set(v.floor, { floor: v.floor, workers: [...v.workers], pulls: [...v.pulls.items] });
+    for (const prev of this.screens.values()) this.closeScreenBitmaps(prev);
     this.screens.clear(); // fresh full frames follow
+    this.pendingImageSigs.clear();
     this.issues = v.issues;
     this.pulls = v.pulls;
     this.pipelines = v.pipelines ?? NO_PIPELINES;
@@ -368,6 +372,22 @@ export class Store {
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
   private setJukebox(j: JukeboxState) {
     this.jukebox = { ...j, since: this.clock ? j.startedAt - this.clock.offset : performance.now() - j.elapsed };
+  }
+
+  private pendingImageSigs = new Map<string, string>();
+
+  private closeScreenBitmaps(s: ScreenState, workerId?: string) {
+    if (workerId) {
+      const prefix = `${workerId}:`;
+      for (const k of this.pendingImageSigs.keys()) {
+        if (k.startsWith(prefix)) this.pendingImageSigs.delete(k);
+      }
+    }
+    if (!s.bitmaps) return;
+    for (const b of s.bitmaps.values()) {
+      if (b.source && 'close' in b.source && typeof b.source.close === 'function') b.source.close();
+    }
+    s.bitmaps.clear();
   }
 
   constructor() {
@@ -434,7 +454,11 @@ export class Store {
       case 'building.remove': {
         const r = this.building.get(msg.floor);
         if (r) r.workers = r.workers.filter((w) => w.id !== msg.workerId);
-        if (msg.floor !== this.floor && this.screens.delete(msg.workerId)) this.emit('screens');
+        if (msg.floor !== this.floor) {
+          const old = this.screens.get(msg.workerId);
+          if (old) this.closeScreenBitmaps(old, msg.workerId);
+          if (this.screens.delete(msg.workerId)) this.emit('screens');
+        }
         this.emit('building');
         break;
       }
@@ -457,19 +481,59 @@ export class Store {
         this.workers.set(msg.worker.id, msg.worker);
         this.emit('workers');
         break;
-      case 'worker.remove':
+      case 'worker.remove': {
         this.workers.delete(msg.workerId);
-        this.screens.delete(msg.workerId);
+        const old = this.screens.get(msg.workerId);
+        if (old) this.closeScreenBitmaps(old, msg.workerId);
+        if (this.screens.delete(msg.workerId)) this.emit('screens');
         this.emit('workers');
         break;
+      }
       case 'screen': {
         let s = this.screens.get(msg.workerId);
         if (!s || msg.full || s.cols !== msg.cols || s.rows !== msg.rows) {
-          s = { cols: msg.cols, rows: msg.rows, lines: [], cursor: msg.cursor, version: (s?.version ?? 0) + 1 };
+          s = {
+            cols: msg.cols,
+            rows: msg.rows,
+            lines: [],
+            placements: msg.full ? msg.placements : s?.placements,
+            bitmaps: s?.bitmaps,
+            cursor: msg.cursor,
+            version: (s?.version ?? 0) + 1,
+          };
           this.screens.set(msg.workerId, s);
         }
         for (const [k, v] of Object.entries(msg.lines)) s.lines[Number(k)] = v;
         if (msg.above) s.above = msg.above;
+        if (msg.placements !== undefined) s.placements = msg.placements;
+        if (msg.images) {
+          const bitmaps = s.bitmaps ?? (s.bitmaps = new Map<number, ScreenBitmap>());
+          for (const [rawId, img] of Object.entries(msg.images)) {
+            const id = Number(rawId);
+            const sig = kittyImageSignature(img);
+            if (bitmaps.get(id)?.sig === sig) continue;
+            const wid = msg.workerId;
+            const pendingKey = `${wid}:${id}`;
+            this.pendingImageSigs.set(pendingKey, sig);
+            decodeScreenBitmap(img)
+              .then((bmp) => {
+                if (!bmp) return;
+                const cur = this.screens.get(wid);
+                if (!cur || this.pendingImageSigs.get(pendingKey) !== sig) {
+                  bmp.close?.();
+                  return;
+                }
+                this.pendingImageSigs.delete(pendingKey);
+                const map = cur.bitmaps ?? (cur.bitmaps = new Map<number, ScreenBitmap>());
+                const prev = map.get(id);
+                if (prev?.source && 'close' in prev.source && typeof prev.source.close === 'function') prev.source.close();
+                map.set(id, { source: bmp, width: bmp.width, height: bmp.height, sig });
+                cur.version++;
+                this.emit('screens');
+              })
+              .catch(() => undefined);
+          }
+        }
         s.cursor = msg.cursor;
         s.version++;
         this.emit('screens');

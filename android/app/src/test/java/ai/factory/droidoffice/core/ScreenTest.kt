@@ -39,4 +39,12 @@ class ScreenTest {
         val s = ScreenState.apply(null, frame(mapOf(0 to listOf(Run("top")), 1 to listOf(Run("  > waiting  "))), full = true))
         assertEquals("> waiting", s.lastLine())
     }
+
+    @Test
+    fun stripsKittyPlaceholdersFromSpokenScreenText() {
+        val ph = "\uDBFB\uDEEE\u0305\u030D"
+        val s = ScreenState.apply(null, frame(mapOf(0 to listOf(Run("header")), 1 to listOf(Run("$ph$ph"))), full = true))
+        assertEquals("header", s.text())
+        assertEquals("header", s.lastLine())
+    }
 }

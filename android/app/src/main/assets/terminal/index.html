@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob: data:">
 <title>Terminal</title>
 <link rel="stylesheet" href="vendor/xterm.css">
 <style>
@@ -41,6 +41,10 @@
   .xterm .xterm-scrollable-element > .scrollbar,
   .xterm .xterm-viewport::-webkit-scrollbar {
     display: none;
+  }
+  .xterm .xterm-screen canvas.term-kitty-layer {
+    pointer-events: none;
+    z-index: 2;
   }
 </style>
 </head>

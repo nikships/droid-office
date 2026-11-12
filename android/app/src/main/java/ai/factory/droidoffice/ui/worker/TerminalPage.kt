@@ -73,6 +73,8 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
 
     fun typeDirectly(enabled: Boolean) = keyboard.typeDirectly(enabled)
 
+    fun setCsiEnter(enabled: Boolean) { keyboard.csiEnter = enabled }
+
     fun destroy() {
         typeDirectly(false)
         ready = false
@@ -100,6 +102,7 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
             val msg = TermPage.decode(json) ?: return
             view.post {
                 if (msg == PageMsg.Ready) ready = true
+                if (msg is PageMsg.Kitty) keyboard.kittyFlags = msg.flags
                 onMessage(msg)
             }
         }

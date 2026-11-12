@@ -74,6 +74,8 @@ fun Terminal(
     modifier: Modifier = Modifier,
     onFit: (TermSize) -> Unit = {},
     directInput: Boolean = false,
+    csiEnter: Boolean = false,
+    onKittyFlags: (Int) -> Unit = {},
 ) {
     val connection = LocalGraph.current.connection
     val context = LocalContext.current
@@ -86,6 +88,7 @@ fun Terminal(
     val latestLive by rememberUpdatedState(live)
     val latestFit by rememberUpdatedState(onFit)
     val latestScale by rememberUpdatedState(fontScale)
+    val latestKittyFlags by rememberUpdatedState(onKittyFlags)
 
     val page = remember(workerId, generation) {
         lateinit var p: TerminalPage
@@ -101,6 +104,7 @@ fun Terminal(
                     PageMsg.Drawn -> drawn = true
                     is PageMsg.Bottom -> atBottom = msg.at
                     is PageMsg.Fit -> latestFit(msg.size)
+                    is PageMsg.Kitty -> latestKittyFlags(msg.flags)
                     is PageMsg.Input -> if (latestLive) connection.send(ClientMsg.termInput(workerId, msg.data))
                 }
             },
@@ -117,6 +121,7 @@ fun Terminal(
     LaunchedEffect(page, view) { page.send(TermPage.view(view)) }
     LaunchedEffect(page, fontScale) { page.send(TermPage.config(fontScale, view)) }
     LaunchedEffect(page, directInput, live) { page.typeDirectly(directInput && live) }
+    LaunchedEffect(page, csiEnter) { page.setCsiEnter(csiEnter) }
 
     Box(
         modifier.clip(RoundedCornerShape(12.dp)).background(TermBg)

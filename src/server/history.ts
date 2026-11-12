@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import path from 'node:path';
 import type headless from '@xterm/headless';
 import type serialize from '@xterm/addon-serialize';
+import { stripKittyPlaceholders } from '../shared/kitty.js';
 import { logicalLines, searchKey, snippet } from '../shared/search.js';
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
@@ -106,7 +107,7 @@ export function plainTail(term: HeadlessTerminal, lines: number): string {
     const line = buf.getLine(y);
     if (!line) continue;
     // A row that wraps onto the next keeps its trailing spaces; they are part of the line.
-    run.push(line.translateToString(buf.getLine(y + 1)?.isWrapped !== true));
+    run.push(stripKittyPlaceholders(line.translateToString(buf.getLine(y + 1)?.isWrapped !== true)));
     if (!line.isWrapped) flush();
   }
   // The oldest line can begin above the scrollback that is kept: what remains of it still counts.

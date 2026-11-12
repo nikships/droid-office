@@ -288,6 +288,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         Offline(link.phase, thread = !tty, composing = composing && !(!tty && worker.state == WorkerStatus.NeedsInput))
         if (tty) NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
+        var kittyFlags by remember(workerId, tty) { mutableIntStateOf(0) }
         val currentSize = TermSize(worker.cols, worker.rows)
         val canResize = live && link.phase == Phase.Connected && screen != null
         LaunchedEffect(phone, phoneSize, canResize, currentSize, tty) {
@@ -329,6 +330,8 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
                 Modifier.fillMaxSize().border(1.dp, Palette.Border, RoundedCornerShape(12.dp)),
                 onFit = { phoneSize = it },
                 directInput = directInput && !worker.isCloud,
+                csiEnter = !worker.isShell && !worker.isCloud,
+                onKittyFlags = { kittyFlags = it },
             )
             if (worker.state.asleep && !mission) Asleep(worker)
         }
@@ -343,7 +346,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             Column(Modifier.onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
                 if (!worker.isCloud && tty) {
                     QuickKeyRow(
-                        workerId, worker.isShell, phone, directInput, link.phase == Phase.Connected,
+                        workerId, worker.isShell, phone, directInput, link.phase == Phase.Connected, kittyFlags,
                         onPhone = { phoneChoice = !phone },
                         onDirect = {
                             directInput = !directInput
@@ -624,7 +627,7 @@ private fun Gone(synced: Boolean, embedded: Boolean, onBack: () -> Unit) {
  * Phone stays first; the rest come in the owner's order, arranged from the button at the end.
  */
 @Composable
-private fun QuickKeyRow(workerId: String, shell: Boolean, phone: Boolean, directInput: Boolean, connected: Boolean, onPhone: () -> Unit, onDirect: () -> Unit) {
+private fun QuickKeyRow(workerId: String, shell: Boolean, phone: Boolean, directInput: Boolean, connected: Boolean, kittyFlags: Int, onPhone: () -> Unit, onDirect: () -> Unit) {
     val graph = LocalGraph.current
     val haptics = LocalHapticFeedback.current
     val store by graph.store.snapshot.collectAsStateWithLifecycle()
@@ -645,7 +648,7 @@ private fun QuickKeyRow(workerId: String, shell: Boolean, phone: Boolean, direct
         keys.forEach { key ->
             QuickKey(key.label, key.spoken, Tags.Worker.key(key.spoken), accent = key.bytes == Keys.ENTER) {
                 haptics.performHapticFeedback(HapticFeedbackType.KeyboardTap)
-                graph.connection.send(ClientMsg.termInput(workerId, key.bytes))
+                graph.connection.send(ClientMsg.termInput(workerId, QuickKeys.bytes(key, kittyFlags)))
             }
         }
         if (!shell) {

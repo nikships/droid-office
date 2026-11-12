@@ -7,7 +7,7 @@ import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { DropStore } from './drops.js';
 import { plainTail, terminalTail } from './history.js';
 import { type PtyHost, SCROLLBACK, type Pty } from './ptys.js';
-import { screenSnapshot } from './screen.js';
+import { screenSnapshot, setTerminalResponder } from './screen.js';
 import { snapshotScreen, type ScreenFrame } from './screen-frame.js';
 import { childEnv, defaultShell } from './workers.js';
 
@@ -218,6 +218,11 @@ export class OfficeShell {
   private follow(proc: Pty) {
     this.pty = proc;
     this.spawnedAt = Date.now();
+    if (!proc.id && this.term) {
+      setTerminalResponder(this.term, (reply) => {
+        if (this.pty === proc) proc.write(reply);
+      });
+    }
     proc.onData((data) => {
       this.term?.write(data);
       this.screenDirty = true;

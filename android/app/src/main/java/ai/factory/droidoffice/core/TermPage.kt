@@ -27,6 +27,8 @@ sealed interface PageMsg {
     /** The grid that fits the phone at readable text. */
     data class Fit(val size: TermSize) : PageMsg
     data class Bottom(val at: Boolean) : PageMsg
+    /** Active Kitty progressive keyboard enhancement flags (`0..31`). */
+    data class Kitty(val flags: Int) : PageMsg
 }
 
 /** The app's side of the terminal page's messages; each one out is a script for `evaluateJavascript`. */
@@ -45,6 +47,7 @@ object TermPage {
                 if (cols > 0 && rows > 0) PageMsg.Fit(TermSize(cols, rows)) else null
             }
             "bottom" -> (o["at"] as? JsonPrimitive)?.booleanOrNull?.let { PageMsg.Bottom(it) }
+            "kitty" -> int("flags")?.let { PageMsg.Kitty(it and KittyKeys.ALL_FLAGS) }
             else -> null
         }
     }

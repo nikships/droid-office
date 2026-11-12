@@ -13,7 +13,7 @@ import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
 import { PTY_PROTOCOL, SCROLLBACK, readMessages, type FromHost, type SpawnOpts, type ToHost } from './ptys.js';
-import { screenSnapshot } from './screen.js';
+import { screenSnapshot, setTerminalResponder } from './screen.js';
 
 /** How long terminals keep running with no office connected before the host gives up on it. */
 const ORPHAN_MS = 30 * 60_000;
@@ -103,6 +103,15 @@ function spawn(id: string, opts: SpawnOpts) {
   const snapshot = screenSnapshot(term, ser);
   if (opts.prelude) term.write(opts.prelude);
   const s: Session = { id, proc, term, snapshot, cols: opts.cols, rows: opts.rows, title: '', attached: true };
+  setTerminalResponder(term, (reply) => {
+    if (s.exitCode === undefined) {
+      try {
+        proc.write(reply);
+      } catch {
+        // exited between checks
+      }
+    }
+  });
   sessions.set(id, s);
   term.onTitleChange((title: string) => (s.title = title));
   proc.onData((data) => {

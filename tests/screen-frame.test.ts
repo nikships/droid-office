@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import headless from '@xterm/headless';
+import serialize from '@xterm/addon-serialize';
+import unicode11 from '@xterm/addon-unicode11';
+import { KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
 import { screenHistoryRows } from '../src/shared/protocol.js';
+import { plainTail, searchTerminal } from '../src/server/history.js';
+import { screenSnapshot } from '../src/server/screen.js';
 import { snapshotScreen } from '../src/server/screen-frame.js';
 
 function terminal(cols: number, rows: number) {
@@ -55,4 +60,51 @@ test('screenHistoryRows covers a laptop and stays within the screen it extends',
   assert.equal(screenHistoryRows(140, 38), 9);
   assert.equal(screenHistoryRows(400, 5), 5);
   assert.equal(screenHistoryRows(56, 22), 0);
+});
+
+test('snapshotScreen coalesces Kitty U=1 placeholders, strips U+10EEEE from text runs and diffs image payloads once', async () => {
+  const term = new headless.Terminal({ cols: 40, rows: 6, scrollback: 50, allowProposedApi: true });
+  const ser = new serialize.SerializeAddon();
+  term.loadAddon(ser as any);
+  term.loadAddon(new unicode11.Unicode11Addon() as any);
+  term.unicode.activeVersion = '11';
+  screenSnapshot(term, ser);
+  const write = (data: string) => new Promise<void>((resolve) => term.write(data, resolve));
+
+  const d0 = String.fromCodePoint(KITTY_DIACRITICS[0]);
+  const d1 = String.fromCodePoint(KITTY_DIACRITICS[1]);
+  await write(
+    `header\r\n` +
+      `\x1b_Ga=T,U=1,q=2,f=32,s=18,v=36,i=7,c=2,r=2;AAAAAAAAAAAAAAAA\x1b\\` +
+      `\x1b[38;2;0;0;7m${KITTY_PLACEHOLDER_CHAR}${d0}${d0}${KITTY_PLACEHOLDER_CHAR}${d0}${d1}\x1b[39m\r\n` +
+      `\x1b[38;2;0;0;7m${KITTY_PLACEHOLDER_CHAR}${d1}${d0}${KITTY_PLACEHOLDER_CHAR}${d1}${d1}\x1b[39m caption\r\n`,
+  );
+
+  const last: string[] = [];
+  const first = snapshotScreen(term, last);
+  assert.ok(first);
+  assert.deepEqual(first.lines[0], [['header', -1, -1, 0]]);
+  assert.deepEqual(first.lines[1], [], 'placeholder-only row trims to empty text runs');
+  assert.deepEqual(first.lines[2], [['   caption', -1, -1, 0]], 'placeholders become spaces preserving column alignment');
+  assert.deepEqual(first.placements, [{ id: 7, x: 0, y: 1, cols: 2, rows: 2, srcCol: 0, srcRow: 0, totalCols: 2, totalRows: 2 }]);
+  assert.equal(first.images?.[7]?.data, 'AAAAAAAAAAAAAAAA');
+
+  // Subsequent text updates do not re-transmit unchanged image bytes.
+  await write('footer');
+  const next = snapshotScreen(term, last);
+  assert.ok(next);
+  assert.equal(next.images, undefined);
+  assert.equal(next.placements, undefined);
+
+  // Re-uploading the same image ID with equal-length different bytes delivers the updated payload.
+  await write('\x1b_Ga=T,U=1,q=2,f=32,s=18,v=36,i=7,c=2,r=2;////////////////\x1b\\');
+  const updated = snapshotScreen(term, last);
+  assert.equal(updated?.images?.[7]?.data, '////////////////');
+
+  // Plain-text log & search helpers never expose U+10EEEE or combining diacritics.
+  assert.equal(plainTail(term, 10).includes(KITTY_PLACEHOLDER_CHAR), false);
+  const search = searchTerminal(term, 'caption', 5);
+  assert.equal(search.hits.length, 1);
+  assert.equal(search.hits[0].text, 'caption');
+  term.dispose();
 });
