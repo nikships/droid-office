@@ -6,9 +6,14 @@ import { AUTO_DESK } from '../../shared/protocol.js';
 import type { OfficeMcpServer } from './index.js';
 import { officeError } from './index.js';
 import { buildingOnly, findMissionAgent, findWorker, missionControlRefusal, outsideOffice, pickFloor, ownerResult, type OwnerAction, type OwnerOffice } from './owner.js';
-import { cloud, effort, floorRef, id, images, menu, model, text, workerRef } from './owner-schemas.js';
+import { cloud, effort, floorRef, id, images, menu, model, PROMPT_TEXT_ERROR, resolvePromptText, resolveWorkerTarget, text, WORKER_TARGET_ERROR, workerTarget } from './owner-schemas.js';
 
-type Input<A extends OwnerAction> = Omit<Extract<ClientMsg, { t: A }>, 't' | 'request' | 'requestId' | 'requestFloor' | 'floor'> & { floor?: string };
+type WireInput<A extends OwnerAction> = Omit<Extract<ClientMsg, { t: A }>, 't' | 'request' | 'requestId' | 'requestFloor' | 'floor'>;
+type Input<A extends OwnerAction> = (A extends 'worker.prompt'
+  ? Omit<WireInput<A>, 'workerId' | 'prompt'> & { worker?: string; workerId?: string; name?: string; prompt?: string; text?: string }
+  : 'workerId' extends keyof WireInput<A>
+    ? Omit<WireInput<A>, 'workerId'> & { worker?: string; workerId?: string; name?: string }
+    : WireInput<A>) & { floor?: string };
 type Scope = 'floor' | 'worker';
 type Effect = 'read' | 'write' | 'delete';
 
@@ -28,7 +33,8 @@ function tool<A extends OwnerAction>(action: A, name: string, description: strin
 }
 
 const floor = { floor: floorRef.optional() };
-const worker = { workerId: workerRef, ...floor };
+const worker = { ...workerTarget, ...floor };
+const hasWorker = (a: { worker?: string; workerId?: string; name?: string }) => resolveWorkerTarget(a) !== undefined;
 const number = z.number().int().positive();
 export const OWNER_TOOLS = [
   tool(
@@ -57,8 +63,18 @@ export const OWNER_TOOLS = [
   tool(
     'worker.prompt',
     'office_worker_prompt',
-    'Prompt an independent floor worker (check office_look first; for subagents use team_message; never prompt a worker at a permission prompt).',
-    z.strictObject({ ...worker, prompt: text.min(1), issue: number.optional(), images: images.optional(), queue: z.boolean().default(false).describe('Queue behind running turn.') }),
+    'Prompt an independent floor worker (check office_look first; for subagents use team_message; never prompt a worker at a permission prompt). Accepts worker (or workerId/name) and prompt (or text).',
+    z
+      .strictObject({
+        ...worker,
+        prompt: text.min(1).optional().describe('Prompt message (or pass text).'),
+        text: text.min(1).optional().describe('Alias for prompt.'),
+        issue: number.optional(),
+        images: images.optional(),
+        queue: z.boolean().default(false).describe('Queue behind running turn.'),
+      })
+      .refine(hasWorker, WORKER_TARGET_ERROR)
+      .refine((a) => resolvePromptText(a) !== undefined, PROMPT_TEXT_ERROR),
     'worker',
     'write',
     true,
@@ -75,16 +91,17 @@ export const OWNER_TOOLS = [
         choices: z.array(number).optional().describe('Checkbox option numbers.'),
         text: text.optional().describe('Typed answer.'),
       })
+      .refine(hasWorker, WORKER_TARGET_ERROR)
       .refine((a) => (a.choice !== undefined ? a.choices === undefined && a.text === undefined : a.choices !== undefined || a.text !== undefined), 'Send one choice, checkbox choices, or text; do not combine choice with the others.'),
     'worker',
     'delete',
   ),
-  tool('worker.interrupt', 'office_worker_interrupt', 'Interrupt a floor worker’s running turn without dismissing it.', z.strictObject({ ...worker }), 'worker', 'delete', true),
+  tool('worker.interrupt', 'office_worker_interrupt', 'Interrupt a floor worker’s running turn without dismissing it.', z.strictObject({ ...worker }).refine(hasWorker, WORKER_TARGET_ERROR), 'worker', 'delete', true),
   tool(
     'thread.read',
     'office_worker_thread',
     'Read one page of a local or cloud worker’s conversation (or Orchestrator’s), read-only.',
-    z.strictObject({ ...worker, before: z.number().int().nonnegative().optional().describe('Entry sequence for older history.') }),
+    z.strictObject({ ...worker, before: z.number().int().nonnegative().optional().describe('Entry sequence for older history.') }).refine(hasWorker, WORKER_TARGET_ERROR),
     'worker',
     'read',
     true,
@@ -99,9 +116,12 @@ export function registerOwnerTools(server: OfficeMcpServer, owner: OwnerOffice):
       delete args.floor;
       let floor: string | undefined;
       if (entry.scope === 'worker') {
-        const found = findWorker(owner.floors(), String(args.workerId), ref);
+        const target = resolveWorkerTarget(input as { worker?: string; workerId?: string; name?: string })!;
+        delete args.worker;
+        delete args.name;
+        const found = findWorker(owner.floors(), target, ref);
         if (typeof found === 'string') {
-          const building = findMissionAgent(owner, String(args.workerId));
+          const building = findMissionAgent(owner, target);
           if (!building) return officeError(found);
           // Building agents are read, never controlled, and only the Orchestrator's conversation is in this office.
           if (entry.action !== 'thread.read') return officeError(missionControlRefusal(building, entry.name));
@@ -110,6 +130,10 @@ export function registerOwnerTools(server: OfficeMcpServer, owner: OwnerOffice):
         } else {
           args.workerId = found.worker.id;
           floor = found.floor.id;
+        }
+        if (entry.action === 'worker.prompt') {
+          args.prompt = resolvePromptText(input as { prompt?: string; text?: string })!;
+          delete args.text;
         }
       } else {
         const at = ref ?? caller.floor?.id;

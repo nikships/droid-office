@@ -81,6 +81,8 @@ export interface OfficeMcpDeps {
   answers: Pick<Answers, 'answer'>;
   /** The office's Linear workspace: the linear_* tools are listed only while it's connected. */
   linear?: LinearOffice;
+  /** Optional override for the per-call server hold cap in team_wait (ms); defaults to WAIT_HOLD_MAX_SEC * 1000. */
+  waitHoldMaxMs?: number;
 }
 
 export interface OfficeMcpCaller {

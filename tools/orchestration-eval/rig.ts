@@ -471,7 +471,9 @@ export async function createEvalRig(config: EvalWorldConfig) {
     team.handle = async (caller: WorkerInfo, body: Record<string, unknown>): Promise<TeamReply> => {
       if (body.action === 'diff') {
         const targetRef = typeof body.worker === 'string' ? body.worker.trim().toLowerCase() : '';
-        const found = [...people.values()].find((w) => w.lead === caller.id && (w.id.toLowerCase() === targetRef || w.name.toLowerCase() === targetRef));
+        const active = [...people.values()].find((w) => w.lead === caller.id && (w.id.toLowerCase() === targetRef || w.name.toLowerCase() === targetRef));
+        const former = !active ? team.formerMatches(caller.id, String(body.worker ?? ''))[0] : undefined;
+        const found = active ?? former;
         if (!found) return { status: 404, body: { error: `No subagent called ${String(body.worker)} in your team.` } };
         if (typeof body.base === 'string' && (body.base.startsWith('-') || /\s/.test(body.base))) {
           return { status: 400, body: { error: 'Use a branch, tag or commit without spaces or a leading dash.' } };
@@ -596,9 +598,13 @@ export async function createEvalRig(config: EvalWorldConfig) {
 
   const remoteOffice = new RemoteOffice(store, () => remoteFloors);
   const realInbox = remoteOffice.inbox.bind(remoteOffice);
-  remoteOffice.inbox = (id, ack = [], limit = 50, includeMessages = true) => {
-    if (ack.length) state.ackedInboxIds.push(...ack);
-    return realInbox(id, ack, limit, includeMessages);
+  remoteOffice.inbox = (id, ack = [], limit = 50, includeMessages = true, filter) => {
+    const res = realInbox(id, ack, limit, includeMessages, filter);
+    if (ack.length) {
+      const ignored = new Set((res as { ignoredAck?: string[] }).ignoredAck ?? []);
+      state.ackedInboxIds.push(...ack.filter((a) => !ignored.has(a)));
+    }
+    return res;
   };
 
   const ownerFloors = (): OwnerFloor[] =>

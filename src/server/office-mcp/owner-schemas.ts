@@ -5,6 +5,25 @@ import { DROID_MODEL_MAX, isValidDroidModel } from '../agents.js';
 
 export const floorRef = z.string().trim().min(1).max(128).describe('Floor id, number, or name.');
 export const workerRef = z.string().trim().min(1).max(64).describe('Worker id or name from office_roster.');
+export const workerTarget = {
+  worker: workerRef.optional().describe('Worker id or name from office_roster.'),
+  workerId: workerRef.optional().describe('Alias for worker.'),
+  name: workerRef.optional().describe('Alias for worker.'),
+};
+export const WORKER_TARGET_ERROR = 'Pass worker (or alias workerId/name), without conflicting values.';
+export const PROMPT_TEXT_ERROR = 'Pass prompt or text, without conflicting values.';
+
+export function resolveWorkerTarget(a: { worker?: string; workerId?: string; name?: string }): string | undefined {
+  const vals = [a.worker, a.workerId, a.name].filter((v): v is string => v !== undefined);
+  if (!vals.length) return undefined;
+  const first = vals[0].toLowerCase();
+  return vals.every((v) => v.toLowerCase() === first) ? vals[0] : undefined;
+}
+
+export function resolvePromptText(a: { prompt?: string; text?: string }): string | undefined {
+  if (a.prompt !== undefined && a.text !== undefined && a.prompt !== a.text) return undefined;
+  return a.prompt ?? a.text;
+}
 export const id = z.string().trim().min(1).max(1024);
 export const text = z.string().max(20_000);
 export const model = z.string().trim().min(1).max(DROID_MODEL_MAX).refine(isValidDroidModel, 'Model ids contain no whitespace or control characters.').describe('Exact model id from team_models.');
