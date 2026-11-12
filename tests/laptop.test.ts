@@ -5,7 +5,7 @@ import type { Address } from 'node:net';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import * as THREE from 'three';
-import { BASE_W, Laptop, LID_W, paintScreen, SCREEN_CANVAS, SCREEN_H, SCREEN_W, type ScreenState } from '../src/client/world/laptop.js';
+import { BASE_W, Laptop, LID_H, LID_W, paintScreen, SCREEN_CANVAS, SCREEN_H, SCREEN_W, type ScreenState } from '../src/client/world/laptop.js';
 import { loadPropManifest, preloadProps, propReady } from '../src/client/world/props.js';
 import { fontRevision, loadFonts } from '../src/client/fonts.js';
 import { BEANBAGS, DESK_LAPTOP, DESK_SIZE, DESKS, FLOOR, SEATING_BY_ID } from '../src/shared/layout.js';
@@ -281,9 +281,8 @@ test('the screens of back-to-back desks stay on their own side, and each laptop 
   const far = place(back);
   // The MacBook's Display node, as the lid GLB exports it, once the screen is stretched over it.
   const glbDisplay = (laptop: Laptop) => {
-    const display = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.46), new THREE.MeshBasicMaterial());
+    const display = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.46).translate(0, 0.253, 0.013), new THREE.MeshBasicMaterial());
     display.name = 'Display';
-    display.position.set(0, 0.253, 0.013);
     const inner = laptop as unknown as { lidModel: THREE.Group; wireDisplay(): void };
     inner.lidModel.add(display);
     inner.wireDisplay();
@@ -302,12 +301,15 @@ test('the screens of back-to-back desks stay on their own side, and each laptop 
   assert.ok(DESK_LAPTOP.z + 0.28 * DESK_LAPTOP.scale <= DESK_SIZE.depth / 2 - 0.02, "the deck's front edge stays on the desk top");
 });
 
-test('widescreen canvas matches the widened display aspect so a 136x30 Droid CLI renders edge to edge unstretched', (t) => {
+test('widescreen canvas matches the taller display aspect so a 136x35 Droid CLI renders edge to edge unstretched', (t) => {
   stubDocument(t);
   assert.equal(BASE_W, 0.78, 'keyboard deck width stays untouched');
-  assert.ok(SCREEN_W > 1 && LID_W > SCREEN_W, 'lid and lit panel widen into widescreen');
+  assert.equal(LID_W, 1.065, 'widescreen lid width stays untouched');
+  assert.equal(LID_H, 0.575, 'lid height is 15% taller than the 0.50 base GLB');
+  assert.equal(SCREEN_H, 0.57, 'lit panel height scales up 15% with a 2.5 mm bezel margin');
+  assert.ok(SCREEN_W > 1 && LID_W > SCREEN_W && LID_H > SCREEN_H, 'lid frames the taller widescreen panel');
   assert.ok(Math.abs(SCREEN_CANVAS.width / SCREEN_CANVAS.height - SCREEN_W / SCREEN_H) < 1e-9, 'default canvas texels are square on the 3D screen');
-  assert.deepEqual([DEFAULT_COLS, DEFAULT_ROWS], [136, 30]);
+  assert.deepEqual([DEFAULT_COLS, DEFAULT_ROWS], [136, 35]);
   assert.deepEqual([CLOUD_SCREEN_COLS, CLOUD_SCREEN_ROWS], [DEFAULT_COLS, DEFAULT_ROWS]);
 
   const laptop = new Laptop();
@@ -316,15 +318,17 @@ test('widescreen canvas matches the widened display aspect so a 136x30 Droid CLI
   assert.deepEqual([inner.canvas.width, inner.canvas.height], [SCREEN_CANVAS.width, SCREEN_CANVAS.height]);
   const baseBox = new THREE.Box3().setFromObject(inner.baseModel);
   assert.ok(Math.abs(baseBox.max.x - baseBox.min.x - BASE_W) < 1e-3, 'procedural base keeps its 0.78 width');
+  assert.ok(Math.abs(baseBox.max.z - baseBox.min.z - 0.52) < 1e-3, 'procedural base keeps its 0.52 depth');
   const lidBox = new THREE.Box3().setFromObject(inner.lidModel);
-  assert.ok(Math.abs(lidBox.max.x - lidBox.min.x - LID_W) < 1e-3, 'procedural lid widens to LID_W');
+  assert.ok(Math.abs(lidBox.max.x - lidBox.min.x - LID_W) < 1e-3, 'procedural lid keeps LID_W');
+  assert.ok(Math.abs(lidBox.max.y - lidBox.min.y - LID_H) < 1e-3, 'procedural lid scales up to LID_H');
 
   const { ctx, ops } = canvasSpy();
-  const full = screen(136, 30, 30, 136);
-  full.above = Array.from({ length: 10 }, (): Run[] => [['h'.repeat(136), -1, -1, 0]]);
+  const full = screen(DEFAULT_COLS, DEFAULT_ROWS, DEFAULT_ROWS, DEFAULT_COLS);
+  full.above = Array.from({ length: 10 }, (): Run[] => [['h'.repeat(DEFAULT_COLS), -1, -1, 0]]);
   paintScreen(ctx, SCREEN_CANVAS.width, SCREEN_CANVAS.height, full, undefined, 22);
   const texts = ops.filter((op) => op.kind === 'fillText');
-  assert.equal(texts.length, 30, 'all 30 live rows fit without pulling scrollback');
+  assert.equal(texts.length, DEFAULT_ROWS, 'all 35 live rows fit without pulling scrollback');
   assert.equal(texts.filter((op) => String(op.args[0]).startsWith('h')).length, 0);
   const ys = textYs(ops);
   assert.ok(Math.min(...ys) < 40);
@@ -360,9 +364,8 @@ test('every neighboring desk, beanbag and boss laptop keeps a visible gap betwee
   for (const glb of [false, true]) {
     if (glb) {
       for (const { laptop } of placed) {
-        const display = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.46), new THREE.MeshBasicMaterial());
+        const display = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.46).translate(0, 0.253, 0.013), new THREE.MeshBasicMaterial());
         display.name = 'Display';
-        display.position.set(0, 0.253, 0.013);
         const inner = laptop as unknown as { lidModel: THREE.Group; wireDisplay(): void };
         inner.lidModel.add(display);
         inner.wireDisplay();
@@ -441,46 +444,58 @@ function triangleGlb(nodeName: string): Buffer {
   return Buffer.concat([header, jsonHead, jsonChunk, binHead, bin]);
 }
 
-/** A multi-node uncompressed GLB for testing lid shell end-cap widening alongside Display and hinge lip. */
+/** A multi-node uncompressed GLB for testing lid shell resizing alongside Display, notch, badge and hinge lip. */
 function lidGlb(): Buffer {
-  const mkTri = (x0: number, x1: number) => new Float32Array([x0, 0, 0, x1, 0, 0, 0, 0.5, 0]);
-  const displayPos = mkTri(-0.36, 0.36);
-  const shellPos = mkTri(-0.39, 0.39);
-  const lipPos = mkTri(-0.35, 0.35);
+  const mkTri = (x0: number, x1: number, y0: number, y1: number) => new Float32Array([x0, y0, 0, x1, y0, 0, 0, y1, 0]);
+  const displayPos = mkTri(-0.36, 0.36, 0.023, 0.483);
+  const shellPos = mkTri(-0.39, 0.39, 0, 0.5);
+  const lipPos = mkTri(-0.35, 0.35, 0, 0.012);
+  const notchPos = mkTri(-0.0225, 0.0225, 0.473, 0.485);
+  const badgePos = mkTri(-0.055, 0.055, 0.205, 0.315);
   const indices = new Uint16Array([0, 1, 2]);
-  const parts = [Buffer.from(displayPos.buffer), Buffer.from(shellPos.buffer), Buffer.from(lipPos.buffer), Buffer.from(indices.buffer)];
+  const parts = [Buffer.from(displayPos.buffer), Buffer.from(shellPos.buffer), Buffer.from(lipPos.buffer), Buffer.from(notchPos.buffer), Buffer.from(badgePos.buffer), Buffer.from(indices.buffer)];
   const payload = Buffer.concat(parts);
   const bin = Buffer.concat([payload, Buffer.alloc((4 - (payload.length % 4)) % 4)]);
   const json = {
     asset: { version: '2.0' },
-    scenes: [{ nodes: [0, 1, 2] }],
+    scenes: [{ nodes: [0, 1, 2, 3, 4] }],
     nodes: [
       { mesh: 0, name: 'Display' },
       { mesh: 1, name: 'Shell' },
       { mesh: 2, name: 'Lip' },
+      { mesh: 3, name: 'Notch' },
+      { mesh: 4, name: 'Badge' },
     ],
     meshes: [
-      { primitives: [{ attributes: { POSITION: 0 }, indices: 3, material: 0 }] },
-      { primitives: [{ attributes: { POSITION: 1 }, indices: 3, material: 1 }] },
-      { primitives: [{ attributes: { POSITION: 2 }, indices: 3, material: 2 }] },
+      { primitives: [{ attributes: { POSITION: 0 }, indices: 5, material: 0 }] },
+      { primitives: [{ attributes: { POSITION: 1 }, indices: 5, material: 1 }] },
+      { primitives: [{ attributes: { POSITION: 2 }, indices: 5, material: 2 }] },
+      { primitives: [{ attributes: { POSITION: 3 }, indices: 5, material: 3 }] },
+      { primitives: [{ attributes: { POSITION: 4 }, indices: 5, material: 4 }] },
     ],
     materials: [
       { name: 'ScreenOff', pbrMetallicRoughness: {} },
       { name: 'MacbookBody', pbrMetallicRoughness: {} },
       { name: 'PlasticBlack', pbrMetallicRoughness: {} },
+      { name: 'Rubber', pbrMetallicRoughness: {} },
+      { name: 'Chrome', pbrMetallicRoughness: {} },
     ],
     buffers: [{ byteLength: bin.length }],
     bufferViews: [
       { buffer: 0, byteOffset: 0, byteLength: 36, target: 34962 },
       { buffer: 0, byteOffset: 36, byteLength: 36, target: 34962 },
       { buffer: 0, byteOffset: 72, byteLength: 36, target: 34962 },
-      { buffer: 0, byteOffset: 108, byteLength: 6, target: 34963 },
+      { buffer: 0, byteOffset: 108, byteLength: 36, target: 34962 },
+      { buffer: 0, byteOffset: 144, byteLength: 36, target: 34962 },
+      { buffer: 0, byteOffset: 180, byteLength: 6, target: 34963 },
     ],
     accessors: [
-      { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [-0.36, 0, 0], max: [0.36, 0.5, 0] },
+      { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3', min: [-0.36, 0.023, 0], max: [0.36, 0.483, 0] },
       { bufferView: 1, componentType: 5126, count: 3, type: 'VEC3', min: [-0.39, 0, 0], max: [0.39, 0.5, 0] },
-      { bufferView: 2, componentType: 5126, count: 3, type: 'VEC3', min: [-0.35, 0, 0], max: [0.35, 0.5, 0] },
-      { bufferView: 3, componentType: 5123, count: 3, type: 'SCALAR' },
+      { bufferView: 2, componentType: 5126, count: 3, type: 'VEC3', min: [-0.35, 0, 0], max: [0.35, 0.012, 0] },
+      { bufferView: 3, componentType: 5126, count: 3, type: 'VEC3', min: [-0.0225, 0.473, 0], max: [0.0225, 0.485, 0] },
+      { bufferView: 4, componentType: 5126, count: 3, type: 'VEC3', min: [-0.055, 0.205, 0], max: [0.055, 0.315, 0] },
+      { bufferView: 5, componentType: 5123, count: 3, type: 'SCALAR' },
     ],
   };
   const raw = Buffer.from(JSON.stringify(json));
@@ -565,14 +580,24 @@ test('a laptop swaps its stand-in for the MacBook GLBs once they are cached', as
   assert.equal(laptop.screen, display, 'the GLB display is the shot target');
   const shellMesh = inner.lidModel.getObjectByName('Shell') as THREE.Mesh;
   const lipMesh = inner.lidModel.getObjectByName('Lip') as THREE.Mesh;
+  const notchMesh = inner.lidModel.getObjectByName('Notch') as THREE.Mesh;
+  const badgeMesh = inner.lidModel.getObjectByName('Badge') as THREE.Mesh;
+  const pinwheel = inner.lidModel.getObjectByName('pinwheel-decal') as THREE.Mesh;
   assert.ok(Math.abs(shellMesh.geometry.boundingBox!.max.x - LID_W / 2) < 1e-6, 'outer lid shell widens to LID_W');
   assert.ok(Math.abs(shellMesh.geometry.boundingBox!.min.x + LID_W / 2) < 1e-6);
+  assert.ok(Math.abs(shellMesh.geometry.boundingBox!.min.y) < 1e-6, 'lid hinge edge stays locked at y=0');
+  assert.ok(Math.abs(shellMesh.geometry.boundingBox!.max.y - LID_H) < 1e-6, 'outer lid shell scales up to LID_H');
   const lipBox = new THREE.Box3().setFromBufferAttribute(lipMesh.geometry.getAttribute('position') as THREE.BufferAttribute);
-  assert.ok(Math.abs(lipBox.max.x - 0.35) < 1e-6, 'inner hinge lip stays 0.70 wide to mate with the base');
+  assert.ok(Math.abs(lipBox.max.x - 0.35) < 1e-6 && Math.abs(lipBox.max.y - 0.012) < 1e-6, 'inner hinge lip stays 0.70 x 0.012 on the hinge');
+  assert.ok(Math.abs(notchMesh.geometry.boundingBox!.max.y - (0.485 + LID_H - 0.5)) < 1e-6, 'camera notch moves up with the top bezel');
+  assert.ok(Math.abs(notchMesh.geometry.boundingBox!.max.y - notchMesh.geometry.boundingBox!.min.y - 0.012) < 1e-6, 'camera notch is not stretched vertically');
+  const badgeCenterY = (badgeMesh.geometry.boundingBox!.min.y + badgeMesh.geometry.boundingBox!.max.y) / 2;
+  assert.ok(Math.abs(badgeCenterY - pinwheel.position.y) < 1e-6, 'back badge and pinwheel decal stay centered together');
+  assert.ok(Math.abs(badgeMesh.geometry.boundingBox!.max.y - badgeMesh.geometry.boundingBox!.min.y - 0.11) < 1e-6, 'back badge stays round instead of stretching');
   const second = new Laptop();
   second.update(0.016, undefined, 0);
   const secondInner = second as unknown as { lidModel: THREE.Group };
-  assert.equal((secondInner.lidModel.getObjectByName('Shell') as THREE.Mesh).geometry, shellMesh.geometry, 'widened lid geometry is built once and shared');
+  assert.equal((secondInner.lidModel.getObjectByName('Shell') as THREE.Mesh).geometry, shellMesh.geometry, 'resized lid geometry is built once and shared');
   second.dispose();
   laptop.dispose();
 });
@@ -629,7 +654,7 @@ test('an idle laptop repaints when all fonts settle, including a failed unrelate
 
 test('paintScreen leaves empty space beside and behind inline images black instead of grey', () => {
   const { ctx, rectStyles, drawnImages } = canvasSpy();
-  const lines: ScreenState['lines'] = Array.from({ length: 30 }, () => []);
+  const lines: ScreenState['lines'] = Array.from({ length: DEFAULT_ROWS }, () => []);
   lines[0] = [
     [' ', -1, 0x1d75f00, 0],
     [' '.repeat(135), -1, 0x1262626, 0],
@@ -638,21 +663,21 @@ test('paintScreen leaves empty space beside and behind inline images black inste
     [' ', -1, 0x1d75f00, 0],
     [`${' '.repeat(45)}caption${' '.repeat(83)}`, 0x1eeeeee, 0x1262626, 0],
   ];
-  lines[28] = [['─'.repeat(136), -1, -1, 0]];
+  lines[DEFAULT_ROWS - 2] = [['─'.repeat(136), -1, -1, 0]];
   const s: ScreenState = {
-    cols: 136,
-    rows: 30,
+    cols: DEFAULT_COLS,
+    rows: DEFAULT_ROWS,
     lines,
     placements: [{ id: 1, x: 3, y: 0, cols: 42, rows: 2, srcCol: 0, srcRow: 0, totalCols: 42, totalRows: 2 }],
     bitmaps: new Map([[1, { source: {} as CanvasImageSource, width: 420, height: 120 }]]),
-    cursor: [0, 29],
+    cursor: [0, DEFAULT_ROWS - 1],
     version: 1,
   };
   paintScreen(ctx, SCREEN_CANVAS.width, SCREEN_CANVAS.height, s, undefined, 22);
 
   assert.equal(rectStyles[0]?.style, '#000000', 'canvas clears to pure OLED black');
   const pad = SCREEN_CANVAS.width * 0.01;
-  const charW = Math.min((SCREEN_CANVAS.width - pad * 2) / 136 / 0.6, (SCREEN_CANVAS.height - pad * 2) / 30 / 1.25) * 0.6;
+  const charW = Math.min((SCREEN_CANVAS.width - pad * 2) / DEFAULT_COLS / 0.6, (SCREEN_CANVAS.height - pad * 2) / DEFAULT_ROWS / 1.25) * 0.6;
   const lineH = (charW / 0.6) * 1.25;
   const greyRects = rectStyles.filter((op) => op.style === 'rgb(38,38,38)');
   assert.equal(greyRects.filter((r) => Number(r.args[1]) < pad + lineH * 0.5).length, 0, 'pure image row paints zero grey rects');

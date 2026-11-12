@@ -226,23 +226,27 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
   }
 }
 
-/** The unchanged keyboard deck width; only the hinged lid and display widen past it. */
+/** The unchanged keyboard deck width; only the hinged lid and display scale past it. */
 export const BASE_W = 0.78;
-/** Widescreen lid width in laptop space: fills a 2.14 m workbench while leaving ~6.9 cm between neighboring 2.2 m desks. */
+const BASE_LID_H = 0.5;
+/** Widescreen lid dimensions in laptop space: 1.065 wide and 0.575 tall (+15%), leaving ~6.9 cm between neighboring 2.2 m desks. */
 export const LID_W = 1.065;
-const LID_H = 0.5;
+export const LID_H = 0.575;
 /** Outer shell and cover-glass bevels in macbook-lid.glb sit past ±0.37; the 0.70 hinge lip, notch, lens and badge stay inside. */
 const LID_END_X = 0.37;
-/** The lit widescreen panel in lid space, nearly edge to edge on the 1.065 x 0.5 lid (212:99 aspect). */
+/** Top bevels, cover glass, camera notch and lens sit above 0.40; the back badge sits in 0.205..0.315; the hinge lip sits below 0.02. */
+const LID_TOP_Y = 0.4;
+const LID_MID_Y = 0.15;
+/** The lit widescreen panel in lid space, nearly edge to edge on the 1.065 x 0.575 lid (106:57 aspect). */
 export const SCREEN_W = 1.06;
-export const SCREEN_H = 0.495;
-/** Default terminal canvas matching SCREEN_W : SCREEN_H (212:99) so glyphs and Kitty images have square texels. */
-export const SCREEN_CANVAS = { width: 2968, height: 1386 } as const;
+export const SCREEN_H = 0.57;
+/** Default terminal canvas matching SCREEN_W : SCREEN_H (106:57) so glyphs and Kitty images have square texels. */
+export const SCREEN_CANVAS = { width: 2968, height: 1596 } as const;
 /** In front of the GLB's bezel frame, whose face is at z 0.018. */
 const SCREEN_Z = 0.02;
 
-/** Radians the open lid leans back past upright; negative tips the screen toward whoever sits at it. */
-const LID_LEAN = 0.04;
+/** Radians the open lid leans back past upright; scaled with LID_H so the taller lid's top overhangs no further back. */
+const LID_LEAN = 0.034;
 
 /** The Factory-issue laptop's finish: a space-black shell with a graphite trackpad. */
 const SPACE_BLACK = '#1c1c1e';
@@ -254,7 +258,7 @@ const SPACE_BLACK = '#1c1c1e';
  */
 const RETONE: Record<string, string> = { MacbookBody: SPACE_BLACK, Chrome: SPACE_BLACK, MacbookPad: '#2a2a2a', MacbookGrille: SPACE_BLACK };
 const retoned = new Map<THREE.Material, THREE.Material>();
-const widenedLids = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
+const resizedLids = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
 
 /** Swaps a freshly installed GLB's materials for their Factory-toned copies (made once, shared by every laptop). */
 function retone(root: THREE.Object3D) {
@@ -277,43 +281,47 @@ function retone(root: THREE.Object3D) {
 }
 
 /**
- * Widens the MacBook lid GLB's outer shell and front glass to LID_W by translating their left/right
- * end-caps outward (made once, shared by every laptop). Central features inside ±LID_END_X — the
- * 0.70 hinge lip mating with the 0.78 base, the camera notch/lens, and the back badge — stay untouched
- * and unstretched, with corner bevel radii and normals preserved.
+ * Resizes the MacBook lid GLB's outer shell and front glass to LID_W x LID_H by translating its
+ * left/right end-caps outward and its top edge, camera notch and lens upward (made once, shared by
+ * every laptop). The 0.70 hinge lip and bottom bevels stay locked on y=0 to mate with the 0.78 base,
+ * the back badge shifts to the taller lid's midpoint, and all bevel radii and normals stay intact.
  */
-function widenLid(root: THREE.Object3D) {
-  const shift = (LID_W - BASE_W) / 2;
+function resizeLid(root: THREE.Object3D) {
+  const shiftX = (LID_W - BASE_W) / 2;
+  const shiftY = LID_H - BASE_LID_H;
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh || m.name === 'Display' || m.name === 'pinwheel-decal') return;
     const src = m.geometry;
-    let out = widenedLids.get(src);
+    let out = resizedLids.get(src);
     if (!out) {
       const pos = src.getAttribute('position');
-      let hasOuter = false;
+      let needsShift = false;
       if (pos) {
         for (let i = 0; i < pos.count; i++) {
-          if (Math.abs(pos.getX(i)) > LID_END_X) {
-            hasOuter = true;
+          if (Math.abs(pos.getX(i)) > LID_END_X || pos.getY(i) > LID_MID_Y) {
+            needsShift = true;
             break;
           }
         }
       }
-      if (!hasOuter || !pos) {
+      if (!needsShift || !pos) {
         out = src;
       } else {
         out = src.clone();
         const dst = out.getAttribute('position');
         for (let i = 0; i < dst.count; i++) {
           const x = dst.getX(i);
-          if (Math.abs(x) > LID_END_X) dst.setX(i, x + Math.sign(x) * shift);
+          const y = dst.getY(i);
+          if (Math.abs(x) > LID_END_X) dst.setX(i, x + Math.sign(x) * shiftX);
+          if (y > LID_TOP_Y) dst.setY(i, y + shiftY);
+          else if (y > LID_MID_Y) dst.setY(i, y + shiftY / 2);
         }
         dst.needsUpdate = true;
         out.computeBoundingBox();
         out.computeBoundingSphere();
       }
-      widenedLids.set(src, out);
+      resizedLids.set(src, out);
     }
     m.geometry = out;
   });
@@ -333,7 +341,7 @@ function pinwheelDecal(): THREE.Mesh {
     mat.userData.outlineParameters = { visible: false };
     decal = { geo: glyphFlat(0.11, 3).rotateY(Math.PI), mat };
   }
-  const m = mesh(decal.geo, decal.mat, 0, 0.26, -0.0135);
+  const m = mesh(decal.geo, decal.mat, 0, 0.26 + (LID_H - BASE_LID_H) / 2, -0.0135);
   m.name = 'pinwheel-decal';
   return m;
 }
@@ -387,7 +395,7 @@ export class Laptop {
     this.lidModel.add(lidShell);
     const screen = new THREE.Mesh(new THREE.PlaneGeometry(SCREEN_W, SCREEN_H), this.screenMat);
     this.screen = screen;
-    screen.position.set(0, 0.25, 0.014);
+    screen.position.set(0, LID_H / 2, 0.014);
     this.lidModel.add(screen);
     this.lidModel.add(pinwheelDecal());
     this.lid.rotation.x = Math.PI / 2; // closed; animates open
@@ -424,7 +432,7 @@ export class Laptop {
    * how lit it is, 0–1: nothing until the lid has swung most of the way up.
    */
   glow(pos: THREE.Vector3, dir: THREE.Vector3): number {
-    this.lid.localToWorld(pos.set(0, 0.25, 0.05));
+    this.lid.localToWorld(pos.set(0, LID_H / 2, 0.05));
     dir.set(0, 0, 1).transformDirection(this.lid.matrixWorld);
     return Math.max(0, (this.openT - 0.6) / 0.4);
   }
@@ -448,7 +456,7 @@ export class Laptop {
     if (this.lidSwapped || !propReady('macbook-lid')) return;
     if (useProp(this.lidModel, 'macbook-lid')) {
       this.lidSwapped = true;
-      widenLid(this.lidModel);
+      resizeLid(this.lidModel);
       retone(this.lidModel);
       this.lidModel.add(pinwheelDecal());
       this.wireDisplay();
@@ -462,11 +470,11 @@ export class Laptop {
     display.material = this.screenMat;
     this.screen = display;
     // The GLB's plane (0.72 x 0.46, centred at y 0.253, z 0.013) sits recessed in a bezel frame.
-    // Stretch it across the widened 1.065 x 0.5 lid and float it just in front of the frame.
+    // Stretch it across the 1.065 x 0.575 lid and float it just in front of the frame.
     const sx = SCREEN_W / 0.72;
     const sy = SCREEN_H / 0.46;
     display.scale.set(sx, sy, 1);
-    display.position.set(0, 0.253 * (1 - sy) + (0.25 - 0.253), SCREEN_Z - 0.013);
+    display.position.set(0, 0.253 * (1 - sy) + (LID_H / 2 - 0.253), SCREEN_Z - 0.013);
   }
 
   private setLid(open: number) {
