@@ -649,7 +649,7 @@ export class Team {
       ...(isBuildingAgent(w) ? {} : { max: s.maxPerLead }),
       worktree: s.worktree && this.opts.git,
       wakeLead: s.wakeLead,
-      ...(modelList(w, s) ? { models: modelList(w, s)!.length } : {}),
+      ...(modelList(s) ? { models: modelList(s)!.length } : {}),
     };
   }
 
@@ -688,7 +688,8 @@ export class Team {
     const known = new Map([...(catalogue?.models ?? []), ...(includeDisabled ? (catalogue?.disabledModels ?? []) : [])].map((m) => [m.id, m]));
     const preferred = this.defaultModel(catalogue?.defaultModel);
     const eligible = (id: string) => !catalogue?.customOnly || known.get(id)?.custom === true;
-    const fallback = preferred && eligible(preferred) ? preferred : undefined;
+    const allowed = modelList(s);
+    const fallback = preferred && eligible(preferred) && !outsideModelList(allowed, preferred) ? preferred : undefined;
     const describe = (id: string, m: DroidModelOption | undefined, note?: string): TeamModel => {
       const avail = this.opts.availability?.(id);
       const stuck = m?.disabled ? 'Switched off in Droid.' : this.whyNot(id);
@@ -729,16 +730,15 @@ export class Team {
         ...(usage ? { usage } : {}),
       };
     };
-    const allowed = modelList(caller, s);
     const models = includeDisabled
       ? [...new Set([...known.keys(), ...(allowed ?? []).map((m) => m.id)])].filter(eligible).map((id) => {
           const model = describe(id, known.get(id), allowed?.find((m) => m.id === id)?.note);
-          return { ...model, enabled: !model.cannotRun && (!allowed || allowed.some((m) => m.id === id) || id === fallback) };
+          return { ...model, enabled: !model.cannotRun && !outsideModelList(allowed, id) };
         })
       : allowed
         ? allowed.filter((a) => eligible(a.id)).map((a) => describe(a.id, known.get(a.id), a.note))
         : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => describe(m.id, m));
-    // The default is what a hire without --model runs, so the lead sees it even when the list leaves it out.
+    // With no allowlist, surface an unlisted configured default so the lead sees what omitting --model runs.
     if (fallback && !models.some((m) => m.id === fallback)) {
       const model = describe(fallback, known.get(fallback));
       models.unshift({ ...model, ...(includeDisabled ? { enabled: !model.cannotRun } : {}) });
@@ -753,20 +753,30 @@ export class Team {
     });
   }
 
-  /** Only a model outside the list needs droid's own default, which subagents may always run. */
-  private async droidDefaultFor(list: readonly SubagentModel[] | undefined, model: string): Promise<string | undefined> {
-    const outside = !!model && !!list && !list.some((m) => m.id === model) && !this.defaultModel();
-    return outside ? (await this.catalogue())?.defaultModel : undefined;
+  /** When `--model` is omitted under an allowlist and no office/subagent default is set, read Droid's default to check it against the list. */
+  private async droidDefaultFor(list: readonly SubagentModel[] | undefined, asked: string): Promise<string | undefined> {
+    return !asked && list && !this.defaultModel() ? (await this.catalogue())?.defaultModel : undefined;
   }
 
   /**
-   * Why `caller` can't give a worker `model` through office_worker_spawn, as it would be refused by team_hire:
-   * outside the list (the default model excepted), or a model that can't run now. Undefined when it can.
+   * Why `caller` can't spawn a worker on `model` (`undefined` when omitted) through office_worker_spawn:
+   * outside the allowlist (resolved default included), or a model that can't run now. Undefined when it can.
    */
-  async refuseSpawnModel(caller: WorkerInfo, model: string): Promise<string | undefined> {
-    const list = modelList(caller, this.opts.settings());
-    if (outsideModelList(list, model, this.defaultModel(await this.droidDefaultFor(list, model)))) return outsideModelListMessage(clip(model, 60));
-    return this.refuseModel(model, true, list);
+  async refuseSpawnModel(_caller: WorkerInfo, model?: string, cloud = false): Promise<string | undefined> {
+    const list = modelList(this.opts.settings());
+    const explicit = model?.trim() ? model.trim() : undefined;
+    const named = explicit !== undefined;
+    const officeModel = this.workers.officeDefault?.model;
+    let resolved = explicit;
+    if (resolved === undefined) {
+      if (cloud) {
+        resolved = officeModel && !officeModel.startsWith('custom:') ? officeModel : undefined;
+      } else {
+        resolved = officeModel ?? (list ? (await this.catalogue())?.defaultModel : undefined);
+      }
+    }
+    if (outsideModelList(list, resolved)) return outsideModelListMessage(resolved ? clip(resolved, 60) : undefined, list!, named);
+    return resolved ? this.refuseModel(resolved, named, list) : undefined;
   }
 
   /** What subscriptions say about `model`: undefined when it can run, or nobody can tell. */
@@ -1105,14 +1115,15 @@ export class Team {
 
   /**
    * What a subagent runs: what its lead asked for, else the Subagents setting, else the office
-   * default. `droidDefault` is droid's own default model, which the model list never refuses.
+   * default. When `list` is set, the resolved model (explicit or default) must be on `list`.
    */
   private choice(b: Record<string, unknown>, droidDefault: string | undefined, list: readonly SubagentModel[] | undefined): Partial<AgentChoice> | string {
     const s = this.opts.settings();
     const model = typeof b.model === 'string' && b.model.trim() ? b.model.trim() : undefined;
     const effort = b.effort === undefined || b.effort === '' ? undefined : b.effort;
     if (effort !== undefined && !isAgentEffort(effort)) return `Effort is one of ${AGENT_EFFORTS.join(', ')}`;
-    if (model !== undefined && outsideModelList(list, model, this.defaultModel(droidDefault))) return outsideModelListMessage(clip(model, 60));
+    const resolved = model ?? this.defaultModel(droidDefault);
+    if (outsideModelList(list, resolved)) return outsideModelListMessage(resolved ? clip(resolved, 60) : undefined, list!, model !== undefined);
     if (model === undefined && effort === undefined) return s.agent ? { ...s.agent } : {};
     // A worker hired with no model starts on the office default, effort and all, so what the lead
     // leaves out comes from the setting, else from that default.
@@ -1129,7 +1140,7 @@ export class Team {
     if (!task) return no(400, 'The subagent needs a task: provide its brief in team_hire');
     const s = this.opts.settings();
     const asked = typeof b.model === 'string' ? b.model.trim() : '';
-    const list = modelList(lead, s);
+    const list = modelList(s);
     const choice = this.choice(b, await this.droidDefaultFor(list, asked), list);
     if (typeof choice === 'string') return no(400, choice);
     const refused = await this.refuseModel(choice.model, !!asked, list);

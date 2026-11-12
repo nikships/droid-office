@@ -160,7 +160,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }, options: 
 
 test('team models describes costs, notes, efforts, images, default and unavailable catalogues', async (t) => {
   const r = await rig(t);
-  r.settings.models = [{ id: 'glm-5.3-flash', note: 'tests and docs' }, { id: 'custom:mine' }];
+  r.settings.models = [{ id: 'claude-opus-5-5' }, { id: 'glm-5.3-flash', note: 'tests and docs' }, { id: 'custom:mine' }];
   const result = await r.call(r.lead, 'team_models');
   assert.equal(result.isError, undefined);
   assert.equal(result.body.restricted, true);
@@ -168,11 +168,21 @@ test('team models describes costs, notes, efforts, images, default and unavailab
     result.body.models.map((m: Record<string, unknown>) => m.id),
     ['claude-opus-5-5', 'glm-5.3-flash', 'custom:mine'],
   );
+  assert.match(result.output, /Settings restrict subagent models to the listed picks\./);
   assert.match(result.output, /x1.6 credits/);
   assert.match(result.output, /effort low\/medium\/high/);
   assert.match(result.output, /x0.06 credits, no images/);
   assert.match(result.output, /tests and docs/);
   assert.match(result.output, /owner's API key, no Factory credits/);
+  assert.match(result.output, /Default: claude-opus-5-5\./);
+  r.settings.models = [{ id: 'glm-5.3-flash', note: 'tests and docs' }];
+  const withoutDefault = await r.call(r.lead, 'team_models');
+  assert.deepEqual(
+    withoutDefault.body.models.map((m: Record<string, unknown>) => m.id),
+    ['glm-5.3-flash'],
+  );
+  assert.equal(withoutDefault.body.defaultModel, undefined);
+  assert.match(withoutDefault.output, /Default: none on the allowed list \(pass model explicitly\)\./);
   const unavailable = await rig(t, {
     models: async () => {
       throw new Error('private error');
@@ -267,6 +277,25 @@ test('team_models and models_list print the plan a subscription model runs on, a
   assert.equal((shown.match(/Subscription usage/g) ?? []).length, 2, 'GLM is not a subscription model');
   const listed = (await r.call(r.lead, 'models_list')).content as { text: string }[];
   assert.match(listed.map((c) => c.text).join('\n'), /Subscription usage: ChatGPT, best of 2 accounts/);
+
+  // With SubagentSettings.models active, team_models keeps the compact provider quota summary scoped to allowed picks.
+  r.settings.models = [{ id: SOL, note: 'try before factory-billed' }];
+  const restricted = await r.call(r.lead, 'team_models');
+  const restrictedText = (restricted.content as { text: string }[]).map((c) => c.text).join('\n');
+  assert.equal(restricted.body.restricted, true);
+  assert.deepEqual(
+    restricted.body.models.map((m: { id: string }) => m.id),
+    [SOL],
+  );
+  assert.match(restrictedText, /^Subscription quotas:\n- ChatGPT \(best of 2 accounts, 1\/1 runnable\):/);
+  assert.doesNotMatch(restrictedText, /Grok/, 'disallowed subscription models are omitted from team_models and its quota header');
+  assert.match(restrictedText, /Settings restrict subagent models to the listed picks\./);
+  assert.match(restrictedText, /Default: none on the allowed list \(pass model explicitly\)\./);
+  const quotasOnly = await r.call(r.lead, 'team_models', { only: 'quotas' });
+  const quotasOnlyText = (quotasOnly.content as { text: string }[]).map((c) => c.text).join('\n');
+  assert.match(quotasOnlyText, /^Subscription quotas:\n- ChatGPT/);
+  assert.doesNotMatch(quotasOnlyText, /Grok/);
+  assert.match(quotasOnlyText, /Default: none on the allowed list \(pass model explicitly\)\./);
 });
 
 test('hiring preserves the literal brief, uses nearest desk and a worktree, and forwards model, effort and from', async (t) => {
@@ -305,7 +334,10 @@ test('hire refusals are actionable errors and do not take a desk', async (t) => 
   r.settings.models = [{ id: 'glm-5.3-flash' }];
   const restricted = await r.hire({ model: 'not-allowed' });
   assert.equal(restricted.isError, true);
-  assert.match(restricted.output, /pick one from team_models/);
+  assert.match(restricted.output, /pick an allowed model from team_models \(glm-5\.3-flash\)/);
+  const disallowedDefault = await r.hire();
+  assert.equal(disallowedDefault.isError, true);
+  assert.match(disallowedDefault.output, /default model \(claude-opus-5-5\) isn't on this office's allowed list[\s\S]*\(glm-5\.3-flash\)/);
   await r.hire({ model: 'glm-5.3-flash' });
   r.settings.maxPerLead = 1;
   const full = await r.hire({ model: 'glm-5.3-flash' });

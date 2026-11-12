@@ -405,9 +405,10 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (res.status >= 400) return reply(res, () => '');
       const allModels = res.body.models as TeamModel[];
       const quotas = res.body.quotas as ProviderQuotaSummary[] | undefined;
+      const defaultLine = `Default: ${res.body.defaultModel ?? (res.body.restricted ? 'none on the allowed list (pass model explicitly)' : "Droid's own default")}.`;
       const mode = only ?? 'all';
       if (mode === 'quotas') {
-        const text = [quotas?.length ? formatProviderQuotas(quotas) : 'Subscription quotas: no subscription providers configured.', `Default: ${res.body.defaultModel ?? "Droid's own default"}.`].join('\n\n');
+        const text = [quotas?.length ? formatProviderQuotas(quotas) : 'Subscription quotas: no subscription providers configured.', defaultLine].join('\n\n');
         return officeResult(text, {
           restricted: res.body.restricted,
           models: [],
@@ -422,10 +423,10 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       return officeResult(
         [
           ...(quotas?.length ? [formatProviderQuotas(quotas)] : []),
-          body.restricted ? 'Settings restrict subagent models to the listed picks and the default.' : 'Subagents may use any current Droid model.',
+          body.restricted ? 'Settings restrict subagent models to the listed picks.' : 'Subagents may use any current Droid model.',
           ...(body.unavailable ? ['Droid could not list its models; costs and providers may be missing.'] : []),
           ...filtered.map(modelText),
-          `Default: ${body.defaultModel ?? "Droid's own default"}.`,
+          defaultLine,
         ].join('\n\n'),
         body,
       );

@@ -121,7 +121,7 @@ The office never turns on [Tailscale Funnel](https://tailscale.com/kb/1223/funne
 
 ## Tools
 
-Remote-bot `tools/list` returns the tools below; Linear tools appear only while the office is connected to Linear. The list is otherwise stable when local hiring or visit permissions change. Hiring and the worker-control tools do not depend on the Subagents permission, model allowlist or team-size limit; office capacity, model availability and the owner's normal action checks still apply. Turning off **Office MCP** or revoking a bot's key cuts off access.
+Remote-bot `tools/list` returns the tools below; Linear tools appear only while the office is connected to Linear. The list is otherwise stable when local hiring or visit permissions change. Hiring and the worker-control tools do not depend on the local Subagents toggle or team-size limit; the Subagents model allowlist (**Settings → Subagents & visits → Models leads can pick**), office capacity, model availability and the owner's normal action checks apply identically to floor leads, the Orchestrator and external bots (existing workers keep their saved models when resumed or prompted). Turning off **Office MCP** or revoking a bot's key cuts off access.
 
 **Choosing a tool:**
 - Manage your own subagents with `team_*`, `worker_log`, `worker_diff`, `questions_list` and `question_answer`.
