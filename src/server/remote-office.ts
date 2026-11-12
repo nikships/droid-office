@@ -136,9 +136,9 @@ export class RemoteOffice {
     return undefined;
   }
 
-  /** Flushes a subagent's non-progress team_report immediately to its Grok Bot lead's webhook. */
+  /** Flushes a subagent's report, progress or question immediately to its Grok Bot lead's webhook. */
   async pushTeamReport(floorId: string, leadId: string, event?: TeamEvent): Promise<GrokWebhookResult | undefined> {
-    if (!this.store.isGrokBot(leadId) || event?.progress) return undefined;
+    if (!this.store.isGrokBot(leadId)) return undefined;
     this.syncWatches();
     if (event) {
       const floor = this.floors().find((f) => f.id === floorId);
@@ -177,7 +177,7 @@ export class RemoteOffice {
       if (enqueued.message) ackId = enqueued.message.id;
     }
     const id = ackId ?? `test-${randomBytes(8).toString('hex')}`;
-    const ackNote = ackId ? ` Acknowledge "${ackId}" via office_inbox({ ack: ["${ackId}"] }) once handled.` : '';
+    const ackNote = ackId ? ' Acknowledge the ackId once handled.' : '';
     const item: GrokWebhookItem = {
       id,
       ...(ackId ? { ackId } : {}),
@@ -193,8 +193,8 @@ export class RemoteOffice {
         input.kind === 'test'
           ? 'Connectivity verification ping from Droid Office; no action or acknowledgment required.'
           : input.kind === 'question'
-            ? `Reply to ${caller.worker.name} with team_message({ worker: "${caller.worker.id}", floor: "${caller.floor.id}", text: "..." }).${ackNote}`
-            : `Inspect team_status or reply with team_message({ worker: "${caller.worker.id}", floor: "${caller.floor.id}", text: "..." }) if needed.${ackNote}`,
+            ? `Send an answer to this worker on this floor.${ackNote}`
+            : `Check this worker's status or send guidance on this floor if needed.${ackNote}`,
     };
     this.queuePush(leadId, { type: 'direct', id, item });
     const receipt = await this.flushLeadPush(leadId);
@@ -248,7 +248,7 @@ export class RemoteOffice {
   }
 
   private onTeamEvent(floor: RemoteFloor, event: TeamEvent) {
-    if (this.stopped || !this.store.isGrokBot(event.lead) || event.progress) return;
+    if (this.stopped || !this.store.isGrokBot(event.lead)) return;
     if (event.kind === 'done') {
       const member = floor.team.roster(event.lead).find((m) => m.id === event.worker);
       if (member && (member.openQuestion !== undefined || member.awaitingJob)) return;
@@ -327,7 +327,7 @@ export class RemoteOffice {
         at: new Date(m.at).toISOString(),
         ...(f ? { floor: { id: f.id, name: f.def.name, cwd: f.dir } } : {}),
         text: m.text,
-        actionHint: `Acknowledge "${m.id}" via office_inbox({ ack: ["${m.id}"] }) after handling.`,
+        actionHint: 'Acknowledge the ackId after handling this message.',
       };
     }
     const { floor, event } = entry;
