@@ -15,6 +15,7 @@ import type { PromptSource } from '../src/server/prompts.js';
 import { CLEAR_DROID_QUEUE } from '../src/shared/droid-queue.js';
 import { PROMPTS } from '../src/shared/prompts.js';
 import { SUBAGENT_DEFAULTS, type AgentChoice, type AgentEffort, type GhPull, type WorkerInfo } from '../src/shared/protocol.js';
+import { nextFreeSeat } from '../src/shared/layout.js';
 import { SCREEN_SETTLE_MS } from '../src/server/droid-screen.js';
 import { airgappedModelError } from '../src/server/droid-models.js';
 
@@ -454,6 +455,24 @@ test('the office’s hires treat a desk and name held as taken', (t) => {
     assert.notEqual(spawned.name, heldName);
     assert.equal(spawned.name, NAMES[1]);
   }
+});
+
+test('a named desk ignores other floors while automatic seats avoid them', (t) => {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const workers = manager(f, []);
+  t.after(() => workers.shutdown());
+  const elsewhere = { worker: { name: 'Pixel' } as WorkerInfo, floorName: 'sabre' };
+  workers.holds = { desk: () => false, names: () => [], liveDeskElsewhere: (id) => (id === 'desk-1' ? elsewhere : undefined), liveNamesElsewhere: () => ['Pixel'] };
+  assert.equal(workers.deskOccupied('desk-1'), true, 'automatic picks treat it as taken');
+  assert.equal(workers.pickSeat(nextFreeSeat)?.id, 'desk-2');
+  const picked = workers.spawn('desk-1', 'owner');
+  assert.equal(typeof picked, 'object', String(picked));
+  if (typeof picked === 'object') {
+    assert.equal(picked.deskId, 'desk-1');
+    assert.notEqual(picked.name, 'Pixel');
+  }
+  assert.equal(workers.spawn('desk-1', 'owner'), 'That desk is taken');
 });
 
 test('Droid workers pin their model and effort in a per-worker settings overlay, kept across a restart', async (t) => {

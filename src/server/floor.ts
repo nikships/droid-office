@@ -325,7 +325,6 @@ export class Floor {
       dataDir,
       {
         deskTaken: (id) => own.ownDesk(id),
-        liveDeskElsewhere: (id) => ctx.liveDeskElsewhere?.(this, id),
         names: ownNames,
         liveNamesElsewhere: () => ctx.liveNamesElsewhere?.(this) ?? [],
         allNamesElsewhere: () => ctx.allNamesElsewhere?.(this) ?? [],
@@ -388,6 +387,7 @@ export class Floor {
         get: (id) => workers.get(id) ?? workers.buildingIdentity(id),
         buildingAgent: (id) => workers.buildingAgent(id),
         deskOccupied: (id) => workers.deskOccupied(id),
+        pickSeat: (choose) => workers.pickSeat(choose),
         get officeDefault() {
           return workers.officeDefault;
         },
