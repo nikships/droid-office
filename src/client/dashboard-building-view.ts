@@ -23,12 +23,13 @@ interface BuildingViewState {
   rows: BuildingWorkerRow[];
   floors: FloorInfo[];
   live: boolean;
+  canHire: boolean;
   mission?: MissionControlState;
 }
 
 /** A building-wide directory. Opening a row uses the workspace's existing cross-floor navigation. */
 export function createBuildingView(host: { open(row: BuildingWorkerRow): void; workspace(): void; hire(): void }) {
-  let state: BuildingViewState = { rows: [], floors: [], live: false };
+  let state: BuildingViewState = { rows: [], floors: [], live: false, canHire: false };
   let filter: BuildingFilter = 'all';
   let optionsKey = '';
   const nodes = new Map<string, { button: HTMLButtonElement; key: string }>();
@@ -109,9 +110,11 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
 
   function paint() {
     const focused = document.activeElement instanceof HTMLElement && list.contains(document.activeElement) ? document.activeElement : undefined;
+    const focusedIndex = focused ? [...list.querySelectorAll('button')].indexOf(focused as HTMLButtonElement) : -1;
     const counts = buildingCounts(state.rows);
     total.textContent = String(counts.all);
-    hire.disabled = !state.live || !state.floors.length;
+    hire.disabled = !state.live || !state.canHire;
+    hire.title = state.canHire ? 'Hire a Droid on the current floor' : 'Choose a project floor above to hire a Droid';
     const key = JSON.stringify([state.floors.map((f) => [f.id, f.name]), state.rows.some((r) => r.floorId === MISSION_FLOOR)]);
     if (key !== optionsKey) {
       const selected = floor.value;
@@ -153,35 +156,46 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
       button.classList.toggle('asleep', isAsleep(w.status));
       button.classList.toggle('is-subworker', row.depth > 0);
       const blocked = row.kind === 'orchestrator' && !!orchestratorBlocked(state.mission);
-      const status = blocked
-        ? 'Blocked'
-        : row.kind === 'bot'
-          ? isAsleep(w.status)
-            ? 'Offline'
-            : 'External bot'
-          : w.status === 'needs_input'
-            ? 'Needs you'
-            : w.status === 'done'
-              ? !w.acked && !w.lead
-                ? 'Done · new'
-                : 'Done'
-              : isAsleep(w.status)
-                ? 'Asleep'
-                : w.status === 'idle'
-                  ? 'Ready'
-                  : w.status === 'starting'
-                    ? 'Starting'
-                    : 'Working';
+      let status: string;
+      if (blocked) status = 'Blocked';
+      else if (row.kind === 'bot') status = isAsleep(w.status) ? 'Offline' : 'External bot';
+      else if (isAsleep(w.status)) status = 'Asleep';
+      else {
+        switch (w.status) {
+          case 'needs_input':
+            status = 'Needs you';
+            break;
+          case 'done':
+            status = !w.acked && !w.lead ? 'Done · new' : 'Done';
+            break;
+          case 'idle':
+            status = 'Ready';
+            break;
+          case 'starting':
+            status = 'Starting';
+            break;
+          default:
+            status = 'Working';
+        }
+      }
       const detail = row.kind === 'orchestrator' ? orchestratorLine(state.mission) : doingLine(w);
       const model = w.activeModel ?? w.model;
       const effort = w.activeEffort ?? w.effort;
       const branch = w.worktree?.branch;
-      const rowKey = JSON.stringify([w.name, w.color, status, detail, model, effort, w.kind, w.cloud?.computerName, w.todos, branch, row.floorName, row.repo, row.leadName, row.depth, row.kind]);
+      const rowKey = JSON.stringify([w.name, w.color, w.status, status, detail, model, effort, w.kind, w.cloud?.computerName, w.todos, branch, row.floorName, row.repo, row.leadName, row.depth, row.kind]);
       if (rowKey !== node.key) {
         node.key = rowKey;
         button.setAttribute('aria-label', `Open ${w.name}, ${row.floorName}, ${status}${row.leadName ? `, subworker of ${row.leadName}` : ''}: ${detail}`);
         button.title = [w.name, row.floorName, row.repo, branch, detail].filter(Boolean).join(' · ');
-        const sub = row.leadName ? `Subworker of ${row.leadName}` : row.kind === 'desk' ? workerKind(w) : 'Mission Control';
+        let sub = row.kind === 'desk' ? workerKind(w) : 'Mission Control';
+        if (row.leadName) sub = `Subworker of ${row.leadName}`;
+        let engine: HTMLElement | string | undefined;
+        if (w.kind === 'shell') engine = 'Shell';
+        else if (row.kind === 'bot') engine = 'Runs externally';
+        else engine = modelBadgeNode(model, effort);
+        let statusKind: string = w.status;
+        if (row.kind === 'bot') statusKind = 'external';
+        if (blocked) statusKind = 'blocked';
         button.replaceChildren(
           h(
             'span.dash-building-identity',
@@ -196,8 +210,8 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
             ),
           ),
           h('span.dash-building-place', {}, h('span', { title: row.floorName }, row.floorName), h('small', { title: [row.repo, branch].filter(Boolean).join(' · ') }, [row.repo, branch].filter(Boolean).join(' · ') || '—')),
-          h('span.dash-building-model', {}, w.kind === 'shell' ? 'Shell' : row.kind === 'bot' ? 'Runs externally' : modelBadgeNode(model, effort)),
-          h('span.dash-building-status', { 'data-status': blocked ? 'blocked' : row.kind === 'bot' ? 'external' : w.status }, status),
+          h('span.dash-building-model', {}, engine),
+          h('span.dash-building-status', { 'data-status': statusKind }, status),
           h('span.dash-building-open', { 'aria-hidden': 'true' }, icon('arrow', 16)),
         );
       }
@@ -207,17 +221,28 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
     const ids = new Set(state.rows.map((r) => r.worker.id));
     for (const id of nodes.keys()) if (!ids.has(id)) nodes.delete(id);
     reconcileChildren(list, content);
-    if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+    if (focused) {
+      const kept = focused.isConnected && !(focused instanceof HTMLButtonElement && focused.disabled);
+      const next = kept ? focused : (content[Math.min(focusedIndex, content.length - 1)]?.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? search);
+      if (document.activeElement !== next) next.focus({ preventScroll: true });
+    }
     list.hidden = !shown.length;
     empty.hidden = !!shown.length;
     if (!shown.length) {
       const filtered = !!search.value.trim() || !!floor.value || filter !== 'all';
-      empty.replaceChildren(
-        h('img', { src: '/factory-glyph.svg', alt: '', width: 32, height: 32 }),
-        h('b', {}, filtered ? 'No matching workers' : state.live ? 'No workers in the building yet' : 'Waiting for the office'),
-        h('p', {}, filtered ? 'Try another search, floor or status.' : state.live ? 'Hire a Droid on your current floor to get started. Workers from every floor appear here.' : 'The roster will update when the office reconnects.'),
-        ...(filtered ? [clear] : state.live ? [h('button.btn.primary', { type: 'button', disabled: !state.floors.length, onclick: host.hire }, icon('plus', 14), 'Hire Droid')] : []),
-      );
+      let emptyTitle = 'Waiting for the office';
+      let description = 'The roster will update when the office reconnects.';
+      const actions: HTMLElement[] = [];
+      if (filtered) {
+        emptyTitle = 'No matching workers';
+        description = 'Try another search, floor or status.';
+        actions.push(clear);
+      } else if (state.live) {
+        emptyTitle = 'No workers in the building yet';
+        description = state.canHire ? 'Hire a Droid on your current floor to get started. Workers from every floor appear here.' : 'Choose a project floor above to hire a Droid.';
+        actions.push(h('button.btn.primary', { type: 'button', disabled: !state.canHire, onclick: host.hire }, icon('plus', 14), 'Hire Droid'));
+      }
+      empty.replaceChildren(h('img', { src: '/factory-glyph.svg', alt: '', width: 32, height: 32 }), h('b', {}, emptyTitle), h('p', {}, description), ...actions);
     }
   }
   return {

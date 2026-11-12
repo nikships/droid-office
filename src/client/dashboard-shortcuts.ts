@@ -51,9 +51,10 @@ export function workspaceCommand(e: ShortcutEvent, nativeCompanion = false): Wor
 }
 
 /** Run in window capture, before xterm or a composer can consume or send the chord. */
-export function workspaceShortcut(e: ShortcutEvent, run: (command: WorkspaceCommand) => void, nativeCompanion = false): boolean {
+export function workspaceShortcut(e: ShortcutEvent, run: (command: WorkspaceCommand) => void, nativeCompanion = false, scope: 'workspace' | 'directory' = 'workspace'): boolean {
   const command = workspaceCommand(e, nativeCompanion);
   if (!command) return false;
+  if (scope === 'directory' && ['layout', 'maximize', 'pane', 'worker', 'sidebar'].includes(command.action)) return false;
   e.preventDefault();
   e.stopImmediatePropagation();
   if (!e.repeat) run(command);

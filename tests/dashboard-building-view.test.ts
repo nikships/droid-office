@@ -37,6 +37,7 @@ test('all-workers directory filters, opens cross-floor workers, and keeps focus 
     w.view.el.hidden = false;
     w.state = {
       live: true,
+      canHire: true,
       floors: [
         { id: 'office', name: 'droid-office' },
         { id: 'tools', name: 'Tools' },
@@ -118,6 +119,14 @@ test('all-workers directory filters, opens cross-floor workers, and keeps focus 
   assert.equal(await page.locator('[data-worker=pixel]').evaluate((el) => el === document.activeElement), true);
   await page.keyboard.press('End');
   assert.equal(await page.locator('[data-worker=bot]').evaluate((el) => el === document.activeElement), true);
+  for (const status of ['working', 'done', 'needs_input']) {
+    await page.evaluate((status) => {
+      const w = window as any;
+      w.state.rows[4].worker.status = status;
+      w.paint();
+    }, status);
+    assert.equal(await page.locator('[data-worker=bot] .dash-dot').getAttribute('data-status'), status, 'bot status-only ticks refresh the dot');
+  }
   await page.evaluate(() => {
     const w = window as any;
     w.state.rows[0].worker.name = `<script>alert("unsafe")</script>${'Long name '.repeat(20)}`;
@@ -173,5 +182,34 @@ test('all-workers directory filters, opens cross-floor workers, and keeps focus 
   });
   assert.equal(await page.locator('[data-status=blocked]').innerText(), 'Blocked');
   assert.match(await rows.first().innerText(), /Droid is not signed in/);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.state.rows = ['first', 'second'].map((id) => ({ worker: { id, name: id, kind: 'agent', status: 'working' }, kind: 'desk', floorId: 'office', floorName: 'droid-office', depth: 0 }));
+    w.paint();
+  });
+  await page.getByRole('button', { name: 'Working, 2', exact: true }).click();
+  await page.locator('[data-worker=first]').focus();
+  await page.evaluate(() => {
+    const w = window as any;
+    w.state.rows[0].worker.status = 'done';
+    w.paint();
+  });
+  assert.equal(await page.locator('[data-worker=second]').evaluate((el) => el === document.activeElement), true, 'a filtered-out row hands focus to its nearest neighbor');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.state.rows[1].worker.status = 'done';
+    w.paint();
+  });
+  assert.equal(await page.getByRole('searchbox').evaluate((el) => el === document.activeElement), true, 'the last result hands focus back to search');
+  await page.getByRole('button', { name: 'All workers, 2', exact: true }).click();
+  await page.evaluate(() => {
+    const w = window as any;
+    w.state.canHire = false;
+    w.state.rows = [];
+    w.paint();
+  });
+  assert.equal(await page.getByRole('button', { name: 'Hire Droid', exact: true }).count(), 2);
+  for (const button of await page.getByRole('button', { name: 'Hire Droid', exact: true }).all()) assert.equal(await button.isDisabled(), true, 'Rooftop has no current floor to hire on');
+  assert.equal(await page.getByText('Choose a project floor above to hire a Droid.', { exact: true }).isVisible(), true);
   assert.deepEqual(errors, []);
 });

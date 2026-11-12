@@ -103,6 +103,9 @@ test('bots appear once from Mission Control and fall back to remote floor worker
     assert.equal(rows[0].kind, 'bot');
     assert.equal(rows[0].floorId, MISSION_FLOOR);
   }
+  assert.equal(buildingRoster(input)[0].navigationFloor, 'web', 'legacy floor bots must retain their navigation destination');
+  assert.equal(buildingRoster({ ...input, mission: state })[0].navigationFloor, undefined, 'real Mission Control agents open globally');
+  assert.equal(buildingRoster({ ...input, currentFloor: 'android', workers: [bot] })[0].navigationFloor, 'android', 'the live floor wins over an old duplicate');
   assert.deepEqual(buildingRoster({ ...input, mission: mission(false) }), []);
 });
 

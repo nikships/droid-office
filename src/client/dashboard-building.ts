@@ -9,6 +9,8 @@ export interface BuildingWorkerRow {
   worker: WorkerInfo;
   kind: 'desk' | 'orchestrator' | 'bot';
   floorId: string;
+  /** Older offices place external bots on a floor; only real Mission Control agents open globally. */
+  navigationFloor?: string;
   floorName: string;
   repo?: string;
   leadName?: string;
@@ -36,7 +38,11 @@ function actionable(row: BuildingWorkerRow): boolean {
 
 function priority(row: BuildingWorkerRow): number {
   const w = row.worker;
-  if (!actionable(row)) return w.status === 'working' || w.status === 'starting' ? 3 : w.status === 'done' || w.status === 'idle' ? 5 : 7;
+  if (!actionable(row)) {
+    if (w.status === 'working' || w.status === 'starting') return 3;
+    if (w.status === 'done' || w.status === 'idle') return 5;
+    return 7;
+  }
   switch (w.status) {
     case 'needs_input':
       return 0;
@@ -62,8 +68,8 @@ export function buildingRoster(input: { floors: readonly FloorInfo[]; building: 
   const floorRank = new Map(floors.map((floor, index) => [floor.id, index]));
   const live = new Map([...input.workers].map((w) => [w.id, w]));
   const rows = new Map<string, BuildingWorkerRow>();
-  const addMission = (worker: WorkerInfo, kind: 'orchestrator' | 'bot') => {
-    if (!rows.has(worker.id)) rows.set(worker.id, { worker, kind, floorId: MISSION_FLOOR, floorName: 'Mission Control', depth: 0 });
+  const addMission = (worker: WorkerInfo, kind: 'orchestrator' | 'bot', navigationFloor?: string) => {
+    if (!rows.has(worker.id)) rows.set(worker.id, { worker, kind, floorId: MISSION_FLOOR, navigationFloor, floorName: 'Mission Control', depth: 0 });
   };
   const orchestrator = orchestratorWorker(mission);
   if (orchestrator) addMission(orchestrator, 'orchestrator');
@@ -77,7 +83,7 @@ export function buildingRoster(input: { floors: readonly FloorInfo[]; building: 
       if (worker.id === ORCHESTRATOR_ID || (mission && worker.remote) || rows.has(worker.id)) continue;
       if (currentFloor !== null && floorId !== currentFloor && live.has(worker.id)) continue;
       if (worker.remote) {
-        addMission(worker, 'bot');
+        addMission(worker, 'bot', floorId);
       } else {
         rows.set(worker.id, { worker, kind: 'desk', floorId, floorName: floor?.name ?? floorId, repo: repoLabel(floor), depth: 0 });
       }

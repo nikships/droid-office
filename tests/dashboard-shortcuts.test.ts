@@ -142,3 +142,34 @@ test('the sidebar’s arrow keys walk Mission Control and the floor as one list,
   assert.equal(step(undefined, '', -1), 5, 'and up the last');
   assert.equal(sideStep([], undefined, '', 1), undefined);
 });
+
+test('directory search keeps Command caret movement and cannot change hidden workspace panes', () => {
+  for (const value of ['1', '2', '3', '4', '5', '6', '7', '8', 'Enter', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '\\']) {
+    const calls: string[] = [];
+    const e = key(value, { preventDefault: () => calls.push('prevent'), stopImmediatePropagation: () => calls.push('stop') });
+    assert.equal(
+      workspaceShortcut(e, (command) => calls.push(command.action), false, 'directory'),
+      false,
+      value,
+    );
+    assert.deepEqual(calls, [], value);
+  }
+});
+
+test('directory mode keeps global Settings, hire, Whiteboard, Orchestrator and native floor shortcuts', () => {
+  for (const [value, action] of [
+    ['n', 'hire'],
+    ['b', 'board'],
+    [',', 'settings'],
+    ['o', 'orchestrator'],
+    ['=', 'floor'],
+  ]) {
+    const calls: string[] = [];
+    const e = key(value!, { preventDefault: () => calls.push('prevent'), stopImmediatePropagation: () => calls.push('stop') });
+    assert.equal(
+      workspaceShortcut(e, (command) => calls.push(command.action), true, 'directory'),
+      true,
+    );
+    assert.deepEqual(calls, ['prevent', 'stop', action]);
+  }
+});

@@ -346,8 +346,8 @@ const content = h('div.dash-body', { hidden: true }, side, mainEl);
 const buildingView = createBuildingView({
   open: (row) => {
     if (!live()) return;
-    if (row.kind !== 'desk' || row.floorId === floor) openHere(row.worker.id, true);
-    else openAcross(row.worker.id, row.floorId);
+    if (row.kind === 'desk' || row.navigationFloor) openAcross(row.worker.id, row.navigationFloor ?? row.floorId);
+    else openHere(row.worker.id, true);
   },
   workspace: () => showWorkers(false),
   hire: () => hire(),
@@ -879,7 +879,7 @@ function paint() {
   const buildingRows = buildingRoster({ floors: store.floors, building: store.building, currentFloor: store.floor, workers: store.workers.values(), mission: store.missionControl });
   allWorkersCount.textContent = String(buildingRows.length);
   allWorkersBtn.setAttribute('aria-label', `All workers, ${buildingRows.length}`);
-  if (showingWorkers) buildingView.update({ rows: buildingRows, floors: store.floors, live: up, mission: store.missionControl });
+  if (showingWorkers) buildingView.update({ rows: buildingRows, floors: store.floors, live: up, canHire: !!here, mission: store.missionControl });
   const b = store.floor && store.whiteboard.board(store.floor);
   const unread = b ? cardsNewestFirst(b).filter((c) => cardChanged(b, OWNER, c.id)).length : 0;
   boardCount.textContent = String(unread);
@@ -1301,10 +1301,11 @@ function accessDialog() {
 if (nativeCompanion) {
   window.addEventListener('droid-office:close-pane', () => {
     if (workerMenu.close(true) || closeTopModal()) return;
+    if (showingWorkers) return showWorkers(false);
     if (live() && (focusedWorker(ws) || SLOT_COUNT[ws.layout] > 1)) paneHost.close(ws.focused);
   });
   window.addEventListener('droid-office:send-home', () => {
-    if (!live() || modalOpen() || workerMenu.isOpen()) return;
+    if (!live() || showingWorkers || modalOpen() || workerMenu.isOpen()) return;
     const w = store.workers.get(focusedWorker(ws) ?? '');
     if (w && !busy.has(w.id)) sendHome(w);
   });
@@ -1370,6 +1371,7 @@ window.addEventListener(
         }
       },
       nativeCompanion,
+      showingWorkers ? 'directory' : 'workspace',
     );
   },
   true,
