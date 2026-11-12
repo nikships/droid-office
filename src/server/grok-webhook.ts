@@ -21,7 +21,7 @@ export interface GrokWebhookWorker {
   name: string;
   status: string;
   state?: string;
-  /** Runtime turn state, independent of whether the task has been reported complete. */
+  /** Successful final reports expose a done/settled task snapshot, not the returning MCP call. */
   settled?: boolean;
   desk?: string;
   task?: string;
@@ -137,7 +137,7 @@ export function webhookWorkerFromMember(m: TeamMember | undefined, w?: WorkerInf
       id: m.id,
       name: m.name,
       status: m.status,
-      state: m.state,
+      ...(m.state !== m.status ? { state: m.state } : {}),
       settled: m.settled,
       desk: m.desk,
       ...(m.task ? { task: m.task } : {}),
@@ -160,7 +160,7 @@ export function webhookWorkerFromMember(m: TeamMember | undefined, w?: WorkerInf
   return fallback ? { id: fallback.id, name: fallback.name, status: 'exited', settled: true } : undefined;
 }
 
-function teamActionHint(item: { kind: GrokWebhookItemKind; questionId?: string; terminalAsk?: GrokWebhookTerminalAsk }): string {
+function teamActionHint(item: { kind: GrokWebhookItemKind; questionId?: string; terminalAsk?: GrokWebhookTerminalAsk; hasChanges?: boolean }): string {
   const ack = 'Acknowledge the ackId after handling this item.';
   if (item.kind === 'question' && item.questionId) {
     return `Answer the question identified by questionId, or send guidance to this worker on this floor. ${ack}`;
@@ -172,7 +172,7 @@ function teamActionHint(item: { kind: GrokWebhookItemKind; questionId?: string; 
     return `Worker is waiting on a terminal prompt only the person at the desk can approve${item.terminalAsk?.why ? ` (${item.terminalAsk.why})` : ''}: notify the owner. ${ack}`;
   }
   if (item.kind === 'report') {
-    return `Review this worker's changes and checks, and record a review before merging or dismissing it. ${ack}`;
+    return item.hasChanges ? `Review the reported changes and checks; record a review before merging. ${ack}` : `Read the outcome and checks, then follow up or dismiss the worker if no further work is needed. ${ack}`;
   }
   if (item.kind === 'progress') return `The task is not finished. Follow its progress and step in if help is needed; do not merge or dismiss it yet. ${ack}`;
   if (item.kind === 'stopped' || item.kind === 'blocker') {
@@ -190,10 +190,6 @@ export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhoo
     else if (event.progress || event.result?.status === 'partial') kind = 'progress';
   }
   const isReport = event.kind === 'report' || event.kind === 'question';
-  let reportPhase: GrokWebhookItem['reportPhase'] = 'final';
-  if (kind === 'question') reportPhase = 'question';
-  else if (kind === 'blocker') reportPhase = 'blocked';
-  else if (kind === 'progress') reportPhase = 'progress';
   const terminalAsk: GrokWebhookTerminalAsk | undefined =
     openQuestion && (openQuestion.kind === 'terminal' || openQuestion.kind === 'permission')
       ? {
@@ -208,29 +204,47 @@ export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhoo
       : undefined;
   const questionId = event.kind === 'question' ? id : terminalAsk?.answerable ? openQuestion?.id : undefined;
   const prUrl = event.prUrl ?? event.result?.artifacts?.prUrl ?? member?.pr?.url ?? worker?.pr?.url;
+  const taskComplete = kind === 'report' && (!event.result || event.result.status === 'ok');
+  const snapshot = webhookWorkerFromMember(member, worker, { id: event.worker, name: event.name });
+  if (snapshot && taskComplete) {
+    snapshot.status = 'done';
+    snapshot.settled = true;
+    delete snapshot.state;
+  }
+  // Questions already carry their answerable text. Keep only distinct structured results.
+  const duplicateQuestion = kind === 'question' && event.result?.summary.trim() === event.text?.trim() && Object.keys(event.result ?? {}).every((key) => key === 'summary' || key === 'status');
+  const result = duplicateQuestion ? undefined : event.result;
+  const hasChanges = Boolean(prUrl || event.pushedSha || event.result?.artifacts?.commits?.length || event.result?.artifacts?.files?.length);
   return {
     id,
     ackId: id,
     kind,
     at: new Date(event.at).toISOString(),
     floor,
-    worker: webhookWorkerFromMember(member, worker, { id: event.worker, name: event.name }),
+    worker: snapshot,
     // Structured results carry the summary and artifacts once. Keep original prose in the durable report.
     ...(event.text && (event.kind !== 'report' || !event.result) ? { text: clipText(event.text, isReport ? id : undefined) } : {}),
-    ...(isReport ? { reportId: id, reportPhase, taskComplete: kind === 'report' && (!event.result || event.result.status === 'ok') } : {}),
+    ...(isReport ? { reportId: id, taskComplete } : {}),
     ...(event.options?.length ? { options: [...event.options] } : {}),
     ...(questionId ? { questionId } : {}),
     ...(terminalAsk ? { terminalAsk } : {}),
     ...(event.pushedSha ? { pushedSha: event.pushedSha } : {}),
     ...(prUrl ? { prUrl } : {}),
-    ...(event.result ? { result: event.result } : {}),
-    actionHint: teamActionHint({ kind, questionId, terminalAsk }),
+    ...(result ? { result } : {}),
+    actionHint: teamActionHint({ kind, questionId, terminalAsk, hasChanges }),
   };
 }
 
 function itemHeadline(item: GrokWebhookItem, leadName: string): string {
   const who = item.worker ? `${item.worker.name}${item.floor ? ` (${item.floor.name})` : ''}` : item.floor ? item.floor.name : 'Droid Office';
-  // Headlines describe the event, never a clipped fragment of the worker's prose.
+  const outcome = (item.kind === 'question' ? item.text : (item.result?.summary ?? item.text ?? item.terminalAsk?.question))?.replace(/\s+/g, ' ').trim();
+  if (outcome && item.kind !== 'test') {
+    const label = item.kind === 'report' ? 'Completed' : item.kind === 'progress' ? 'Progress' : item.kind === 'question' ? 'Question' : item.kind;
+    // Put useful content before floor/worker context so wake truncation keeps the outcome.
+    const headline = `${label}: ${outcome}`;
+    const clipped = headline.length > 180 ? `${headline.slice(0, 179).trimEnd()}…` : headline;
+    return `${clipped} (${item.worker?.name ?? item.floor?.name ?? leadName})`;
+  }
   switch (item.kind) {
     case 'question':
       return `${who} asked ${leadName} a question.`;
@@ -262,13 +276,7 @@ function itemHeadline(item: GrokWebhookItem, leadName: string): string {
 export function buildGrokWebhookPayload(lead: { id: string; name: string }, items: GrokWebhookItem[], now = Date.now()): GrokWebhookPayload {
   const primary = items.reduce((best, cur) => (PRIORITY[cur.kind] > PRIORITY[best.kind] ? cur : best), items[0]);
   const test = items.length === 1 && primary.kind === 'test';
-  const summary =
-    items.length === 1
-      ? itemHeadline(primary, lead.name)
-      : `${items.length} Droid Office updates for ${lead.name}: ${items
-          .slice(0, 3)
-          .map((item) => itemHeadline(item, lead.name))
-          .join('; ')}${items.length > 3 ? ` (+${items.length - 3} more)` : ''}`;
+  const summary = items.length === 1 ? itemHeadline(primary, lead.name) : `${itemHeadline(primary, lead.name)} (+${items.length - 1} more updates)`;
   return {
     source: 'droid-office',
     version: 1,
