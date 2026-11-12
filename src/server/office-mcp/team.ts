@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { floorNamed } from '../remote-office.js';
 import type { TeamEvent, TeamMember, TeamModel, TeamReply, WorkerReview } from '../team.js';
 import { teamBoardText, type TeamBoardMember } from '../team.js';
+import { formatOtherFloorWorkers, type OtherFloorWorker } from '../floor-watch.js';
 import { isSubscriptionModel, modelUsageWords } from '../../shared/subscriptions.js';
 import { briefAge, formatForgeLines, formatProviderQuotas, formatTaskTag, formatWorkerInspection, type ProviderQuotaSummary, type WorkerInspection } from '../worker-status.js';
 import { hasOwnerAccess } from './owner.js';
@@ -48,7 +49,7 @@ function memberText(member: TeamMember & { terminal?: string; terminalUnavailabl
   const forgeLines = formatForgeLines({ pr: member.prStatus, ci: member.ci, releaseRun: member.releaseRun });
   const queueBrief = member.queuedMessages ? formatQueueBrief(member.queuedMessages) : undefined;
   return [
-    `${member.name} (${member.id}), ${member.status}, ${member.desk}${member.model ? `, ${member.model}${member.effort ? ` ${member.effort}` : ''}` : ''}.`,
+    `${member.name} (${member.id})${member.watched ? ' [watching]' : ''}, ${member.status}, ${member.desk}${member.model ? `, ${member.model}${member.effort ? ` ${member.effort}` : ''}` : ''}.`,
     ...(member.idleForMs !== undefined ? [`Idle for ${Math.floor(member.idleForMs / 60_000)} minutes.`] : []),
     ...(member.awaitingJob ? [PROGRESS_REST] : []),
     ...(member.task ? [`Task: ${member.task}${formatTaskTag(member.taskLabel)}`] : []),
@@ -66,7 +67,10 @@ function memberText(member: TeamMember & { terminal?: string; terminalUnavailabl
     ...(queueBrief ? [queueBrief] : []),
     ...(member.areas?.length ? [`Areas: ${member.areas.join(', ')}`] : []),
     ...(member.note ? [`Note: ${member.note.text}`] : []),
-    member.worktree ? `Worktree: ${member.worktree.path} on ${member.worktree.branch}${member.worktree.from ? ` from ${member.worktree.from}` : ''}.` : 'Working in the main checkout.',
+    member.worktree
+      ? `Worktree: ${member.worktree.path} on ${member.worktree.branch}${member.worktree.from ? ` from ${member.worktree.from}` : ''}.`
+      : `Working in the main checkout${member.cwd ? ` (${member.cwd})` : ''}${member.branch ? ` on ${member.branch}` : ''}.`,
+    ...(member.warnings?.length ? [`Warning: ${member.warnings.join('; ')}`] : []),
     ...(forgeLines.length ? forgeLines : member.pr ? [`Pull request: ${member.pr.url}`] : []),
     ...(member.report ? [`Last ${member.report.question ? 'question' : member.report.progress ? 'progress report' : 'report'}:\n${member.report.text}`, ...resultDetailLines(member.report.result, member.report.review)] : []),
     ...(member.terminal !== undefined ? [`Terminal:\n${member.terminal || '(empty)'}`] : []),
@@ -78,7 +82,14 @@ function eventText(event: TeamEvent): string {
   const at = `[${new Date(event.at).toISOString()}]`;
   if (event.progress) return `${at} Worker progress report from ${event.name} (not finished; its turn ended waiting on its own background work, which wakes it):\n${event.text ?? ''}`;
   if (event.kind === 'report' || event.kind === 'question') return `${at} Worker ${event.kind} from ${event.name}:\n${event.text ?? ''}`;
-  const status = { done: 'finished its turn without reporting', needs_input: 'needs someone to answer in its own terminal', stopped: 'stopped', left: 'left the floor', sent_home: 'was sent home by the owner' };
+  if (event.kind === 'pr') return `${at} Pull request update from ${event.name}:\n${event.text ?? ''}`;
+  const status = {
+    done: event.watched ? 'finished its turn' : 'finished its turn without reporting',
+    needs_input: 'needs someone to answer in its own terminal',
+    stopped: 'stopped',
+    left: 'left the floor',
+    sent_home: 'was sent home by the owner',
+  };
   return `${at} Office status: ${event.name} ${status[event.kind]}${event.text ? `: ${event.text}` : ''}.${event.kind === 'needs_input' ? ' Tell whoever asked you; someone must answer at its desk.' : ''}`;
 }
 
@@ -110,8 +121,10 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   const modelsTeam = (caller: OfficeMcpCaller) => caller.floor?.team ?? deps.remote?.floors()[0]?.team;
   const statusText = (body: Record<string, unknown>) => {
     const members = body.team as TeamMember[];
+    const otherWorkers = body.otherWorkers as OtherFloorWorker[] | undefined;
     const news = body.events as TeamEvent[];
-    return [...(members.length ? members.map(memberText) : ['You have no subagents.']), news.length ? `News since your last status call:\n${news.map(eventText).join('\n\n')}` : 'No unread team news.'].join('\n\n');
+    const otherBlock = otherWorkers?.length ? [formatOtherFloorWorkers(otherWorkers, true).join('\n')] : [];
+    return [...(members.length ? members.map(memberText) : ['You have no subagents.']), ...otherBlock, news.length ? `News since your last status call:\n${news.map(eventText).join('\n\n')}` : 'No unread team news.'].join('\n\n');
   };
   const statusOptions = {
     verbose: z.boolean().optional().describe('false for compact summaries; omit/true for full text.'),
@@ -127,20 +140,34 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     const remote = caller.building ? deps.remote : undefined;
     const result = remote
       ? await remote.team(caller.worker, { ...request, ...(cursor ? { since: Object.fromEntries(cursor) } : {}) })
-      : await ownFloor(caller).team.handle(caller.worker, { ...request, ...(cursor ? { since: cursor.get(own) ?? 0 } : {}) });
+      : await ownFloor(caller).team.handle(caller.worker, { ...request, ...(cursor ? { since: cursor.get(own) } : {}) });
     if (result.status >= 400) return reply(result, statusText);
-    const { team, events, latest, ...rest } = result.body as { team: (TeamMember & { floor?: string })[]; events: (TeamEvent & { floor?: string })[]; latest: number | Record<string, number> };
+    const { team, events, latest, otherWorkers, ...rest } = result.body as {
+      team: (TeamMember & { floor?: string })[];
+      otherWorkers?: OtherFloorWorker[];
+      events: (TeamEvent & { floor?: string })[];
+      latest: number | Record<string, number>;
+    };
     const workers = team.map((m) => compactWorker(m, m.floor ?? own));
     const news = events.map((e) => compactEvent(e, e.floor ?? own, args.verbose === true));
     const position = cursorOf(typeof latest === 'number' ? { [own]: latest } : latest);
     if (args.verbose === false)
-      return officeResult([...(workers.length ? workers.map(compactWorkerText) : ['You have no subagents.']), ...(news.length ? news.map(compactEventText) : ['No team news.']), `Cursor: ${position}`].join('\n'), {
-        ...rest,
-        workers,
-        news,
-        cursor: position,
-      });
-    return officeResult(statusText(result.body), { ...result.body, workers, news, cursor: position });
+      return officeResult(
+        [
+          ...(workers.length ? workers.map(compactWorkerText) : ['You have no subagents.']),
+          ...(otherWorkers?.length ? formatOtherFloorWorkers(otherWorkers, false) : []),
+          ...(news.length ? news.map(compactEventText) : ['No team news.']),
+          `Cursor: ${position}`,
+        ].join('\n'),
+        {
+          ...rest,
+          workers,
+          ...(otherWorkers?.length ? { floorWorkers: otherWorkers } : {}),
+          news,
+          cursor: position,
+        },
+      );
+    return officeResult(statusText(result.body), { ...result.body, workers, ...(otherWorkers?.length ? { floorWorkers: otherWorkers } : {}), news, cursor: position });
   };
   const worker = z.string().trim().min(1).max(200).describe('Subagent name or id.');
   server.tool(
@@ -203,6 +230,41 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     async (args, caller) => {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       return integrationReply(await command(caller, { action: 'pr', ...args }));
+    },
+  );
+  server.tool(
+    {
+      name: 'team_watch',
+      description:
+        'Follow or unfollow independent floor workers without re-hiring or interrupting them. Watched workers appear in team_status, team_wait and questions_list, and wake you on turn completion, terminal questions, stops, departures, and PR updates.',
+      inputSchema: z.strictObject({
+        worker: worker.optional(),
+        workers: z.array(worker).min(1).max(100).optional(),
+        all: z.literal(true).optional().describe('Watch (or unwatch) every independent worker on the floor.'),
+        watch: z.boolean().default(true).describe('Default true to watch; false to stop watching.'),
+        floor: floorArg,
+      }),
+      annotations: changesState,
+    },
+    officeAccess.team,
+    async (args, caller) => {
+      if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
+      if ([args.worker !== undefined, args.workers !== undefined, args.all === true].filter(Boolean).length !== 1) return officeError('Choose exactly one of worker, workers, or all: true.');
+      return reply(await command(caller, { action: 'watch', ...args }), (body) => {
+        const results = (body.results as Array<Record<string, unknown>> | undefined) ?? [];
+        if (!results.length) return String(body.note ?? (args.watch === false ? 'Stopped watching.' : 'No workers matched.'));
+        return results
+          .map((r) => {
+            const label = `${r.name ?? r.id}${r.floor ? ` (${r.floor})` : ''}`;
+            if (r.error) return `${label}: ${r.error}`;
+            if (r.note) return `${label}: ${r.note}`;
+            const w = r.worker as TeamMember | undefined;
+            return r.watching === false
+              ? `${label}: stopped watching`
+              : `${label}: watching${w ? ` (${w.status}${w.cwd ? `, ${w.cwd}` : ''}${w.branch ? ` on ${w.branch}` : ''}${w.pr ? `, PR ${w.pr.url}` : ''}${w.warnings?.length ? `; Warning: ${w.warnings.join('; ')}` : ''})` : ''}`;
+          })
+          .join('\n');
+      });
     },
   );
   server.tool(

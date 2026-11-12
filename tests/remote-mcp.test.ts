@@ -776,6 +776,7 @@ test('external-bot tools/list returns exactly the supported tools and their docu
     'office_status',
     'team_models',
     'team_hire',
+    'team_watch',
     'team_status',
     'team_wait',
     'team_message',
@@ -798,7 +799,7 @@ test('external-bot tools/list returns exactly the supported tools and their docu
     'office_worker_answer',
     'office_worker_thread',
   ];
-  assert.equal(listed.length, 27);
+  assert.equal(listed.length, 28);
   assert.deepEqual(new Set(listed.map((tool) => tool.name)), new Set(expected));
   t.diagnostic(
     `external-bot tools/list: ${listed.length} tools, exact set equality passed: ${listed

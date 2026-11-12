@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import type { ChangesState, FloorInfo, ProjectInfo, ServerMsg, WorkerInfo } from '../shared/protocol.js';
+import type { ChangesState, FloorInfo, GhPull, ProjectInfo, ServerMsg, WorkerInfo } from '../shared/protocol.js';
 import { isBusy } from '../shared/status.js';
 import { isCheckout, type FloorDef } from './building.js';
 import { excludeFromGit } from './config.js';
+import { isProtectedBaseBranch, readHeadBranch } from './floor-watch.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { OfficeShell } from './office-shell.js';
 import { COLORS, NAMES, WorkerManager, type HookEnv } from './workers.js';
@@ -102,6 +103,12 @@ export interface FloorContext {
   workerLabelsOn?(): boolean;
   /** Another floor of the building: a worker across repositories works in its project too (see WorkerInfo.repos). */
   floor(id: string): Floor | undefined;
+  /** Another floor's live worker holding `deskId`, so live workers keep unique desks across floors. */
+  liveDeskElsewhere?(floor: Floor, deskId: string): { worker: WorkerInfo; floorName: string } | undefined;
+  /** Names of live workers across other open floors and Mission Control, so live workers never share a name. */
+  liveNamesElsewhere?(floor: Floor): Iterable<string>;
+  /** Names of all workers across other open floors and Mission Control, preferred last when picking names. */
+  allNamesElsewhere?(floor: Floor): Iterable<string>;
   /** This floor's pull requests came back: a worker on another floor with a repository here may have landed. */
   pullsChanged(floor: Floor): void;
   /** Whether a worker on another floor works in this floor's project too. */
@@ -188,6 +195,7 @@ export class Floor {
   private timer: NodeJS.Timeout;
   /** Pull requests merging, to ring the gong for. */
   private merges = new MergeWatch();
+  private pullsPrimed = false;
   /** A look for workers whose pull request merged, due shortly (see sendLandedHome). */
   private landedTimer?: NodeJS.Timeout;
   /** Workers across repositories whose worktrees are being checked before they go home. */
@@ -224,8 +232,11 @@ export class Floor {
     const onPulls = (state: Board['pulls']) => {
       ctx.emit(this, { t: 'gh.pulls', state });
       if (state.loading || state.error) return;
+      const initialScan = !this.pullsPrimed;
+      this.pullsPrimed = true;
+      this.syncWorkerPulls(state.items, initialScan);
       // A worker may have opened one from a branch it made itself, mid-turn or from a shell.
-      void this.workers.syncBranches();
+      void this.workers.syncBranches().then(() => this.syncWorkerPulls(state.items, initialScan));
       // A branch that merged is no place for the next worker to start from.
       void this.workers.settleCheckout().catch(() => undefined);
       for (const p of this.merges.look(state.items)) {
@@ -312,7 +323,14 @@ export class Floor {
     const ownNames = () => own.list().map((w) => w.name.replace(/ 🐚$/, ''));
     this.cloud = new CloudWorkers(
       dataDir,
-      { deskTaken: (id) => own.ownDesk(id), names: ownNames, pool: { names: NAMES, colors: COLORS } },
+      {
+        deskTaken: (id) => own.ownDesk(id),
+        liveDeskElsewhere: (id) => ctx.liveDeskElsewhere?.(this, id),
+        names: ownNames,
+        liveNamesElsewhere: () => ctx.liveNamesElsewhere?.(this) ?? [],
+        allNamesElsewhere: () => ctx.allNamesElsewhere?.(this) ?? [],
+        pool: { names: NAMES, colors: COLORS },
+      },
       {
         update: (worker) => {
           ctx.emit(this, { t: 'worker.update', worker });
@@ -329,6 +347,9 @@ export class Floor {
     this.workers.holds = {
       desk: (id) => this.cloud.deskTaken(id),
       names: () => this.cloud.names(),
+      liveDeskElsewhere: (id) => ctx.liveDeskElsewhere?.(this, id),
+      liveNamesElsewhere: () => ctx.liveNamesElsewhere?.(this) ?? [],
+      allNamesElsewhere: () => ctx.allNamesElsewhere?.(this) ?? [],
     };
     this.workers.freshMain = () => ctx.freshMain();
     this.workers.visitsOn = () => ctx.subagents().visits;
@@ -387,12 +408,18 @@ export class Floor {
       {
         dataDir,
         dir: def.dir,
+        floorId: this.id,
+        floorName: def.name,
         git: !this.plain && !!this.project.branch,
         pulls: this.board,
         pullItems: () => this.board.pulls.items,
         pipelineState: () => this.pipelines.state,
         labelsOn: () => ctx.workerLabelsOn?.() ?? true,
         baseBranch: () => workers.selectedBranch ?? workers.baseBranch ?? this.project.branch,
+        checkoutBranch: () => {
+          const live = !this.plain ? readHeadBranch(def.dir) : { found: false as const };
+          return live.found ? live.branch : this.project.branch;
+        },
         onPull: (id, pr) => {
           workers.recordPull(id, pr);
           void this.board.refresh();
@@ -520,6 +547,61 @@ export class Floor {
     if (this.plain) return;
     if (refresh.board) this.boardSoon();
     if (refresh.pipelines) this.pipelinesSoon();
+  }
+
+  /** Links open forge pull requests onto matching floor workers and notifies leads/watchers of PR transitions. */
+  private syncWorkerPulls(pulls: GhPull[], initialScan: boolean) {
+    if (this.plain || !this.workers || !this.team) return;
+    const list = this.workers.list();
+    const live = readHeadBranch(this.dir);
+    const checkoutBranch = live.found ? live.branch : this.project.branch;
+    const baseBranch = this.workers.selectedBranch ?? this.workers.baseBranch ?? this.project.branch;
+    const checkoutAgents = list.filter((w) => !w.worktree && !w.cloud && !w.remote && w.kind === 'agent');
+    for (const w of list) {
+      if (w.remote || w.cloud) continue;
+      if (w.pr) {
+        const known = pulls.find((p) => p.number === w.pr!.number);
+        if (known) {
+          const createdAt = Date.parse(known.createdAt);
+          this.team.onPullState(
+            w,
+            {
+              number: known.number,
+              url: known.url,
+              title: known.title,
+              state: known.state === 'MERGED' ? 'merged' : known.state === 'CLOSED' ? 'closed' : 'open',
+              ...(Number.isFinite(createdAt) ? { createdAt } : {}),
+            },
+            { initialScan },
+          );
+        }
+      }
+      const wtDir = w.worktree ? path.resolve(this.dir, w.worktree.path) : undefined;
+      const wtLive = wtDir ? readHeadBranch(wtDir) : { found: false as const };
+      let head: string | undefined;
+      if (w.worktree) {
+        head = wtLive.found ? (wtLive.branch ?? w.worktree.branch) : w.worktree.branch;
+      } else if (checkoutAgents.length === 1 && checkoutAgents[0].id === w.id && checkoutBranch && !isProtectedBaseBranch(checkoutBranch, baseBranch)) {
+        head = checkoutBranch;
+      }
+      if (!head) continue;
+      for (const p of pulls) {
+        if (p.headRefName !== head || p.number === w.pr?.number) continue;
+        if (p.state === 'OPEN' && !w.pr) this.workers.recordPull(w.id, { number: p.number, url: p.url });
+        const createdAt = Date.parse(p.createdAt);
+        this.team.onPullState(
+          this.workers.get(w.id) ?? w,
+          {
+            number: p.number,
+            url: p.url,
+            title: p.title,
+            state: p.state === 'MERGED' ? 'merged' : p.state === 'CLOSED' ? 'closed' : 'open',
+            ...(Number.isFinite(createdAt) ? { createdAt } : {}),
+          },
+          { initialScan },
+        );
+      }
+    }
   }
 
   /** Pull request `n` merged (`by` someone, from the PR window): the gong rings, once per PR. */

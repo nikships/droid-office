@@ -174,7 +174,7 @@ Set your self-reported office status and optional short activity. This does not 
 
 ### `office_roster`
 
-List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, task-label provenance (`taskLabel`: whether the task text is a `generated` label vs `lead`/`prompt` assigned, its `updatedAt` ISO timestamp when generated, and `stale: true` when Worker labels are turned off), model, lead, and whether it is you or your own subagent. Includes owner-hired workers, subagents, shells and cloud workers. Mission Control's building agents have their own section, with no floor or desk: tools read them and never control them.
+List every worker in the building, or on one floor: id, name, floor id and number (1-based, the elevator's order), desk, status, task, task-label provenance (`taskLabel`: whether the task text is a `generated` label vs `lead`/`prompt` assigned, its `updatedAt` ISO timestamp when generated, and `stale: true` when Worker labels are turned off), working directory, active branch/PR, checkout safety warnings (such as two live writers sharing one tree without isolated worktrees or sitting directly on `main`), model, lead, and whether it is you, your subagent or a watched worker. Includes owner-hired workers, subagents, shells and cloud workers. Mission Control's building agents have their own section, with no floor or desk: tools read them and never control them.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -313,11 +313,23 @@ Hire one fresh subagent at the nearest free desk for an independent task. It get
 | `from` | string | no | Branch/tag/commit, worker:<name or id>, or a registered worktree's absolute path for the fresh worktree, without spaces or a leading dash. Origin is fetched first. Omit to start on your branch at HEAD, refreshed if behind origin. Only committed work follows. Requires worktree: true. |
 | `worktree` | boolean | no | Omit to default to a fresh worktree for structured tasks on Git floors (false on non-Git floors) or follow the owner's Subagents setting. True: isolated git worktree. False: shared checkout without switching its branch (omit baseBranch/branch/from). |
 
+### `team_watch`
+
+Follow or unfollow independent floor workers without re-hiring or interrupting them. Watched workers remain independent (their system prompt, Stop hook and owner attention stay unchanged), appear in `team_status`, `team_wait` and `questions_list` with `watched: true`, and wake you on turn completion, terminal `AskUser` questions, stops, departures and pull-request updates (`pr`). `team_dismiss` refuses watched independent workers so owner sessions are never accidentally sent home.
+
+| Argument | Type | Required | Description |
+| --- | --- | --- | --- |
+| `worker` | string | no | Independent worker name or id to watch or unwatch. |
+| `workers` | string[] | no | Subset of worker names or ids (1–100). |
+| `all` | true | no | Watch (or unwatch) every independent worker on the floor. |
+| `watch` | boolean | no, default `true` | Default true to watch; false to stop watching. |
+| `floor` | string | no | Building agents only (floor workers omit): floor id, name, or path. |
+
 ### `team_status`
 
-Read your subagents and unread team news at once, without waiting; optionally one worker, with recent terminal lines. `structuredContent` has `workers` (one compact object each with `state`, `task`, `taskLabel` provenance/timestamp/staleness, `plan`, `currentTool`/`lastTool`, `lastActivityAt`/`silentForMs`, `queued`, `retryingModel`/`modelStatus` cooldowns, and `prStatus`/`ci`/`releaseRun` from cached floor state), `news` (typed events with ids and times) and a `cursor` to pass as `since`. `verbose: false` makes the text compact too. `team_report_get` reads a full report.
+Read your subagents, watched floor workers, other active workers on the floor (`floorWorkers`), and unread team news at once, without waiting; optionally one worker, with recent terminal lines. `structuredContent` has `workers` (one compact object each with `state`, `task`, `taskLabel` provenance/timestamp/staleness, `plan`, `currentTool`/`lastTool`, `lastActivityAt`/`silentForMs`, `queued`, `retryingModel`/`modelStatus` cooldowns, `prStatus`/`ci`/`releaseRun` from cached floor state, working directory, branch, and checkout warnings), optional `floorWorkers` (independent workers on the floor not yet in your team), `news` (typed events with ids and times) and a `cursor` to pass as `since`. `verbose: false` makes the text compact too. `team_report_get` reads a full report.
 
-For an external worker, status news follows a cursor kept for that bot across reconnects and office restarts: the first status call sets a baseline without replaying old reports, later calls return only newer events, and each news line starts with its UTC time. `team` with action `status` reads the same cursor. Reading status does not acknowledge anything in `office_inbox`.
+For an external worker, status news follows a cursor kept for that bot across reconnects and office restarts: the first status call sets a baseline without replaying old reports, later calls return only newer events that have not already been acknowledged in `office_inbox`, and each news line starts with its UTC time. `team` with action `status` reads the same cursor. Reading status does not acknowledge anything in `office_inbox`.
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -326,7 +338,7 @@ For an external worker, status news follows a cursor kept for that bot across re
 | `lines` | integer | no | Include this many recent terminal lines per selected subagent, at most 400. Omit to leave terminals out. |
 | `verbose` | boolean | no | false for one compact line per subagent and per event, with summaries instead of whole reports. Omit or true for the full text. |
 | `since` | string | no | A cursor from an earlier status (cursor field) or one event id. News is everything after it, heard or not, instead of only unread news. |
-| `kinds` | "question" \| "report" \| "needs_input" \| "stopped" \| "left" \| "sent_home" \| "done" \| "blocked"[] | no | Just these news kinds (blocked is needs_input). Other news stays unread, but the cursor moves past it: reuse a filtered cursor only with the same kinds. |
+| `kinds` | "question" \| "report" \| "pr" \| "needs_input" \| "stopped" \| "left" \| "sent_home" \| "done" \| "blocked"[] | no | Just these news kinds (blocked is needs_input). Other news stays unread, but the cursor moves past it: reuse a filtered cursor only with the same kinds. |
 
 ### `team_message`
 
@@ -431,7 +443,7 @@ Without `since`, an external worker's wait starts from the news as it stands whe
 
 | Argument | Type | Required | Description |
 | --- | --- | --- | --- |
-| `until` | "question" \| "report" \| "needs_input" \| "stopped" \| "left" \| "sent_home" \| "done" \| "blocked" \| "idle"[] | no | What to wait for. Event kinds, blocked (needs input in its own terminal), or idle (every watched subagent settles during the wait). Default report, question, blocked, idle. |
+| `until` | "question" \| "report" \| "pr" \| "needs_input" \| "stopped" \| "left" \| "sent_home" \| "done" \| "blocked" \| "idle"[] | no | What to wait for. Event kinds, blocked (needs input in its own terminal), or idle (every watched subagent settles during the wait). Default report, question, pr, blocked, idle. |
 | `workers` | string[] | no | Subagent names or ids to watch. Omit for your whole team. |
 | `timeoutSec` | integer | no | Longest wait in seconds, default 30, at most 600 (each call holds at most 90 s and returns `matched: false` + `cursor` to continue). |
 | `since` | string | no | A cursor from an earlier response (cursor field), or one event id: only events after it are considered, whether or not you have heard them. |
@@ -476,7 +488,7 @@ The office sends an HTTP `POST` (`Content-Type: application/json`, `Authorizatio
 
 - A subagent finishes or asks via `team_report` (flushed immediately; `progress: true` reports do not wake the lead while a background job is still running).
 - A subagent calls `lead_notify` (available only to subagents of a Grok Bot) for a mid-turn `update`, `question`, `blocker` or `test` ping without ending its turn.
-- Floor hooks report that a subagent entered `needs_input` (including terminal `AskUser` choices and `questionId`, or a desk permission prompt), `stopped`, `done` (when not already covered by a report), `left`, or `sent_home` (coalesced across bursts).
+- Floor hooks or board updates report that a subagent or `team_watch`-followed floor worker entered `needs_input` (including terminal `AskUser` choices and `questionId`, or a desk permission prompt), `pr` (opened, merged or closed pull request), `stopped`, `done` (when not already covered by a report), `left`, or `sent_home` (coalesced across bursts).
 - A message is queued to the bot's inbox, or the owner clicks **Send test** in Settings (`test: true`).
 
 Each payload has `{ source: "droid-office", version: 1, event, test?, deliveryId?, ackIds?, summary, sentAt, lead: { id, name }, items: [...] }`. Durable items carry an `ackId` (`team:<floor>:<seq>` or `msg-...`) that stays in `office_inbox` until acknowledged via `office_inbox({ ack: [ackId] })` (or `office_inbox({ deliveryId, ack: [ackId] })` in overlapping webhook runs), so a failed, retried, or concurrent webhook wake never loses or cross-acknowledges work.

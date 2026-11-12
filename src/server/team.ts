@@ -18,6 +18,7 @@ import { workerMessageVars } from '../shared/prompts.js';
 import { hireRefusal } from './subscriptions/map.js';
 import { isBuildingAgent, MISSION_CONTROL_DOOR } from './building-agent.js';
 import { modelList, outsideModelList, outsideModelListMessage } from './model-policy.js';
+import { analyzeCheckoutSafety, buildOtherFloorWorkers, workerLocation, type FloorTreeContext } from './floor-watch.js';
 import { pushedSha, workerDiff } from './team-inspect.js';
 import { canonicalPath, currentBranch, handoffStart, integrateWorker, verifyPushed, workerBranch, workerCwd } from './team-integrate.js';
 import type { PullHost, PullRef } from './forge.js';
@@ -68,6 +69,9 @@ export interface TeamOptions {
   dataDir: string;
   /** The floor's checkout, which worktree paths are relative to. */
   dir: string;
+  /** Optional floor identity, used when describing independent floor workers in team_status. */
+  floorId?: string;
+  floorName?: string;
   /** It's a git checkout, so subagents can have worktrees. */
   git: boolean;
   pulls?: Pick<PullHost, 'createPull'>;
@@ -75,6 +79,7 @@ export interface TeamOptions {
   pipelineState?: () => PipelinesState | undefined;
   labelsOn?: () => boolean;
   baseBranch?(): string | undefined;
+  checkoutBranch?(): string | undefined;
   onPull?(worker: string, pr: PullRef): void;
   settings(): SubagentSettings;
   /** Droid's model list, for team_models. None: only what the settings name. */
@@ -92,7 +97,7 @@ export interface TeamOptions {
   now?: () => number;
 }
 
-export type TeamEventKind = 'report' | 'question' | 'done' | 'needs_input' | 'stopped' | 'left' | 'sent_home';
+export type TeamEventKind = 'report' | 'question' | 'pr' | 'done' | 'needs_input' | 'stopped' | 'left' | 'sent_home';
 
 export type ResultStatus = 'ok' | 'blocked' | 'failed' | 'partial';
 
@@ -145,11 +150,13 @@ export interface TeamEvent {
    * on (a background job it started, which wakes it when it exits). Its status still goes to done.
    */
   progress?: true;
+  /** Emitted because `lead` watches this worker on the floor rather than having hired it as a subagent. */
+  watched?: true;
   result?: WorkerResult;
   review?: WorkerReview;
 }
 
-/** A subagent as the team tools show it. */
+/** A subagent (or watched floor worker) as the team tools show it. */
 export interface TeamMember {
   id: string;
   name: string;
@@ -157,10 +164,17 @@ export interface TeamMember {
   /** Its status, or blocked_on_question while an asked question or a terminal question waits for an answer. */
   state: TeamState;
   desk: string;
+  /** Present when followed via team_watch rather than hired as this caller's subagent. */
+  watched?: true;
   model?: string;
   effort?: string;
   /** Its own worktree, by its full path, and the branch (or commit) it started from. */
   worktree?: { path: string; branch: string; from?: string };
+  /** Active working directory and branch, including when working directly in the shared checkout. */
+  cwd?: string;
+  branch?: string;
+  sharedCheckout?: true;
+  warnings?: string[];
   activity?: string;
   task?: string;
   taskLabel?: WorkerTaskLabel;
@@ -307,10 +321,11 @@ const LOG_MAX = 400;
 const TYPING_MS = 5000;
 
 /** The most telling news about one subagent, when there's more than one. */
-const WEIGHT: Record<TeamEventKind, number> = { question: 5, report: 4, needs_input: 3, stopped: 2, left: 2, sent_home: 2, done: 1 };
+const WEIGHT: Record<TeamEventKind, number> = { question: 5, report: 4, pr: 3, needs_input: 3, stopped: 2, left: 2, sent_home: 2, done: 1 };
 const NEWS: Record<TeamEventKind, string> = {
   question: 'asked you a question',
   report: 'reported back',
+  pr: 'updated its pull request',
   needs_input: 'needs someone to answer it in its own terminal',
   stopped: 'stopped',
   left: 'left the floor',
@@ -342,13 +357,13 @@ function newsWords(news: TeamEvent[]): string {
     const had = latest.get(e.worker);
     if (!had || WEIGHT[e.kind] >= WEIGHT[had.kind]) latest.set(e.worker, e);
   }
-  return [...latest.values()].map((e) => `${e.name} ${e.progress ? PROGRESS_NEWS : NEWS[e.kind]}.`).join(' ');
+  return [...latest.values()].map((e) => `${e.name} ${e.progress ? PROGRESS_NEWS : e.watched && e.kind === 'done' ? 'finished its turn' : NEWS[e.kind]}.`).join(' ');
 }
 
 export const TEAM_EVENT_KINDS = Object.keys(WEIGHT) as TeamEventKind[];
 
 /** The read and watch side of a team that structured status, team_wait and questions use. */
-export type TeamViews = 'subscribe' | 'latest' | 'news' | 'markSeen' | 'questions' | 'reports' | 'roster';
+export type TeamViews = 'subscribe' | 'latest' | 'news' | 'markSeen' | 'questions' | 'reports' | 'roster' | 'isWatching';
 
 export class Team {
   private log: TeamEvent[] = [];
@@ -359,8 +374,13 @@ export class Team {
   /** Per lead: the last event it has been woken for. */
   private nudged = new Map<string, number>();
   private timers = new Map<string, NodeJS.Timeout>();
-  /** The last status, name and lead seen of each worker, to tell what changed. */
-  private known = new Map<string, { name: string; lead?: string; status: WorkerStatus }>();
+  /** The last status, name, lead and PR seen of each worker, to tell what changed. */
+  private known = new Map<string, { name: string; lead?: string; status: WorkerStatus; prNumber?: number }>();
+  /** Independent floor workers (or other leads' workers) followed by each lead via team_watch. */
+  private watched = new Map<string, Set<string>>();
+  /** Last known PR state per `${workerId}:${prNumber}`, so PR opens/merges/closes fire once without startup noise. */
+  private pullStates = new Map<string, 'open' | 'merged' | 'closed'>();
+  private startedAt: number;
   /** Subagents that have reported in the turn they're in, whose turn ending is no news. */
   private reported = new Set<string>();
   /** Subagents that reported or asked their lead something in the turn they're in: their turn may end (see beforeStop). */
@@ -379,32 +399,68 @@ export class Team {
   ) {
     this.path = path.join(opts.dataDir, 'team.json');
     this.now = opts.now ?? Date.now;
+    this.startedAt = this.now();
     this.restore();
     for (const w of workers.list()) {
-      this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
+      this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status, prNumber: w.pr?.number });
       this.rememberSubagent(w);
+      if (w.pr && !this.pullStates.has(`${w.id}:${w.pr.number}`)) this.pullStates.set(`${w.id}:${w.pr.number}`, 'open');
       if ((w.status === 'idle' || w.status === 'done') && !this.idleSince.has(w.id)) this.idleSince.set(w.id, this.now());
     }
+  }
+
+  /** Whether `leadId` currently watches `workerId` via team_watch. */
+  isWatching(leadId: string, workerId: string): boolean {
+    return this.watched.get(leadId)?.has(workerId) ?? false;
+  }
+
+  private watchersOf(workerId: string): string[] {
+    const out: string[] = [];
+    for (const [leadId, ids] of this.watched) if (ids.has(workerId)) out.push(leadId);
+    return out;
+  }
+
+  private recipientsOf(w: Pick<WorkerInfo, 'id' | 'lead'>): string[] {
+    const out = new Set<string>();
+    if (w.lead) out.add(w.lead);
+    for (const [leadId, ids] of this.watched) if (ids.has(w.id)) out.add(leadId);
+    return [...out];
+  }
+
+  private floorTreeContext(): FloorTreeContext & { workers: WorkerInfo[] } {
+    return {
+      id: this.opts.floorId ?? '',
+      name: this.opts.floorName ?? path.basename(this.opts.dir),
+      dir: this.opts.dir,
+      plain: !this.opts.git,
+      branch: this.opts.checkoutBranch?.(),
+      baseBranch: this.opts.baseBranch?.(),
+      workers: this.workers.list(),
+    };
   }
 
   /** A worker on the floor changed: a subagent's turn may have ended, or a lead may have come to rest with news. */
   onWorker(w: WorkerInfo) {
     this.observe(w);
     // After any news it made, so a waiter sees the event before the state it left behind.
-    if (w.lead) this.emit({ type: 'worker', worker: w });
+    if (w.lead || this.watchersOf(w.id).length) this.emit({ type: 'worker', worker: w });
   }
 
   private observe(w: WorkerInfo) {
     const prev = this.known.get(w.id);
-    this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status });
+    this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status, prNumber: w.pr?.number });
     this.rememberSubagent(w);
+    if (w.pr && w.pr.number !== prev?.prNumber && !this.pullStates.has(`${w.id}:${w.pr.number}`)) {
+      this.onPullState(w, { number: w.pr.number, url: w.pr.url, state: 'open' });
+    }
     if (w.status !== 'idle' && w.status !== 'done') this.idleSince.delete(w.id);
     else if (!this.idleSince.has(w.id)) this.idleSince.set(w.id, this.now());
     if (!prev || prev.status === w.status) return;
     this.persist();
     if (w.status === 'working' && (prev.status === 'done' || prev.status === 'idle')) this.nextTurn(w.id);
     if ((w.status === 'done' || w.status === 'idle') && this.unnudged(w.id).length) this.scheduleNudge(w.id);
-    if (!w.lead || prev.status === 'offline') return;
+    const recipients = this.recipientsOf(w);
+    if (!recipients.length || prev.status === 'offline') return;
     let kind: TeamEventKind | undefined;
     if (w.status === 'done' && (prev.status === 'working' || prev.status === 'needs_input')) {
       if (this.reported.delete(w.id)) return;
@@ -413,7 +469,47 @@ export class Team {
     else if (w.status === 'exited') kind = 'stopped';
     if (!kind) return;
     const text = kind === 'needs_input' ? w.activity : kind === 'done' ? (w.task?.summary ?? w.activity) : w.exitCode !== undefined ? `exit code ${w.exitCode}` : undefined;
-    this.push({ lead: w.lead, worker: w.id, name: w.name, kind, ...(text ? { text } : {}) });
+    for (const leadId of recipients) {
+      this.push({ lead: leadId, worker: w.id, name: w.name, kind, ...(text ? { text } : {}), ...(leadId !== w.lead ? { watched: true as const } : {}) });
+    }
+  }
+
+  /** Records a pull request state transition for `w` and wakes its lead and any watching leads. */
+  onPullState(w: WorkerInfo, pr: { number: number; url: string; title?: string; state: 'open' | 'merged' | 'closed'; createdAt?: number }, opts?: { excludeLead?: string; initialScan?: boolean }) {
+    const key = `${w.id}:${pr.number}`;
+    const prev = this.pullStates.get(key);
+    if (prev === pr.state) return;
+    if (opts?.initialScan && !prev && (pr.state !== 'open' || w.createdAt < this.startedAt)) {
+      this.pullStates.set(key, pr.state);
+      this.persist();
+      return;
+    }
+    const createdByWorker = !opts?.initialScan && pr.createdAt !== undefined && Number.isFinite(pr.createdAt) && pr.createdAt >= w.createdAt;
+    if (!prev && pr.state !== 'open' && !createdByWorker) {
+      this.pullStates.set(key, pr.state);
+      this.persist();
+      return;
+    }
+    this.pullStates.set(key, pr.state);
+    this.persist();
+    const recipients = this.recipientsOf(w).filter((leadId) => leadId !== opts?.excludeLead);
+    if (!recipients.length) return;
+    const verb = pr.state === 'open' ? 'Opened' : pr.state === 'merged' ? 'Merged' : 'Closed';
+    const summary = `${verb} PR #${pr.number}${pr.title ? `: ${clip(pr.title, 140)}` : ''} (${pr.url})`;
+    const status: ResultStatus = pr.state === 'closed' ? 'partial' : 'ok';
+    const result: WorkerResult = { status, summary, artifacts: { prNumber: pr.number, prUrl: pr.url } };
+    for (const leadId of recipients) {
+      this.push({
+        lead: leadId,
+        worker: w.id,
+        name: w.name,
+        kind: 'pr',
+        text: summary,
+        prUrl: pr.url,
+        result: cloneWorkerResult(result),
+        ...(leadId !== w.lead ? { watched: true as const } : {}),
+      });
+    }
   }
 
   /** A worker started a new turn: what it reported in the last one doesn't count for this one. */
@@ -427,7 +523,20 @@ export class Team {
   onWorkerGone(id: string) {
     const previous = this.known.get(id);
     const by = this.sending.get(id);
-    if (previous?.lead && by !== 'lead' && this.workers.get(previous.lead)) this.push({ lead: previous.lead, worker: id, name: previous.name, kind: by === 'owner' ? 'sent_home' : 'left' });
+    const recipients = new Set<string>();
+    if (previous?.lead) recipients.add(previous.lead);
+    for (const [watcher, ids] of this.watched) if (ids.has(id)) recipients.add(watcher);
+    for (const leadId of recipients) {
+      if ((leadId !== previous?.lead || by !== 'lead') && (this.workers.get(leadId) || this.workers.buildingAgent?.(leadId))) {
+        this.push({
+          lead: leadId,
+          worker: id,
+          name: previous?.name ?? id,
+          kind: by === 'owner' ? 'sent_home' : 'left',
+          ...(leadId !== previous?.lead ? { watched: true as const } : {}),
+        });
+      }
+    }
     this.known.delete(id);
     this.idleSince.delete(id);
     const hadNote = this.notes.delete(id);
@@ -444,6 +553,20 @@ export class Team {
       this.subagents.delete(id);
       droppedFormer = true;
     }
+    let hadWatch = this.watched.delete(id);
+    for (const [watcher, ids] of this.watched) {
+      if (ids.delete(id)) {
+        hadWatch = true;
+        if (!ids.size) this.watched.delete(watcher);
+      }
+    }
+    let hadPullState = false;
+    for (const key of [...this.pullStates.keys()]) {
+      if (key.startsWith(`${id}:`)) {
+        this.pullStates.delete(key);
+        hadPullState = true;
+      }
+    }
     this.reported.delete(id);
     this.spoke.delete(id);
     const before = this.log.length;
@@ -452,7 +575,7 @@ export class Team {
     const hadCursor = this.statusCursors.delete(id);
     clearTimeout(this.timers.get(id));
     this.timers.delete(id);
-    if (this.log.length !== before || hadCursor || hadNote || hadSubagent || droppedFormer) this.persist();
+    if (this.log.length !== before || hadCursor || hadNote || hadSubagent || droppedFormer || hadWatch || hadPullState) this.persist();
   }
 
   /** Runs `send`, which may send worker `id` home, so its lead hears who did it. */
@@ -511,9 +634,9 @@ export class Team {
     if (changed) this.persist();
   }
 
-  /** Questions `lead`'s current subagents asked with team_report that nobody has answered yet. */
+  /** Questions `lead`'s current subagents (or watched workers) asked with team_report that nobody has answered yet. */
   questions(lead: string): TeamEvent[] {
-    return this.news(lead, { kinds: new Set(['question']) }).filter((e) => !e.answered && this.workers.get(e.worker)?.lead === lead);
+    return this.news(lead, { kinds: new Set(['question']) }).filter((e) => !e.answered && (this.workers.get(e.worker)?.lead === lead || this.isWatching(lead, e.worker)));
   }
 
   /** What `lead`'s subagents reported or asked, oldest first, kept even after one leaves; `ref` picks one subagent by id or name. */
@@ -522,9 +645,10 @@ export class Team {
     return this.news(lead, { kinds: new Set(['report', 'question']) }).filter((e) => !want || e.worker === want || e.name.toLowerCase() === want || e.name.replace(/ 🐚$/, '').toLowerCase() === want);
   }
 
-  /** `lead`'s subagents as team tools show them. */
+  /** `lead`'s subagents and watched floor workers as team tools show them. */
   roster(lead: string): TeamMember[] {
-    return this.teamOf(lead).map((w) => this.member(w));
+    const safety = this.opts.git ? analyzeCheckoutSafety([this.floorTreeContext()]) : undefined;
+    return this.followedOf(lead).map((w) => this.member(w, lead, safety?.perWorker.get(w.id)));
   }
 
   /**
@@ -623,6 +747,8 @@ export class Team {
       }
       case 'send':
         return this.send(caller, b);
+      case 'watch':
+        return this.watch(caller, b);
       case 'review':
         return this.review(caller, b);
       case 'dismiss':
@@ -630,7 +756,7 @@ export class Team {
       case 'report':
         return this.report(caller, b);
       default:
-        return no(400, 'Unknown action: use whoami, status, hire, models, send, review, dismiss or report');
+        return no(400, 'Unknown action: use whoami, status, watch, hire, models, send, review, dismiss or report');
     }
   }
 
@@ -653,12 +779,14 @@ export class Team {
     const why = this.cannotHire(w);
     const lead = w.lead ? this.workers.get(w.lead) : undefined;
     const team = this.teamOf(w.id).length;
+    const watching = this.watchedOf(w.id).length;
     return {
       you: { id: w.id, name: w.name, desk: DESK_BY_ID.get(w.deskId)?.label ?? w.deskId, role: lead ? 'subagent' : team ? 'lead' : 'worker' },
       ...(lead ? { lead: { id: lead.id, name: lead.name } } : {}),
       canHire: !why,
       ...(why ? { why } : {}),
       subagents: team,
+      ...(watching ? { watching } : {}),
       // Building agents have the owner's access, which no team size limits.
       ...(isBuildingAgent(w) ? {} : { max: s.maxPerLead }),
       worktree: s.worktree && this.opts.git,
@@ -825,24 +953,43 @@ export class Team {
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
+  private watchedOf(leadId: string): WorkerInfo[] {
+    const ids = this.watched.get(leadId);
+    if (!ids?.size) return [];
+    return this.workers
+      .list()
+      .filter((w) => w.lead !== leadId && ids.has(w.id))
+      .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  private followedOf(leadId: string): WorkerInfo[] {
+    const ids = this.watched.get(leadId);
+    return this.workers
+      .list()
+      .filter((w) => w.lead === leadId || !!ids?.has(w.id))
+      .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
   /** Metadata only: no terminal reads, Git commands, or lead inbox acknowledgments. */
   board(lead: string): TeamBoardMember[] {
-    return this.roster(lead).map((w) => {
-      const note = this.notes.get(w.id);
-      return {
-        id: w.id,
-        name: w.name,
-        status: w.status,
-        state: w.state,
-        ...(w.task ? { task: w.task } : {}),
-        ...(w.activity ? { activity: clip(w.activity, 200) } : {}),
-        ...(w.worktree ? { branch: w.worktree.branch } : {}),
-        areas: [...(note?.areas ?? [])],
-        ...(note?.text ? { note: { text: note.text, at: note.at } } : {}),
-        ...(w.report ? { report: { summary: clip(w.report.result?.summary ?? w.report.text, 300), kind: w.report.question ? 'question' : w.report.progress ? 'progress' : 'report', at: w.report.at } } : {}),
-        ...(w.report?.result ? { result: { status: w.report.result.status, summary: clip(w.report.result.summary, 300) } } : {}),
-      };
-    });
+    return this.teamOf(lead)
+      .map((w) => this.member(w, lead))
+      .map((w) => {
+        const note = this.notes.get(w.id);
+        return {
+          id: w.id,
+          name: w.name,
+          status: w.status,
+          state: w.state,
+          ...(w.task ? { task: w.task } : {}),
+          ...(w.activity ? { activity: clip(w.activity, 200) } : {}),
+          ...(w.worktree ? { branch: w.worktree.branch } : {}),
+          areas: [...(note?.areas ?? [])],
+          ...(note?.text ? { note: { text: note.text, at: note.at } } : {}),
+          ...(w.report ? { report: { summary: clip(w.report.result?.summary ?? w.report.text, 300), kind: w.report.question ? 'question' : w.report.progress ? 'progress' : 'report', at: w.report.at } } : {}),
+          ...(w.report?.result ? { result: { status: w.report.result.status, summary: clip(w.report.result.summary, 300) } } : {}),
+        };
+      });
   }
 
   /** Kept outside the lead's literal task, capped independently from the live board. */
@@ -935,27 +1082,35 @@ export class Team {
     }
   }
 
-  private member(w: WorkerInfo): TeamMember {
+  private member(w: WorkerInfo, leadId?: string, warnings?: readonly string[]): TeamMember {
     this.rememberSubagent(w);
+    const targetLead = leadId ?? w.lead;
+    const watched = Boolean(leadId && w.lead !== leadId);
     const note = this.notes.get(w.id);
     const reversed = [...this.log].reverse();
     const last = reversed.find((e) => e.worker === w.id && (e.kind === 'report' || e.kind === 'question'));
     const model = w.activeModel ?? w.model;
     const effort = w.activeEffort ?? w.effort;
-    const open = reversed.find((e) => e.worker === w.id && e.kind === 'question' && !e.answered && e.lead === w.lead);
+    const open = targetLead ? reversed.find((e) => e.worker === w.id && e.kind === 'question' && !e.answered && e.lead === targetLead) : undefined;
     const asking = w.status === 'needs_input' && w.ask?.kind === 'question';
     // A later event (a turn that ended without a report, a stop) means the job already woke it.
     const awaitingJob = (w.status === 'idle' || w.status === 'done') && last?.progress && !this.log.some((e) => e.worker === w.id && e.seq > last.seq);
     const inspection = this.inspectWorker(w, { last, open });
+    const loc = workerLocation(w, this.floorTreeContext());
     return {
       id: w.id,
       name: w.name,
       status: w.status,
       state: open || asking ? 'blocked_on_question' : w.status,
       desk: DESK_BY_ID.get(w.deskId)?.label ?? w.deskId,
+      ...(watched ? { watched: true as const } : {}),
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
       ...(w.worktree ? { worktree: { path: path.join(this.opts.dir, w.worktree.path), branch: w.worktree.branch, from: w.worktree.from ?? w.worktree.base?.slice(0, 7) } } : {}),
+      ...(loc.cwd ? { cwd: loc.cwd } : {}),
+      ...(loc.branch ? { branch: loc.branch } : {}),
+      ...(loc.sharedCheckout ? { sharedCheckout: true as const } : {}),
+      ...(warnings?.length ? { warnings: [...warnings] } : {}),
       ...(w.activity ? { activity: w.activity } : {}),
       ...(w.task ? { task: w.task.name } : {}),
       ...(inspection.taskLabel ? { taskLabel: inspection.taskLabel } : {}),
@@ -1049,7 +1204,7 @@ export class Team {
       if (rec.lead === lead && !active.has(rec.id)) map.set(rec.id, rec);
     }
     for (const e of this.log) {
-      if (e.lead === lead && !active.has(e.worker) && !map.has(e.worker)) map.set(e.worker, { id: e.worker, name: e.name, lead: e.lead });
+      if (e.lead === lead && !e.watched && !active.has(e.worker) && !map.has(e.worker)) map.set(e.worker, { id: e.worker, name: e.name, lead: e.lead });
     }
     return [...map.values()];
   }
@@ -1070,6 +1225,8 @@ export class Team {
     const team = this.teamOf(lead.id);
     const found = team.find((w) => w.id === want || w.name.toLowerCase() === want || w.name.replace(/ 🐚$/, '').toLowerCase() === want);
     if (found) return { live: found, record: this.rememberSubagent(found)! };
+    const watchedFound = this.watchedOf(lead.id).find((w) => w.id === want || w.name.toLowerCase() === want || w.name.replace(/ 🐚$/, '').toLowerCase() === want);
+    if (watchedFound) return { live: watchedFound, record: { id: watchedFound.id, name: watchedFound.name, lead: watchedFound.lead ?? lead.id, deskId: watchedFound.deskId } };
     const former = this.formerRecords(lead.id);
     const byId = former.find((r) => r.id.toLowerCase() === want);
     if (byId) return { record: byId };
@@ -1114,16 +1271,120 @@ export class Team {
     };
   }
 
-  /** One of `lead`'s subagents, by its id or its name. */
+  /** One of `lead`'s subagents or watched floor workers, by its id or its name. */
   private resolve(lead: WorkerInfo, ref: unknown): WorkerInfo | string {
     const want = typeof ref === 'string' ? ref.trim().toLowerCase() : '';
     if (!want) return 'Name the subagent: team with action status shows your team';
-    const team = this.teamOf(lead.id);
+    const team = this.followedOf(lead.id);
     const found = team.find((w) => w.id === want || w.name.toLowerCase() === want || w.name.replace(/ 🐚$/, '').toLowerCase() === want);
     if (found) return found;
-    const other = this.workers.list().find((w) => w.id === want || w.name.toLowerCase() === want);
-    if (other) return `${other.name} isn't one of your subagents${team.length ? `: yours are ${team.map((w) => w.name).join(', ')}` : ''}`;
+    const other = this.workers.list().find((w) => w.id === want || w.name.toLowerCase() === want || w.name.replace(/ 🐚$/, '').toLowerCase() === want);
+    if (other) return `${other.name} isn't one of your subagents${team.length ? `: yours are ${team.map((w) => w.name).join(', ')}` : ''}. Call team_watch to follow an independent floor worker.`;
     return `No subagent called ${String(ref)}${team.length ? `: yours are ${team.map((w) => w.name).join(', ')}` : ': you have none'}`;
+  }
+
+  private canControlWatched(lead: WorkerInfo): boolean {
+    return isBuildingAgent(lead) || Boolean(this.workers.buildingAgent?.(lead.id));
+  }
+
+  /** Starts or stops watching independent floor workers so their turns, prompts, stops, departures and PRs wake `lead`. */
+  private watch(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
+    if (lead.lead) return no(403, 'Subagents cannot watch floor workers; only leads and building agents use team_watch.');
+    if (b.watch !== undefined && typeof b.watch !== 'boolean') return no(400, 'watch takes true or false.');
+    const enable = b.watch !== false;
+    const candidates = this.workers.list().filter((w) => w.id !== lead.id && !w.remote);
+    let refs: unknown[];
+    if (b.all === true) {
+      if (b.worker !== undefined || b.workers !== undefined) return no(400, 'Choose exactly one of worker, workers, or all: true.');
+      refs = enable ? candidates.filter((w) => !w.lead && !w.cloud).map((w) => w.id) : [...(this.watched.get(lead.id) ?? [])];
+      if (!refs.length) {
+        const safety = this.opts.git ? analyzeCheckoutSafety([this.floorTreeContext()]) : undefined;
+        return ok({
+          watch: enable,
+          results: [],
+          watching: this.watchedOf(lead.id).map((w) => this.member(w, lead.id, safety?.perWorker.get(w.id))),
+          note: enable ? 'No independent workers on this floor to watch.' : 'You were not watching any workers on this floor.',
+        });
+      }
+    } else if (Array.isArray(b.workers)) {
+      if (b.worker !== undefined || !b.workers.length) return no(400, 'Choose exactly one of worker, workers, or all: true.');
+      refs = b.workers;
+    } else if (typeof b.worker === 'string' && b.worker.trim()) {
+      refs = [b.worker];
+    } else {
+      return no(400, 'Choose worker, workers, or all: true for team_watch.');
+    }
+
+    const seen = new Set<string>();
+    const results: Array<{ id: string; name?: string; watching?: boolean; note?: string; error?: string; worker?: TeamMember }> = [];
+    let changed = false;
+    const safety = this.opts.git ? analyzeCheckoutSafety([this.floorTreeContext()]) : undefined;
+
+    for (const ref of refs) {
+      const want = typeof ref === 'string' ? ref.trim().toLowerCase() : '';
+      if (!want) {
+        results.push({ id: String(ref), error: 'Empty worker reference.' });
+        continue;
+      }
+      if (want === lead.id.toLowerCase()) {
+        results.push({ id: lead.id, name: lead.name, error: 'You cannot watch yourself.' });
+        continue;
+      }
+      const matches = candidates.filter((w) => w.id.toLowerCase() === want || w.name.toLowerCase() === want || w.name.replace(/ 🐚$/, '').toLowerCase() === want);
+      if (matches.length !== 1) {
+        results.push({ id: String(ref), error: matches.length ? `${String(ref)} matches multiple workers on this floor; use the worker id.` : `No worker called ${String(ref)} on this floor.` });
+        continue;
+      }
+      const w = matches[0];
+      if (seen.has(w.id)) continue;
+      seen.add(w.id);
+      if (w.lead === lead.id) {
+        if (!enable) {
+          results.push({ id: w.id, name: w.name, error: `${w.name} is your hired subagent, not a watched independent worker; use team_dismiss when finished.` });
+        } else {
+          results.push({ id: w.id, name: w.name, watching: true, note: 'Already reporting to you as your subagent.', worker: this.member(w, lead.id, safety?.perWorker.get(w.id)) });
+        }
+        continue;
+      }
+      if (w.lead && enable) {
+        const boss = this.workers.get(w.lead)?.name ?? w.lead;
+        results.push({ id: w.id, name: w.name, error: `${w.name} is a subagent of ${boss}, not an independent floor worker.` });
+        continue;
+      }
+      if (enable) {
+        let set = this.watched.get(lead.id);
+        if (!set) {
+          set = new Set();
+          this.watched.set(lead.id, set);
+        }
+        if (!set.has(w.id)) {
+          set.add(w.id);
+          changed = true;
+        }
+        this.known.set(w.id, { name: w.name, lead: w.lead, status: w.status, prNumber: w.pr?.number });
+        if (w.pr && !this.pullStates.has(`${w.id}:${w.pr.number}`)) {
+          this.pullStates.set(`${w.id}:${w.pr.number}`, 'open');
+          changed = true;
+        }
+        results.push({ id: w.id, name: w.name, watching: true, worker: this.member(w, lead.id, safety?.perWorker.get(w.id)) });
+      } else {
+        const set = this.watched.get(lead.id);
+        if (set?.delete(w.id)) {
+          changed = true;
+          if (!set.size) this.watched.delete(lead.id);
+        }
+        results.push({ id: w.id, name: w.name, watching: false });
+      }
+    }
+    if (changed) this.persist();
+    const okAny = results.some((r) => !r.error);
+    if (!okAny && results.length === 1) return no(results[0].error?.includes('No worker called') ? 404 : 409, results[0].error!);
+    if (!okAny) return no(409, results.map((r) => `${r.name ?? r.id}: ${r.error}`).join('\n'));
+    return ok({
+      watch: enable,
+      results,
+      watching: this.watchedOf(lead.id).map((w) => this.member(w, lead.id, safety?.perWorker.get(w.id))),
+    });
   }
 
   /**
@@ -1215,6 +1476,9 @@ export class Team {
   private async merge(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const w = this.resolve(lead, b.worker);
     if (typeof w === 'string') return no(404, w);
+    if (w.lead !== lead.id && !this.canControlWatched(lead)) {
+      return no(403, `${w.name} is an independent floor worker: floor peers can watch and inspect it, while only its lead or a building agent can integrate it.`);
+    }
     if (!this.opts.git) return no(400, 'Integration requires a Git floor.');
     if (b.mode !== undefined && b.mode !== 'merge' && b.mode !== 'cherry-pick') return no(400, 'mode takes merge or cherry-pick.');
     if (b.target !== undefined && (typeof b.target !== 'string' || !b.target.trim())) return no(400, 'target takes an existing local branch.');
@@ -1235,6 +1499,9 @@ export class Team {
   private async openPull(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const w = this.resolve(lead, b.worker);
     if (typeof w === 'string') return no(404, w);
+    if (w.lead !== lead.id && !this.canControlWatched(lead)) {
+      return no(403, `${w.name} is an independent floor worker: floor peers can watch and inspect it, while only its lead or a building agent can open PRs for it.`);
+    }
     if (!this.opts.git || !this.opts.pulls) return no(400, 'This floor cannot open pull requests.');
     const title = str(b.title, 200).trim();
     if (!title) return no(400, 'Provide the pull request title.');
@@ -1258,6 +1525,7 @@ export class Team {
       }
       const pr = await this.opts.pulls.createPull(workerCwd(this.opts.dir, w), branch, base, title, str(b.body, TASK_MAX));
       w.pr = pr;
+      this.onPullState(w, { number: pr.number, url: pr.url, title, state: 'open' }, { excludeLead: lead.id });
       this.opts.onPull?.(w.id, pr);
       return ok({ status: 'ok', worker: w.id, branch, pr, artifacts: { prUrl: pr.url, prNumber: pr.number }, summary: `Opened ${pr.url} from ${branch}.` } satisfies WorkerResult & Record<string, unknown>);
     } catch (err) {
@@ -1270,29 +1538,32 @@ export class Team {
   private async status(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const named = b.worker !== undefined ? this.resolve(lead, b.worker) : undefined;
     if (typeof named === 'string') return no(404, named);
-    const selected = named ? [named] : this.teamOf(lead.id);
+    const selected = named ? [named] : this.followedOf(lead.id);
     await this.recheckIfRetrying(selected);
     const lines = Number.isInteger(b.lines) ? Math.min(READ_MAX, Math.max(1, b.lines as number)) : undefined;
+    const ctx = this.floorTreeContext();
+    const safety = this.opts.git ? analyzeCheckoutSafety([ctx]) : undefined;
     const team = selected.map((w) => {
-      const member = this.member(w);
+      const member = this.member(w, lead.id, safety?.perWorker.get(w.id));
       if (lines === undefined) return member;
       const text = this.workers.tail(w.id, lines);
       return { ...member, ...(text === undefined ? { terminalUnavailable: `${w.name} has no terminal yet: it's ${w.status}` } : { terminal: text }) };
     });
+    const otherWorkers = named ? undefined : buildOtherFloorWorkers(ctx, lead.id, new Set(selected.map((w) => w.id)), new Map(ctx.workers.map((w) => [w.id, w.name] as const)));
     const since = Number.isSafeInteger(b.since) && (b.since as number) >= 0 ? (b.since as number) : undefined;
     const kinds = Array.isArray(b.kinds) ? new Set(b.kinds.filter((k): k is TeamEventKind => TEAM_EVENT_KINDS.includes(k as TeamEventKind))) : undefined;
-    return ok({ ...this.whoami(lead), team, events: this.statusNews(lead, since, kinds), latest: this.seq });
+    return ok({ ...this.whoami(lead), team, ...(otherWorkers?.length ? { otherWorkers } : {}), events: this.statusNews(lead, since, kinds), latest: this.seq });
   }
 
   /**
-   * First poll establishes a baseline; later polls return only this caller's newer events. A kinds filter
-   * moves the cursor only up to the first event it leaves out, so that news stays unheard; matching news
-   * after it may be returned again.
+   * First poll establishes a baseline; later polls return only this caller's newer events. Events already
+   * acknowledged via office_inbox (`seen: true`) are omitted so status never replays handled news. A kinds
+   * filter moves the cursor only up to the first event it leaves out, so that news stays unheard.
    */
   private remoteStatusNews(lead: string, kinds?: ReadonlySet<TeamEventKind>): TeamEvent[] {
     const previous = this.statusCursors.get(lead);
     const after = previous ?? this.seq;
-    const news = this.log.filter((e) => e.lead === lead && e.seq > after);
+    const news = this.log.filter((e) => e.lead === lead && !e.seen && e.seq > after);
     const skipped = kinds && news.find((e) => !kinds.has(e.kind));
     const next = skipped ? skipped.seq - 1 : this.seq;
     if (previous !== next) {
@@ -1332,6 +1603,7 @@ export class Team {
       ...(e.pushedSha ? { pushedSha: e.pushedSha } : {}),
       ...(e.prUrl ? { prUrl: e.prUrl } : {}),
       ...(e.progress ? { progress: true as const } : {}),
+      ...(e.watched ? { watched: true as const } : {}),
       ...(e.result ? { result: cloneWorkerResult(e.result) } : {}),
       ...(e.review ? { review: { ...e.review } } : {}),
     }));
@@ -1361,6 +1633,9 @@ export class Team {
     }
     const w = this.resolve(lead, b.worker);
     if (typeof w === 'string') return no(404, w);
+    if (w.lead !== lead.id && !this.canControlWatched(lead)) {
+      return no(403, `${w.name} is an independent floor worker: floor peers can watch and inspect it, while only a building agent can message it directly. Use visit_request to talk to ${w.name}.`);
+    }
     if (w.status === 'starting') return no(409, `${w.name} is still starting up: try again in a few seconds`);
     if (w.status === 'needs_input') return no(409, `${w.name} is waiting on an answer in its own terminal (${w.activity ?? 'a prompt'}): someone has to answer it there, so tell the person`);
     const message = officePrompt(this.opts.prompts, 'subagent.message', { from: lead.name, ...workerMessageVars(text) });
@@ -1411,7 +1686,7 @@ export class Team {
     this.spoke.delete(w.id);
     this.settleQuestions(w.id);
     return ok({
-      worker: this.member(this.workers.get(w.id) ?? w),
+      worker: this.member(this.workers.get(w.id) ?? w, lead.id),
       delivery,
       ...(blockingTool ? { blockingTool, warning } : {}),
     });
@@ -1420,6 +1695,9 @@ export class Team {
   private async dismiss(lead: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     const w = this.resolve(lead, b.worker);
     if (typeof w === 'string') return no(404, w);
+    if (w.lead !== lead.id) {
+      return no(409, `${w.name} is a watched floor worker, not your hired subagent. Call team_watch with watch: false to stop watching, or office_send_home only when the owner asks to dismiss it.`);
+    }
     if (b.pruneWorktree !== undefined && typeof b.pruneWorktree !== 'boolean') return no(400, 'pruneWorktree takes true or false.');
     if (b.keepBranch !== undefined && typeof b.keepBranch !== 'boolean') return no(400, 'keepBranch takes true or false.');
     if (b.keepBranch === false && b.pruneWorktree !== true) return no(400, 'keepBranch: false requires pruneWorktree: true.');
@@ -1471,6 +1749,22 @@ export class Team {
     const result = buildWorkerResult(parsedResult, { status: question ? 'blocked' : progress ? 'partial' : 'ok', summary: clip(text, 240), prUrl: resultPrUrl, prNumber, sha });
     const provenance = { ...(sha ? { pushedSha: sha } : {}), ...(prUrl ? { prUrl } : {}) };
     this.push({ lead: lead.id, worker: w.id, name: w.name, kind: question ? 'question' : 'report', text, ...(options.length ? { options } : {}), ...provenance, ...(progress ? { progress: true as const } : {}), result });
+    for (const watcherId of this.watchersOf(w.id)) {
+      if (watcherId !== lead.id) {
+        this.push({
+          lead: watcherId,
+          worker: w.id,
+          name: w.name,
+          kind: question ? 'question' : 'report',
+          text,
+          ...(options.length ? { options: [...options] } : {}),
+          ...provenance,
+          ...(progress ? { progress: true as const } : {}),
+          watched: true,
+          result: cloneWorkerResult(result),
+        });
+      }
+    }
     if (!question) this.reported.add(w.id);
     this.spoke.add(w.id);
     this.opts.toast(`${question ? `❓ ${w.name} asked ${lead.name}` : progress ? `⏳ ${w.name} reported progress to ${lead.name}` : `📨 ${w.name} reported to ${lead.name}`}: “${clip(text, 90)}”`, 'info', w.id);
@@ -1481,12 +1775,15 @@ export class Team {
     const resolved = this.resolveWithFormer(lead, b.worker);
     if ('status' in resolved) return resolved;
     const { live: w, record } = resolved;
+    if (w && w.lead !== lead.id && !this.canControlWatched(lead)) {
+      return no(403, `${w.name} is an independent floor worker: floor peers can watch and inspect it, while only its lead or a building agent can review it.`);
+    }
     if (typeof b.verdict !== 'string' || !(REVIEW_VERDICTS as readonly string[]).includes(b.verdict)) return no(400, `verdict must be one of ${REVIEW_VERDICTS.join(', ')}.`);
     const verdict = b.verdict as ReviewVerdict;
     const notes = str(b.notes, TASK_MAX).trim();
     if (!notes) return no(400, 'Provide notes for team_review.');
     if (b.notify !== undefined && typeof b.notify !== 'boolean') return no(400, 'notify takes true or false.');
-    const last = [...this.log].reverse().find((e) => e.worker === record.id && e.lead === lead.id && (e.kind === 'report' || e.kind === 'question'));
+    const last = [...this.log].reverse().find((e) => e.worker === record.id && e.lead === lead.id && (e.kind === 'report' || e.kind === 'question' || (e.watched && (e.kind === 'done' || e.kind === 'pr'))));
     if (!last) return no(409, `${record.name} has not reported a result to review yet.`);
     const review: WorkerReview = { verdict, notes, by: lead.name, at: this.now() };
     last.review = review;
@@ -1513,7 +1810,7 @@ export class Team {
         }
       }
     }
-    return ok({ worker: w ? this.member(this.workers.get(w.id) ?? w) : this.formerMember(record), review: { ...review }, reportSeq: last.seq, notified, ...(notifyNote ? { notifyNote } : {}) });
+    return ok({ worker: w ? this.member(this.workers.get(w.id) ?? w, lead.id) : this.formerMember(record), review: { ...review }, reportSeq: last.seq, notified, ...(notifyNote ? { notifyNote } : {}) });
   }
 
   private push(e: Omit<TeamEvent, 'seq' | 'at'>) {
@@ -1586,7 +1883,17 @@ export class Team {
 
   private restore() {
     try {
-      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as { events?: unknown; nudged?: unknown; seq?: unknown; idleSince?: unknown; statusCursors?: unknown; notes?: unknown; former?: unknown };
+      const raw = JSON.parse(readFileSync(this.path, 'utf8')) as {
+        events?: unknown;
+        nudged?: unknown;
+        seq?: unknown;
+        idleSince?: unknown;
+        statusCursors?: unknown;
+        notes?: unknown;
+        former?: unknown;
+        watched?: unknown;
+        pullStates?: unknown;
+      };
       if (Array.isArray(raw.former))
         for (const entry of raw.former) {
           if (!isPlainObject(entry) || typeof entry.id !== 'string' || typeof entry.name !== 'string' || typeof entry.lead !== 'string') continue;
@@ -1618,6 +1925,21 @@ export class Team {
           const note = value as Record<string, unknown>;
           if (this.workers.get(id) && typeof note.text === 'string' && typeof note.at === 'number') this.notes.set(id, { text: str(note.text, 1000).trim(), areas: noteAreas(note.areas), at: note.at });
         }
+      if (raw.watched && typeof raw.watched === 'object' && !Array.isArray(raw.watched)) {
+        for (const [leadId, ids] of Object.entries(raw.watched)) {
+          if (!Array.isArray(ids) || (!this.workers.get(leadId) && !this.workers.buildingAgent?.(leadId))) continue;
+          const valid = ids.filter((id): id is string => typeof id === 'string' && id !== leadId && !!this.workers.get(id));
+          if (valid.length) this.watched.set(leadId, new Set(valid));
+        }
+      }
+      if (raw.pullStates && typeof raw.pullStates === 'object' && !Array.isArray(raw.pullStates)) {
+        for (const [key, state] of Object.entries(raw.pullStates)) {
+          const workerId = key.split(':')[0];
+          if ((state === 'open' || state === 'merged' || state === 'closed') && workerId && this.workers.get(workerId)) {
+            this.pullStates.set(key, state);
+          }
+        }
+      }
       if (Number.isSafeInteger(raw.seq)) this.seq = raw.seq as number;
       if (raw.idleSince && typeof raw.idleSince === 'object')
         for (const [id, at] of Object.entries(raw.idleSince)) {
@@ -1651,6 +1973,7 @@ export class Team {
           ...(typeof x.pushedSha === 'string' && /^[0-9a-f]{40,64}$/.test(x.pushedSha) ? { pushedSha: x.pushedSha } : {}),
           ...(typeof x.prUrl === 'string' ? { prUrl: x.prUrl.slice(0, 2000) } : {}),
           ...(x.progress === true ? { progress: true as const } : {}),
+          ...(x.watched === true ? { watched: true as const } : {}),
           ...(restoreWorkerResult(x.result) ? { result: restoreWorkerResult(x.result) } : {}),
           ...(restoreWorkerReview(x.review) ? { review: restoreWorkerReview(x.review) } : {}),
         });
@@ -1674,6 +1997,7 @@ export class Team {
 
   private persist() {
     try {
+      const watched = Object.fromEntries([...this.watched].filter(([, ids]) => ids.size > 0).map(([leadId, ids]) => [leadId, [...ids]]));
       writeFileSync(
         this.path,
         JSON.stringify({
@@ -1684,6 +2008,8 @@ export class Team {
           statusCursors: Object.fromEntries(this.statusCursors),
           notes: Object.fromEntries(this.notes),
           former: [...this.subagents.values()].slice(-LOG_MAX),
+          ...(Object.keys(watched).length ? { watched } : {}),
+          ...(this.pullStates.size ? { pullStates: Object.fromEntries(this.pullStates) } : {}),
         }),
         {
           mode: 0o600,
