@@ -21,6 +21,7 @@ import type { SubscriptionProviderKey, SubscriptionsState } from './subscription
 import type { ThreadPresentation } from './thread-presentation.js';
 import type { ThreadEntry } from './worker-thread.js';
 import type { WorkerLabelSettings, WorkerLabelState } from './worker-labels.js';
+import type { FloorVibesState, GeminiConnectionState } from './gemini-vibes.js';
 
 export type WorkerStatus =
   | 'starting' // PTY launched, agent booting
@@ -580,6 +581,8 @@ export interface FloorView {
   linear: LinearFloorState;
   /** The Linear tab of the issue board; null on a floor without a Linear team. */
   linearBoard: LinearBoardState | null;
+  /** Living 3D worker postures, micro-reactions, monitor bounce spill and room mood lighting for this floor. */
+  vibes?: FloorVibesState;
 }
 
 /** Every desk and cloud worker on one floor, with its pull requests, for building-wide views. */
@@ -916,6 +919,16 @@ type ClientMessage =
   | { t: 'factory.refresh'; feature?: FactoryFeatureId }
   /** A board or window of `feature` opened (`on`) or closed in this tab: it polls fast while one is open. */
   | { t: 'factory.watch'; feature: FactoryFeatureId; on: boolean }
+  /** Connect the office to Google Gemini Decisions (`gemini-decision-1`); answered with `gemini.setup`. */
+  | { t: 'gemini.connect'; key: string }
+  /** Forget the office's Gemini API key. */
+  | { t: 'gemini.disconnect' }
+  /** Probe the saved Gemini API key against `gemini-decision-1` now. */
+  | { t: 'gemini.check' }
+  /** Enable or pause Living 3D Reactions & Mood Lighting while viewing a 3D floor. */
+  | { t: 'gemini.vibes'; on: boolean }
+  /** True strictly while this 3D office tab is open, visible, uncovered, and standing on an indoor floor. */
+  | { t: 'vibes.watch'; active: boolean }
   /** Look at Droid (installed, signed in, newest release) and DroidProxy again now (docs/subscriptions.md). */
   | { t: 'setup.check' }
   | { t: 'setup.airgapped'; on: boolean }
@@ -1073,6 +1086,8 @@ export type ServerMsg =
       prompts: PromptsState;
       /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
       factory: FactoryState;
+      /** Google Gemini Decisions (`gemini-decision-1`) connection and Living 3D Studio telemetry. */
+      gemini?: GeminiConnectionState;
       /** Droid installed and signed in, and whether the owner has been through the welcome (docs/subscriptions.md). */
       setup: SetupState;
       /** DroidProxy, the subscriptions it serves, and which of their models can run now. */
@@ -1166,6 +1181,12 @@ export type ServerMsg =
   | { t: 'factory'; state: FactoryState }
   /** To whoever sent `factory.connect`: connected, or why not. */
   | { t: 'factory.setup'; ok: boolean; error?: string }
+  /** Google Gemini Decisions connection, toggle or telemetry changed. */
+  | { t: 'gemini'; state: GeminiConnectionState }
+  /** To whoever sent `gemini.connect` or `gemini.check`: verified, or why not. */
+  | { t: 'gemini.setup'; ok: boolean; error?: string; latencyMs?: number }
+  /** Living 3D worker postures, micro-reactions, monitor spill and room mood lighting for a floor. */
+  | { t: 'vibes'; state: FloorVibesState }
   /** Droid's install or sign-in changed, or the welcome was finished: all of it, to everyone. */
   | { t: 'setup'; state: SetupState }
   /** DroidProxy, an account or a model's quota changed: all of it, to everyone. */
