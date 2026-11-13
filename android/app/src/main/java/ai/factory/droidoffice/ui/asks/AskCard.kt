@@ -135,6 +135,16 @@ fun AskCard(
     }
 }
 
+/** Opens the full-screen AskUser workspace directly when arriving from a question deep link. */
+@Composable
+fun QuestionWorkspaceDialog(worker: WorkerInfo, menu: Menu, onDismiss: () -> Unit, onRaw: () -> Unit) {
+    val data by LocalGraph.current.connection.data.collectAsStateWithLifecycle()
+    val identity = remember(data.officeId, worker.id, worker.sessionId) { data.askIdentity(worker.id, worker.sessionId) }
+    key(identity, menu) {
+        AnswerWorkspace(worker, menu, emptyList(), identity, onAnswered = null, onDismiss = onDismiss, onRaw = onRaw)
+    }
+}
+
 /** A full-height answer workspace. Dismiss only closes it; the draft belongs to its screen menu. */
 @Composable
 private fun AnswerWorkspace(worker: WorkerInfo, shown: Menu, entries: List<ThreadEntry>, identity: String, onAnswered: ((String) -> Unit)?, onDismiss: () -> Unit, onRaw: () -> Unit) {

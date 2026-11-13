@@ -9,6 +9,7 @@ import { formatImageLines, OfficeImageStore, type OfficeImageRef } from '../offi
 import { floorNamed } from '../remote-office.js';
 import type { WhiteboardStore } from '../whiteboard.js';
 import { readBoard, workerAuthor } from '../whiteboard-agent.js';
+import { cardDeepLink, enrichWhiteboardRead, floorDeepLink, mcpDeepLinkBase } from './deep-links.js';
 import { floorArg } from './team-events.js';
 import { formatRead, printable } from './whiteboard-format.js';
 import { officeAccess, officeError, officeResult, ownFloor, record, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
@@ -80,15 +81,17 @@ function resolvePaths(ops: Record<string, unknown>[], cwd: string): Op[] {
   });
 }
 
-function applyOnFloor(floor: { dir: string; whiteboard: WhiteboardStore }, caller: OfficeMcpCaller, ops: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
+function applyOnFloor(floor: { id: string; dir: string; whiteboard: WhiteboardStore }, caller: OfficeMcpCaller, ops: Record<string, unknown>[], extra: Record<string, unknown> = {}, linkBase?: string) {
   const store = floor.whiteboard;
   const out = store.apply({ epoch: store.issueEpoch(), seq: 1, ops: resolvePaths(ops, caller.cwd ?? floor.dir) }, workerAuthor(caller.worker), 'agent');
   if (out.kind !== 'ack') return officeError(out.reason === 'invalid' ? printable(out.error.message) : 'The batch expired. Read the board before retrying.');
-  return officeResult(`Done at revision ${out.rev}.${extra.card ? ` Card: ${extra.card}.` : ''}${extra.id ? ` Mark: ${extra.id}.` : ''}`, { ok: true, rev: out.rev, ...extra });
+  const removed = ops.some((op) => op.op === 'card.rm');
+  const deepLink = typeof extra.deepLink === 'string' ? extra.deepLink : !removed && typeof extra.card === 'string' ? cardDeepLink(extra.card, floor.id, linkBase) : undefined;
+  return officeResult(`Done at revision ${out.rev}.${extra.card ? ` Card: ${extra.card}.` : ''}${extra.id ? ` Mark: ${extra.id}.` : ''}`, { ok: true, rev: out.rev, ...(deepLink ? { deepLink } : {}), ...extra });
 }
 
-function apply(caller: OfficeMcpCaller, ops: Record<string, unknown>[], extra: Record<string, unknown> = {}) {
-  return applyOnFloor(ownFloor(caller), caller, ops, extra);
+function apply(caller: OfficeMcpCaller, ops: Record<string, unknown>[], extra: Record<string, unknown> = {}, linkBase?: string) {
+  return applyOnFloor(ownFloor(caller), caller, ops, extra, linkBase);
 }
 
 function resolveReadFloor(caller: OfficeMcpCaller, deps: OfficeMcpDeps, floorRef?: string): { id: string; name: string; dir: string; whiteboard: WhiteboardStore } | string {
@@ -292,10 +295,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           result.content.push(label, { type: 'image', data, mimeType: 'image/png' });
         });
       }
-      // Do not duplicate base64 tiles in JSON text or structuredContent; expose clean {id, url} image references instead.
+      // Do not duplicate base64 tiles in JSON text or structuredContent; expose clean {id, url} image references and deep links instead.
+      const linkBase = mcpDeepLinkBase(deps);
+      const enriched = enrichWhiteboardRead(out, linkBase);
       const structured = {
-        ...out,
-        cards: out.cards.map((card) => {
+        ...enriched,
+        cards: enriched.cards.map((card) => {
           const imgs = cardImages.get(card.id);
           const pngField = card.png?.ok ? { ...card.png, tiles: undefined, tileCount: card.png.tiles.length } : card.png;
           return {
@@ -337,10 +342,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.worker,
     async (args, caller) => {
+      const linkBase = mcpDeepLinkBase(deps);
       const card = args.card ?? (args.action === 'create' ? newId('c') : undefined);
       if (args.action === 'show') {
         if (args.grid && card) return officeError('Choose a card or grid:true, not both.');
-        return apply(caller, [{ op: 'show', selection: card ? { kind: 'card', id: card } : { kind: 'grid' } }]);
+        const floor = ownFloor(caller);
+        return apply(caller, [{ op: 'show', selection: card ? { kind: 'card', id: card } : { kind: 'grid' } }], card ? { card, shown: true } : { deepLink: floorDeepLink(floor.id, linkBase) }, linkBase);
       }
       if (!card) return officeError('Give the card id. whiteboard_read lists cards.');
       const picked = args.source ? sourceOf(args.source) : undefined;
@@ -353,7 +360,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         if (!title || !picked) return officeError('Create needs a nonempty title and a source: html, markdown, markdownFile, file, dir, video, image, link or canvas.');
         const ops: Record<string, unknown>[] = [{ op: 'card.create', card, title, kind: picked.kind === 'canvas' ? 'canvas' : 'html', ...(content ? { content } : {}) }];
         if (args.show) ops.push({ op: 'show', selection: { kind: 'card', id: card } });
-        const result = apply(caller, ops, { card, ...(args.show ? { shown: true } : {}) });
+        const result = apply(caller, ops, { card, ...(args.show ? { shown: true } : {}) }, linkBase);
         if (!result.isError) {
           const created = await readBoard(floor.whiteboard, caller.worker.id, floor, { cards: [card] });
           const details = created.cards[0];
@@ -371,15 +378,15 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         if (content) ops.push({ op: 'card.content', card, content });
         if (!ops.length) return officeError('Update needs a title or source.');
         if (args.show) ops.push({ op: 'show', selection: { kind: 'card', id: card } });
-        return attachCardImages(apply(caller, ops, { card, ...(args.show ? { shown: true } : {}) }), floor, card, caller);
+        return attachCardImages(apply(caller, ops, { card, ...(args.show ? { shown: true } : {}) }, linkBase), floor, card, caller);
       }
       if (args.action === 'link') {
         if (picked?.kind !== 'link') return officeError('Link needs source: {link: "file-or-folder", entry?: "index.html"}.');
         const ops: Record<string, unknown>[] = [{ op: 'card.linkTo', card, path: picked.load.link, ...(picked.load.entry === undefined ? {} : { entry: picked.load.entry }) }];
         if (args.show) ops.push({ op: 'show', selection: { kind: 'card', id: card } });
-        return attachCardImages(apply(caller, ops, { card, ...(args.show ? { shown: true } : {}) }), floor, card, caller);
+        return attachCardImages(apply(caller, ops, { card, ...(args.show ? { shown: true } : {}) }, linkBase), floor, card, caller);
       }
-      return apply(caller, [{ op: args.action === 'remove' ? 'card.rm' : 'card.unlink', card }], { card });
+      return apply(caller, [{ op: args.action === 'remove' ? 'card.rm' : 'card.unlink', card }], { card }, linkBase);
     },
   );
   server.tool(
@@ -392,6 +399,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.worker,
     async (args, caller) => {
+      const linkBase = mcpDeepLinkBase(deps);
       const path = dotted(args.path);
       if (args.op === 'get') {
         const floor = ownFloor(caller);
@@ -399,10 +407,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         const card = out.cards[0];
         if (!card) return officeError(`No such card: ${args.card}. Use whiteboard_read to list cards.`);
         const value = stateAt(card.state, path);
-        return value === undefined ? officeError(`${args.card} has nothing at ${args.path ?? '(root)'}.`) : officeResult(JSON.stringify(value, null, 2), { card: args.card, path, value });
+        return value === undefined
+          ? officeError(`${args.card} has nothing at ${args.path ?? '(root)'}.`)
+          : officeResult(JSON.stringify(value, null, 2), { card: args.card, deepLink: cardDeepLink(args.card, floor.id, linkBase), path, value });
       }
       if (args.op !== 'del' && args.value === undefined) return officeError('Give a JSON value for set or merge.');
-      return apply(caller, [{ op: `state.${args.op}`, card: args.card, path, ...(args.op === 'del' ? {} : { value: args.value }) }]);
+      return apply(caller, [{ op: `state.${args.op}`, card: args.card, path, ...(args.op === 'del' ? {} : { value: args.value }) }], { card: args.card }, linkBase);
     },
   );
   server.tool(
@@ -447,7 +457,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         if (args.op === 'add' || args.op === 'reply') op.message = newId('m');
         else if (args.message !== undefined) op.message = args.message;
       }
-      const out = apply(caller, [op], { card: args.card, id, ...(typeof op.message === 'string' ? { message: op.message } : {}) });
+      const out = apply(caller, [op], { card: args.card, id, ...(typeof op.message === 'string' ? { message: op.message } : {}) }, mcpDeepLinkBase(deps));
       return args.kind === 'picture' && (args.op === 'add' || args.op === 'file') ? attachCardImages(out, ownFloor(caller), args.card, caller) : out;
     },
   );

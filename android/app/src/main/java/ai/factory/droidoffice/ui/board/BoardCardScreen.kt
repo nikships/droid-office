@@ -112,6 +112,7 @@ import ai.factory.droidoffice.core.WbThread
 import ai.factory.droidoffice.core.WhiteboardPing
 import ai.factory.droidoffice.core.WhiteboardView
 import ai.factory.droidoffice.core.Workers
+import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.components.Eyebrow
@@ -145,6 +146,15 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavig
     val scope = rememberCoroutineScope()
     val boards by connection.boards.collectAsStateWithLifecycle()
     val data by connection.data.collectAsStateWithLifecycle()
+    val link by connection.link.collectAsStateWithLifecycle()
+    val store by graph.store.snapshot.collectAsStateWithLifecycle()
+    val officeSynced = data.synced && (store.active?.id == null || data.officeId == store.active?.id)
+    val floorMissing = officeSynced && (floorId.isBlank() || data.floors.none { it.id == floorId })
+    LaunchedEffect(floorId, data.floorId, officeSynced, floorMissing, link.phase) {
+        if (link.phase == Phase.Connected && officeSynced && !floorMissing && data.floorId != floorId) {
+            connection.goFloor(floorId)
+        }
+    }
     val floor = boards[floorId]
     val board = floor?.board
     val card = board?.card(cardId)
@@ -164,9 +174,9 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavig
     var adding by remember { mutableStateOf(false) }
     val actedAt = remember(cardId) { mutableMapOf<String, Long>() }
 
-    LifecycleStartEffect(cardId) {
-        connection.watchBoard(WATCH)
-        onStopOrDispose { connection.unwatchBoard(WATCH) }
+    LifecycleStartEffect(cardId, floorMissing) {
+        if (!floorMissing) connection.watchBoard(WATCH)
+        onStopOrDispose { if (!floorMissing) connection.unwatchBoard(WATCH) }
     }
 
     // What changed since you last looked stays marked while you're here, though looking moves the read point.
@@ -318,6 +328,10 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavig
 
     Box(Modifier.fillMaxSize().tagged(Tags.Screen.BOARD_CARD).background(Palette.Bg)) {
         Column(Modifier.fillMaxSize().imePadding()) {
+            if (floorMissing) {
+                Gone(onBack, floorGone = true)
+                return@Column
+            }
             if (!immersive) {
                 Header(
                     card,
@@ -977,11 +991,16 @@ private fun StickyRow(s: WbSticky, onOpen: () -> Unit) {
 }
 
 @Composable
-private fun Gone(onBack: () -> Unit) {
+private fun Gone(onBack: () -> Unit, floorGone: Boolean = false) {
     Column(Modifier.fillMaxSize().tagged(Tags.Board.GONE).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Text("This card was deleted", style = MaterialTheme.typography.headlineSmall)
+        Text(if (floorGone) "This floor is no longer open" else "This card was deleted", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(6.dp))
-        Text("Someone took it off the board while you had it open.", style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary, textAlign = TextAlign.Center)
+        Text(
+            if (floorGone) "The floor this Whiteboard card belonged to was closed." else "It’s no longer on this floor’s Whiteboard.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Palette.TextSecondary,
+            textAlign = TextAlign.Center,
+        )
         Spacer(Modifier.height(18.dp))
         SecondaryButton("Back to the board", onBack)
     }

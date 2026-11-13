@@ -11,6 +11,8 @@ import type { Config } from './config.js';
 import type { AddressInfo } from 'node:net';
 import { bearerToken, isLoopback, lanAllowed, loopbackHost, lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
 import { DevicesStore, machineName, pairingAddresses } from './devices.js';
+import { serveDeepLinkBounce } from './deep-links.js';
+import { DEEP_LINK_OPEN_PREFIX, pickDeepLinkBase } from '../shared/deep-links.js';
 import { TailscaleWatch } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
 import { COMPANION_OFF, pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
@@ -305,8 +307,21 @@ export async function startServer(cfg: Config) {
   }
   const floors = new Map<string, Floor>();
   const remoteWorkers = new RemoteWorkers(cfg.dataDir, () => missionChanged());
-  const remoteOffice = new RemoteOffice(remoteWorkers, () => [...floors.values()]);
   let remoteMcp: RemoteMcp | undefined;
+  const deepLinkBase = (): string | undefined => {
+    let port = cfg.port;
+    try {
+      port = (server.address() as AddressInfo | null)?.port ?? cfg.port;
+    } catch {
+      // server not initialized yet
+    }
+    const scheme = cfg.tls ? 'https' : 'http';
+    const tailIps = tailscaleIPv4s();
+    const serveDns = remoteMcp?.dnsName();
+    const tailnet = tailscale.peek() ?? (serveDns ? { dnsName: serveDns, ips: tailIps } : undefined);
+    return pickDeepLinkBase(pairingAddresses({ scheme, host: cfg.host, port, lan: lanIPv4s(), tailscale: tailnet, tailscaleIps: tailIps }));
+  };
+  const remoteOffice = new RemoteOffice(remoteWorkers, () => [...floors.values()], { deepLinkBase });
   const floorOf = (c: Client): Floor | undefined => (c.floor ? floors.get(c.floor) : undefined);
   /** The floor a worker sits on. Worker ids are unique across the building. */
   const workerFloor = (workerId: string): Floor | undefined => {
@@ -525,6 +540,7 @@ export async function startServer(cfg: Config) {
   orchestrator.workers.setSharedImages(remoteOffice.images);
   officeMcp = createOfficeMcp({
     hookUrl,
+    deepLinkBase,
     answers,
     settings: () => subagents.settings,
     floor: officeMcpFloor,
@@ -848,6 +864,7 @@ export async function startServer(cfg: Config) {
       dataDir: cfg.dataDir,
       office: remoteOffice,
       mcp: {
+        deepLinkBase,
         answers,
         images: remoteOffice.images,
         owner: ownerBridge,
@@ -1199,6 +1216,13 @@ export async function startServer(cfg: Config) {
       // A Whiteboard card's files (see whiteboard.ts): the capability in the path is the only credential,
       // so the sandboxed frame and its relative assets load without the LAN token.
       if (url.pathname.startsWith(CARD_ROUTE)) return serveCard(req, res, url.pathname.slice(CARD_ROUTE.length));
+      // Android deep links shared in chat (`/open/worker/...`, `/open/floor/...`, `/open/card/...`,
+      // `/open/question/...`): zero office state or credentials, redirecting Android browsers into
+      // `droidoffice://open/...` with a fallback launch card when uninstalled or on desktop.
+      if (p === '/open' || p.startsWith(DEEP_LINK_OPEN_PREFIX)) {
+        const scheme = cfg.tls ? 'https' : 'http';
+        return serveDeepLinkBounce(req, res, req.url ?? p, scheme, deepLinkBase());
+      }
       // Public bootstrap only: no office state or injected credentials. Saved browser tokens are
       // origin-scoped JS storage and cannot accompany a top-level bookmarked navigation.
       if (p === '/dashboard' || p === '/dashboard/' || p === '/dashboard.html') {

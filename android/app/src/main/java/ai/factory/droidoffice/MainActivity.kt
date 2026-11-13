@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import ai.factory.droidoffice.core.DeepLinks
 import ai.factory.droidoffice.core.Pairing
 import ai.factory.droidoffice.ui.AppRoot
 import ai.factory.droidoffice.ui.Incoming
@@ -43,8 +44,20 @@ class MainActivity : ComponentActivity() {
     private fun read(intent: Intent?): Incoming? {
         intent ?: return null
         return when (intent.action) {
-            Intent.ACTION_VIEW -> intent.dataString?.let { Incoming.Link(it.take(4096)) }
-            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.take(4096)?.takeIf { Pairing.parseOrNull(it) != null }?.let { Incoming.Link(it) }
+            Intent.ACTION_VIEW -> {
+                val raw = intent.dataString?.take(4096) ?: return null
+                DeepLinks.parse(raw)?.let { return Incoming.Deep(it) }
+                if (Pairing.parseOrNull(raw) != null || raw.startsWith("${DeepLinks.SCHEME}://${Pairing.HOST}", ignoreCase = true)) {
+                    Incoming.Link(raw)
+                } else {
+                    null
+                }
+            }
+            Intent.ACTION_SEND -> {
+                val raw = intent.getStringExtra(Intent.EXTRA_TEXT)?.take(4096) ?: return null
+                DeepLinks.parse(raw)?.let { return Incoming.Deep(it) }
+                Pairing.parseOrNull(raw)?.let { Incoming.Link(raw) }
+            }
             ACTION_OPEN_WORKER -> {
                 val office = intent.getStringExtra(EXTRA_OFFICE)?.takeIf { ID.matches(it) } ?: return null
                 val worker = intent.getStringExtra(EXTRA_WORKER)?.takeIf { ID.matches(it) } ?: return null

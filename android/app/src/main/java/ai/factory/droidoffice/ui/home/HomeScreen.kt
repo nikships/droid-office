@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
@@ -350,14 +351,42 @@ internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     val scroll = rememberScrollState()
     val bounds = remember { mutableMapOf<String, Rect>() }
+    val spans = remember { mutableMapOf<String, Pair<Float, Int>>() }
+    var spanVersion by remember { mutableStateOf(0) }
     var viewport by remember { mutableStateOf(Rect.Zero) }
     var dragging by remember { mutableStateOf<String?>(null) }
     var pointerX by remember { mutableStateOf(0f) }
     var startX by remember { mutableStateOf(0f) }
     var scrollStart by remember { mutableStateOf(0) }
-    val edge = with(LocalDensity.current) { 48.dp.toPx() }
+    val density = LocalDensity.current
+    val edge = with(density) { 48.dp.toPx() }
+    val scrollPad = with(density) { 16.dp.toPx() }
     val live = link.phase == Phase.Connected && data.synced
     val latestLive by rememberUpdatedState(live)
+    LaunchedEffect(data.floors) {
+        val liveIds = data.floors.mapTo(HashSet()) { it.id }
+        bounds.keys.retainAll(liveIds)
+        spans.keys.retainAll(liveIds)
+    }
+    LaunchedEffect(data.floorId, viewport, spanVersion, dragging) {
+        val active = data.floorId ?: return@LaunchedEffect
+        if (dragging != null || viewport.isEmpty) return@LaunchedEffect
+        val initialSpan = spans[active] ?: return@LaunchedEffect
+        delay(32)
+        if (dragging != null || viewport.isEmpty || data.floorId != active) return@LaunchedEffect
+        val (leftInRow, widthPx) = spans[active] ?: initialSpan
+        val viewWidth = viewport.width
+        if (viewWidth <= 0f) return@LaunchedEffect
+        val visibleLeft = scroll.value.toFloat()
+        val visibleRight = visibleLeft + viewWidth
+        val target = when {
+            leftInRow < visibleLeft + scrollPad -> leftInRow - scrollPad
+            leftInRow + widthPx > visibleRight - scrollPad -> leftInRow + widthPx - viewWidth + scrollPad
+            else -> visibleLeft
+        }
+        val clamped = target.toInt().coerceIn(0, scroll.maxValue)
+        if (clamped != scroll.value) scroll.animateScrollTo(clamped)
+    }
     fun before(): String? = latestFloors.firstOrNull { f ->
         f.id != dragging && bounds[f.id]?.let { pointerX < it.center.x } == true
     }?.id
@@ -398,7 +427,13 @@ internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
             data.floors.forEachIndexed { index, f ->
                 key(f.id) {
                     Box(
-                        Modifier.onGloballyPositioned { bounds[f.id] = it.boundsInWindow() }
+                        Modifier.onGloballyPositioned {
+                            bounds[f.id] = it.boundsInWindow()
+                            val nextSpan = it.positionInParent().x to it.size.width
+                            if (spans.put(f.id, nextSpan) != nextSpan && f.id == data.floorId) {
+                                spanVersion++
+                            }
+                        }
                             .pointerInput(f.id, data.floors.map { it.id }, live) {
                                 if (!live) return@pointerInput
                                 detectDragGesturesAfterLongPress(

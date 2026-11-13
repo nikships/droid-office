@@ -191,4 +191,10 @@ export class TailscaleWatch {
       });
     return this.pending;
   }
+
+  /** Latest cached Tailscale identity without awaiting the CLI; refreshes in the background when stale. */
+  peek(): TailscaleSelf | undefined {
+    if (!this.last || this.now() - this.last.at >= this.ttlMs) void this.get();
+    return this.last?.self;
+  }
 }

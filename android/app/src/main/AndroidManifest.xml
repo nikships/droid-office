@@ -49,7 +49,48 @@
                     android:host="pair"
                     android:scheme="droidoffice" />
             </intent-filter>
-            <!-- A join link shared from a chat or the browser. -->
+            <!-- Deep links to a worker's terminal, a floor, a Whiteboard card, or a pending question. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="open"
+                    android:pathPrefix="/"
+                    android:scheme="droidoffice" />
+                <data
+                    android:host="worker"
+                    android:pathPrefix="/"
+                    android:scheme="droidoffice" />
+                <data
+                    android:host="floor"
+                    android:pathPrefix="/"
+                    android:scheme="droidoffice" />
+                <data
+                    android:host="card"
+                    android:pathPrefix="/"
+                    android:scheme="droidoffice" />
+                <data
+                    android:host="question"
+                    android:pathPrefix="/"
+                    android:scheme="droidoffice" />
+                <data
+                    android:host="ask"
+                    android:pathPrefix="/"
+                    android:scheme="droidoffice" />
+            </intent-filter>
+            <!-- Tailscale MagicDNS /open/... links when shared or enabled under Open by default;
+                 browsers also bounce /open/... into droidoffice://open/... from the server. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="*.ts.net" />
+                <data android:pathPrefix="/open/" />
+            </intent-filter>
+            <!-- A join link or deep link shared from a chat or the browser. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />

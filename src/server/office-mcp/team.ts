@@ -10,6 +10,7 @@ import { isSubscriptionModel, modelUsageWords } from '../../shared/subscriptions
 import { briefAge, formatForgeLines, formatProviderQuotas, formatTaskTag, formatWorkerInspection, type ProviderQuotaSummary, type WorkerInspection } from '../worker-status.js';
 import { hasOwnerAccess } from './owner.js';
 import { formatBlockingSummary, formatQueueBrief } from '../worker-queue.js';
+import { enrichTeamReplyBody, floorDeepLink, mcpDeepLinkBase, withCompactWorkerDeepLink, withMemberDeepLink, withOtherWorkerDeepLink, workerDeepLink } from './deep-links.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor, resultDetailLines, withImageOrigin } from './team-events.js';
 
@@ -126,6 +127,8 @@ function modelText(model: TeamModel): string {
 export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   const command = (caller: OfficeMcpCaller, args: { action: string; worker?: string; floor?: string; [key: string]: unknown }) =>
     caller.building && deps.remote ? deps.remote.team(caller.worker, args) : ownFloor(caller).team.handle(caller.worker, args);
+  const replyFor = (caller: OfficeMcpCaller, result: TeamReply, describe: (body: Record<string, unknown>) => string) =>
+    result.status >= 400 ? reply(result, describe) : reply({ ...result, body: enrichTeamReplyBody(result.body, caller.floor?.id, mcpDeepLinkBase(deps)) }, describe);
   /** The team that answers for the office's models: the caller's floor, or for a building agent the first open one. */
   const modelsTeam = (caller: OfficeMcpCaller) => caller.floor?.team ?? deps.remote?.floors()[0]?.team;
   const statusText = (body: Record<string, unknown>, imageOrigin?: string) => {
@@ -162,9 +165,14 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       events: (TeamEvent & { floor?: string })[];
       latest: number | Record<string, number>;
     };
-    const enrichedTeam = team.map((m) => (m.report?.images?.length ? { ...m, report: { ...m.report, images: withImageOrigin(m.report.images, imageOrigin) } } : m));
+    const linkBase = mcpDeepLinkBase(deps);
+    const enrichedTeam = team.map((m) => {
+      const withImages = m.report?.images?.length ? { ...m, report: { ...m.report, images: withImageOrigin(m.report.images, imageOrigin) } } : m;
+      return withMemberDeepLink(withImages, own || undefined, linkBase);
+    });
     const enrichedEvents = events.map((e) => (e.images?.length ? { ...e, images: withImageOrigin(e.images, imageOrigin) } : e));
-    const workers = team.map((m) => compactWorker(m, m.floor ?? own, imageOrigin));
+    const workers = team.map((m) => withCompactWorkerDeepLink(compactWorker(m, m.floor ?? own, imageOrigin), linkBase));
+    const enrichedFloorWorkers = otherWorkers?.map((o) => withOtherWorkerDeepLink(o, own || undefined, linkBase));
     const news = events.map((e) => compactEvent(e, e.floor ?? own, args.verbose === true, imageOrigin));
     const position = cursorOf(typeof latest === 'number' ? { [own]: latest } : latest);
     if (args.verbose === false)
@@ -178,13 +186,13 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         {
           ...rest,
           workers,
-          ...(otherWorkers?.length ? { floorWorkers: otherWorkers } : {}),
+          ...(enrichedFloorWorkers?.length ? { floorWorkers: enrichedFloorWorkers } : {}),
           news,
           cursor: position,
         },
       );
     const enrichedBody = { ...result.body, team: enrichedTeam, events: enrichedEvents };
-    return officeResult(statusText(enrichedBody, imageOrigin), { ...enrichedBody, workers, ...(otherWorkers?.length ? { floorWorkers: otherWorkers } : {}), news, cursor: position });
+    return officeResult(statusText(enrichedBody, imageOrigin), { ...enrichedBody, workers, ...(enrichedFloorWorkers?.length ? { floorWorkers: enrichedFloorWorkers } : {}), news, cursor: position });
   };
   const worker = z.string().trim().min(1).max(200).describe('Subagent name or id.');
   server.tool(
@@ -267,7 +275,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     async (args, caller) => {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       if ([args.worker !== undefined, args.workers !== undefined, args.all === true].filter(Boolean).length !== 1) return officeError('Choose exactly one of worker, workers, or all: true.');
-      return reply(await command(caller, { action: 'watch', ...args }), (body) => {
+      return replyFor(caller, await command(caller, { action: 'watch', ...args }), (body) => {
         const results = (body.results as Array<Record<string, unknown>> | undefined) ?? [];
         if (!results.length) return String(body.note ?? (args.watch === false ? 'Stopped watching.' : 'No workers matched.'));
         return results
@@ -322,7 +330,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     async (args, caller) => {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       if ([args.worker !== undefined, args.workers !== undefined, args.all === true].filter(Boolean).length !== 1) return officeError('Choose exactly one of worker, workers, or all: true.');
-      return reply(await command(caller, { action: 'send', ...args }), (body) =>
+      return replyFor(caller, await command(caller, { action: 'send', ...args }), (body) =>
         body.results
           ? (body.results as Record<string, unknown>[]).map((r) => `${r.name ?? r.id}${r.floor ? ` (${r.floor})` : ''}: ${r.error ?? r.delivery}${r.warning ? ` — Warning: ${r.warning}` : ''}`).join('\n')
           : `${(body.worker as TeamMember).name}: ${body.delivery}${body.warning ? `\nWarning: ${body.warning}` : ''}`,
@@ -391,7 +399,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     officeAccess.team,
     async (args, caller) => {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
-      return reply(await command(caller, { action: 'log', ...args }), (body) => {
+      return replyFor(caller, await command(caller, { action: 'log', ...args }), (body) => {
         const state = body.inspection as WorkerInspection | undefined;
         if (body.tail === 0 && state) return formatWorkerInspection(state, { includeSteps: true });
         if (state) return `${formatWorkerInspection(state)}\n\nTerminal:\n${body.terminal ?? 'Terminal unavailable.'}${body.truncated ? '\n[Truncated]' : ''}`;
@@ -413,9 +421,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const { body } = await floor.team.handle(caller.worker, { action: 'whoami' });
       const visitRefusal = floor.visits.cannotVisit(caller.worker);
       const leadPush = Boolean(caller.worker.lead && deps.remote?.store.isGrokBot(caller.worker.lead));
+      const linkBase = mcpDeepLinkBase(deps);
       const identity = {
         ...body,
         floor: { id: floor.id, name: floor.name },
+        deepLink: workerDeepLink(caller.worker.id, floor.id, linkBase),
+        floorDeepLink: floorDeepLink(floor.id, linkBase),
         cwd: caller.cwd,
         canVisit: !visitRefusal,
         ...(visitRefusal ? { visitRefusal } : {}),
@@ -445,10 +456,12 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     const owner = hasOwnerAccess(caller, deps.owner);
     const kind = caller.worker.remote ? 'external' : 'orchestrator';
     const grokBot = Boolean(caller.worker.remote && deps.remote?.store.isGrokBot(caller.worker.id));
+    const linkBase = mcpDeepLinkBase(deps);
     const identity = {
       you: { id: caller.worker.id, name: caller.worker.name, role: subagents ? 'lead' : 'worker', building: kind },
       room: 'Mission Control',
       floor: null,
+      deepLink: workerDeepLink(caller.worker.id, undefined, linkBase),
       ...(caller.cwd ? { cwd: caller.cwd } : {}),
       canHire: true,
       subagents,
@@ -578,7 +591,8 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         ? `${ticket}${repoLabel ? `\n\nRepository: ${repoLabel}` : ''}${task.baseBranch ? `\nBase branch: ${task.baseBranch}` : ''}${task.branch ? `\nTask branch: ${task.branch}` : ''}${task.prNumber ? `\nPull request: #${task.prNumber}` : ''}${task.acceptanceCriteria?.length ? `\nAcceptance criteria:\n${task.acceptanceCriteria.map((c) => `- ${c}`).join('\n')}` : ''}`
         : ticket;
       if (prompt.length > 20_000) return officeError('The complete structured task ticket must fit in 20,000 characters.');
-      return reply(
+      return replyFor(
+        caller,
         await command(caller, {
           action: 'hire',
           ...args,
@@ -616,7 +630,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
       if (args.action !== 'status' && (args.verbose !== undefined || args.since !== undefined || args.kinds !== undefined)) return officeError('verbose, since and kinds are only for team action status.');
       if (args.action === 'status') return status(caller, { worker: args.name, floor: args.floor, lines: args.lines, verbose: args.verbose, since: args.since, kinds: args.kinds });
-      return reply(await command(caller, { action: args.action === 'message' ? 'send' : args.action, worker: args.name, text: args.text, floor: args.floor }), (body) =>
+      return replyFor(caller, await command(caller, { action: args.action === 'message' ? 'send' : args.action, worker: args.name, text: args.text, floor: args.floor }), (body) =>
         args.action === 'message' ? `Sent to ${(body.worker as TeamMember).name}.` : `Sent ${body.name} home.${body.note ? ` ${body.note}.` : ''}`,
       );
     },
@@ -677,7 +691,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     officeAccess.team,
     async (args, caller) => {
       if (args.floor && !caller.building) return officeError('Floor workers manage only their own floor');
-      return reply(await command(caller, { action: 'review', ...args }), (body) => {
+      return replyFor(caller, await command(caller, { action: 'review', ...args }), (body) => {
         const member = body.worker as TeamMember;
         const review = body.review as WorkerReview;
         const delivery = body.notified ? ` Sent findings to ${member.name} to address.` : typeof body.notifyNote === 'string' ? ` Not sent to ${member.name} (${body.notifyNote}).` : '';

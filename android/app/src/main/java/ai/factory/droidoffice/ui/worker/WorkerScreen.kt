@@ -85,9 +85,11 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.Choices
+import ai.factory.droidoffice.core.DeepLinks
 import ai.factory.droidoffice.core.EffortDial
 import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.Keys
+import ai.factory.droidoffice.core.Menu
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.PhoneSizing
 import ai.factory.droidoffice.core.QuickKeys
@@ -99,12 +101,14 @@ import ai.factory.droidoffice.core.TermSize
 import ai.factory.droidoffice.core.TermView
 import ai.factory.droidoffice.core.ThreadQueue
 import ai.factory.droidoffice.core.WorkerInfo
+import ai.factory.droidoffice.core.WorkerLinkView
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.MissionAgent
 import ai.factory.droidoffice.core.MissionControl
 import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.net.nameOf
+import ai.factory.droidoffice.ui.asks.QuestionWorkspaceDialog
 import ai.factory.droidoffice.ui.components.WorkerModelLogo
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
@@ -146,7 +150,18 @@ private class QueueReceipts(val queue: ThreadQueue, var onDisk: String?)
 private val localThreadQueues = mutableMapOf<String, QueueReceipts>()
 
 @Composable
-fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false, draft: String? = null, onOpenWorker: ((String) -> Unit)? = null) {
+fun WorkerScreen(
+    workerId: String,
+    onBack: () -> Unit,
+    embedded: Boolean = false,
+    draft: String? = null,
+    onOpenWorker: ((String) -> Unit)? = null,
+    floorHint: String? = null,
+    initialView: WorkerLinkView? = null,
+    openQuestion: Boolean = false,
+    questionId: String? = null,
+    launchId: Int = 0,
+) {
     val graph = LocalGraph.current
     val connection = graph.connection
     val data by connection.data.collectAsStateWithLifecycle()
@@ -160,19 +175,24 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         BotScreen(bot, embedded, onBack, onOpenWorker)
         return
     }
+    val store by graph.store.snapshot.collectAsStateWithLifecycle()
+    val officeSynced = data.synced && (store.active?.id == null || data.officeId == store.active?.id)
     val orchestrator = data.mission?.orchestrator
     if (mission && (orchestrator?.settings?.on != true || orchestrator.agent == null)) {
-        OrchestratorIdle(orchestrator, data.synced, embedded, onBack, onOpenWorker)
+        OrchestratorIdle(orchestrator, officeSynced, embedded, onBack, onOpenWorker)
         return
     }
     val worker = data.worker(workerId)
-    val ownerFloor = if (mission) null else data.workerFloorId(workerId)
+    val resolvedHintFloor = if (mission || floorHint == null || !officeSynced) null else DeepLinks.resolveFloorId(data.floors, floorHint)
+    val targetFloor = if (mission) null else data.workerFloorId(workerId) ?: resolvedHintFloor
+    val ownerFloor = if (mission) null else data.workerFloorId(workerId) ?: resolvedHintFloor?.takeIf { worker != null }
+    val awaitingFloorSwitch = !mission && officeSynced && !data.hasBuildingRoster && resolvedHintFloor != null && data.floorId != resolvedHintFloor
     val effectiveFloor = ownerFloor ?: data.floorId
     var switchedFloor by remember(workerId) { mutableStateOf(false) }
-    LaunchedEffect(workerId, ownerFloor, data.floorId, link.phase) {
-        if (link.phase != Phase.Connected || mission || ownerFloor == null) return@LaunchedEffect
-        if (data.floorId != ownerFloor) {
-            if (connection.goFloor(ownerFloor)) switchedFloor = true
+    LaunchedEffect(workerId, targetFloor, data.floorId, link.phase) {
+        if (link.phase != Phase.Connected || mission || targetFloor == null) return@LaunchedEffect
+        if (data.floorId != targetFloor) {
+            if (connection.goFloor(targetFloor)) switchedFloor = true
         } else if (switchedFloor) {
             switchedFloor = false
             connection.resnapshot(workerId)
@@ -244,7 +264,7 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom)),
     ) {
         if (worker == null) {
-            Gone(data.synced, embedded, onBack)
+            Gone(officeSynced && !awaitingFloorSwitch, embedded, onBack)
             return@Column
         }
         var sendingHome by remember { mutableStateOf(false) }
@@ -259,15 +279,62 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
         // Default to Raw TTY unless the owner last picked Thread or the thread has an answerable
         // question. Wait for the first screen before keeping the default, and never change the view
         // after the owner picks one.
-        val store by graph.store.snapshot.collectAsStateWithLifecycle()
         val scope = rememberCoroutineScope()
+        val snackbarHost = LocalSnackbar.current
         val threadable = !worker.isShell
         // A cloud worker has no terminal here: its Thread is all there is to show.
         val cloud = worker.isCloud
-        var ttyChoice by rememberSaveable(workerId) { mutableStateOf<Boolean?>(if (draft != null) true else null) }
+        val initialTtyChoice = when {
+            draft != null -> true
+            initialView == WorkerLinkView.Tty -> true
+            initialView == WorkerLinkView.Thread -> false
+            else -> null
+        }
+        var ttyChoice by rememberSaveable(workerId, initialView, openQuestion, launchId) { mutableStateOf<Boolean?>(initialTtyChoice) }
         var directInput by rememberSaveable(workerId) { mutableStateOf(false) }
         var composerFocus by remember(workerId) { mutableIntStateOf(0) }
         var sent by remember(workerId) { mutableIntStateOf(0) }
+        val questionScopeKey = "$workerId/${questionId.orEmpty()}/$launchId"
+        var questionHandled by rememberSaveable(questionScopeKey) { mutableStateOf(false) }
+        var openedQuestionMenu by remember(questionScopeKey) { mutableStateOf<Menu?>(null) }
+        LaunchedEffect(worker.state) {
+            if (openedQuestionMenu != null && worker.state != WorkerStatus.NeedsInput) openedQuestionMenu = null
+        }
+        LaunchedEffect(openQuestion, questionScopeKey, link.phase, officeSynced, worker.state, worker.ask, screen) {
+            if (!openQuestion || questionHandled || link.phase != Phase.Connected || !officeSynced) return@LaunchedEffect
+            if (worker.state != WorkerStatus.NeedsInput) {
+                questionHandled = true
+                if (questionId?.startsWith("team:") == true) {
+                    if (threadable && !worker.isCloud) ttyChoice = false
+                } else {
+                    snackbarHost.showSnackbar("${worker.name.ifBlank { worker.id }} isn’t waiting on a question anymore.")
+                }
+                return@LaunchedEffect
+            }
+            if (questionId?.endsWith(":permission") == true && worker.ask?.kind != "permission") {
+                questionHandled = true
+                snackbarHost.showSnackbar("That permission prompt was already handled.")
+                return@LaunchedEffect
+            }
+            val menu = if (!worker.isShell && !worker.isCloud) Asks.menu(worker, screen) else null
+            if (menu != null) {
+                questionHandled = true
+                openedQuestionMenu = menu
+                return@LaunchedEffect
+            }
+            if (worker.ask?.kind == "permission" || worker.isShell || worker.isCloud) {
+                questionHandled = true
+                if (!worker.isCloud) ttyChoice = true
+                if (worker.ask?.kind == "permission") {
+                    snackbarHost.showSnackbar("Approve or decline ${worker.name.ifBlank { "this worker" }}’s permission prompt in Raw TTY.")
+                }
+                return@LaunchedEffect
+            }
+            if (screen == null) return@LaunchedEffect
+            delay(1_500)
+            questionHandled = true
+            if (!worker.isCloud) ttyChoice = true
+        }
         val tty = !cloud && (ttyChoice ?: if (threadable && store.settings.threadView) false else (link.phase != Phase.Connected || !Asks.canAnswer(worker, screen)))
         LaunchedEffect(workerId, screen, store.loaded) {
             if (ttyChoice == null && screen != null && store.loaded) ttyChoice = tty
@@ -418,6 +485,17 @@ fun WorkerScreen(workerId: String, onBack: () -> Unit, embedded: Boolean = false
             onBack()
         })
         if (orchestratorMenu && orchestrator != null) OrchestratorSheet(orchestrator, onDismiss = { orchestratorMenu = false })
+        openedQuestionMenu?.let { menu ->
+            QuestionWorkspaceDialog(
+                worker = worker,
+                menu = menu,
+                onDismiss = { openedQuestionMenu = null },
+                onRaw = {
+                    openedQuestionMenu = null
+                    if (!worker.isCloud) ttyChoice = true
+                },
+            )
+        }
     }
 }
 

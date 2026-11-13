@@ -81,6 +81,8 @@ export interface OfficeMcpDeps {
   images?: OfficeImageStore;
   /** This office's own hook server origin; requests for workers of another local office go there. */
   hookUrl?: string;
+  /** Preferred HTTP(S) Tailscale/LAN base URL for chat-clickable `/open/...` Android deep links. */
+  deepLinkBase?: () => string | undefined;
   settings(): SubagentSettings;
   floor(workerId: string): OfficeMcpFloor | undefined;
   /** The office's one answer queue for terminal questions, shared with the phone's Asks so two answers never race. */

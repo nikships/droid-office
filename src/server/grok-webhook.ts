@@ -1,3 +1,4 @@
+import { questionDeepLink, workerDeepLink } from '../shared/deep-links.js';
 import { DESK_BY_ID } from '../shared/layout.js';
 import type { WorkerInfo } from '../shared/protocol.js';
 import { withImageOrigin, type OfficeImageRef } from './office-images.js';
@@ -32,6 +33,7 @@ export interface GrokWebhookWorker {
   branch?: string;
   worktree?: string;
   prUrl?: string;
+  deepLink?: string;
 }
 
 export interface GrokWebhookTerminalAsk {
@@ -52,6 +54,8 @@ export interface GrokWebhookItem {
   at: string;
   floor?: GrokWebhookFloor;
   worker?: GrokWebhookWorker;
+  /** Ready-made Android deep link to this worker's terminal or waiting question. */
+  deepLink?: string;
   text?: string;
   options?: string[];
   /** Exact questionId for question_answer when answerable via Office MCP. */
@@ -199,8 +203,8 @@ function teamActionHint(item: { kind: GrokWebhookItemKind; questionId?: string; 
   return `Check this worker's status on this floor if action is needed. ${ack}`;
 }
 
-export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhookFloor; member?: TeamMember; worker?: WorkerInfo; openQuestion?: OpenQuestion; imageOrigin?: string }): GrokWebhookItem {
-  const { event, floor, member, worker, openQuestion, imageOrigin } = args;
+export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhookFloor; member?: TeamMember; worker?: WorkerInfo; openQuestion?: OpenQuestion; imageOrigin?: string; deepLinkBase?: string }): GrokWebhookItem {
+  const { event, floor, member, worker, openQuestion, imageOrigin, deepLinkBase } = args;
   const images = withImageOrigin(event.images, imageOrigin);
   const id = `team:${floor.id}:${event.seq}`;
   let kind: GrokWebhookItemKind = event.kind;
@@ -230,6 +234,13 @@ export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhoo
     snapshot.settled = true;
     delete snapshot.state;
   }
+  if (snapshot && deepLinkBase) {
+    snapshot.deepLink = workerDeepLink(event.worker, floor.id, deepLinkBase);
+  }
+  let deepLink: string | undefined;
+  if (deepLinkBase) {
+    deepLink = kind === 'question' || kind === 'needs_input' ? questionDeepLink(event.worker, floor.id, questionId, deepLinkBase) : workerDeepLink(event.worker, floor.id, deepLinkBase);
+  }
   // Questions already carry their answerable text. Keep only distinct structured results.
   const duplicateQuestion = kind === 'question' && event.result?.status === 'blocked' && event.result.summary.trim() === event.text?.trim() && Object.keys(event.result).every((key) => key === 'summary' || key === 'status');
   const result = duplicateQuestion ? undefined : event.result;
@@ -241,6 +252,7 @@ export function buildTeamWebhookItem(args: { event: TeamEvent; floor: GrokWebhoo
     at: new Date(event.at).toISOString(),
     floor,
     worker: snapshot,
+    ...(deepLink ? { deepLink } : {}),
     // Structured results carry the summary and artifacts once. Keep original prose in the durable report.
     ...(event.text && (event.kind !== 'report' || !event.result) ? { text: clipText(event.text, isReport ? id : undefined) } : {}),
     ...(isReport ? { reportId: id, taskComplete } : {}),
