@@ -17,6 +17,8 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,9 +42,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -90,6 +93,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.EffortDial
 import ai.factory.droidoffice.core.FloorOrder
+import ai.factory.droidoffice.core.FloorSwipe
 import ai.factory.droidoffice.core.MissionControl
 import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
@@ -173,15 +177,13 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, selected: String?, onCloseWorker:
                     onRetry = connection::retryNow,
                     onFloor = connection::goFloor,
                 )
-                if (!(data.synced && data.workers.isEmpty()) && link.phase != Phase.Unauthorized) ExtendedFloatingActionButton(
+                if (!(data.synced && data.workers.isEmpty()) && link.phase != Phase.Unauthorized) FloatingActionButton(
                     onClick = { hiring = true },
-                    icon = { Icon(Icons.Default.Add, null) },
-                    text = { Text("Hire", style = MaterialTheme.typography.labelLarge) },
                     containerColor = Palette.Accent,
                     contentColor = Palette.Bg,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = CircleShape,
                     modifier = Modifier.align(Alignment.BottomEnd).windowInsetsPadding(WindowInsets.navigationBars).padding(18.dp).tagged(Tags.Home.HIRE),
-                )
+                ) { Icon(Icons.Default.Add, "Hire") }
             }
             if (wide) {
                 Box(Modifier.width(1.dp).fillMaxHeight().background(Palette.Border))
@@ -237,7 +239,7 @@ private fun WorkerList(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().floorSwipe(data.floors.map { it.id }, data.floorId, onFloor)) {
         TopBar(officeName, data, link, onOffices)
         ConnectionBanner(link, legacy, data.synced, onRetry, onScan)
         if (link.phase == Phase.Unauthorized) {
@@ -283,6 +285,32 @@ private fun WorkerList(
         }
     }
 }
+
+/**
+ * Swiping sideways anywhere on the tab steps to the next or previous floor, as tapping its chip does.
+ * A drag a child already took (the list scrolling, a chip dragged after a long press) is left alone,
+ * and a swipe once claimed is consumed so the card or chip under the finger doesn't also take a tap.
+ */
+private fun Modifier.floorSwipe(floors: List<String>, current: String?, onFloor: (String) -> Unit): Modifier =
+    if (floors.size < 2) this else pointerInput(floors, current) {
+        val distance = 72.dp.toPx()
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            var swiping = false
+            while (true) {
+                val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                val dx = change.position.x - down.position.x
+                val dy = change.position.y - down.position.y
+                if (!change.pressed) {
+                    if (swiping) FloorSwipe.target(floors, current, dx, dy, distance)?.let(onFloor)
+                    break
+                }
+                if (!swiping && change.isConsumed) break
+                if (!swiping && FloorSwipe.claims(dx, dy, viewConfiguration.touchSlop)) swiping = true
+                if (swiping) change.consume()
+            }
+        }
+    }
 
 @Composable
 private fun TopBar(officeName: String, data: OfficeData, link: Link, onOffices: () -> Unit) {
