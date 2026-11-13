@@ -204,6 +204,7 @@ function filterRig(
     airgapped: over.airgapped ?? false,
     calls: 0,
     bodies: [] as { input: string; questions: Record<string, unknown> }[],
+    urls: [] as string[],
     changes: 0,
     decisions: 0,
   };
@@ -215,7 +216,7 @@ function filterRig(
     timeoutMs: 40,
     fetchImpl: async (url, init) => {
       state.calls++;
-      assert.match(String(url), /\/v1beta\/decisions/);
+      state.urls.push(String(url));
       const body = JSON.parse(String(init?.body)) as { input: string; questions: Record<string, unknown> };
       state.bodies.push(body);
       return respond(body, init!);
@@ -253,6 +254,8 @@ test('WakeFilter routes in one call, counts telemetry, tracks chatter and pushed
   assert.equal(first.latencyMs, 25);
   assert.equal(filter.telemetry().inputTokens, 915);
   assert.equal(JSON.stringify(state.bodies[0]).includes(KEY), false);
+  assert.doesNotMatch(JSON.stringify(state.bodies), /AIza[\w-]{20,}/);
+  assert.ok(state.urls.length > 0 && state.urls.every((u) => /\/v1beta\/decisions/.test(u)), state.urls.join());
 
   const second = await filter.decide(packet({ message: { text: 'Phase two going', progress: true, pushedSha: 'aaaaaaa1111' } }));
   assert.equal(second.traffic, 'record_silently');
@@ -465,6 +468,14 @@ function rig(t: { after(fn: () => void): void }, over: Partial<TeamOptions> = {}
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Resolves once `ok` holds, polling briefly, so a slow machine waits instead of racing a fixed sleep. */
+async function until(ok: () => boolean, what: string, ms = 2000) {
+  const end = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > end) assert.fail(`timed out waiting for ${what}`);
+    await sleep(2);
+  }
+}
 
 test('a completion is held while teammates work and the whole batch wakes the lead once', async (t) => {
   const r = rig(t);
@@ -575,7 +586,7 @@ test('questions skip the gate; an off or failing gate delivers exactly as before
   assert.equal(r.gate.calls.length, calls);
 });
 
-test('a blocked held report is still recorded, and a pending answer is released by news that wakes the lead', async (t) => {
+test('a blocked held report is still recorded, and a pending answer is released by news that wakes the lead', { timeout: 10_000 }, async (t) => {
   const r = rig(t);
   await r.call('lead', { action: 'hire', task: 'One' });
   await r.call('lead', { action: 'hire', task: 'Two' });
@@ -584,7 +595,7 @@ test('a blocked held report is still recorded, and a pending answer is released 
   let answer!: (v: WakeVerdict) => void;
   r.gate.route = () => new Promise<WakeVerdict>((resolve) => (answer = resolve));
   const pending = r.call('sub1', { action: 'report', text: 'Thinking out loud.' });
-  await sleep(5);
+  await until(() => r.gate.calls.length === 1, 'the gate to be asked');
   assert.equal(r.team.news('lead')[0]!.gate, 'held');
   // A question wakes the lead and carries the pending report with it.
   await r.call('sub2', { action: 'report', text: 'Blocked: which API?', question: true });
@@ -603,15 +614,15 @@ test('team_note gating: blocked notes are not posted, quiet ones skip irrelevant
   r.set('sub2', 'working');
   r.set('sub3', 'working');
   r.gate.route = (p) => {
-    assert.deepEqual(
-      p.siblings?.map((s) => s.id),
-      ['sub2', 'sub3'],
-    );
     return /chugging/.test(p.message.text)
       ? { traffic: 'block_and_coach', source: 'model', reason: 'chatter', coach: 'Noise gate: heads-down', notify: [] }
       : { traffic: 'wake_immediately', source: 'model', reason: 'contract', notify: ['sub3'] };
   };
   const blocked = await r.call('sub1', { action: 'note', text: 'Still chugging along!' });
+  assert.deepEqual(
+    r.gate.calls.map((p) => p.siblings?.map((s) => s.id)),
+    [['sub2', 'sub3']],
+  );
   assert.equal(blocked.body.blocked, true);
   assert.equal(blocked.body.coach, 'Noise gate: heads-down');
   assert.equal(r.fake.notices.length, 0);
@@ -621,6 +632,10 @@ test('team_note gating: blocked notes are not posted, quiet ones skip irrelevant
   assert.deepEqual(sent.body.notified, ['sub3']);
   assert.deepEqual(sent.body.skipped, ['sub2']);
   assert.equal(sent.body.traffic, 'wake_immediately');
+  assert.deepEqual(
+    r.gate.calls[1]?.siblings?.map((s) => s.id),
+    ['sub2', 'sub3'],
+  );
   assert.match(r.gate.calls[1]!.message.areas?.join() ?? '', /wake-filter/);
   assert.equal(r.gate.calls[1]!.message.areasChanged, true);
   assert.equal(r.team.board('lead').find((m) => m.id === 'sub1')!.note?.text, 'Renamed WakePacket.siblings');
@@ -652,7 +667,7 @@ test('a building lead sees teammates on other floors and its own view through th
   assert.deepEqual(r.team.localTeammates('lead'), [{ id: 'sub1', name: 'Pixel', status: 'working' }]);
 });
 
-test('flushHolds wakes every lead holding a batch at once, including answers still in flight', async (t) => {
+test('flushHolds wakes every lead holding a batch at once, including answers still in flight', { timeout: 10_000 }, async (t) => {
   const r = rig(t);
   await r.call('lead', { action: 'hire', task: 'One' });
   await r.call('lead', { action: 'hire', task: 'Two' });
@@ -669,7 +684,7 @@ test('flushHolds wakes every lead holding a batch at once, including answers sti
   let answer!: (v: WakeVerdict) => void;
   r.gate.route = () => new Promise<WakeVerdict>((resolve) => (answer = resolve));
   const pending = r.call('sub2', { action: 'report', text: 'Done with two.' });
-  await sleep(5);
+  await until(() => r.gate.calls.length === 2, 'the second report to reach the gate');
   assert.deepEqual(
     r.team.news('lead').map((e) => e.gate),
     ['held', 'held'],
@@ -700,7 +715,7 @@ test('flushHolds wakes every lead holding a batch at once, including answers sti
   assert.equal(r.leadPrompts().length, 1, 'nothing held, nothing new');
 });
 
-test('a lead leaving drops pending gate answers for its events, and stop clears the rest', async (t) => {
+test('a lead leaving drops pending gate answers for its events, and stop clears the rest', { timeout: 10_000 }, async (t) => {
   const r = rig(t);
   await r.call('lead', { action: 'hire', task: 'One' });
   await r.call('lead', { action: 'hire', task: 'Two' });
@@ -710,7 +725,7 @@ test('a lead leaving drops pending gate answers for its events, and stop clears 
   let answer!: (v: WakeVerdict) => void;
   r.gate.route = () => new Promise<WakeVerdict>((resolve) => (answer = resolve));
   const pending = r.call('sub1', { action: 'report', text: 'Done with one.' });
-  await sleep(5);
+  await until(() => r.gate.calls.length === 1, 'the gate to be asked');
   const seq = r.team.news('lead')[0]!.seq;
   assert.equal(r.team.eventBySeq(seq)?.gate, 'held');
   const copy = r.team.eventBySeq(seq)!;
@@ -735,7 +750,7 @@ test('a lead leaving drops pending gate answers for its events, and stop clears 
   let answer2!: (v: WakeVerdict) => void;
   r2.gate.route = () => new Promise<WakeVerdict>((resolve) => (answer2 = resolve));
   const pending2 = r2.call('sub1', { action: 'report', text: 'Done with one.' });
-  await sleep(5);
+  await until(() => r2.gate.calls.length === 1, 'the gate to be asked');
   assert.equal(pendingGates(r2.team).size, 1);
   r2.team.stop();
   assert.equal(pendingGates(r2.team).size, 0);

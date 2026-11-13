@@ -66,7 +66,15 @@ async function startWebhookReceiver(t: Cleanup) {
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8');
-      const parsed = JSON.parse(raw) as GrokWebhookPayload;
+      let parsed: GrokWebhookPayload;
+      try {
+        parsed = JSON.parse(raw) as GrokWebhookPayload;
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid JSON' }));
+        waiter?.();
+        return;
+      }
       received.push({ method: req.method, url: req.url, headers: req.headers, body: parsed });
       const out = responder(parsed, req.headers);
       if (out.location) res.setHeader('Location', out.location);
@@ -878,12 +886,19 @@ test('the noise gate defers routine lead_notify updates, holds batch reports fro
   const coached = await aliceClient.callTool({ name: 'visit_message', arguments: { worker: 'Bob', kind: 'tell', text: 'chatter, just saying hi' } });
   assert.equal((coached.structuredContent as Record<string, unknown>).blocked, true);
   assert.equal(calls.at(-1)!.channel, 'visit_tell');
-  const told = await aliceClient.callTool({ name: 'visit_message', arguments: { worker: 'Bob', kind: 'tell', text: 'routine heads-up: the API moved' } });
+  // The gate finds the host by case-insensitive name or id, and a routine tell is still delivered as a visit.
+  const told = await aliceClient.callTool({ name: 'visit_message', arguments: { worker: 'BOB', kind: 'tell', text: 'routine heads-up: the API moved' } });
   assert.equal(told.isError, undefined);
   assert.equal((told.structuredContent as Record<string, unknown>).blocked, undefined);
+  assert.equal(calls.at(-1)?.lead.id, 'bob');
+  assert.match(String((told.structuredContent as Record<string, unknown>).visit), /^v-[a-f0-9]{8}$/);
   const urgent = calls.length;
-  await aliceClient.callTool({ name: 'visit_message', arguments: { worker: 'Bob', kind: 'tell', text: 'chatter', urgent: true } });
+  // Alice is still on her visit, so a third worker sends the urgent tell.
+  const carolClient = await local(person('carol', 'Carol'));
+  const loud = await carolClient.callTool({ name: 'visit_message', arguments: { worker: 'Bob', kind: 'tell', text: 'chatter', urgent: true } });
   assert.equal(calls.length, urgent, 'urgent tells skip the gate');
+  assert.equal((loud.structuredContent as Record<string, unknown>).blocked, undefined);
+  assert.match(String((loud.structuredContent as Record<string, unknown>).visit), /^v-[a-f0-9]{8}$/, 'an urgent tell is delivered, never coached');
 });
 
 test('a held team event flushes with its live log state, not the copy queued when it was held', async (t) => {
