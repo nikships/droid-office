@@ -54,6 +54,22 @@ test('only the crew kit counts as shared geometry, and every person wears the sa
   }
 });
 
+function loadGlb(name: string): ArrayBuffer {
+  const glb = readFileSync(new URL(`../src/client/public/props/${name}.glb`, import.meta.url));
+  return glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength);
+}
+
+/** Mount at exact desk seatAnchor (0, 0.4, 0.93), rotY = Math.PI, scale = 0.82. */
+function makeSeatAnchor(): { desk: THREE.Group; seatAnchor: THREE.Group } {
+  const desk = new THREE.Group();
+  const seatAnchor = new THREE.Group();
+  seatAnchor.position.set(0, 0.4, 0.93);
+  seatAnchor.rotation.y = Math.PI;
+  seatAnchor.scale.setScalar(0.82);
+  desk.add(seatAnchor);
+  return { desk, seatAnchor };
+}
+
 test('droid-worker.glb upgrades waiting workers and mounts articulated droid parts on shared geometry', async () => {
   const restore = canvasDocument();
   try {
@@ -61,8 +77,7 @@ test('droid-worker.glb upgrades waiting workers and mounts articulated droid par
     waiting.setStatus('working');
     waiting.update(0.1, 1.0);
 
-    const glb = readFileSync(new URL('../src/client/public/props/droid-worker.glb', import.meta.url));
-    await parseWorker(glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength));
+    await parseWorker(loadGlb('droid-worker'));
     assert.equal(workerReady(), true);
 
     const fresh = new Worker('Fresh', '#3b82f6');
@@ -102,12 +117,8 @@ test('droid-worker.glb upgrades waiting workers and mounts articulated droid par
 test('droid-team-kit.glb mounts the crown on a lead and the comms kit on a subagent, shared per team, clear of the beacon and untouched by status', async () => {
   const restore = canvasDocument();
   try {
-    const load = (name: string) => {
-      const glb = readFileSync(new URL(`../src/client/public/props/${name}.glb`, import.meta.url));
-      return glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength);
-    };
-    await parseWorker(load('droid-worker'));
-    const kitScene = await new Promise<THREE.Object3D>((resolve, reject) => new GLTFLoader().parse(load('droid-team-kit'), '', (g) => resolve(g.scene), reject));
+    await parseWorker(loadGlb('droid-worker'));
+    const kitScene = await new Promise<THREE.Object3D>((resolve, reject) => new GLTFLoader().parse(loadGlb('droid-team-kit'), '', (g) => resolve(g.scene), reject));
     for (const node of ['TeamCrown', 'TeamComms', 'TeamShoulders']) assert.ok(kitScene.getObjectByName(node), `${node} is in the GLB`);
 
     const lead = new Worker('Lead', '#ee6018');
@@ -174,21 +185,11 @@ test('droid-team-kit.glb mounts the crown on a lead and the comms kit on a subag
 test('seated workers fit the task chair and clear the over-the-shoulder screen sightline while articulating across acts', async () => {
   const restore = canvasDocument();
   try {
-    const load = (name: string) => {
-      const glb = readFileSync(new URL(`../src/client/public/props/${name}.glb`, import.meta.url));
-      return glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength);
-    };
-    await parseWorker(load('droid-worker'));
-    const kitScene = await new Promise<THREE.Object3D>((resolve, reject) => new GLTFLoader().parse(load('droid-team-kit'), '', (g) => resolve(g.scene), reject));
+    await parseWorker(loadGlb('droid-worker'));
+    const kitScene = await new Promise<THREE.Object3D>((resolve, reject) => new GLTFLoader().parse(loadGlb('droid-team-kit'), '', (g) => resolve(g.scene), reject));
     setTeamKit(kitScene);
 
-    // Mount at exact desk seatAnchor (0, 0.4, 0.93), rotY = Math.PI, scale = 0.82.
-    const desk = new THREE.Group();
-    const seatAnchor = new THREE.Group();
-    seatAnchor.position.set(0, 0.4, 0.93);
-    seatAnchor.rotation.y = Math.PI;
-    seatAnchor.scale.setScalar(0.82);
-    desk.add(seatAnchor);
+    const { desk, seatAnchor } = makeSeatAnchor();
 
     const w = new Worker('Byte', '#ee6018');
     w.setSeat('chair');
@@ -246,15 +247,9 @@ test('seated workers fit the task chair and clear the over-the-shoulder screen s
 test('reading workers pinch the clipboard notepad between both hands below the visor with the printed sheet facing their eyes', async () => {
   const restore = canvasDocument();
   try {
-    const glb = readFileSync(new URL('../src/client/public/props/droid-worker.glb', import.meta.url));
-    await parseWorker(glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength));
+    await parseWorker(loadGlb('droid-worker'));
 
-    const desk = new THREE.Group();
-    const seatAnchor = new THREE.Group();
-    seatAnchor.position.set(0, 0.4, 0.93);
-    seatAnchor.rotation.y = Math.PI;
-    seatAnchor.scale.setScalar(0.82);
-    desk.add(seatAnchor);
+    const { desk, seatAnchor } = makeSeatAnchor();
 
     const seated = new Worker('Reader', '#ee6018');
     seated.setSeat('chair');
@@ -270,9 +265,10 @@ test('reading workers pinch the clipboard notepad between both hands below the v
 
       const meshes = notepad.children.filter((c): c is THREE.Mesh => (c as THREE.Mesh).isMesh);
       assert.equal(meshes.length, 4, 'clipboard uses compact board, pad, clip and tab meshes without stacked 3D ink bars');
-      const pad = meshes.find((m) => Array.isArray(m.material))!;
+      const pad = meshes.find((m) => Array.isArray(m.material));
       assert.ok(pad, 'paper pad carries edge and printed face materials');
       const padMats = pad.material as THREE.MeshToonMaterial[];
+      assert.equal(padMats.length, 6, 'box pad has six face materials');
       assert.ok(padMats[5].map, 'printed sheet texture sits on the -z face toward the worker');
       assert.deepEqual(padMats[5].userData.outlineParameters, { visible: false }, 'printed face disables backface outline shell');
 
@@ -333,14 +329,21 @@ test('reading workers pinch the clipboard notepad between both hands below the v
     seated.setAction('read');
     for (let i = 0; i < 180; i++) seated.update(1 / 60, 8 + i / 60);
     desk.updateMatrixWorld(true);
-    const deskPadBox = new THREE.Box3().setFromObject(seated.root.getObjectByName('worker-notepad')!);
+    const deskNotepad = seated.root.getObjectByName('worker-notepad');
+    assert.ok(deskNotepad, 'seated worker keeps a named notepad prop');
+    const deskPadBox = new THREE.Box3().setFromObject(deskNotepad);
     assert.ok(deskPadBox.min.z > 0.55, `seated notepad clears the desk edge (${deskPadBox.min.z})`);
 
     // Pupils scan from the left margin (+x on the -z face) to the right edge (-x) across a line.
+    const pupilX = () => {
+      const pupil = seated.head.children.find((c) => c.position.z > 0.16 && c.children.length > 0);
+      assert.ok(pupil, 'pupil group found on head');
+      return pupil.position.x;
+    };
     seated.update(0, (10 + 0.1) / 0.85);
-    const startX = seated.head.children.find((c) => c.position.z > 0.16 && c.children.length > 0)!.position.x;
+    const startX = pupilX();
     seated.update(0, (10 + 0.9) / 0.85);
-    const endX = seated.head.children.find((c) => c.position.z > 0.16 && c.children.length > 0)!.position.x;
+    const endX = pupilX();
     assert.ok(startX > endX, `pupils scan left-to-right across the sheet (${startX} -> ${endX})`);
 
     seated.dispose();
