@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fingerprintGeminiKey, GEMINI_DECISIONS_MODEL, isValidGeminiApiKey } from '../shared/gemini-vibes.js';
@@ -149,6 +150,7 @@ export interface CallGeminiDecisionsInit {
 /** Calls `POST /v1beta/decisions` (`gemini-decision-1`) in one zero-output-token forward pass. */
 export async function callGeminiDecisions(init: CallGeminiDecisionsInit): Promise<GeminiDecisionResponse> {
   const { apiKey, input, questions, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS, signal, now = Date.now } = init;
+  if (signal?.aborted) return { ok: false, status: 0, error: 'Cancelled.' };
   const keys = Object.keys(questions);
   if (keys.length < 1 || keys.length > 1000) {
     return { ok: false, status: 400, error: 'Gemini Decisions requires between 1 and 1,000 questions per request.' };
@@ -409,6 +411,7 @@ export class GeminiDecisionsStore {
   }
 
   private persist(): string | undefined {
+    const temp = `${this.file}.${randomUUID()}.tmp`;
     const disk: PersistedGeminiData = {
       vibesOn: this.vibes,
       ...(this.savedKey ? { apiKey: this.savedKey } : {}),
@@ -419,12 +422,12 @@ export class GeminiDecisionsStore {
     };
     try {
       mkdirSync(path.dirname(this.file), { recursive: true });
-      writeFileSync(`${this.file}.tmp`, JSON.stringify(disk, null, 2), { mode: 0o600 });
-      renameSync(`${this.file}.tmp`, this.file);
+      writeFileSync(temp, JSON.stringify(disk, null, 2), { mode: 0o600, flag: 'wx' });
+      renameSync(temp, this.file);
       return undefined;
     } catch {
       try {
-        unlinkSync(`${this.file}.tmp`);
+        unlinkSync(temp);
       } catch {}
       return 'Could not save Gemini settings to disk.';
     }

@@ -3092,7 +3092,7 @@ export async function startServer(cfg: Config) {
         factory.message(c.id, who, msg, (reply) => sendTo(c, reply));
         break;
       case 'gemini.connect':
-        void officeVibes.connect(str(msg.key, 512), who, (reply) => sendTo(c, reply));
+        void officeVibes.connect(str(msg.key, 512), who, (reply) => sendTo(c, reply)).catch(() => sendTo(c, { t: 'gemini.setup', ok: false, error: 'Gemini connection check failed.' }));
         break;
       case 'gemini.disconnect': {
         const err = officeVibes.disconnect();
@@ -3102,7 +3102,7 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'gemini.check':
-        void officeVibes.check((reply) => sendTo(c, reply));
+        void officeVibes.check((reply) => sendTo(c, reply)).catch(() => sendTo(c, { t: 'gemini.setup', ok: false, error: 'Gemini connection check failed.' }));
         break;
       case 'gemini.vibes': {
         if (typeof msg.on !== 'boolean') return stop('Send {"on": true} or {"on": false}.');

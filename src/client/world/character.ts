@@ -2025,6 +2025,8 @@ export class Worker {
    */
   dance(stage: Stage) {
     if (this.leaving || this.dead || this.split || this.levitating !== null || this.visitPose) return;
+    this.microReaction = null;
+    this.paintBulb();
     const d = this.dancing;
     if (!d) {
       this.dancing = { stage, t: 0 };
@@ -2097,6 +2099,7 @@ export class Worker {
   /** Sent home: its light goes out, its face falls, and its things pop into a box in its arms. `farewell` goes over its head. */
   leave(farewell: string) {
     if (this.leaving) return;
+    this.microReaction = null;
     this.hush();
     this.visitPose = null;
     this.stopDancing();
@@ -2190,6 +2193,7 @@ export class Worker {
    */
   die(asleep = false) {
     if (this.dead) return;
+    this.microReaction = null;
     this.hush();
     this.visitPose = null;
     this.dead = true;
@@ -2408,25 +2412,19 @@ export class Worker {
           s.browLift = THREE.MathUtils.lerp(s.browLift, 0.009, env);
           s.mouthW = THREE.MathUtils.lerp(s.mouthW, 1.38, env);
           s.mouthH = THREE.MathUtils.lerp(s.mouthH, 1.48, env);
-          s.frown = 0;
+          s.frown = THREE.MathUtils.lerp(s.frown, 0, env);
           reactionBulbHex = '#34d399';
         } else if (r.kind === 'fresh_breakage') {
-          if (r.t < 0.45) {
-            // Sharp double-take flinch back at the screen.
-            s.lean = THREE.MathUtils.lerp(s.lean, -0.18, env);
-            s.lid = THREE.MathUtils.lerp(s.lid, 1.22, env);
-            s.headY = THREE.MathUtils.lerp(s.headY, Math.sin(r.t * 26) * 0.18, env);
-          } else {
-            // Brief facepalm / slump forward.
-            s.lean = THREE.MathUtils.lerp(s.lean, 0.24, env);
-            s.armRx = THREE.MathUtils.lerp(s.armRx, -1.84, env);
-            s.armRz = THREE.MathUtils.lerp(s.armRz, -0.12, env);
-            s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -1.9, env);
-            s.forearmRz = THREE.MathUtils.lerp(s.forearmRz, -0.52, env);
-            s.headX = THREE.MathUtils.lerp(s.headX, 0.2, env);
-            s.headY = THREE.MathUtils.lerp(s.headY, Math.sin(r.t * 14) * 0.14, env);
-            s.lid = THREE.MathUtils.lerp(s.lid, 0.64, env);
-          }
+          // Blend the double-take flinch into the facepalm instead of snapping at the phase boundary.
+          const slump = THREE.MathUtils.smoothstep(r.t, 0.35, 0.55);
+          s.lean = THREE.MathUtils.lerp(s.lean, THREE.MathUtils.lerp(-0.18, 0.24, slump), env);
+          s.lid = THREE.MathUtils.lerp(s.lid, THREE.MathUtils.lerp(1.22, 0.64, slump), env);
+          s.headY = THREE.MathUtils.lerp(s.headY, THREE.MathUtils.lerp(Math.sin(r.t * 26) * 0.18, Math.sin(r.t * 14) * 0.14, slump), env);
+          s.armRx = THREE.MathUtils.lerp(s.armRx, -1.84, env * slump);
+          s.armRz = THREE.MathUtils.lerp(s.armRz, -0.12, env * slump);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -1.9, env * slump);
+          s.forearmRz = THREE.MathUtils.lerp(s.forearmRz, -0.52, env * slump);
+          s.headX = THREE.MathUtils.lerp(s.headX, 0.2, env * slump);
           s.browTilt = THREE.MathUtils.lerp(s.browTilt, -0.34, env);
           s.frown = THREE.MathUtils.lerp(s.frown, 1, env);
           reactionBulbHex = '#f43f5e';

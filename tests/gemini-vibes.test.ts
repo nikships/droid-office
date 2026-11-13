@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -90,6 +90,9 @@ test('GeminiDecisionsStore persists mode 0600 on disk and never leaks raw key in
   assert.equal(store.vibesOn(), true);
   assert.equal(store.saveKey('bad', 'Nik', 1000), 'Enter a valid Gemini API key.');
 
+  const staleTemp = path.join(dir, 'gemini.json.tmp');
+  writeFileSync(staleTemp, 'stale temporary file');
+  chmodSync(staleTemp, 0o666);
   assert.equal(store.saveKey(`  ${TEST_KEY}  `, 'Nik', 1234), undefined);
   assert.equal(store.connected(), true);
   assert.equal(store.apiKey(), TEST_KEY);
@@ -425,6 +428,163 @@ test('OfficeVibes enforces strict view-aware cost gating, digest deduplication, 
   assert.equal(Object.keys(batch.questions).length, 1 + 2 * 3);
 });
 
+test('already cancelled Decisions requests never start a fetch', async () => {
+  const abort = new AbortController();
+  abort.abort();
+  let calls = 0;
+  const result = await callGeminiDecisions({
+    apiKey: TEST_KEY,
+    input: 'cancelled',
+    questions: { ready: { type: 'noul', instructions: 'Ready?' } },
+    signal: abort.signal,
+    fetchImpl: async () => {
+      calls++;
+      return new Response('{}');
+    },
+  });
+  assert.equal(calls, 0);
+  assert.equal(result.ok, false);
+});
+
+test('OfficeVibes backs off failed requests and safely reports snapshot exceptions', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'vibes-retry-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = new GeminiDecisionsStore(dir);
+  store.saveKey(TEST_KEY, 'Owner', 0);
+  let now = 0;
+  let calls = 0;
+  let healthy = false;
+  let brokenTail = false;
+  const floor: VibesFloorView = {
+    id: 'f1',
+    name: 'Office',
+    workers: [makeWorker()],
+    pulls: [],
+    tail: () => {
+      if (brokenTail) throw new Error(`Snapshot failed: ${TEST_KEY}`);
+      return 'Working';
+    },
+  };
+  const vibes = new OfficeVibes({
+    store,
+    airgapped: () => false,
+    clients: () => [{ id: 'view', floor: 'f1', dashboard: false }],
+    floors: () => [floor],
+    floor: () => floor,
+    broadcastGemini: () => {},
+    emitFloorVibes: () => {},
+    pulseMs: 1_000_000,
+    quickPulseMs: 1_000_000,
+    now: () => now,
+    fetchImpl: async () => {
+      calls++;
+      return new Response('{}', { status: healthy ? 200 : 503 });
+    },
+  });
+  t.after(() => vibes.stop());
+  vibes.setWatching('view', true);
+  await vibes.pulseNow();
+  assert.equal(calls, 1);
+  for (const delay of [10_000, 20_000, 40_000, 60_000, 60_000]) {
+    const before = calls;
+    now += delay - 1;
+    await vibes.pulseNow();
+    assert.equal(calls, before, 'failed requests do not retry before their deadline');
+    now++;
+    await vibes.pulseNow();
+    assert.equal(calls, before + 1, 'retry starts only at the exponentially backed-off deadline');
+  }
+  healthy = true;
+  now += 60_000;
+  await vibes.pulseNow();
+  const successCalls = calls;
+  await vibes.pulseNow();
+  assert.equal(calls, successCalls, 'successful snapshots retain digest deduplication');
+  brokenTail = true;
+  await assert.doesNotReject(vibes.pulseNow());
+  assert.match(vibes.geminiState().lastError ?? '', /Snapshot failed/);
+  assert.ok(!vibes.geminiState().lastError?.includes(TEST_KEY), 'unexpected errors redact saved keys');
+  brokenTail = false;
+  now += 10_000;
+  floor.workers.push(makeWorker({ id: 'new' }));
+  await vibes.pulseNow();
+  assert.equal(calls, successCalls + 1, 'success resets the error backoff');
+
+  const batch = buildFloorDecisionsBatch(
+    floor,
+    Array.from({ length: 18 }, (_, i) => makeWorker({ id: `w${i}` })),
+  );
+  assert.match(batch.input, /18 active\/recent desk workers \(16 shown, 2 omitted\)/);
+  assert.equal(batch.workers.length, 16);
+});
+
+test('OfficeVibes cancels airgapped probes and ignores old-key pulses after replacement', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'vibes-races-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = new GeminiDecisionsStore(dir);
+  store.saveKey(TEST_KEY, 'Owner', 100);
+  let airgapped = false;
+  const requests: { signal: AbortSignal; finish: (response: Response) => void }[] = [];
+  const vibes = new OfficeVibes({
+    store,
+    airgapped: () => airgapped,
+    clients: () => [{ id: 'view', floor: 'f1', dashboard: false }],
+    floors: () => [floor],
+    floor: () => ({ ...floor, workers: [...floor.workers] }),
+    broadcastGemini: () => {},
+    emitFloorVibes: () => {},
+    quickPulseMs: 60_000,
+    pulseMs: 60_000,
+    fetchImpl: async (_url, init) => new Promise<Response>((finish) => requests.push({ signal: init!.signal!, finish })),
+  });
+  const floor: VibesFloorView = { id: 'f1', name: 'Office', workers: [makeWorker()], pulls: [], tail: () => 'Working' };
+  t.after(() => vibes.stop());
+  const probeResponse = () => new Response(JSON.stringify({ answers: { ready: { type: 'noul', noul: 1, confidence: 1 } } }));
+  let connected: boolean | undefined;
+  const connect = vibes.connect(TEST_KEY, 'Owner', (r) => {
+    connected = r.ok;
+  });
+  airgapped = true;
+  vibes.syncViewers();
+  assert.equal(requests[0].signal.aborted, true, 'airgapped mode aborts even explicit key probes');
+  requests[0].finish(probeResponse());
+  await connect;
+  assert.equal(connected, false, 'late probe success cannot persist while airgapped');
+
+  airgapped = false;
+  vibes.setWatching('view', true);
+  const pulse = vibes.pulseNow();
+  const replacement = vibes.connect(`${TEST_KEY}new`, 'Owner', () => {});
+  requests[2].finish(probeResponse());
+  await replacement;
+  assert.equal(requests[1].signal.aborted, true, 'replacing a key invalidates old-key pulses');
+  requests[1].finish(new Response(JSON.stringify({ error: { message: 'API key not valid' } }), { status: 400 }));
+  await pulse;
+  assert.equal(store.rejected(), undefined, 'old-key rejection cannot suspend verified replacement');
+
+  store.markChecked(200, 'API key expired');
+  const check = vibes.check(() => {});
+  requests[3].finish(new Response('{}', { status: 503 }));
+  await check;
+  assert.equal(store.rejected(), 'API key expired', 'transient check failure must preserve rejection');
+
+  store.markChecked(300);
+  const departedPulse = vibes.pulseNow();
+  floor.workers = [];
+  requests[4].finish(
+    new Response(
+      JSON.stringify({
+        answers: {
+          w0_posture: { type: 'choice', choice: 'flow', confidence: 1 },
+          w0_react: { type: 'choice', choice: 'breakthrough', confidence: 1 },
+        },
+      }),
+    ),
+  );
+  await departedPulse;
+  assert.deepEqual(vibes.floorState('f1')?.workers, {}, 'late responses cannot resurrect departed workers');
+});
+
 test('3D Worker continuous postures, micro-reaction envelopes and Sky baseline-safe mood crossfades', (t) => {
   const prevDoc = Object.getOwnPropertyDescriptor(globalThis, 'document');
   const ctx2d = {
@@ -517,6 +677,22 @@ test('3D Worker continuous postures, micro-reaction envelopes and Sky baseline-s
     actor.update(2.0, 7.8);
     assert.equal(actor.activeReaction, null);
   }
+  for (const transition of ['die', 'leave', 'dance'] as const) {
+    const interrupted = new Worker('Byte', '#ee6018');
+    interrupted.setSeat('chair');
+    interrupted.triggerReaction('puzzled');
+    interrupted.update(0.3, 1);
+    if (transition === 'dance') interrupted.dance({ pos: new THREE.Vector3(), yaw: 0 });
+    else if (transition === 'leave') interrupted.leave('Bye');
+    else interrupted.die();
+    assert.equal(interrupted.activeReaction, null, `${transition} cancels the reaction before update's early return`);
+    interrupted.dispose();
+  }
+  actor.triggerReaction('fresh_breakage');
+  actor.update(0.449, 8.449);
+  const beforePhase = actor.body.rotation.x;
+  actor.update(0.002, 8.451);
+  assert.ok(Math.abs(actor.body.rotation.x - beforePhase) < 0.02, 'flinch and slump blend continuously across the old 0.45s snap');
   actor.dispose();
 
   // Sky mood crossfade & Remastered GI baseline guard

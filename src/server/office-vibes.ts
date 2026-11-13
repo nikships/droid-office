@@ -33,6 +33,8 @@ const RECENT_DONE_WINDOW_MS = 45_000;
 const MAX_VIBES_WORKERS = 16;
 const TAIL_LINES = 14;
 const MAX_TAIL_CHARS = 900;
+const RETRY_INITIAL_MS = 10_000;
+const RETRY_MAX_MS = 60_000;
 
 export interface VibesClientView {
   id: string;
@@ -71,6 +73,8 @@ interface WorkerTrack {
 
 interface FloorTrack {
   lastDigest: string;
+  retryAt: number;
+  retryDelay: number;
   state: FloorVibesState;
   workers: Map<string, WorkerTrack>;
 }
@@ -138,7 +142,7 @@ export function buildFloorDecisionsBatch(floor: VibesFloorView, activeWorkers: W
 
   const lines: string[] = [
     `Floor "${redactGeminiSecrets(floor.name, extraSecrets)}" snapshot:`,
-    `Summary: ${activeWorkers.length} active/recent desk workers, ${openPulls} open PRs, ${mergedPulls} merged PRs, ${failingRuns} failing CI runs.`,
+    `Summary: ${activeWorkers.length} active/recent desk workers (${Math.min(activeWorkers.length, MAX_VIBES_WORKERS)} shown, ${Math.max(0, activeWorkers.length - MAX_VIBES_WORKERS)} omitted), ${openPulls} open PRs, ${mergedPulls} merged PRs, ${failingRuns} failing CI runs.`,
     '',
   ];
 
@@ -282,6 +286,12 @@ export class OfficeVibes {
 
   /** Called when a client changes floors (e.g. rides to `@roof` or another project floor) or airgapped mode toggles. */
   syncViewers(triggerQuick = false): void {
+    if (this.opts.airgapped()) {
+      this.probeAbort?.abort();
+      this.probeAbort = undefined;
+      this.checking = false;
+      this.resetAllFloorsToNeutral();
+    }
     this.reconcileSchedule(triggerQuick);
     this.opts.broadcastGemini(this.geminiState());
   }
@@ -341,12 +351,18 @@ export class OfficeVibes {
       return;
     }
 
+    // A response from the previous key must never reject or overwrite the newly verified key.
+    this.stopTimersAndInFlight();
     this.calls += 1;
     this.inputTokens += probe.inputTokens;
     this.lastLatencyMs = probe.latencyMs;
     this.lastError = undefined;
     // Force fresh floor digests so watched 3D floors light up immediately on connect.
-    for (const track of this.floorTracks.values()) track.lastDigest = '';
+    for (const track of this.floorTracks.values()) {
+      track.lastDigest = '';
+      track.retryAt = 0;
+      track.retryDelay = 0;
+    }
     this.reconcileSchedule(true);
     this.opts.broadcastGemini(this.geminiState());
     reply({ t: 'gemini.setup', ok: true, latencyMs: probe.latencyMs });
@@ -382,7 +398,7 @@ export class OfficeVibes {
     this.checking = false;
 
     if (!probe.ok) {
-      this.opts.store.markChecked(this.now(), probe.keyRejected ? probe.error : undefined);
+      this.opts.store.markChecked(this.now(), probe.keyRejected ? probe.error : this.opts.store.rejected());
       this.lastError = probe.error;
       if (probe.keyRejected) this.resetAllFloorsToNeutral();
       this.reconcileSchedule(false);
@@ -436,7 +452,20 @@ export class OfficeVibes {
     if (this.stopped || !this.canPulse()) return;
     const { floors } = this.watchedFloorMap();
     if (!floors.size) return;
-    await Promise.all([...floors].map((floorId) => this.pulseFloor(floorId)));
+    await Promise.all(
+      [...floors].map(async (floorId) => {
+        try {
+          await this.pulseFloor(floorId);
+        } catch (error) {
+          this.deferRetry(this.ensureTrack(floorId));
+          this.lastError = redactGeminiSecrets(error instanceof Error ? error.message : 'Floor snapshot failed.', [this.opts.store.apiKey()]).slice(0, 220);
+          // A failed broadcaster must not turn a timer tick into an unhandled rejection either.
+          try {
+            this.opts.broadcastGemini(this.geminiState());
+          } catch {}
+        }
+      }),
+    );
   }
 
   private watchedFloorMap(): { floors: Set<string>; totalViewers: number } {
@@ -507,6 +536,8 @@ export class OfficeVibes {
       const track = this.floorTracks.get(floor.id);
       if (track) {
         track.lastDigest = '';
+        track.retryAt = 0;
+        track.retryDelay = 0;
         track.state = neutral;
       }
       this.opts.emitFloorVibes(floor.id, neutral);
@@ -518,12 +549,19 @@ export class OfficeVibes {
     if (!track) {
       track = {
         lastDigest: '',
+        retryAt: 0,
+        retryDelay: 0,
         state: emptyFloorVibes(floorId, this.now()),
         workers: new Map(),
       };
       this.floorTracks.set(floorId, track);
     }
     return track;
+  }
+
+  private deferRetry(track: FloorTrack): void {
+    track.retryDelay = Math.min(RETRY_MAX_MS, track.retryDelay ? track.retryDelay * 2 : RETRY_INITIAL_MS);
+    track.retryAt = this.now() + track.retryDelay;
   }
 
   private async pulseFloor(floorId: string): Promise<void> {
@@ -534,6 +572,7 @@ export class OfficeVibes {
 
     const now = this.now();
     const track = this.ensureTrack(floorId);
+    if (now < track.retryAt) return;
     const active = floor.workers.filter((w) => eligibleWorker(w, now));
 
     // Prune departed workers from per-worker cooldown tracking.
@@ -568,7 +607,7 @@ export class OfficeVibes {
       if (ctrl.signal.aborted || !this.canPulse()) return;
 
       if (!res.ok) {
-        if (res.status === 0 && res.error === 'Cancelled.') return;
+        this.deferRetry(track);
         this.lastError = res.error;
         if (res.keyRejected) {
           this.opts.store.markChecked(this.now(), res.error);
@@ -580,6 +619,8 @@ export class OfficeVibes {
       }
 
       const doneAt = this.now();
+      track.retryAt = 0;
+      track.retryDelay = 0;
       this.calls += 1;
       this.inputTokens += res.inputTokens;
       this.lastLatencyMs = res.latencyMs;
@@ -598,9 +639,10 @@ export class OfficeVibes {
       const moodConfidence = moodConfident && moodAns ? moodAns.prob : 0;
 
       const workersOut: Record<string, WorkerVibeState> = {};
+      const currentFloor = this.opts.floor(floorId);
       for (const { worker, keyPrefix, workerDigest } of batch.workers) {
-        const currentWorker = floor.workers.find((w) => w.id === worker.id);
-        if (!currentWorker) continue;
+        const currentWorker = currentFloor?.workers.find((w) => w.id === worker.id);
+        if (!currentWorker || !eligibleWorker(currentWorker, doneAt)) continue;
 
         const pAns = choiceProb(res.answers[`${keyPrefix}_posture`]);
         const sAns = choiceProb(res.answers[`${keyPrefix}_spill`]);
