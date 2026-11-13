@@ -5,7 +5,7 @@ description: Clone the owner's installed Droid Office and drive this checkout's 
 
 # Testing on a clone of the owner's office
 
-A clone copies the owner's installed office (floors, repositories, Factory and Jira connections, decor, Whiteboards and browser settings) into a scratch directory with empty desks, served by this checkout's `dist/`. Use it as the default target for running-office checks, bug repros, and PR screenshots or video.
+A clone copies the owner's installed office (floors, repositories, Factory, Jira and Linear connections, decor, Whiteboards and browser settings) into a scratch directory with empty desks, served by this checkout's `dist/`. Use it as the default target for running-office checks, bug repros, and PR screenshots or video.
 
 ## 1. Clone
 
@@ -19,12 +19,12 @@ Source resolution order: `--office DIR`, `$DROID_OFFICE_HOME`, `officeDir` in `~
 
 | Copied | Source |
 | --- | --- |
-| Office config (`factory.json`, `jira.json`, `floors.json`, `orchestrator.json` settings, prompts, subagent settings, theme, credits ledger, paired devices) | `<office>/.droid-office/` |
+| Office config (`factory.json`, `jira.json`, `linear.json`, `floors.json`, `orchestrator.json` settings, prompts, subagent settings, theme, credits ledger, paired devices) | `<office>/.droid-office/` |
 | Project floors as local `git clone`s keeping the real `origin` | each floor's checkout |
-| Per-floor state (decor, jukebox, Whiteboard, team) and Home floor state | `<floor>/.droid-office/`, `~/.droid-office/` |
+| Per-floor state (decor, jukebox, Whiteboard, team, `linear-floor.json` team/project setup) and Home floor state | `<floor>/.droid-office/`, `~/.droid-office/` |
 | Mac app browser settings (profile, graphics, per-desk models, active floor) | `localStorage` LevelDB (`uv`) |
 
-**Excluded so starting the clone cannot resume live sessions:** `workers.json`, `cloud-workers.json`, `guests.json`, the entire `/orchestrator/` session directory, `remote-workers.json`, `remote-mcp.json`, PTY/hook sockets (`pty.sock`, `pty-host.*`, `hook-port`, `shell.*`), `scrollback/`, `worktrees/`, `drops/`, `images/` and `wiki-run*`.
+**Excluded or disarmed so starting the clone cannot resume live sessions or mutate real issues:** `workers.json`, `cloud-workers.json`, `guests.json`, the entire `/orchestrator/` session directory, `remote-workers.json`, `remote-mcp.json`, PTY/hook sockets (`pty.sock`, `pty-host.*`, `hook-port`, `shell.*`), `scrollback/`, `worktrees/`, `drops/`, `images/` and `wiki-run*`; cloned `linear-floor.json` files turn `autopilot.on` off and clear `links`.
 
 **No installed office (`--fresh`):** mutually exclusive with `--office`; creates a local clone of this checkout plus a test `Verifier` profile (`DROID_OFFICE_BROWSERS_PATH` overrides the browser cache). Prefer a real owner clone whenever one exists.
 
