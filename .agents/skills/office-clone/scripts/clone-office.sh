@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Copies the owner's installed Droid Office into a scratch folder, so a build can be tested against
-# their real configuration without touching the office they use: the office folder (Factory and Jira
-# connections, floors, prompts, theme, credits ledger), every floor as a clone of its checkout with
-# its real `origin`, each floor's own state (decor, jukebox, Whiteboard, team), and the Mac app's
-# browser settings (profile, graphics, per-desk models).
+# their real configuration without touching the office they use: the office folder (Factory, Jira and
+# Linear connections, floors, prompts, theme, credits ledger), every floor as a clone of its checkout
+# with its real `origin`, each floor's own state (decor, jukebox, Whiteboard, team, Linear board setup),
+# and the Mac app's browser settings (profile, graphics, per-desk models).
 #
 #   .agents/skills/office-clone/scripts/clone-office.sh [--fresh | --office DIR] [--dest DIR] [--port N]
 #
@@ -12,9 +12,10 @@
 #   local-storage.json   the Mac app's droid-office.* localStorage
 #   load-settings.js     an expression that puts those into a test tab and reloads it (see SKILL.md)
 #
-# Left out on purpose, because a started office acts on them:
+# Left out or disarmed on purpose, because a started office acts on them:
 #   workers.json, cloud-workers.json, guests.json  a started office resumes every saved worker, so a
 #                                                  copy would run the owner's real sessions twice
+#   linear-floor.json autopilot.on & links         keeps team/project setup, turns autopilot off, clears links
 #   pty.sock, pty-host.*, hook-port, shell.*       the running office's terminals and hooks
 #   scrollback/, worktrees/, drops/, images/, wiki-run*  other workers' terminals, checkouts, media and runs
 set -euo pipefail
@@ -91,6 +92,34 @@ copy_state() { # <from dir> <to dir>: a .droid-office folder, minus what a start
   [[ -d "$1/.droid-office" ]] || return 0
   mkdir -p "$2/.droid-office"
   rsync -a "${EXCLUDES[@]}" "$1/.droid-office/" "$2/.droid-office/"
+  if [[ -f "$2/.droid-office/linear-floor.json" || -L "$2/.droid-office/linear-floor.json" ]]; then
+    node -e '
+const fs = require("fs");
+const file = process.argv[1];
+let s;
+try {
+  s = JSON.parse(fs.readFileSync(file, "utf8"));
+} catch {
+  fs.rmSync(file, { force: true });
+  process.exit(0);
+}
+if (!s || typeof s !== "object" || Array.isArray(s)) {
+  fs.rmSync(file, { force: true });
+  process.exit(0);
+}
+if (s.autopilot && typeof s.autopilot === "object" && !Array.isArray(s.autopilot)) {
+  s.autopilot = { ...s.autopilot, on: false };
+} else {
+  delete s.autopilot;
+}
+s.links = [];
+if ("skipped" in s) s.skipped = {};
+const tmp = `${file}.${process.pid}.tmp`;
+fs.writeFileSync(tmp, JSON.stringify(s, null, 2) + "\n", { mode: 0o600 });
+fs.chmodSync(tmp, 0o600);
+fs.renameSync(tmp, file);
+' "$2/.droid-office/linear-floor.json" </dev/null
+  fi
 }
 
 echo "==> office $OFFICE -> $DEST/office"
