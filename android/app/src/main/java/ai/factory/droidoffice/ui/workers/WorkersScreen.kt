@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -33,7 +32,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -94,6 +92,7 @@ import ai.factory.droidoffice.ui.asks.AskCard
 import ai.factory.droidoffice.ui.components.EffortDialMark
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.GlyphMark
+import ai.factory.droidoffice.ui.components.HireFab
 import ai.factory.droidoffice.ui.components.PrimaryButton
 import ai.factory.droidoffice.ui.components.RouteBadge
 import ai.factory.droidoffice.ui.components.Spinner
@@ -184,20 +183,7 @@ fun WorkersScreen(
                     onRetry = connection::retryNow,
                     onScan = onScan,
                 )
-                if (!(data.synced && view.totalSummary.total == 0) && link.phase != Phase.Unauthorized) {
-                    ExtendedFloatingActionButton(
-                        onClick = onHire,
-                        icon = { Icon(Icons.Default.Add, null) },
-                        text = { Text("Hire", style = MaterialTheme.typography.labelLarge) },
-                        containerColor = Palette.Accent,
-                        contentColor = Palette.Bg,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.align(Alignment.BottomEnd)
-                            .windowInsetsPadding(WindowInsets.navigationBars)
-                            .padding(18.dp)
-                            .tagged(Tags.Workers.HIRE),
-                    )
-                }
+                if (!(data.synced && view.totalSummary.total == 0) && link.phase != Phase.Unauthorized) HireFab(Tags.Workers.HIRE, onHire)
             }
             if (wide) {
                 Box(Modifier.width(1.dp).fillMaxHeight().background(Palette.Border))
