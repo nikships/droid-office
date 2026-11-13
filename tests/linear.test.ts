@@ -16,12 +16,14 @@ import {
   findState,
   guessTeam,
   linearColumns,
+  linearImagePath,
   linearIssueRef,
   linearKey,
   linearPriority,
   linearPromptVars,
   linearTaskLine,
   linearTaskOf,
+  linearUploadUrl,
   linkUrl,
   priorityOrder,
   stateForStage,
@@ -961,4 +963,166 @@ test('office refreshTeams persists changed teams and notifies only after success
   assert.equal(r.changes(), 1);
   assert.equal(r.office.connection()?.teams.length, 2);
   assert.equal(new LinearOffice(r.dir, noFetch).connection()?.teams.length, 2);
+});
+
+const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 1]);
+const UPLOAD_URL = 'https://uploads.linear.app/30fd77c9-7d03-4624-807d-e2e52a97ed44/a5d359d8-0b6c-4d6e-95e9-57fa97ba7a43/6d50c94c-a85e-408f-a272-d6bb515194a8';
+
+test('linearUploadUrl and linearImagePath accept only https://uploads.linear.app paths and strip fragments', () => {
+  assert.equal(linearUploadUrl(`  ${UPLOAD_URL}#dark `), UPLOAD_URL);
+  assert.equal(linearUploadUrl('https://UPLOADS.LINEAR.APP/org/asset?signature=abc'), 'https://uploads.linear.app/org/asset?signature=abc');
+  assert.equal(linearImagePath(UPLOAD_URL, 'droid-office'), `/api/linear/image?url=${encodeURIComponent(UPLOAD_URL)}&floor=droid-office`);
+  assert.equal(linearImagePath(UPLOAD_URL), `/api/linear/image?url=${encodeURIComponent(UPLOAD_URL)}`);
+  for (const bad of [
+    undefined,
+    null,
+    42,
+    '',
+    'not a url',
+    `https://uploads.linear.app/${'a'.repeat(2040)}`,
+    'http://uploads.linear.app/org/file',
+    'https://uploads.linear.app/',
+    'https://uploads.linear.app:8443/org/file',
+    'https://user:pass@uploads.linear.app/org/file',
+    'https://sub.uploads.linear.app/org/file',
+    'https://uploads.linear.app.example.com/org/file',
+    'https://api.linear.app/graphql',
+    'https://github.com/user-attachments/assets/123',
+  ]) {
+    assert.equal(linearUploadUrl(bad), undefined, String(bad));
+    assert.equal(linearImagePath(bad, 'droid-office'), undefined, String(bad));
+  }
+});
+
+test('LinearApi.image authenticates personal and OAuth keys, strips auth on cross-origin redirects, sniffs bytes, and guards limits', async () => {
+  const seen: { url: string; auth: string | null }[] = [];
+  const api = new LinearApi(TEST_KEY, async (input, init) => {
+    const url = String(input);
+    const auth = new Headers(init?.headers).get('authorization');
+    seen.push({ url, auth });
+    if (url.endsWith('/redirect-cdn')) return new Response(null, { status: 302, headers: { location: 'https://storage.googleapis.com/linear-bucket/pic.png?sig=1' } });
+    if (url.startsWith('https://storage.googleapis.com/')) return new Response(PNG_BYTES, { status: 200, headers: { 'content-type': 'application/octet-stream' } });
+    if (url.endsWith('/redirect-same')) return new Response(null, { status: 307, headers: { location: '/org/final' } });
+    if (url.endsWith('/org/final')) return new Response('<svg xmlns="http://www.w3.org/2000/svg"/>', { status: 200, headers: { 'content-type': 'image/svg+xml; charset=utf-8' } });
+    if (url.endsWith('/redirect-http')) return new Response(null, { status: 302, headers: { location: 'http://uploads.linear.app/org/cleartext' } });
+    if (url.endsWith('/redirect-loop')) return new Response(null, { status: 302, headers: { location: url } });
+    if (url.endsWith('/401')) return Response.json({ error: 'Authentication required' }, { status: 401 });
+    if (url.endsWith('/404')) return new Response('missing', { status: 404 });
+    if (url.endsWith('/429')) return new Response('slow down', { status: 429 });
+    if (url.endsWith('/500')) return new Response('boom', { status: 500 });
+    if (url.endsWith('/html')) return new Response('<html>login</html>', { status: 200, headers: { 'content-type': 'text/html' } });
+    if (url.endsWith('/csv')) return new Response('a,b,c\n1,2,3', { status: 200, headers: { 'content-type': 'text/csv' } });
+    if (url.endsWith('/empty')) return new Response(new Uint8Array(0), { status: 200, headers: { 'content-type': 'image/png' } });
+    if (url.endsWith('/big-header')) return new Response(PNG_BYTES, { status: 200, headers: { 'content-type': 'image/png', 'content-length': String(25 * 1024 * 1024) } });
+    if (url.endsWith('/big-stream')) {
+      let sent = 0;
+      const chunk = new Uint8Array(5 * 1024 * 1024);
+      const stream = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent >= 5) controller.close();
+          else {
+            sent++;
+            controller.enqueue(chunk);
+          }
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'content-type': 'image/png' } });
+    }
+    if (url.endsWith('/broken-stream')) {
+      const stream = new ReadableStream<Uint8Array>({
+        pull() {
+          throw new Error('reset');
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'content-type': 'image/png' } });
+    }
+    return new Response(PNG_BYTES, { status: 200, headers: { 'content-type': 'image/png' } });
+  });
+
+  assert.deepEqual(await api.image('https://example.com/pic.png'), { status: 400, error: 'Only https://uploads.linear.app links can be loaded through Linear' });
+  assert.deepEqual(await api.image(`${UPLOAD_URL}/redirect-cdn`), { type: 'image/png', body: PNG_BYTES });
+  assert.deepEqual(seen.slice(-2), [
+    { url: `${UPLOAD_URL}/redirect-cdn`, auth: TEST_KEY },
+    { url: 'https://storage.googleapis.com/linear-bucket/pic.png?sig=1', auth: null },
+  ]);
+  const svg = await api.image('https://uploads.linear.app/org/redirect-same');
+  assert.equal('type' in svg && svg.type, 'image/svg+xml');
+  assert.equal(seen.at(-1)?.auth, TEST_KEY);
+
+  for (const [suffix, status] of [
+    ['/redirect-http', 502],
+    ['/redirect-loop', 502],
+    ['/401', 401],
+    ['/404', 404],
+    ['/429', 429],
+    ['/500', 502],
+    ['/html', 415],
+    ['/csv', 415],
+    ['/empty', 502],
+    ['/big-header', 413],
+    ['/big-stream', 413],
+    ['/broken-stream', 502],
+  ] as const) {
+    const r = await api.image(`https://uploads.linear.app/org${suffix}`);
+    assert.equal('status' in r && r.status, status, suffix);
+  }
+
+  const oauthKey = `lin_oauth_${'oauthTokenOnly'.repeat(2)}`;
+  const oauthApi = new LinearApi(oauthKey, async (_url, init) => {
+    assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${oauthKey}`);
+    throw new Error(`leaked Bearer ${oauthKey}`);
+  });
+  const netErr = await oauthApi.image(UPLOAD_URL);
+  assert.equal('status' in netErr && netErr.status, 502);
+  assert.ok('error' in netErr && !netErr.error.includes(oauthKey));
+
+  const timeoutApi = new LinearApi(TEST_KEY, async () => {
+    const err = new Error('timed out');
+    err.name = 'TimeoutError';
+    throw err;
+  });
+  assert.deepEqual(await timeoutApi.image(UPLOAD_URL), { status: 504, error: 'Linear took too long to send that image' });
+});
+
+test('LinearOffice and FloorLinear deduplicate, cache, gate by floor setup, and clear images on disconnect', async (t) => {
+  const dir = temporary(t);
+  let imageHits = 0;
+  const gate = deferred();
+  let hold = false;
+  const base = apiRig();
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.startsWith('https://uploads.linear.app/')) {
+      imageHits++;
+      if (hold) await gate.promise;
+      return new Response(PNG_BYTES, { status: 200, headers: { 'content-type': 'image/png' } });
+    }
+    return base.fetchImpl(input, init);
+  };
+  const office = new LinearOffice(dir, fetchImpl);
+  const disconnected = await office.image(UPLOAD_URL);
+  assert.equal('status' in disconnected && disconnected.status, 400);
+
+  assert.equal(await office.connect(TEST_KEY, 'Owner'), undefined);
+  const unconfigured = new FloorLinear(dir, office, undefined, events(), ['other-repo']);
+  assert.deepEqual(await unconfigured.image(UPLOAD_URL), { status: 400, error: 'This floor has no Linear team set up' });
+
+  const floor = new FloorLinear(dir, office, undefined, events(), ['droid-office']);
+  hold = true;
+  const [first, second] = [floor.image(UPLOAD_URL), floor.image(`${UPLOAD_URL}#section`)];
+  gate.resolve();
+  assert.deepEqual(await first, { type: 'image/png', body: PNG_BYTES });
+  assert.deepEqual(await second, { type: 'image/png', body: PNG_BYTES });
+  assert.equal(imageHits, 1, 'concurrent and fragment-equivalent image reads share one upstream fetch');
+
+  hold = false;
+  assert.deepEqual(await floor.image(UPLOAD_URL), { type: 'image/png', body: PNG_BYTES });
+  assert.equal(imageHits, 1, 'cached image is served without refetching');
+
+  office.disconnect();
+  assert.deepEqual(await floor.image(UPLOAD_URL), { status: 400, error: 'This floor has no Linear team set up' });
+  assert.equal(await office.connect(TEST_KEY, 'Owner'), undefined);
+  await floor.connectionChanged();
+  assert.deepEqual(await floor.image(UPLOAD_URL), { type: 'image/png', body: PNG_BYTES });
+  assert.equal(imageHits, 2, 'disconnecting clears cached images');
 });

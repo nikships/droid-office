@@ -11,6 +11,7 @@ import {
   linearIssueRef,
   linearKey,
   linearPromptVars,
+  linearUploadUrl,
   stateForStage,
   type LinearAutopilot,
   type LinearBoardState,
@@ -26,11 +27,17 @@ import {
   type LinearTicket,
   type LinearTicketDetail,
 } from '../shared/linear.js';
+import { sniffImage, type ImageResult } from './decor.js';
 import { redact } from './jira.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 
 const ENDPOINT = 'https://api.linear.app/graphql';
+const UPLOAD_ORIGIN = 'https://uploads.linear.app';
 const TIMEOUT_MS = 20_000;
+const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
+const IMAGE_CACHE_BYTES = 64 * 1024 * 1024;
+const IMAGE_CACHE_MS = 30 * 60_000;
+const MAX_IMAGE_REDIRECTS = 3;
 /** After a rate limit, the board waits at least this long, doubling for each one in a row, up to MAX_BACKOFF_MS. */
 const BACKOFF_MS = 60_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
@@ -161,8 +168,12 @@ export class LinearApi {
     private fetchImpl: Fetch = fetch,
   ) {}
 
+  private get auth(): string {
+    return this.key.startsWith('lin_oauth_') ? `Bearer ${this.key}` : this.key;
+  }
+
   private redact(text: string): string {
-    return redact(text, [this.key]);
+    return redact(text, [this.auth, this.key]);
   }
 
   async graphql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
@@ -170,7 +181,7 @@ export class LinearApi {
     try {
       res = await this.fetchImpl(ENDPOINT, {
         method: 'POST',
-        headers: { authorization: this.key, 'content-type': 'application/json', accept: 'application/json' },
+        headers: { authorization: this.auth, 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify({ query, ...(variables ? { variables } : {}) }),
         redirect: 'error',
         signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -333,6 +344,100 @@ export class LinearApi {
     });
     if (!r.attachmentLinkURL.success) throw new LinearError("Linear didn't attach the link", 400);
   }
+
+  /** Fetches an image from `https://uploads.linear.app` using the office's Linear key. */
+  async image(rawUrl: string): Promise<ImageResult> {
+    const start = linearUploadUrl(rawUrl);
+    if (!start) return { status: 400, error: 'Only https://uploads.linear.app links can be loaded through Linear' };
+    let current = start;
+    let res: Response | undefined;
+    for (let hop = 0; hop <= MAX_IMAGE_REDIRECTS; hop++) {
+      const sameOrigin = new URL(current).origin === UPLOAD_ORIGIN;
+      try {
+        res = await this.fetchImpl(current, {
+          headers: {
+            ...(sameOrigin ? { authorization: this.auth } : {}),
+            accept: 'image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5',
+          },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+      } catch (err) {
+        const e = err as Error & { cause?: { code?: string } };
+        if (e.name === 'TimeoutError') return { status: 504, error: 'Linear took too long to send that image' };
+        const why = e.cause?.code ?? e.message;
+        return { status: 502, error: this.redact(`Couldn't reach Linear (${why}).`) };
+      }
+      if (res.status >= 300 && res.status < 400) {
+        void res.body?.cancel().catch(() => {});
+        const loc = res.headers.get('location');
+        if (!loc || hop === MAX_IMAGE_REDIRECTS) return { status: 502, error: 'Linear redirected that image too many times' };
+        let next: URL;
+        try {
+          next = new URL(loc, current);
+        } catch {
+          return { status: 502, error: 'Linear sent a broken redirect for that image' };
+        }
+        if (next.protocol !== 'https:' || next.username || next.password) return { status: 502, error: 'Linear redirected that image to an unsafe address' };
+        current = next.href;
+        continue;
+      }
+      break;
+    }
+    const r = res!;
+    if (r.status === 401 || r.status === 403) {
+      void r.body?.cancel().catch(() => {});
+      return { status: r.status, error: "Linear didn't allow the office's key to read that image" };
+    }
+    if (r.status === 404) {
+      void r.body?.cancel().catch(() => {});
+      return { status: 404, error: 'That image is no longer in Linear' };
+    }
+    if (r.status === 429) {
+      void r.body?.cancel().catch(() => {});
+      return { status: 429, error: 'Linear is rate limiting the office. Try again in a moment.' };
+    }
+    if (!r.ok) {
+      void r.body?.cancel().catch(() => {});
+      return { status: 502, error: `Linear answered ${r.status}` };
+    }
+    let type = (r.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+    if (type === 'text/html' || type === 'application/xhtml+xml') {
+      void r.body?.cancel().catch(() => {});
+      return { status: 415, error: "That Linear link isn't an image" };
+    }
+    if (Number(r.headers.get('content-length')) > IMAGE_MAX_BYTES) {
+      void r.body?.cancel().catch(() => {});
+      return { status: 413, error: `That image is over ${IMAGE_MAX_BYTES / 1024 / 1024} MB` };
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    try {
+      const reader = r.body?.getReader();
+      if (reader) {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.length;
+          if (size > IMAGE_MAX_BYTES) {
+            await reader.cancel().catch(() => {});
+            return { status: 413, error: `That image is over ${IMAGE_MAX_BYTES / 1024 / 1024} MB` };
+          }
+          chunks.push(Buffer.from(value));
+        }
+      }
+    } catch {
+      return { status: 502, error: 'Linear stopped sending the image halfway' };
+    }
+    const body = Buffer.concat(chunks);
+    if (!body.length) return { status: 502, error: 'Linear sent an empty image' };
+    if (!type.startsWith('image/')) {
+      const sniffed = sniffImage(body);
+      if (!sniffed) return { status: 415, error: `That Linear link isn't an image${type ? ` (it's ${type})` : ''}` };
+      type = sniffed;
+    }
+    return { type, body };
+  }
 }
 
 // ---- Files -------------------------------------------------------------------------------------------
@@ -374,6 +479,9 @@ export class LinearOffice {
   private api?: LinearApi;
   private teamsAt = 0;
   private teamCache = new Map<string, { at: number; ctx: Promise<TeamContext> }>();
+  private imageCache = new Map<string, { type: string; body: Buffer; at: number }>();
+  private imageBytes = 0;
+  private imageInflight = new Map<string, Promise<ImageResult>>();
   readonly file: string;
 
   constructor(
@@ -405,6 +513,12 @@ export class LinearOffice {
     return this.saved?.name;
   }
 
+  private clearImages() {
+    this.imageCache.clear();
+    this.imageBytes = 0;
+    this.imageInflight.clear();
+  }
+
   /** Checks the key with Linear, then saves it. Resolves to why not, if not. */
   async connect(rawKey: string, by: string): Promise<string | undefined> {
     const key = linearKey(rawKey);
@@ -421,6 +535,7 @@ export class LinearOffice {
     this.api = api;
     this.teamsAt = Date.now();
     this.teamCache.clear();
+    this.clearImages();
     this.persist();
     return undefined;
   }
@@ -429,11 +544,50 @@ export class LinearOffice {
     this.saved = undefined;
     this.api = undefined;
     this.teamCache.clear();
+    this.clearImages();
     try {
       rmSync(this.file, { force: true });
     } catch {
       // already gone
     }
+  }
+
+  /** Reads an image on `uploads.linear.app` through the office's connection, cached briefly in memory. */
+  image(rawUrl: string): Promise<ImageResult> {
+    const url = linearUploadUrl(rawUrl);
+    if (!url) return Promise.resolve({ status: 400, error: 'Only https://uploads.linear.app links can be loaded through Linear' });
+    const api = this.api;
+    if (!api) return Promise.resolve({ status: 400, error: 'Linear is not connected. The owner connects it in Settings → Connections → Linear.' });
+    const hit = this.imageCache.get(url);
+    if (hit && Date.now() - hit.at < IMAGE_CACHE_MS) {
+      this.imageCache.delete(url);
+      this.imageCache.set(url, hit);
+      return Promise.resolve({ type: hit.type, body: hit.body });
+    }
+    const existing = this.imageInflight.get(url);
+    if (existing) return existing;
+    const req = api
+      .image(url)
+      .then((r) => {
+        if (!('error' in r) && this.api === api) {
+          const prev = this.imageCache.get(url);
+          if (prev) this.imageBytes -= prev.body.length;
+          this.imageCache.delete(url);
+          this.imageCache.set(url, { ...r, at: Date.now() });
+          this.imageBytes += r.body.length;
+          for (const [k, v] of this.imageCache) {
+            if (this.imageBytes <= IMAGE_CACHE_BYTES) break;
+            this.imageCache.delete(k);
+            this.imageBytes -= v.body.length;
+          }
+        }
+        return r;
+      })
+      .finally(() => {
+        if (this.imageInflight.get(url) === req) this.imageInflight.delete(url);
+      });
+    this.imageInflight.set(url, req);
+    return req;
   }
 
   /** Reads the workspace's teams again when they're old (or `force`), for the floor's team picker. */
@@ -753,6 +907,12 @@ export class FloorLinear {
     const link = this.links.find((l) => l.issueId === d.id && l.stage !== 'completed');
     const worker = link && this.events.workers().find((w) => w.id === link.workerId);
     return worker ? { ...d, worker: { id: worker.id, name: worker.name } } : d;
+  }
+
+  /** An image on `uploads.linear.app` for this floor's Linear ticket window. */
+  image(rawUrl: string): Promise<ImageResult> {
+    if (!this.on) return Promise.resolve({ status: 400, error: 'This floor has no Linear team set up' });
+    return this.office.image(rawUrl);
   }
 
   /**

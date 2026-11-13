@@ -354,7 +354,7 @@ const CACHE_MS = 30 * 60_000;
 const TIMEOUT_MS = 12_000;
 
 /** Recognizes common image formats from their first bytes, for hosts that don't say. */
-function sniff(b: Buffer): string | undefined {
+export function sniffImage(b: Buffer): string | undefined {
   const at = (i: number, s: string) => b.subarray(i, i + s.length).toString('latin1') === s;
   if (at(0, '\x89PNG')) return 'image/png';
   if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
@@ -441,7 +441,7 @@ export class ImageProxy {
     }
     const body = Buffer.concat(chunks);
     if (!type.startsWith('image/')) {
-      const sniffed = sniff(body);
+      const sniffed = sniffImage(body);
       if (!sniffed) return { status: 415, error: `That link isn't an image${type ? ` (it's ${type})` : ''}` };
       type = sniffed;
     }

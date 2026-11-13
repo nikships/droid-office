@@ -1641,6 +1641,22 @@ export async function startServer(cfg: Config) {
           return send(res, status === 400 || status === 403 || status === 404 || status === 409 ? status : 502, { error: (err as Error).message });
         }
       }
+      if (p === '/api/linear/image' && req.method === 'GET') {
+        // An image on uploads.linear.app in a ticket's description or comments, fetched with the office's key.
+        if (!floor) return send(res, 404, { error: 'No such floor' });
+        const r = await floor.linear.image(url.searchParams.get('url') ?? '');
+        if ('error' in r) return send(res, r.status, { error: r.error });
+        res.writeHead(200, {
+          'content-type': r.type,
+          'content-length': String(r.body.length),
+          'cache-control': 'private, max-age=3600',
+          'x-content-type-options': 'nosniff',
+          'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+          'cross-origin-resource-policy': 'same-origin',
+        });
+        res.end(r.body);
+        return;
+      }
       if (p === '/api/jira/ticket' && req.method === 'GET') {
         // What a Jira ticket's window shows beyond its card (see jira.ts). Only the floor's epic's tickets.
         if (!floor) return send(res, 404, { error: 'No such floor' });

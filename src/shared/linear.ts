@@ -160,6 +160,32 @@ export function linkUrl(url: string): string | undefined {
   return /^https?:\/\//i.test(url.trim()) ? url.trim() : undefined;
 }
 
+/**
+ * A file on Linear's private upload host (`https://uploads.linear.app/…`), normalized with any
+ * fragment stripped, or undefined for anything else.
+ */
+export function linearUploadUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const raw = value.trim();
+  if (!raw || raw.length > 2048) return undefined;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  if (u.protocol !== 'https:' || u.hostname !== 'uploads.linear.app' || u.port || u.username || u.password || u.pathname.length <= 1) return undefined;
+  u.hash = '';
+  return u.href;
+}
+
+/** The office route that fetches an image on `uploads.linear.app` for `floor`, or undefined. */
+export function linearImagePath(src: unknown, floor?: string | null): string | undefined {
+  const url = linearUploadUrl(src);
+  if (!url) return undefined;
+  return `/api/linear/image?url=${encodeURIComponent(url)}${floor ? `&floor=${encodeURIComponent(floor)}` : ''}`;
+}
+
 // ---- Keys --------------------------------------------------------------------------------------------
 
 const IDENTIFIER = /^[A-Z][A-Z0-9_]{0,9}-[1-9]\d{0,8}$/;
