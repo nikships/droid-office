@@ -18,8 +18,9 @@ import * as pty from '@lydell/node-pty';
  * Bump whenever the host's messages change: an office that finds an older host stops it and starts its own.
  * 4: the Mac app runs the host on its Helper binary; hosts started on the main binary have a Dock icon.
  * 5: the host answers Kitty keyboard/graphics, geometry and color queries and replays Kitty state in snapshots.
+ * 6: the host reports 2× device-pixel cells (18×36) so CLIs send inline images at Retina resolution.
  */
-export const PTY_PROTOCOL = 5;
+export const PTY_PROTOCOL = 6;
 export const SCROLLBACK = 3000;
 
 export interface SpawnOpts {

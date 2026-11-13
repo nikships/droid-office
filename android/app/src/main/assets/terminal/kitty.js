@@ -5,6 +5,9 @@
 export const KITTY_KB_ALL_FLAGS = 31;
 export const ALT_BUFFER_MODES = [47, 1047, 1049];
 export const KITTY_PLACEHOLDER_CHAR = '\udbfb\udeee';
+/** Implied cell size in device pixels for placements without `c`/`r`, matching the office's `CSI 16 t` answer. */
+export const KITTY_CELL_PX_W = 18;
+export const KITTY_CELL_PX_H = 36;
 
 export const KITTY_DIACRITICS = [
   773, 781, 782, 784, 786, 829, 830, 831, 838, 842, 843, 844, 848, 849, 850, 855, 859, 867, 868, 869, 870, 871, 872, 873, 874, 875, 876, 877, 878, 879, 1155, 1156, 1157, 1158, 1159, 1426, 1427, 1428, 1429, 1431, 1432, 1433, 1436, 1437,

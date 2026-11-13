@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
-import { KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
+import { KITTY_CELL_PX_H, KITTY_CELL_PX_W, KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
 import { screenHistoryRows } from '../src/shared/protocol.js';
 import { plainTail, searchTerminal } from '../src/server/history.js';
 import { screenSnapshot } from '../src/server/screen.js';
@@ -106,6 +106,30 @@ test('snapshotScreen coalesces Kitty U=1 placeholders, strips U+10EEEE from text
   const search = searchTerminal(term, 'caption', 5);
   assert.equal(search.hits.length, 1);
   assert.equal(search.hits[0].text, 'caption');
+  term.dispose();
+});
+
+test("laptop placements use an image's explicit c/r, and size images without them from the reported cells", async () => {
+  const term = new headless.Terminal({ cols: 40, rows: 4, scrollback: 20, allowProposedApi: true });
+  const ser = new serialize.SerializeAddon();
+  term.loadAddon(ser as any);
+  term.loadAddon(new unicode11.Unicode11Addon() as any);
+  term.unicode.activeVersion = '11';
+  screenSnapshot(term, ser);
+  const write = (data: string) => new Promise<void>((resolve) => term.write(data, resolve));
+  const d0 = String.fromCodePoint(KITTY_DIACRITICS[0]);
+  const cell = (id: number) => `\x1b[38;2;0;0;${id}m${KITTY_PLACEHOLDER_CHAR}${d0}${d0}\x1b[39m`;
+  // What Droid sends for a 2400×1640 screenshot: 35×12 cells, 630×431 px. Only its top-left cell is on screen.
+  await write(`\x1b_Ga=T,U=1,q=2,f=32,s=630,v=431,i=11,c=35,r=12;AAAA\x1b\\${cell(11)}\r\n`);
+  await write(`\x1b_Ga=T,U=1,q=2,f=32,s=${KITTY_CELL_PX_W * 4},v=${KITTY_CELL_PX_H * 3},i=12;AAAA\x1b\\${cell(12)}`);
+  const frame = snapshotScreen(term, []);
+  assert.deepEqual(
+    frame?.placements?.map((p) => [p.id, p.totalCols, p.totalRows]),
+    [
+      [11, 35, 12],
+      [12, 4, 3],
+    ],
+  );
   term.dispose();
 });
 

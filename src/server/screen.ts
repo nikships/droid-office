@@ -1,6 +1,6 @@
 import type headless from '@xterm/headless';
 import type serialize from '@xterm/addon-serialize';
-import { cellUnderlineId, decodePlaceholderCell, isKittyPlaceholderCell, KITTY_PLACEHOLDER_CHAR, KittyApcSplitter, KittyGraphicsStore, KittyKeyboardState, type KittyPlaceRequest } from '../shared/kitty.js';
+import { cellUnderlineId, decodePlaceholderCell, isKittyPlaceholderCell, KITTY_CELL_PX_H, KITTY_CELL_PX_W, KITTY_PLACEHOLDER_CHAR, KittyApcSplitter, KittyGraphicsStore, KittyKeyboardState, type KittyPlaceRequest } from '../shared/kitty.js';
 import { SCROLLBACK } from './ptys.js';
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
@@ -11,9 +11,9 @@ const MOUSE_ENCODINGS = [1006, 1016];
 /** DECSET modes that switch between normal and alternate screen buffers. */
 const ALT_BUFFER_MODES = [47, 1047, 1049];
 
-/** Logical cell pixel size reported for CSI 14t / 16t queries (crisp 9x18 @ 14px monospace). */
-export const SERVER_CELL_PX_W = 9;
-export const SERVER_CELL_PX_H = 18;
+/** Cell pixel size reported for CSI 14t / 16t queries (see `KITTY_CELL_PX_W`). */
+export const SERVER_CELL_PX_W = KITTY_CELL_PX_W;
+export const SERVER_CELL_PX_H = KITTY_CELL_PX_H;
 
 export interface DirectKittyPlacement {
   imageId: number;
