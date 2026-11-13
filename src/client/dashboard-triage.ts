@@ -1,3 +1,4 @@
+import { rankFloors } from '../shared/floor-relevance';
 import { floorPalette } from '../shared/floors';
 import { ORCHESTRATOR_ID } from '../shared/mission-control';
 import type { FloorInfo, FloorRoster, GhPull, WorkerInfo } from '../shared/protocol';
@@ -22,11 +23,6 @@ export interface TriageFloor {
   totalWorkers: number;
   idleState: FloorIdleState;
   openPrs: number;
-}
-
-export interface TriagePartition {
-  surfaced: TriageFloor[];
-  quiet: TriageFloor[];
 }
 
 export function floorChord(index: number): string | undefined {
@@ -80,7 +76,7 @@ export function buildTriageFloors(input: { floors: readonly FloorInfo[]; buildin
       }
     } else {
       needsInput = floor.waiting;
-      busy = Math.max(0, floor.busy - floor.waiting);
+      busy = floor.busy;
     }
 
     const idleState = floorIdleState(totalWorkers, busy, needsInput, deskWorkers);
@@ -113,27 +109,32 @@ export function buildTriageFloors(input: { floors: readonly FloorInfo[]; buildin
 }
 
 /**
- * Surfaces the active floor and every floor with workers in any state (working, waiting, done or
- * asleep), in floor order so a tab keeps its place as statuses change; the strip scrolls when they
- * overflow. Floors without workers fold into the switcher.
+ * Floor ids from most to least relevant for the floor strip (src/shared/floor-relevance.ts): the
+ * strip gives tabs in this order until the next would not fit, and the rest wait in "+N more".
  */
-export function partitionTriageFloors(items: readonly TriageFloor[], currentFloor: string | null): TriagePartition {
-  const surfaced: TriageFloor[] = [];
-  const quiet: TriageFloor[] = [];
-  for (const item of items) {
-    const staffed = item.totalWorkers > 0 || item.needsInput > 0 || item.unackedDone > 0 || item.busy > 0;
-    (item.floor.id === currentFloor || staffed ? surfaced : quiet).push(item);
-  }
-  return { surfaced, quiet };
+export function rankTriageFloors(items: readonly TriageFloor[], now: number): string[] {
+  return rankFloors(
+    items.map((item) => ({
+      id: item.floor.id,
+      needsInput: item.needsInput,
+      unackedDone: item.unackedDone,
+      busy: item.busy,
+      totalWorkers: item.totalWorkers,
+      lastVisitedAt: item.floor.lastVisitedAt,
+      lastWorkerAt: item.floor.lastWorkerAt,
+      hires: item.floor.hires,
+    })),
+    now,
+  );
 }
 
 /**
- * Empty search lists floors without workers (or all floors when none are tucked away so `⌘ K` always has rows);
+ * Empty search lists the floors without a tab (or all floors when every one has a tab, so `⌘ K` always has rows);
  * a non-empty search matches across every floor in the building by number, name, repo, or branch.
  */
-export function filterSwitcherFloors(items: readonly TriageFloor[], quiet: readonly TriageFloor[], query: string): TriageFloor[] {
+export function filterSwitcherFloors(items: readonly TriageFloor[], hidden: readonly TriageFloor[], query: string): TriageFloor[] {
   const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  if (!words.length) return quiet.length ? [...quiet] : [...items];
+  if (!words.length) return hidden.length ? [...hidden] : [...items];
   return items.filter((item) => {
     const haystack = [item.number, String(item.index + 1), item.floor.name, item.floor.repo ?? '', item.branch ?? '', item.floor.plain ? 'plain folder' : '', item.floor.home ? 'home ~' : ''].join(' ').toLowerCase();
     return words.every((w) => haystack.includes(w));

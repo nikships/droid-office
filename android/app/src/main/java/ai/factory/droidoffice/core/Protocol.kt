@@ -193,6 +193,12 @@ data class FloorInfo(
     val workers: Int = 0,
     val busy: Int = 0,
     val waiting: Int = 0,
+    /** For ranking Home's floor chips (core/FloorRelevance.kt): when the owner last went there. */
+    val lastVisitedAt: Long? = null,
+    /** When the floor last had a worker. */
+    val lastWorkerAt: Long? = null,
+    /** Workers ever hired there. */
+    val hires: Int? = null,
 )
 
 @Serializable

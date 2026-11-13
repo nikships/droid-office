@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildingRoster } from '../src/client/dashboard-building.js';
-import { buildTriageFloors, filterSwitcherFloors, floorChord, nextUrgentTarget, partitionTriageFloors, unackedDoneBuildingCount } from '../src/client/dashboard-triage.js';
+import { buildTriageFloors, filterSwitcherFloors, floorChord, nextUrgentTarget, rankTriageFloors, unackedDoneBuildingCount } from '../src/client/dashboard-triage.js';
 import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 import type { FloorInfo, FloorRoster, GhPull, WorkerInfo } from '../src/shared/protocol.js';
 
@@ -64,7 +64,7 @@ test('floor chords map floors 1–9 and 10 (0) and omit 11+', () => {
   assert.equal(floorChord(-1), undefined);
 });
 
-test('10-floor triage gives every staffed floor a tab and folds only empty floors', () => {
+test('10-floor triage ranks floors by relevance for the floor strip', () => {
   const floors = [
     makeFloor(0, { id: 'droid-office', name: 'droid-office', workers: 3, busy: 3, waiting: 1 }),
     makeFloor(1, { id: 'droid-proxy', name: 'droid-proxy', workers: 2, busy: 2, waiting: 1 }),
@@ -110,47 +110,44 @@ test('10-floor triage gives every staffed floor a tab and folds only empty floor
   assert.equal(items[9]?.idleState, 'empty');
   assert.equal(items[9]?.metaLabel, 'plain folder');
 
-  const part = partitionTriageFloors(items, 'droid-office');
-  assert.deepEqual(
-    part.surfaced.map((i) => i.floor.id),
-    ['droid-office', 'droid-proxy', 'factory-cli', 'orca', 'screenplay', 'hyperframes', 'browse-mcp', 'muse-agent', 'gemdex'],
-    'every floor with workers gets a tab in floor order, whether working, waiting, done or asleep',
-  );
-  assert.deepEqual(
-    part.quiet.map((i) => i.floor.id),
-    ['home'],
-    'only floors without workers fold into the switcher',
-  );
+  const ranked = rankTriageFloors(items, 1_000_000);
+  // Floors waiting on the owner first; equal scores (droid-proxy and hyperframes, factory-cli's two busy
+  // and muse-agent's one done plus one busy) keep building order; idle and asleep floors, then empty ones, last.
+  assert.deepEqual(ranked, ['droid-office', 'droid-proxy', 'hyperframes', 'factory-cli', 'muse-agent', 'screenplay', 'orca', 'browse-mcp', 'gemdex', 'home']);
 
-  // The active floor keeps its tab even when it has no workers; with no active floor only staffed floors show.
-  assert.deepEqual(
-    partitionTriageFloors(items, 'home').surfaced.map((i) => i.floor.id),
-    part.surfaced.map((i) => i.floor.id).concat('home'),
-  );
-  assert.equal(partitionTriageFloors(items, null).surfaced.length, 9);
+  // History orders floors without workers: a fresh visit, then a recent worker, then lifetime hires.
+  const now = 100 * 3_600_000;
+  const quietItems = buildTriageFloors({
+    floors: [makeFloor(0, { id: 'never' }), makeFloor(1, { id: 'hired', hires: 30 }), makeFloor(2, { id: 'worked', lastWorkerAt: now - 3_600_000 }), makeFloor(3, { id: 'visited', lastVisitedAt: now - 60_000 })],
+    building: new Map(),
+    currentFloor: null,
+    workers: [],
+  });
+  assert.deepEqual(rankTriageFloors(quietItems, now), ['visited', 'worked', 'hired', 'never']);
 
   // A floor whose roster has not arrived yet still counts its workers from the floor summary.
   const unloaded = buildTriageFloors({ floors: [makeFloor(0, { id: 'a', workers: 0 }), makeFloor(1, { id: 'b', workers: 2 })], building: new Map(), currentFloor: 'a', workers: [] });
-  assert.deepEqual(
-    partitionTriageFloors(unloaded, 'a').surfaced.map((i) => i.floor.id),
-    ['a', 'b'],
-  );
+  assert.deepEqual(rankTriageFloors(unloaded, 0), ['b', 'a']);
 
-  // Switcher search: empty query lists floors without workers; non-empty query searches all 10 floors.
-  assert.equal(filterSwitcherFloors(items, part.quiet, '').length, 1);
+  // Switcher search: empty query lists the floors without a tab; non-empty query searches all 10 floors.
+  const hidden = items.filter((i) => ['gemdex', 'home'].includes(i.floor.id));
   assert.deepEqual(
-    filterSwitcherFloors(items, part.quiet, 'release/2.4').map((i) => i.floor.id),
+    filterSwitcherFloors(items, hidden, '').map((i) => i.floor.id),
+    ['gemdex', 'home'],
+  );
+  assert.deepEqual(
+    filterSwitcherFloors(items, hidden, 'release/2.4').map((i) => i.floor.id),
     ['factory-cli'],
   );
   assert.deepEqual(
-    filterSwitcherFloors(items, part.quiet, '06 feat').map((i) => i.floor.id),
+    filterSwitcherFloors(items, hidden, '06 feat').map((i) => i.floor.id),
     ['hyperframes'],
-    'searches surfaced floors too when query is non-empty',
+    'searches floors with tabs too when query is non-empty',
   );
   assert.deepEqual(
     filterSwitcherFloors(items, [], '').map((i) => i.floor.id),
     items.map((i) => i.floor.id),
-    'falls back to all floors when zero floors are quiet so ⌘ K always opens a populated list',
+    'falls back to all floors when every floor has a tab so ⌘ K always opens a populated list',
   );
 });
 

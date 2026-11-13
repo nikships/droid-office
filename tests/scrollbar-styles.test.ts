@@ -46,9 +46,16 @@ test('standard scrollbar styling cannot override WebKit styling outside the fall
 });
 
 test('compact navigation strips hide scrollbars without disabling scrolling', () => {
-  for (const selector of ['.mp-chips', '.dash-floor-bays', '.dash-team-nav-members']) {
+  for (const selector of ['.mp-chips', '.dash-team-nav-members']) {
     assert.match(rule(selector), /overflow-x:\s*auto;/);
     assert.match(rule(selector), /scrollbar-width:\s*none;/);
     assert.match(rule(`${selector}::-webkit-scrollbar`), /display:\s*none;/);
   }
+});
+
+test("the companion's floor strip never scrolls: tabs that don't fit fold into +N more", () => {
+  assert.match(rule('.dash-floor-bays'), /overflow:\s*hidden;/);
+  assert.doesNotMatch(rule('.dash-floor-bays'), /overflow-x:\s*auto/);
+  assert.match(rule('.dash-floor-chip'), /flex:\s*none;/);
+  assert.doesNotMatch(rule('.dash-floor-chip'), /max-width/);
 });

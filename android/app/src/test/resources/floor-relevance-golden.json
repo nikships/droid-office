@@ -1,0 +1,433 @@
+{
+  "now": 1763000000000,
+  "floors": [
+    {
+      "id": "waiting",
+      "needsInput": 2,
+      "unackedDone": 0,
+      "busy": 1,
+      "totalWorkers": 3,
+      "lastVisitedAt": 1760408000000,
+      "hires": 12
+    },
+    {
+      "id": "done",
+      "needsInput": 0,
+      "unackedDone": 1,
+      "busy": 0,
+      "totalWorkers": 1,
+      "hires": 2
+    },
+    {
+      "id": "busy",
+      "needsInput": 0,
+      "unackedDone": 0,
+      "busy": 2,
+      "totalWorkers": 2,
+      "lastVisitedAt": 1762992800000,
+      "hires": 40
+    },
+    {
+      "id": "asleep",
+      "needsInput": 0,
+      "unackedDone": 0,
+      "busy": 0,
+      "totalWorkers": 1,
+      "lastVisitedAt": 1762136000000,
+      "hires": 1
+    },
+    {
+      "id": "visited-now",
+      "needsInput": 0,
+      "unackedDone": 0,
+      "busy": 0,
+      "totalWorkers": 0,
+      "lastVisitedAt": 1762999940000,
+      "lastWorkerAt": 1762568000000,
+      "hires": 3
+    },
+    {
+      "id": "worker-yesterday",
+      "needsInput": 0,
+      "unackedDone": 0,
+      "busy": 0,
+      "totalWorkers": 0,
+      "lastWorkerAt": 1762913600000,
+      "hires": 1
+    },
+    {
+      "id": "visited-last-week",
+      "needsInput": 0,
+      "unackedDone": 0,
+      "busy": 0,
+      "totalWorkers": 0,
+      "lastVisitedAt": 1762395200000
+    },
+    {
+      "id": "busy-history",
+      "needsInput": 0,
+      "unackedDone": 0,
+      "busy": 0,
+      "totalWorkers": 0,
+      "lastWorkerAt": 1760408000000,
+      "hires": 60
+    },
+    {
+      "id": "never",
+      "needsInput": 0,
+      "unackedDone": 0,
+      "busy": 0,
+      "totalWorkers": 0
+    },
+    {
+      "id": "never-too",
+      "needsInput": 0,
+      "unackedDone": 0,
+      "busy": 0,
+      "totalWorkers": 0,
+      "hires": 0
+    },
+    {
+      "id": "huge",
+      "needsInput": 9,
+      "unackedDone": 9,
+      "busy": 9,
+      "totalWorkers": 40,
+      "lastVisitedAt": 1763018000000,
+      "lastWorkerAt": 1763000000000,
+      "hires": 1000
+    }
+  ],
+  "scores": [
+    {
+      "id": "waiting",
+      "score": 3009.774
+    },
+    {
+      "id": "done",
+      "score": 791.095
+    },
+    {
+      "id": "busy",
+      "score": 1228.272
+    },
+    {
+      "id": "asleep",
+      "score": 297.909
+    },
+    {
+      "id": "visited-now",
+      "score": 163.917
+    },
+    {
+      "id": "worker-yesterday",
+      "score": 67
+    },
+    {
+      "id": "visited-last-week",
+      "score": 15
+    },
+    {
+      "id": "busy-history",
+      "score": 48.788
+    },
+    {
+      "id": "never",
+      "score": 0
+    },
+    {
+      "id": "never-too",
+      "score": 0
+    },
+    {
+      "id": "huge",
+      "score": 10269.771
+    }
+  ],
+  "ranked": [
+    "huge",
+    "waiting",
+    "busy",
+    "done",
+    "asleep",
+    "visited-now",
+    "worker-yesterday",
+    "busy-history",
+    "visited-last-week",
+    "never",
+    "never-too"
+  ],
+  "fit": [
+    {
+      "name": "everything fits without a more button",
+      "widths": [
+        {
+          "id": "a",
+          "width": 140
+        },
+        {
+          "id": "b",
+          "width": 96
+        },
+        {
+          "id": "c",
+          "width": 210
+        },
+        {
+          "id": "d",
+          "width": 120
+        },
+        {
+          "id": "e",
+          "width": 180
+        }
+      ],
+      "ranked": [
+        "c",
+        "a",
+        "e",
+        "b",
+        "d"
+      ],
+      "current": "b",
+      "available": 746,
+      "more": 90,
+      "expected": {
+        "shown": [
+          "a",
+          "b",
+          "c",
+          "d",
+          "e"
+        ],
+        "hidden": []
+      }
+    },
+    {
+      "name": "stops at the first tab that would not fit",
+      "widths": [
+        {
+          "id": "a",
+          "width": 140
+        },
+        {
+          "id": "b",
+          "width": 96
+        },
+        {
+          "id": "c",
+          "width": 210
+        },
+        {
+          "id": "d",
+          "width": 120
+        },
+        {
+          "id": "e",
+          "width": 180
+        }
+      ],
+      "ranked": [
+        "c",
+        "a",
+        "e",
+        "b",
+        "d"
+      ],
+      "current": "b",
+      "available": 600,
+      "more": 90,
+      "expected": {
+        "shown": [
+          "a",
+          "b",
+          "c"
+        ],
+        "hidden": [
+          "e",
+          "d"
+        ]
+      }
+    },
+    {
+      "name": "the current floor always keeps its tab",
+      "widths": [
+        {
+          "id": "a",
+          "width": 140
+        },
+        {
+          "id": "b",
+          "width": 96
+        },
+        {
+          "id": "c",
+          "width": 210
+        },
+        {
+          "id": "d",
+          "width": 120
+        },
+        {
+          "id": "e",
+          "width": 180
+        }
+      ],
+      "ranked": [
+        "c",
+        "a",
+        "e",
+        "b",
+        "d"
+      ],
+      "current": "d",
+      "available": 300,
+      "more": 90,
+      "expected": {
+        "shown": [
+          "d"
+        ],
+        "hidden": [
+          "c",
+          "a",
+          "e",
+          "b"
+        ]
+      }
+    },
+    {
+      "name": "a narrow window keeps only the current floor",
+      "widths": [
+        {
+          "id": "a",
+          "width": 140
+        },
+        {
+          "id": "b",
+          "width": 96
+        },
+        {
+          "id": "c",
+          "width": 210
+        },
+        {
+          "id": "d",
+          "width": 120
+        },
+        {
+          "id": "e",
+          "width": 180
+        }
+      ],
+      "ranked": [
+        "c",
+        "a",
+        "e",
+        "b",
+        "d"
+      ],
+      "current": "e",
+      "available": 120,
+      "more": 90,
+      "expected": {
+        "shown": [
+          "e"
+        ],
+        "hidden": [
+          "c",
+          "a",
+          "b",
+          "d"
+        ]
+      }
+    },
+    {
+      "name": "no current floor (the roof) fills from the top",
+      "widths": [
+        {
+          "id": "a",
+          "width": 140
+        },
+        {
+          "id": "b",
+          "width": 96
+        },
+        {
+          "id": "c",
+          "width": 210
+        },
+        {
+          "id": "d",
+          "width": 120
+        },
+        {
+          "id": "e",
+          "width": 180
+        }
+      ],
+      "ranked": [
+        "e",
+        "d",
+        "c",
+        "b",
+        "a"
+      ],
+      "current": null,
+      "available": 420,
+      "more": 90,
+      "expected": {
+        "shown": [
+          "d",
+          "e"
+        ],
+        "hidden": [
+          "c",
+          "b",
+          "a"
+        ]
+      }
+    },
+    {
+      "name": "unranked floors come last",
+      "widths": [
+        {
+          "id": "a",
+          "width": 140
+        },
+        {
+          "id": "b",
+          "width": 96
+        },
+        {
+          "id": "c",
+          "width": 210
+        },
+        {
+          "id": "d",
+          "width": 120
+        },
+        {
+          "id": "e",
+          "width": 180
+        }
+      ],
+      "ranked": [
+        "b"
+      ],
+      "current": null,
+      "available": 500,
+      "more": 90,
+      "expected": {
+        "shown": [
+          "a",
+          "b"
+        ],
+        "hidden": [
+          "c",
+          "d",
+          "e"
+        ]
+      }
+    }
+  ]
+}

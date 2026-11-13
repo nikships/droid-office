@@ -35,6 +35,7 @@ import { mountSetup, readSetupFile } from './setup/index.js';
 import { mountSubscriptions } from './subscriptions/index.js';
 import { MAX_WORKER_LIMIT, Machine, parseWorkerLimit } from './machine.js';
 import { Building, type FloorDef } from './building.js';
+import { FloorActivity } from './floor-activity.js';
 import { Floor, type FloorContext } from './floor.js';
 import { Sky } from './sky.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
@@ -316,6 +317,7 @@ export async function startServer(cfg: Config) {
     if (err) console.error(`droid-office: --projects: ${err}`);
   }
   const floors = new Map<string, Floor>();
+  const floorActivity = new FloorActivity(cfg.dataDir);
   const remoteWorkers = new RemoteWorkers(cfg.dataDir, () => missionChanged());
   let remoteMcp: RemoteMcp | undefined;
   const deepLinkBase = (): string | undefined => {
@@ -358,7 +360,14 @@ export async function startServer(cfg: Config) {
     acting.getStore()?.(text);
     toFloor(floor, workerId === undefined ? { t: 'toast', text, level } : { t: 'toast', text, level, workerId });
   };
-  const floorInfos = (): FloorInfo[] => [...floors.values()].map((f) => ({ ...f.info(), ...(building.isLocal(f.id) ? { local: true } : {}), ...(building.isHome(f.id) ? { home: true } : {}) }));
+  const floorInfos = (): FloorInfo[] =>
+    [...floors.values()].map((f) => {
+      floorActivity.observe(
+        f.id,
+        f.everyone().map((w) => w.id),
+      );
+      return { ...f.info(), ...floorActivity.info(f.id), ...(building.isLocal(f.id) ? { local: true } : {}), ...(building.isHome(f.id) ? { home: true } : {}) };
+    });
   // The elevator's counts change with every worker update; tell everyone at most a few times a second.
   let floorsSent = '';
   let floorsTimer: NodeJS.Timeout | undefined;
@@ -836,6 +845,12 @@ export async function startServer(cfg: Config) {
       }
       // A building lead's held batch may span floors: a teammate settling here can complete it there.
       if (typeof w !== 'string' && w.lead) for (const f of floors.values()) if (f !== floor) f.team.recheckHolds(w.lead);
+      // Counted now rather than when the floor list next goes out, so a worker hired and gone within it still counts.
+      if (floors.get(floor.id) === floor)
+        floorActivity.observe(
+          floor.id,
+          floor.everyone().map((x) => x.id),
+        );
       machine.workersChanged();
       floorsChanged();
       missionChanged();
@@ -1849,6 +1864,7 @@ export async function startServer(cfg: Config) {
     };
     clients.set(id, client);
     ws.on('pong', () => (client.isAlive = true));
+    if (floor) floorActivity.visited(floor.id);
 
     sendTo(client, {
       t: 'welcome',
@@ -2053,6 +2069,7 @@ export async function startServer(cfg: Config) {
       } else sendTo(c, { t: 'toast', text: `🛗 ${who} took ${name} off the building`, level: 'info' });
     }
     floors.delete(floor.id);
+    floorActivity.forget(floor.id);
     officeVibes.dropFloor(floor.id);
     remoteOffice.syncWatches();
     floor.shutdown();
@@ -2298,7 +2315,11 @@ export async function startServer(cfg: Config) {
         }
         const floor = floors.get(str(msg.floor, 64));
         if (!floor) warn(c, 'No such floor');
-        else goToFloor(c, floor, arrivalSpot(msg.at));
+        else {
+          floorActivity.visited(floor.id);
+          goToFloor(c, floor, arrivalSpot(msg.at));
+          floorsChanged();
+        }
         break;
       }
       case 'floor.reorder': {
@@ -3567,6 +3588,7 @@ export async function startServer(cfg: Config) {
     setup.stop();
     subscriptions.stop();
     for (const f of floors.values()) f.shutdown(keep);
+    floorActivity.flush();
     orchestrator.shutdown(keep);
     clearTimeout(missionTimer);
     clearTimeout(wakeTelemetryTimer);

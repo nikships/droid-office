@@ -231,6 +231,9 @@ object Tags {
         const val REPAIR_FORGET = "home.repair.forget"
         const val PICK_WORKER = "home.pick_worker"
         const val FLOOR_ORDER_HINT = "home.floor_order_hint"
+        /** The "+N more" chip after the floor chips that fit, and the menu of the other floors it opens. */
+        const val FLOOR_MORE = "home.floor_more"
+        const val FLOOR_MORE_MENU = "home.floor_more.menu"
 
         // Inside each worker card; the card itself is [worker].
         const val CARD_NAME = "home.worker.name"
@@ -241,6 +244,7 @@ object Tags {
         const val CARD_TODOS = "home.worker.todos"
 
         fun floor(id: String) = "home.floor/$id"
+        fun floorMore(id: String) = "home.floor_more/$id"
         fun worker(id: String) = "home.worker/$id"
     }
 

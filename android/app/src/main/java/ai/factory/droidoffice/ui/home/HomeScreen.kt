@@ -1,6 +1,14 @@
 package ai.factory.droidoffice.ui.home
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.unit.Constraints
+import ai.factory.droidoffice.core.FloorInfo
+import ai.factory.droidoffice.core.FloorRelevance
+import kotlin.math.max
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -10,8 +18,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -34,7 +40,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -70,7 +75,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
@@ -342,6 +346,17 @@ internal fun ConnectionBanner(link: Link, legacy: Boolean, synced: Boolean, onRe
     }
 }
 
+/** Slot ids for FloorChips' "+N more" chip: one measured at its widest to reserve room, one shown. */
+private object MoreProbe
+private object MoreSlot
+/** The current floor's chip again, held to what's left beside "+N more" when the row is narrower than it. */
+private object NarrowSlot
+
+/**
+ * The floor chips, which never scroll: the current floor always has one, the others get one most
+ * relevant first (core/FloorRelevance.kt, as on the web) until the next would not fit, and the rest
+ * wait under "+N more". Chips keep the building's order, and long-pressing one drags it to a new place.
+ */
 @Composable
 internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
     val connection = LocalGraph.current.connection
@@ -349,47 +364,42 @@ internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
     val latestFloors by rememberUpdatedState(data.floors)
     val snackbar = LocalSnackbar.current
     val scope = rememberCoroutineScope()
-    val scroll = rememberScrollState()
     val bounds = remember { mutableMapOf<String, Rect>() }
-    val spans = remember { mutableMapOf<String, Pair<Float, Int>>() }
-    var spanVersion by remember { mutableStateOf(0) }
-    var viewport by remember { mutableStateOf(Rect.Zero) }
     var dragging by remember { mutableStateOf<String?>(null) }
     var pointerX by remember { mutableStateOf(0f) }
     var startX by remember { mutableStateOf(0f) }
-    var scrollStart by remember { mutableStateOf(0) }
-    val density = LocalDensity.current
-    val edge = with(density) { 48.dp.toPx() }
-    val scrollPad = with(density) { 16.dp.toPx() }
     val live = link.phase == Phase.Connected && data.synced
     val latestLive by rememberUpdatedState(live)
-    LaunchedEffect(data.floors) {
-        val liveIds = data.floors.mapTo(HashSet()) { it.id }
-        bounds.keys.retainAll(liveIds)
-        spans.keys.retainAll(liveIds)
+    val now = rememberNow(60_000)
+    val ranked = remember(data.floors, data.floorId, data.workers, data.buildingWorkers, now) {
+        FloorRelevance.rank(
+            data.floors.map { f ->
+                val current = f.id == data.floorId
+                val desk = if (current) data.workers.values else data.buildingWorkers[f.id]?.values?.takeIf { it.isNotEmpty() || f.workers == 0 }
+                f.id to FloorRelevance.signals(f, desk, current)
+            },
+            now,
+        )
     }
-    LaunchedEffect(data.floorId, viewport, spanVersion, dragging) {
-        val active = data.floorId ?: return@LaunchedEffect
-        if (dragging != null || viewport.isEmpty) return@LaunchedEffect
-        val initialSpan = spans[active] ?: return@LaunchedEffect
-        delay(32)
-        if (dragging != null || viewport.isEmpty || data.floorId != active) return@LaunchedEffect
-        val (leftInRow, widthPx) = spans[active] ?: initialSpan
-        val viewWidth = viewport.width
-        if (viewWidth <= 0f) return@LaunchedEffect
-        val visibleLeft = scroll.value.toFloat()
-        val visibleRight = visibleLeft + viewWidth
-        val target = when {
-            leftInRow < visibleLeft + scrollPad -> leftInRow - scrollPad
-            leftInRow + widthPx > visibleRight - scrollPad -> leftInRow + widthPx - viewWidth + scrollPad
-            else -> visibleLeft
+    val numbers = remember(data.floors) { data.floors.mapIndexed { i, f -> f.id to i + 1 }.toMap() }
+    /**
+     * The floor a dragged chip lands before: the first chip on screen right of the finger, else the one
+     * after the last chip on screen. Left between the same chips it started between, it stays put
+     * rather than jumping over floors that have no chip.
+     */
+    fun before(): String? {
+        val id = dragging
+        val order = latestFloors.map { it.id }
+        val onScreen = order.filter { it != id && bounds.containsKey(it) }
+        val slot = onScreen.indexOfFirst { f -> bounds[f]?.let { pointerX < it.center.x } == true }.let { if (it < 0) onScreen.size else it }
+        if (id != null) {
+            val at = order.indexOf(id)
+            if (slot == onScreen.count { order.indexOf(it) < at }) return order.getOrNull(at + 1)
         }
-        val clamped = target.toInt().coerceIn(0, scroll.maxValue)
-        if (clamped != scroll.value) scroll.animateScrollTo(clamped)
+        if (slot < onScreen.size) return onScreen[slot]
+        val last = onScreen.lastOrNull() ?: return null
+        return order.drop(order.indexOf(last) + 1).firstOrNull { it != id }
     }
-    fun before(): String? = latestFloors.firstOrNull { f ->
-        f.id != dragging && bounds[f.id]?.let { pointerX < it.center.x } == true
-    }?.id
     fun move(id: String, step: Int): Boolean {
         if (!live) return false
         val move = FloorOrder.step(latestFloors.map { it.id }, id, step) ?: return false
@@ -403,91 +413,137 @@ internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
         if (!FloorOrder.changed(latestFloors.map { it.id }, id, target)) return
         if (!connection.reorderFloor(id, target)) scope.launch { snackbar.showSnackbar("Disconnected. The floor was not reordered.") }
     }
-    LaunchedEffect(dragging) {
-        while (dragging != null) {
-            if (viewport.isEmpty) {
-                delay(16)
-                continue
-            }
-            val speed = when {
-                pointerX < viewport.left + edge -> -10f
-                pointerX > viewport.right - edge -> 10f
-                else -> 0f
-            }
-            if (speed != 0f) scroll.scrollBy(speed)
-            delay(16)
+    @Composable
+    fun FloorChip(index: Int, f: FloorInfo) {
+        Box(
+            Modifier.onGloballyPositioned { bounds[f.id] = it.boundsInWindow() }
+                .pointerInput(f.id, data.floors.map { it.id }, live) {
+                    if (!live) return@pointerInput
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { offset ->
+                            bounds[f.id]?.let { rect ->
+                                dragging = f.id
+                                pointerX = rect.left + offset.x
+                                startX = pointerX
+                            }
+                        },
+                        onDragCancel = { dragging = null },
+                        onDragEnd = {
+                            val id = dragging
+                            val target = before()
+                            dragging = null
+                            if (id != null) drop(id, target)
+                        },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            pointerX += amount.x
+                        },
+                    )
+                }
+                .drawBehind {
+                    if (dragging != null && before() == f.id) drawLine(Palette.Accent, Offset.Zero, Offset(0f, size.height), 2.dp.toPx())
+                },
+        ) {
+            Chip(
+                text = "${index + 1} · ${f.name.ifBlank { f.id }}",
+                selected = f.id == data.floorId,
+                onClick = { if (dragging == null && f.id != data.floorId) onFloor(f.id) },
+                icon = if (live) OfficeIcons.Grip else OfficeIcons.Layers,
+                badge = if (f.id == data.floorId) 0 else f.waiting,
+                modifier = Modifier.tagged(Tags.Home.floor(f.id))
+                    .semantics {
+                        customActions = listOf(
+                            CustomAccessibilityAction("Move floor earlier") { move(f.id, -1) },
+                            CustomAccessibilityAction("Move floor later") { move(f.id, 1) },
+                        )
+                    }
+                    .graphicsLayer {
+                        translationX = if (dragging == f.id) pointerX - startX else 0f
+                        alpha = if (dragging == f.id) 0.65f else 1f
+                    },
+            )
         }
     }
     Column {
-        Row(
-            Modifier.fillMaxWidth().onGloballyPositioned { viewport = it.boundsInWindow() }
-                .horizontalScroll(scroll).padding(horizontal = 14.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            data.floors.forEachIndexed { index, f ->
-                key(f.id) {
-                    Box(
-                        Modifier.onGloballyPositioned {
-                            bounds[f.id] = it.boundsInWindow()
-                            val nextSpan = it.positionInParent().x to it.size.width
-                            if (spans.put(f.id, nextSpan) != nextSpan && f.id == data.floorId) {
-                                spanVersion++
-                            }
-                        }
-                            .pointerInput(f.id, data.floors.map { it.id }, live) {
-                                if (!live) return@pointerInput
-                                detectDragGesturesAfterLongPress(
-                                    onDragStart = { offset ->
-                                        bounds[f.id]?.let { rect ->
-                                            dragging = f.id
-                                            pointerX = rect.left + offset.x
-                                            startX = pointerX
-                                            scrollStart = scroll.value
-                                        }
-                                    },
-                                    onDragCancel = { dragging = null },
-                                    onDragEnd = {
-                                        val id = dragging
-                                        val target = before()
-                                        dragging = null
-                                        if (id != null) drop(id, target)
-                                    },
-                                    onDrag = { change, amount ->
-                                        change.consume()
-                                        pointerX += amount.x
-                                    },
-                                )
-                            }
-                            .drawBehind {
-                                if (dragging != null && before() == f.id) drawLine(Palette.Accent, Offset.Zero, Offset(0f, size.height), 2.dp.toPx())
-                            },
-                    ) {
-                        Chip(
-                            text = "${index + 1} · ${f.name.ifBlank { f.id }}",
-                            selected = f.id == data.floorId,
-                            onClick = { if (dragging == null && f.id != data.floorId) onFloor(f.id) },
-                            icon = if (live) OfficeIcons.Grip else OfficeIcons.Layers,
-                            badge = if (f.id == data.floorId) 0 else f.waiting,
-                            modifier = Modifier.tagged(Tags.Home.floor(f.id))
-                                .semantics {
-                                    customActions = listOf(
-                                        CustomAccessibilityAction("Move floor earlier") { move(f.id, -1) },
-                                        CustomAccessibilityAction("Move floor later") { move(f.id, 1) },
-                                    )
-                                }
-                                .graphicsLayer {
-                                    translationX = if (dragging == f.id) pointerX - startX + scroll.value - scrollStart else 0f
-                                    alpha = if (dragging == f.id) 0.65f else 1f
-                                },
-                        )
-                    }
+        SubcomposeLayout(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp)) { constraints ->
+            val gap = 8.dp.roundToPx()
+            val loose = Constraints()
+            val chips = data.floors.mapIndexed { index, f -> f.id to subcompose(f.id) { FloorChip(index, f) }.map { it.measure(loose) } }
+            val waiting = data.floors.filter { it.id != data.floorId }.sumOf { it.waiting }
+            val widest = subcompose(MoreProbe) { MoreFloorsChip(max(1, data.floors.size - 1), waiting) {} }.map { it.measure(loose) }
+            val fit = FloorRelevance.fit(
+                widths = chips.map { (id, p) -> id to (p.maxOfOrNull { it.width } ?: 0) + gap },
+                ranked = ranked,
+                current = data.floorId,
+                available = constraints.maxWidth + gap,
+                more = (widest.maxOfOrNull { it.width } ?: 0) + gap,
+            )
+            val shown = fit.shown.toSet()
+            bounds.keys.retainAll(shown)
+            val hidden = fit.hidden.mapNotNull { id -> data.floors.firstOrNull { it.id == id } }
+            val more = if (hidden.isEmpty()) emptyList() else subcompose(MoreSlot) { MoreFloors(hidden, numbers, onFloor) }.map { it.measure(loose) }
+            val moreWidth = more.maxOfOrNull { it.width + gap } ?: 0
+            // Narrower than even the current floor's own chip: only then may its name shorten, so "+N more" stays on screen.
+            val placed = chips.filter { it.first in shown }.map { (id, placeables) ->
+                val full = placeables.maxOfOrNull { it.width } ?: 0
+                val room = constraints.maxWidth - moreWidth
+                if (shown.size == 1 && full > room) {
+                    val index = data.floors.indexOfFirst { it.id == id }
+                    id to subcompose(NarrowSlot) { FloorChip(index, data.floors[index]) }.map { it.measure(Constraints(maxWidth = max(0, room))) }
+                } else {
+                    id to placeables
                 }
+            }
+            val height = (placed.flatMap { it.second } + more).maxOfOrNull { it.height } ?: 0
+            layout(constraints.maxWidth, height) {
+                var x = 0
+                for ((_, placeables) in placed) {
+                    placeables.forEach { it.placeRelative(x, (height - it.height) / 2) }
+                    x += (placeables.maxOfOrNull { it.width } ?: 0) + gap
+                }
+                more.forEach { it.placeRelative(x, (height - it.height) / 2) }
             }
         }
         if (live) Text("Long-press a floor and drag to reorder", style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, modifier = Modifier.padding(start = 14.dp, bottom = 6.dp).tagged(Tags.Home.FLOOR_ORDER_HINT))
     }
 }
 
+@Composable
+private fun MoreFloorsChip(count: Int, waiting: Int, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Chip(text = "+$count more", selected = false, onClick = onClick, icon = OfficeIcons.Layers, badge = waiting, modifier = modifier)
+}
+
+/** "+N more": the floors without a chip, most relevant first. */
+@Composable
+private fun MoreFloors(hidden: List<FloorInfo>, numbers: Map<String, Int>, onFloor: (String) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        MoreFloorsChip(hidden.size, hidden.sumOf { it.waiting }, Modifier.tagged(Tags.Home.FLOOR_MORE)) { open = true }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            containerColor = Palette.SurfaceRaised,
+            border = BorderStroke(1.dp, Palette.BorderStrong),
+            modifier = Modifier.tagged(Tags.Home.FLOOR_MORE_MENU),
+        ) {
+            hidden.forEach { f ->
+                DropdownMenuItem(
+                    text = { Text("${numbers[f.id] ?: ""} · ${f.name.ifBlank { f.id }}", style = MaterialTheme.typography.bodyLarge, color = Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    trailingIcon = if (f.waiting > 0) {
+                        { Text("${f.waiting} waiting", style = MaterialTheme.typography.bodySmall, color = Palette.Danger) }
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        open = false
+                        onFloor(f.id)
+                    },
+                    modifier = Modifier.tagged(Tags.Home.floorMore(f.id)),
+                )
+            }
+        }
+    }
+}
 @Composable
 internal fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Boolean, onOpen: (String) -> Unit, onActions: (String) -> Unit, modifier: Modifier = Modifier) {
     val w = row.worker
