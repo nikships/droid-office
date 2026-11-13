@@ -301,15 +301,15 @@ test('the screens of back-to-back desks stay on their own side, and each laptop 
   assert.ok(DESK_LAPTOP.z + 0.28 * DESK_LAPTOP.scale <= DESK_SIZE.depth / 2 - 0.02, "the deck's front edge stays on the desk top");
 });
 
-test('widescreen canvas matches the taller display aspect so a 136x35 Droid CLI renders edge to edge unstretched', (t) => {
+test('widescreen canvas matches the taller display aspect so a 136x39 Droid CLI renders edge to edge unstretched', (t) => {
   stubDocument(t);
   assert.equal(BASE_W, 0.78, 'keyboard deck width stays untouched');
   assert.equal(LID_W, 1.065, 'widescreen lid width stays untouched');
-  assert.equal(LID_H, 0.575, 'lid height is 15% taller than the 0.50 base GLB');
-  assert.equal(SCREEN_H, 0.57, 'lit panel height scales up 15% with a 2.5 mm bezel margin');
+  assert.equal(LID_H, 0.635, 'lid height is 10% taller than the previous 0.575');
+  assert.equal(SCREEN_H, 0.63, 'lit panel height scales up 10% with a 2.5 mm bezel margin');
   assert.ok(SCREEN_W > 1 && LID_W > SCREEN_W && LID_H > SCREEN_H, 'lid frames the taller widescreen panel');
   assert.ok(Math.abs(SCREEN_CANVAS.width / SCREEN_CANVAS.height - SCREEN_W / SCREEN_H) < 1e-9, 'default canvas texels are square on the 3D screen');
-  assert.deepEqual([DEFAULT_COLS, DEFAULT_ROWS], [136, 35]);
+  assert.deepEqual([DEFAULT_COLS, DEFAULT_ROWS], [136, 39]);
   assert.deepEqual([CLOUD_SCREEN_COLS, CLOUD_SCREEN_ROWS], [DEFAULT_COLS, DEFAULT_ROWS]);
 
   const laptop = new Laptop();
@@ -328,7 +328,7 @@ test('widescreen canvas matches the taller display aspect so a 136x35 Droid CLI 
   full.above = Array.from({ length: 10 }, (): Run[] => [['h'.repeat(DEFAULT_COLS), -1, -1, 0]]);
   paintScreen(ctx, SCREEN_CANVAS.width, SCREEN_CANVAS.height, full, undefined, 22);
   const texts = ops.filter((op) => op.kind === 'fillText');
-  assert.equal(texts.length, DEFAULT_ROWS, 'all 35 live rows fit without pulling scrollback');
+  assert.equal(texts.length, DEFAULT_ROWS, 'all 39 live rows fit without pulling scrollback');
   assert.equal(texts.filter((op) => String(op.args[0]).startsWith('h')).length, 0);
   const ys = textYs(ops);
   assert.ok(Math.min(...ys) < 40);

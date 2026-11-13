@@ -229,24 +229,24 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
 /** The unchanged keyboard deck width; only the hinged lid and display scale past it. */
 export const BASE_W = 0.78;
 const BASE_LID_H = 0.5;
-/** Widescreen lid dimensions in laptop space: 1.065 wide and 0.575 tall (+15%), leaving ~6.9 cm between neighboring 2.2 m desks. */
+/** Widescreen lid dimensions in laptop space: 1.065 wide and 0.635 tall (+10% over 0.575), leaving ~6.9 cm between neighboring 2.2 m desks. */
 export const LID_W = 1.065;
-export const LID_H = 0.575;
+export const LID_H = 0.635;
 /** Outer shell and cover-glass bevels in macbook-lid.glb sit past ±0.37; the 0.70 hinge lip, notch, lens and badge stay inside. */
 const LID_END_X = 0.37;
 /** Top bevels, cover glass, camera notch and lens sit above 0.40; the back badge sits in 0.205..0.315; the hinge lip sits below 0.02. */
 const LID_TOP_Y = 0.4;
 const LID_MID_Y = 0.15;
-/** The lit widescreen panel in lid space, nearly edge to edge on the 1.065 x 0.575 lid (106:57 aspect). */
+/** The lit widescreen panel in lid space, nearly edge to edge on the 1.065 x 0.635 lid (106:63 aspect). */
 export const SCREEN_W = 1.06;
-export const SCREEN_H = 0.57;
-/** Default terminal canvas matching SCREEN_W : SCREEN_H (106:57) so glyphs and Kitty images have square texels. */
-export const SCREEN_CANVAS = { width: 2968, height: 1596 } as const;
+export const SCREEN_H = 0.63;
+/** Default terminal canvas matching SCREEN_W : SCREEN_H (106:63) so glyphs and Kitty images have square texels. */
+export const SCREEN_CANVAS = { width: 2968, height: 1764 } as const;
 /** In front of the GLB's bezel frame, whose face is at z 0.018. */
 const SCREEN_Z = 0.02;
 
 /** Radians the open lid leans back past upright; scaled with LID_H so the taller lid's top overhangs no further back. */
-const LID_LEAN = 0.034;
+const LID_LEAN = 0.031;
 
 /** The Factory-issue laptop's finish: a space-black shell with a graphite trackpad. */
 const SPACE_BLACK = '#1c1c1e';
@@ -470,7 +470,7 @@ export class Laptop {
     display.material = this.screenMat;
     this.screen = display;
     // The GLB's plane (0.72 x 0.46, centred at y 0.253, z 0.013) sits recessed in a bezel frame.
-    // Stretch it across the 1.065 x 0.575 lid and float it just in front of the frame.
+    // Stretch it across the 1.065 x 0.635 lid and float it just in front of the frame.
     const sx = SCREEN_W / 0.72;
     const sy = SCREEN_H / 0.46;
     display.scale.set(sx, sy, 1);

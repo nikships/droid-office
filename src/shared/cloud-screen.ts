@@ -7,7 +7,7 @@ import { FLAG_BOLD, FLAG_DIM, RGB_FLAG, type Run } from './protocol.js';
 // grid, and sent as the same `screen` frame a local worker's PTY sends.
 
 export const CLOUD_SCREEN_COLS = 136;
-export const CLOUD_SCREEN_ROWS = 35;
+export const CLOUD_SCREEN_ROWS = 39;
 /** Lines of a tool's result shown under its call. */
 const RESULT_LINES = 3;
 /** Lines of a reply shown, from its end. */

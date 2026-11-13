@@ -62,9 +62,9 @@ import { pickUniqueForkName, pickUniqueSeat, pickUniqueWorkerName, readHeadBranc
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
 
-/** Widescreen default PTY dimensions matching the 3D laptop's 106:57 display at 0.6:1.25 cell aspect. */
+/** Widescreen default PTY dimensions matching the 3D laptop's 106:63 display at 0.6:1.25 cell aspect. */
 export const DEFAULT_COLS = 136;
-export const DEFAULT_ROWS = 35;
+export const DEFAULT_ROWS = 39;
 
 /** Workers' names, and their colors. */
 export const NAMES = [
