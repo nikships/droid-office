@@ -216,7 +216,14 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       annotations: changesState,
     },
     officeAccess.subagent,
-    async (args, caller) => reply(await ownFloor(caller).team.handle(caller.worker, { action: 'note', ...args }), () => 'Shared with your siblings. Continue your task; report results to your lead with team_report.'),
+    async (args, caller) =>
+      reply(await ownFloor(caller).team.handle(caller.worker, { action: 'note', ...args }), (body) =>
+        body.blocked
+          ? String(body.coach)
+          : body.traffic === 'record_silently'
+            ? 'Posted on the team board without interrupting working siblings (the noise gate read it as a routine update). Continue your task; report results to your lead with team_report.'
+            : 'Shared with your siblings. Continue your task; report results to your lead with team_report.',
+      ),
   );
   server.tool(
     {
@@ -763,7 +770,39 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       const floor = ownFloor(caller);
       const ingested = notifyArgs.kind === 'test' ? { ok: true as const, images: [] as StoredImageMeta[], store: deps.remote.images } : resolveSubagentImages(caller, rawImages, notifyArgs.text);
       if (!ingested.ok) return officeError(ingested.error);
-      const sent = await deps.remote.notifyLead({ worker: caller.worker, floor: { id: floor.id, name: floor.name, dir: floor.dir } }, { ...notifyArgs, ...(ingested.images.length ? { images: ingested.images } : {}) });
+      let quiet = false;
+      const leadId = caller.worker.lead;
+      if (notifyArgs.kind === 'update' && leadId && deps.wakeFilter?.active() && floor.team.wakeContext) {
+        const verdict = await deps.wakeFilter
+          .decide({
+            channel: 'lead_notify',
+            ...floor.team.wakeContext(leadId, caller.worker),
+            message: {
+              text: notifyArgs.text,
+              kind: 'update',
+              ...(notifyArgs.pushedSha ? { pushedSha: notifyArgs.pushedSha } : {}),
+              ...(notifyArgs.prUrl ? { prUrl: notifyArgs.prUrl } : {}),
+              ...(ingested.images.length ? { images: ingested.images.length } : {}),
+            },
+          })
+          .catch(() => undefined);
+        if (verdict?.traffic === 'block_and_coach') return officeResult(verdict.coach ?? 'Not delivered: the noise gate read this as chatter.', { kind: args.kind, pushed: false, blocked: true });
+        quiet = verdict?.traffic === 'record_silently' || verdict?.traffic === 'hold_for_batch';
+      }
+      const sent = await deps.remote.notifyLead(
+        { worker: caller.worker, floor: { id: floor.id, name: floor.name, dir: floor.dir } },
+        { ...notifyArgs, ...(ingested.images.length ? { images: ingested.images } : {}), ...(quiet ? { quiet } : {}) },
+      );
+      if (sent.deferred) {
+        return officeResult(`Recorded in ${sent.lead}'s office_inbox (${sent.ackId}) without waking it: the noise gate read this as a routine update, so it rides along with the next webhook push. Continue your task.`, {
+          lead: sent.lead,
+          kind: args.kind,
+          pushed: false,
+          deferred: true,
+          ...(sent.ackId ? { ackId: sent.ackId } : {}),
+          ...(sent.images?.length ? { images: sent.images } : {}),
+        });
+      }
       if (!sent.ok) {
         const saved = sent.ackId ? ` Saved in ${sent.lead}'s office_inbox (${sent.ackId}), so nothing was lost.` : '';
         return officeError(`Webhook push to ${sent.lead} failed (${sent.error ?? 'delivery failed'}).${saved}`, 'webhook_failed');

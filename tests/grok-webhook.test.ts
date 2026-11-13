@@ -16,6 +16,7 @@ import { RemoteOffice, type RemoteFloor } from '../src/server/remote-office.js';
 import { GROK_BOTS_FILE, RemoteWorkers } from '../src/server/remote-workers.js';
 import { Team, type TeamEvent, type TeamWorkers } from '../src/server/team.js';
 import { Visits } from '../src/server/visits.js';
+import type { WakeGate, WakePacket } from '../src/server/wake-filter.js';
 import { WhiteboardStore } from '../src/server/whiteboard.js';
 import { readMenu } from '../src/shared/asks.js';
 import { SUBAGENT_DEFAULTS, type WorkerInfo } from '../src/shared/protocol.js';
@@ -729,4 +730,158 @@ test('Grok Bot leads receive immediate team_report, lead_notify, floor hook, inb
     assert.equal(JSON.stringify(received.body).includes(DUMMY_TOKEN), false);
     for (const item of received.body.items) assert.doesNotMatch(item.actionHint, /\w+\(\{/);
   }
+});
+
+test('the noise gate defers routine lead_notify updates, holds batch reports from Grok Bot webhooks, and blocks only chatter tells', async (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'grok-gate-'));
+  const cleanups: (() => void | Promise<void>)[] = [];
+  const rig: Cleanup = { after: (fn) => cleanups.push(fn) };
+  t.after(async () => {
+    try {
+      for (const fn of cleanups.reverse()) await fn();
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+
+  const receiver = await startWebhookReceiver(rig);
+  const store = new RemoteWorkers(dir);
+  const settings = { ...SUBAGENT_DEFAULTS, visits: true, maxPerLead: 4 };
+  const floors: RemoteFloor[] = [];
+  const office = new RemoteOffice(store, () => floors, { webhookDelayMs: 15 });
+  rig.after(() => office.stop());
+  const calls: WakePacket[] = [];
+  const gate: WakeGate = {
+    active: () => true,
+    async decide(p) {
+      calls.push(p);
+      if (/chatter/.test(p.message.text)) return { traffic: 'block_and_coach', source: 'model', reason: 'chatter', coach: 'Noise gate: heads-down' };
+      if (/routine/.test(p.message.text) || p.message.progress) return { traffic: 'record_silently', source: 'model', reason: 'routine' };
+      if (p.channel === 'team_report' && p.teammates.some((m) => m.status === 'working')) return { traffic: 'hold_for_batch', source: 'model', reason: 'batch' };
+      return { traffic: 'wake_immediately', source: 'model', reason: 'final' };
+    },
+  };
+
+  const people = new Map<string, WorkerInfo>();
+  const tokens = new Map<string, string>();
+  let seq = 0;
+  const alphaDir = path.join(dir, 'alpha');
+  mkdirSync(alphaDir, { recursive: true });
+  const person = (id: string, name: string, extra: Partial<WorkerInfo> = {}): WorkerInfo => {
+    const w: WorkerInfo = { id, name, kind: 'agent', deskId: `desk-${id}`, color: '#ff6600', status: 'working', acked: true, createdAt: 1, createdBy: 'owner', cols: 100, rows: 30, open: false, ...extra };
+    people.set(id, w);
+    tokens.set(id, `tok-${id}`);
+    return w;
+  };
+  const get = (id: string) => people.get(id) ?? store.identity(id);
+  const workers: TeamWorkers & RemoteFloor['workers'] = {
+    list: () => [...people.values()],
+    get: (id) => people.get(id),
+    authenticate: (id, token) => (tokens.get(id) === token ? people.get(id) : undefined),
+    releaseLead: () => {},
+    officeDefault: undefined,
+    deskOccupied: (id) => [...people.values()].some((w) => w.deskId === id),
+    hire: (_deskId, _by, _prompt, _worktree, _choice, lead) => person(`sub-${++seq}`, `Worker${seq}`, { lead }),
+    prompt: (wid, text) => (store.identity(wid) ? office.tell(wid, text, 'alpha') : undefined),
+    resume: (wid, text) => (text && store.identity(wid) ? office.tell(wid, text, 'alpha') : undefined),
+    kill: async (wid) => {
+      people.delete(wid);
+      return {};
+    },
+    tail: () => 'working',
+    screenLines: () => ['working'],
+    screenMenu: () => undefined,
+    write: () => true,
+    setTask() {},
+  };
+  const team = new Team({ ...workers, get }, { dataDir: alphaDir, dir: alphaDir, git: false, settings: () => settings, toast() {}, wakeFilter: gate });
+  rig.after(() => team.stop());
+  const visits = new Visits({ ...workers, get, tell: workers.prompt, cancelTurn: () => false, turnScreen: () => undefined }, { on: () => settings.visits, emit() {} });
+  rig.after(() => visits.stop());
+  const whiteboard = new WhiteboardStore(alphaDir);
+  rig.after(() => whiteboard.stop());
+  floors.push({ id: 'alpha', dir: alphaDir, def: { name: 'Droid Office' }, workers, team, visits, whiteboard });
+  const grok = office.add('grokbot', { webhookUrl: receiver.url, webhookToken: DUMMY_TOKEN });
+
+  const floorLookup = (wid: string) => {
+    const f = floors.find((x) => x.workers.get(wid));
+    return f ? { ...f, name: f.def.name } : undefined;
+  };
+  const mcpDeps = { answers: new Answers(), remote: office, floor: floorLookup, settings: () => settings, wakeFilter: gate };
+  const localMcp = createOfficeMcp(mcpDeps);
+  const localUrl = new URL(
+    '/office/mcp',
+    await listening(
+      rig,
+      createServer((req, res) => void localMcp.handle(req, res)),
+    ),
+  );
+  const hostname = 'office.example.ts.net';
+  const remoteUrl = new URL('/office/mcp', await listening(rig, remoteMcpListener({ ...mcpDeps, remoteTransport: { hostname: () => hostname, owner: () => undefined } })));
+  const connect = async (url: URL, headers: Record<string, string>, fetchImpl?: typeof fetch) => {
+    const c = new Client({ name: 'gate-test', version: '1' });
+    rig.after(() => c.close());
+    await c.connect(new StreamableHTTPClientTransport(url, { ...(fetchImpl ? { fetch: fetchImpl } : {}), requestInit: { headers } }));
+    return c;
+  };
+  const local = (w: WorkerInfo) => connect(localUrl, { Authorization: `Bearer ${tokens.get(w.id)!}`, 'x-droid-office-worker-id': w.id });
+  const grokClient = await connect(remoteUrl, { host: `${hostname}:8443`, Authorization: `Bearer ${grok.token}` }, proxyFetch);
+  const hire = async (title: string) => people.get(((await grokClient.callTool({ name: 'team_hire', arguments: { title, brief: title, floor: 'alpha', worktree: false } })).structuredContent as { worker: WorkerInfo }).worker.id)!;
+  const one = await hire('One');
+  const two = await hire('Two');
+  const oneClient = await local(one);
+  const twoClient = await local(two);
+  const settle = () => new Promise((r) => setTimeout(r, 60));
+
+  // A routine mid-turn update is saved in office_inbox and rides along with the next push.
+  const routine = await oneClient.callTool({ name: 'lead_notify', arguments: { kind: 'update', text: 'routine: phase one green, starting phase two' } });
+  assert.equal(routine.isError, undefined);
+  assert.equal((routine.structuredContent as Record<string, unknown>).deferred, true);
+  assert.equal(calls[0]!.channel, 'lead_notify');
+  assert.equal(calls[0]!.lead.name, 'grokbot');
+  assert.deepEqual(
+    calls[0]!.teammates.map((m) => m.id),
+    [two.id],
+  );
+  const chatter = await oneClient.callTool({ name: 'lead_notify', arguments: { kind: 'update', text: 'chatter chatter' } });
+  assert.equal((chatter.structuredContent as Record<string, unknown>).blocked, true);
+  assert.match(JSON.stringify(chatter.content), /Noise gate: heads-down/);
+  // Blockers never reach the gate.
+  const gated = calls.length;
+  await oneClient.callTool({ name: 'lead_notify', arguments: { kind: 'blocker', text: 'chatter but blocked on staging creds' } });
+  assert.equal(calls.length, gated);
+  await receiver.waitForCount(1);
+  assert.equal(receiver.received[0]!.body.event, 'blocker');
+  assert.equal(receiver.received[0]!.body.items.length, 2, 'the deferred update rides along');
+  assert.equal(office.inbox(grok.worker.id).messages.length, 2);
+
+  // A progress report is recorded silently; a completion is held while its sibling works.
+  await oneClient.callTool({ name: 'team_report', arguments: { text: 'CI suite running in background', progress: true } });
+  await oneClient.callTool({ name: 'team_report', arguments: { text: 'Worker1 finished One.' } });
+  await settle();
+  assert.equal(receiver.received.length, 1);
+  people.get(one.id)!.status = 'done';
+  team.onWorker({ ...people.get(one.id)! });
+  await twoClient.callTool({ name: 'team_report', arguments: { text: 'Worker2 finished Two.' } });
+  await receiver.waitForCount(2);
+  await settle();
+  assert.equal(receiver.received.length, 2, 'the batch arrives as one push');
+  const batch = JSON.stringify(receiver.received[1]!.body.items);
+  assert.match(batch, /Worker1 finished One/);
+  assert.match(batch, /Worker2 finished Two/);
+  assert.match(batch, /CI suite running in background/);
+
+  // Visit tells: only chatter is coached back; everything else is delivered as before.
+  const alice = person('alice', 'Alice');
+  person('bob', 'Bob');
+  const aliceClient = await local(alice);
+  const coached = await aliceClient.callTool({ name: 'visit_message', arguments: { worker: 'Bob', kind: 'tell', text: 'chatter, just saying hi' } });
+  assert.equal((coached.structuredContent as Record<string, unknown>).blocked, true);
+  assert.equal(calls.at(-1)!.channel, 'visit_tell');
+  const told = await aliceClient.callTool({ name: 'visit_message', arguments: { worker: 'Bob', kind: 'tell', text: 'routine heads-up: the API moved' } });
+  assert.equal(told.isError, undefined);
+  assert.equal((told.structuredContent as Record<string, unknown>).blocked, undefined);
+  const urgent = calls.length;
+  await aliceClient.callTool({ name: 'visit_message', arguments: { worker: 'Bob', kind: 'tell', text: 'chatter', urgent: true } });
+  assert.equal(calls.length, urgent, 'urgent tells skip the gate');
 });

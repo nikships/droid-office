@@ -927,6 +927,8 @@ type ClientMessage =
   | { t: 'gemini.check' }
   /** Enable or pause Living 3D Reactions & Mood Lighting while viewing a 3D floor. */
   | { t: 'gemini.vibes'; on: boolean }
+  /** Turn the Gemini inter-agent noise gate and smart lead wakeup filter on or off (persisted in `gemini.json`). */
+  | { t: 'gemini.wakeFilter'; on: boolean }
   /** True strictly while this 3D office tab is open, visible, uncovered, and standing on an indoor floor. */
   | { t: 'vibes.watch'; active: boolean }
   /** Look at Droid (installed, signed in, newest release) and DroidProxy again now (docs/subscriptions.md). */

@@ -82,10 +82,37 @@ export interface FloorVibesState {
   updatedAt: number;
 }
 
+/** How the inter-agent noise gate routes one message to a lead (docs/office-mcp.md#inter-agent-noise-gate). */
+export type WakeTraffic = 'wake_immediately' | 'hold_for_batch' | 'record_silently' | 'block_and_coach';
+export const WAKE_TRAFFIC: readonly WakeTraffic[] = ['wake_immediately', 'hold_for_batch', 'record_silently', 'block_and_coach'];
+
+/** Live noise gate counters since the office started. */
+export interface WakeFilterTelemetry {
+  /** Messages the gate routed (deterministic guardrails included; bypassed and failed-open calls are not). */
+  evaluated: number;
+  woken: number;
+  held: number;
+  silent: number;
+  blocked: number;
+  /** Mid-turn sibling notices a team_note skipped because the note did not concern that sibling. */
+  siblingFiltered: number;
+  /** Calls that failed or timed out and delivered as before. */
+  failedOpen: number;
+  lastLatencyMs?: number;
+  lastAt?: number;
+}
+
+export function emptyWakeFilterTelemetry(): WakeFilterTelemetry {
+  return { evaluated: 0, woken: 0, held: 0, silent: 0, blocked: 0, siblingFiltered: 0, failedOpen: 0 };
+}
+
 export interface GeminiConnectionState {
   connected: boolean;
   /** Whether Living 3D Reactions & Mood Lighting runs while a 3D floor is open and visible. */
   vibesOn: boolean;
+  /** Whether the inter-agent noise gate and smart lead wakeup filter routes team traffic. */
+  wakeFilterOn: boolean;
+  wakeFilter: WakeFilterTelemetry;
   fingerprint?: string;
   at?: number;
   checkedAt?: number;
@@ -104,6 +131,8 @@ export function emptyGeminiState(): GeminiConnectionState {
   return {
     connected: false,
     vibesOn: true,
+    wakeFilterOn: true,
+    wakeFilter: emptyWakeFilterTelemetry(),
     watching3d: 0,
     calls: 0,
     inputTokens: 0,

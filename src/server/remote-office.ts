@@ -6,6 +6,7 @@ import { buildGrokWebhookPayload, buildTeamWebhookItem, sendGrokWebhook, webhook
 import { formatImageLines, OfficeImageStore, type OfficeImageRef, type StoredImageMeta } from './office-images.js';
 import { terminalQuestion } from './office-mcp/team-events.js';
 import { pushedSha } from './team-inspect.js';
+import type { WakeTraffic } from '../shared/gemini-vibes.js';
 import { teamDeliveryReply, type Team, type TeamDelivery, type TeamEvent, type TeamReply, type TeamViews } from './team.js';
 import type { Visits } from './visits.js';
 import type { GrokBotInput, RemoteMessage, RemoteWorkers } from './remote-workers.js';
@@ -97,6 +98,7 @@ export class RemoteOffice {
         floor,
         floor.team.subscribe((signal) => {
           if (signal.type === 'event') this.onTeamEvent(floor, signal.event);
+          else if (signal.type === 'gate') this.onTeamGate(floor, signal.event, signal.traffic);
         }),
       );
     }
@@ -156,6 +158,8 @@ export class RemoteOffice {
       const floor = this.floors().find((f) => f.id === floorId);
       const id = `team:${floorId}:${event.seq}`;
       if (floor && !this.pushedIds.has(id)) this.queuePush(leadId, { type: 'team', id, floor, event });
+      // Held or silent: it rides along with the lead's next push instead of waking it now.
+      if (event.gate) return undefined;
     }
     return this.flushLeadPush(leadId);
   }
@@ -163,8 +167,8 @@ export class RemoteOffice {
   /** Sends a direct mid-turn update, question, blocker or connectivity test from a subagent to its Grok Bot lead. */
   async notifyLead(
     caller: { worker: WorkerInfo; floor: { id: string; name: string; dir: string } },
-    input: { kind: 'update' | 'question' | 'blocker' | 'test'; text: string; options?: string[]; prUrl?: string; pushedSha?: string; images?: readonly StoredImageMeta[] },
-  ): Promise<{ ok: boolean; status?: number; error?: string; ackId?: string; lead: string; images?: OfficeImageRef[] }> {
+    input: { kind: 'update' | 'question' | 'blocker' | 'test'; text: string; options?: string[]; prUrl?: string; pushedSha?: string; images?: readonly StoredImageMeta[]; quiet?: boolean },
+  ): Promise<{ ok: boolean; status?: number; error?: string; ackId?: string; lead: string; images?: OfficeImageRef[]; deferred?: true }> {
     const leadId = caller.worker.lead;
     const lead = leadId ? this.store.identity(leadId) : undefined;
     if (!leadId || !lead || !this.store.isGrokBot(leadId)) {
@@ -220,6 +224,8 @@ export class RemoteOffice {
             : `Check this worker's status or send guidance on this floor if needed.${ackNote}`,
     };
     this.queuePush(leadId, { type: 'direct', id, item });
+    // A routine update the noise gate recorded silently: saved in office_inbox, sent with the next push.
+    if (input.quiet && ackId) return { ok: true, ackId, ...(imageRefs ? { images: imageRefs } : {}), lead: lead.name, deferred: true };
     const receipt = await this.flushLeadPush(leadId);
     return {
       ok: Boolean(receipt?.ok),
@@ -271,8 +277,22 @@ export class RemoteOffice {
     return next;
   }
 
+  /** The noise gate routed a team event: woken ones push now, held or silent ones wait for the next push. */
+  private onTeamGate(floor: RemoteFloor, event: TeamEvent, traffic: WakeTraffic) {
+    if (this.stopped || !this.store.isGrokBot(event.lead)) return;
+    if (event.kind === 'done') {
+      const member = floor.team.roster(event.lead).find((m) => m.id === event.worker);
+      if (member && (member.openQuestion !== undefined || member.awaitingJob)) return;
+    }
+    const id = `team:${floor.id}:${event.seq}`;
+    if (this.pushedIds.has(id)) return;
+    this.queuePush(event.lead, { type: 'team', id, floor, event });
+    if (traffic === 'wake_immediately') this.scheduleFlush(event.lead);
+  }
+
   private onTeamEvent(floor: RemoteFloor, event: TeamEvent) {
     if (this.stopped || !this.store.isGrokBot(event.lead)) return;
+    if (event.gate) return;
     if (event.kind === 'done') {
       const member = floor.team.roster(event.lead).find((m) => m.id === event.worker);
       if (member && (member.openQuestion !== undefined || member.awaitingJob)) return;

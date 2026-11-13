@@ -125,7 +125,11 @@ export const SETTINGS_CARDS = [
   { pane: 'connections', title: 'DroidProxy', keywords: 'droidproxy subscriptions claude chatgpt plan menu bar install start' },
   { pane: 'connections', title: 'Accounts', keywords: 'subscription accounts claude chatgpt plans usage connect remove' },
   { pane: 'connections', title: 'Models in Droid', keywords: 'subscription models droidproxy droid list update' },
-  { pane: 'connections', title: 'Gemini Decisions API', keywords: 'gemini decision decisions api key google aistudio living 3d reactions postures mood lighting aura vibes' },
+  {
+    pane: 'connections',
+    title: 'Gemini Decisions API',
+    keywords: 'gemini decision decisions api key google aistudio living 3d reactions postures mood lighting aura vibes noise gate wakeup wake filter inter-agent chatter batch hold lead nudge',
+  },
   { pane: 'connections', title: 'Linear', keywords: 'linear connect api key workspace tickets issues issue board', on: OFFICE },
   { pane: 'connections', title: "This floor's Linear team", keywords: 'linear team project floor issue board tickets', on: OFFICE },
   { pane: 'connections', title: 'Linear autopilot', keywords: 'linear autopilot automatic hire workers tickets todo backlog triage', on: OFFICE },

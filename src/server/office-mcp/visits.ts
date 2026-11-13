@@ -21,7 +21,7 @@ function result(reply: VisitReply, describe: (body: Record<string, unknown>) => 
   return reply.status >= 400 ? officeError(String(reply.body.error ?? 'The visit could not be completed.')) : officeResult(describe(reply.body), reply.body);
 }
 
-export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
+export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
   server.tool(
     {
       name: 'visit_roster',
@@ -71,10 +71,27 @@ export function register(server: OfficeMcpServer, _deps: OfficeMcpDeps): void {
       annotations,
     },
     officeAccess.visits,
-    (args, caller) => {
+    async (args, caller) => {
       if (args.title && args.kind !== 'handoff') return officeError('title is only for a handoff. Remove it or use kind: "handoff".');
       const { worker: _worker, name: _name, ...rest } = args;
-      return result(ownFloor(caller).visits.handle(caller.worker, { ...rest, action: 'visit', worker: resolvePeer(args)! }), (body) => {
+      const floor = ownFloor(caller);
+      if (args.kind === 'tell' && !args.urgent && deps.wakeFilter?.active()) {
+        const want = resolvePeer(args)!.toLowerCase();
+        const host = floor.workers.list().find((w) => w.id === want || w.name.toLowerCase() === want);
+        if (host && host.id !== caller.worker.id && !host.lead) {
+          const verdict = await deps.wakeFilter
+            .decide({
+              channel: 'visit_tell',
+              lead: { id: host.id, name: host.name, status: host.status, ...(host.task ? { task: `${host.task.name}: ${host.task.summary}` } : {}) },
+              sender: { id: caller.worker.id, name: caller.worker.name, ...(caller.worker.task ? { task: `${caller.worker.task.name}: ${caller.worker.task.summary}` } : {}) },
+              teammates: [],
+              message: { text: args.text, kind: 'tell' },
+            })
+            .catch(() => undefined);
+          if (verdict?.traffic === 'block_and_coach') return officeResult(verdict.coach ?? 'Not delivered: the noise gate read this as chatter.', { delivered: false, blocked: true });
+        }
+      }
+      return result(floor.visits.handle(caller.worker, { ...rest, action: 'visit', worker: resolvePeer(args)! }), (body) => {
         const host = body.host as { name: string };
         return `${body.visit}: ${body.delivered ? `delivered to ${host.name}` : `queued for ${host.name}; it will be delivered after the walk when its session can take it`}.${args.kind === 'ask' ? ' Its answer will arrive later in your session. Continue your task; do not wait or poll.' : ''}`;
       });

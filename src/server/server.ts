@@ -88,6 +88,7 @@ import { missionTeam, type BuildingAgents } from './building-agent.js';
 import { buildWorkerInspection, inspectTerminalRetry } from './worker-status.js';
 import { GeminiDecisionsStore } from './gemini-decisions.js';
 import { OfficeVibes, type VibesFloorView } from './office-vibes.js';
+import { WakeFilter } from './wake-filter.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -553,7 +554,24 @@ export async function startServer(cfg: Config) {
     act: (...a) => ownerOffice.act(...a),
   };
   orchestrator.workers.setSharedImages(remoteOffice.images);
+  const geminiStore = new GeminiDecisionsStore(cfg.dataDir);
+  let isAirgapped = () => false;
+  let wakeTelemetryTimer: NodeJS.Timeout | undefined;
+  // The inter-agent noise gate (docs/office-mcp.md#inter-agent-noise-gate): routes team traffic, failing open.
+  const wakeFilter = new WakeFilter({
+    store: geminiStore,
+    airgapped: () => isAirgapped(),
+    onUsage: (inputTokens, latencyMs) => officeVibes.recordUsage(inputTokens, latencyMs),
+    onChange: () => {
+      wakeTelemetryTimer ??= setTimeout(() => {
+        wakeTelemetryTimer = undefined;
+        broadcast({ t: 'gemini', state: officeVibes.geminiState() });
+      }, 400);
+      wakeTelemetryTimer.unref?.();
+    },
+  });
   officeMcp = createOfficeMcp({
+    wakeFilter,
     hookUrl,
     deepLinkBase,
     answers,
@@ -657,7 +675,6 @@ export async function startServer(cfg: Config) {
     changed: (state) => broadcast({ t: 'workerLabels', state }),
   });
 
-  const geminiStore = new GeminiDecisionsStore(cfg.dataDir);
   const vibesFloorView = (f: Floor): VibesFloorView => ({
     id: f.id,
     name: f.def.name,
@@ -666,7 +683,6 @@ export async function startServer(cfg: Config) {
     pipelines: f.pipelines.state,
     tail: (workerId, lines) => f.workers.tail(workerId, lines),
   });
-  let isAirgapped = () => false;
   const officeVibes = new OfficeVibes({
     store: geminiStore,
     airgapped: () => isAirgapped(),
@@ -677,6 +693,7 @@ export async function startServer(cfg: Config) {
       return f ? vibesFloorView(f) : undefined;
     },
     broadcastGemini: (state) => broadcast({ t: 'gemini', state }),
+    wakeTelemetry: () => wakeFilter.telemetry(),
     emitFloorVibes: (floorId, state) => {
       const f = floors.get(floorId);
       if (f) toFloor(f, { t: 'vibes', state });
@@ -813,6 +830,8 @@ export async function startServer(cfg: Config) {
           if (w.status === 'needs_input') broadcastOffFloorScreen(floor, w.id);
         }
       }
+      // A building lead's held batch may span floors: a teammate settling here can complete it there.
+      if (typeof w !== 'string' && w.lead) for (const f of floors.values()) if (f !== floor) f.team.recheckHolds(w.lead);
       machine.workersChanged();
       floorsChanged();
       missionChanged();
@@ -870,6 +889,24 @@ export async function startServer(cfg: Config) {
     lent: (floor) => [...floors.values()].some((f) => f !== floor && worksIn(f, floor)),
     renderer,
     sharedImages: remoteOffice.images,
+    wakeFilter,
+    leadView: (lead) => {
+      if (lead === ORCHESTRATOR_ID) {
+        const w = orchestrator.workers.get(lead);
+        const steps = orchestrator.workers.runtime(lead)?.todoSteps;
+        return {
+          name: w?.name ?? 'Orchestrator',
+          building: true,
+          ...(w?.status ? { status: w.status } : {}),
+          ...(w?.task ? { task: `${w.task.name}: ${w.task.summary}` } : {}),
+          ...(steps?.length ? { steps: steps.map((s) => ({ content: s.content, status: s.status })) } : {}),
+          ...(w ? { tail: orchestrator.workers.tail(lead, 30) } : {}),
+        };
+      }
+      const bot = remoteWorkers.identity(lead);
+      return bot ? { name: bot.name, building: true, status: remoteWorkers.isGrokBot(lead) ? 'remote Grok Bot (woken by webhook push)' : 'remote bot (reads its office_inbox)' } : undefined;
+    },
+    teammatesElsewhere: (floor, lead, rich) => [...floors.values()].filter((f) => f !== floor).flatMap((f) => f.team.localTeammates(lead, rich).map((t) => ({ ...t, floor: f.def.name }))),
   };
   /** Whether a worker on `from` works in `on`'s project too (see WorkerInfo.repos). */
   const worksIn = (from: Floor, on: Floor) => from.workers.list().some((w) => w.repos?.some((r) => r.floor === on.id));
@@ -3123,6 +3160,13 @@ export async function startServer(cfg: Config) {
       case 'gemini.vibes': {
         if (typeof msg.on !== 'boolean') return stop('Send {"on": true} or {"on": false}.');
         const err = officeVibes.setVibesOn(msg.on);
+        if (err) return stop(err);
+        done();
+        break;
+      }
+      case 'gemini.wakeFilter': {
+        if (typeof msg.on !== 'boolean') return stop('Send {"on": true} or {"on": false}.');
+        const err = officeVibes.setWakeFilterOn(msg.on);
         if (err) return stop(err);
         done();
         break;
