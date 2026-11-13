@@ -7,6 +7,7 @@ import {
   type GeminiConnectionState,
   isFloorMood,
   isMonitorSpillTone,
+  isValidGeminiApiKey,
   isWorkerMicroReaction,
   isWorkerVibePosture,
   MICRO_REACTION_CONFIDENCE_MIN,
@@ -291,6 +292,7 @@ export class OfficeVibes {
     this.inFlight.delete(floorId);
     this.floorTracks.delete(floorId);
     this.reconcileSchedule(false);
+    this.opts.broadcastGemini(this.geminiState());
   }
 
   /** Connects and verifies a new Gemini API key. */
@@ -304,6 +306,10 @@ export class OfficeVibes {
       reply({ t: 'gemini.setup', ok: false, error: 'Enter a Gemini API key.' });
       return;
     }
+    if (!isValidGeminiApiKey(key)) {
+      reply({ t: 'gemini.setup', ok: false, error: 'Enter a valid Google AI Studio key (starts with AIza).' });
+      return;
+    }
     this.probeAbort?.abort();
     const abort = new AbortController();
     this.probeAbort = abort;
@@ -315,7 +321,10 @@ export class OfficeVibes {
       signal: abort.signal,
       now: this.opts.now,
     });
-    if (this.probeAbort !== abort) return;
+    if (this.probeAbort !== abort) {
+      reply({ t: 'gemini.setup', ok: false, error: 'Cancelled.' });
+      return;
+    }
     this.probeAbort = undefined;
     this.checking = false;
 
@@ -365,13 +374,17 @@ export class OfficeVibes {
       signal: abort.signal,
       now: this.opts.now,
     });
-    if (this.probeAbort !== abort) return;
+    if (this.probeAbort !== abort) {
+      reply({ t: 'gemini.setup', ok: false, error: 'Cancelled.' });
+      return;
+    }
     this.probeAbort = undefined;
     this.checking = false;
 
     if (!probe.ok) {
       this.opts.store.markChecked(this.now(), probe.keyRejected ? probe.error : undefined);
       this.lastError = probe.error;
+      if (probe.keyRejected) this.resetAllFloorsToNeutral();
       this.reconcileSchedule(false);
       this.opts.broadcastGemini(this.geminiState());
       reply({ t: 'gemini.setup', ok: false, error: probe.error });
@@ -559,6 +572,7 @@ export class OfficeVibes {
         this.lastError = res.error;
         if (res.keyRejected) {
           this.opts.store.markChecked(this.now(), res.error);
+          this.resetAllFloorsToNeutral();
           this.reconcileSchedule(false);
         }
         this.opts.broadcastGemini(this.geminiState());
@@ -579,8 +593,9 @@ export class OfficeVibes {
       }
 
       const moodAns = choiceProb(res.answers.floor_mood);
-      const mood: FloorMood = moodAns && isFloorMood(moodAns.choice) && moodAns.prob >= MOOD_CONFIDENCE_MIN ? moodAns.choice : 'calm_planning';
-      const moodConfidence = moodAns ? moodAns.prob : 1;
+      const moodConfident = Boolean(moodAns && isFloorMood(moodAns.choice) && moodAns.prob >= MOOD_CONFIDENCE_MIN);
+      const mood: FloorMood = moodConfident && moodAns ? (moodAns.choice as FloorMood) : 'calm_planning';
+      const moodConfidence = moodConfident && moodAns ? moodAns.prob : 0;
 
       const workersOut: Record<string, WorkerVibeState> = {};
       for (const { worker, keyPrefix, workerDigest } of batch.workers) {
@@ -601,7 +616,7 @@ export class OfficeVibes {
           track.workers.set(currentWorker.id, wTrack);
         }
 
-        let reaction = wTrack.lastReaction;
+        let reaction = wTrack.lastReaction && doneAt - wTrack.lastReaction.at <= 4500 ? wTrack.lastReaction : undefined;
         if (rAns && isWorkerMicroReaction(rAns.choice) && rAns.prob >= MICRO_REACTION_CONFIDENCE_MIN && wTrack.lastReactDigest !== workerDigest && doneAt - wTrack.lastReactionAt >= MICRO_REACTION_COOLDOWN_MS) {
           this.reactionSeq += 1;
           reaction = {

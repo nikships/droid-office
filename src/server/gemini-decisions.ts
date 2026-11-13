@@ -1,4 +1,4 @@
-import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fingerprintGeminiKey, GEMINI_DECISIONS_MODEL, isValidGeminiApiKey } from '../shared/gemini-vibes.js';
 
@@ -56,13 +56,13 @@ export function redactGeminiSecrets(text: string, extraSecrets: readonly (string
   let out = pattern ? text.replace(new RegExp(pattern, 'g'), '[redacted]') : text;
   out = out.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
   out = out.replace(/(x-goog-api-key\s*[:=]\s*)\S+/gi, '$1[redacted]');
-  out = out.replace(/\bAIza[A-Za-z0-9_-]{16,}\b/g, '[redacted]');
-  out = out.replace(/\b(?:fk|sk|rk)-[A-Za-z0-9_-]{16,}\b/g, '[redacted]');
-  out = out.replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b/g, '[redacted]');
-  out = out.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, '[redacted]');
-  out = out.replace(/\bglpat-[A-Za-z0-9_-]{16,}\b/g, '[redacted]');
-  out = out.replace(/\blin_api_[A-Za-z0-9_-]{16,}\b/g, '[redacted]');
-  out = out.replace(/\bcrsr_[A-Za-z0-9_-]{12,}\b/g, '[redacted]');
+  out = out.replace(/\bAIza[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])/g, '[redacted]');
+  out = out.replace(/\b(?:fk|sk|rk)-[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])/g, '[redacted]');
+  out = out.replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}(?![A-Za-z0-9_])/g, '[redacted]');
+  out = out.replace(/\bgithub_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9_])/g, '[redacted]');
+  out = out.replace(/\bglpat-[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])/g, '[redacted]');
+  out = out.replace(/\blin_api_[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])/g, '[redacted]');
+  out = out.replace(/\bcrsr_[A-Za-z0-9_-]{12,}(?![A-Za-z0-9_-])/g, '[redacted]');
   return out;
 }
 
@@ -71,6 +71,10 @@ function cleanError(text: string, apiKey?: string): string {
 }
 
 async function readBoundedText(res: Response, maxBytes: number): Promise<string> {
+  const contentLength = Number(res.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error('Gemini response exceeded size limit.');
+  }
   const reader = res.body?.getReader();
   if (!reader) {
     const text = await res.text();
@@ -414,10 +418,14 @@ export class GeminiDecisionsStore {
       ...(this.rejectedReason ? { rejected: this.rejectedReason } : {}),
     };
     try {
+      mkdirSync(path.dirname(this.file), { recursive: true });
       writeFileSync(`${this.file}.tmp`, JSON.stringify(disk, null, 2), { mode: 0o600 });
       renameSync(`${this.file}.tmp`, this.file);
       return undefined;
     } catch {
+      try {
+        unlinkSync(`${this.file}.tmp`);
+      } catch {}
       return 'Could not save Gemini settings to disk.';
     }
   }

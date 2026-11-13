@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
-import type { WorkerMicroReaction, WorkerVibePosture, WorkerVibeState } from '../../shared/gemini-vibes';
+import { isWorkerMicroReaction, isWorkerVibePosture, type WorkerMicroReaction, type WorkerVibePosture, type WorkerVibeState } from '../../shared/gemini-vibes';
 import type { CarriedIssue, TeamBadge, TodoProgress, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
 import { isAsleep, type WorkerPr } from '../../shared/status';
 import { todoCount, todoFraction, todoLine } from '../../shared/todos';
@@ -1914,18 +1914,20 @@ export class Worker {
 
   /** Applies continuous desk posture and any newly sequenced high-confidence micro-reaction. */
   applyVibe(vibe: WorkerVibeState | undefined, nowMs = Date.now()) {
-    this.vibePosture = vibe?.posture ?? 'steady';
+    this.vibePosture = vibe && isWorkerVibePosture(vibe.posture) ? vibe.posture : 'steady';
     const r = vibe?.reaction;
-    if (r && r.seq > this.lastReactionSeq) {
+    if (r && r.seq > 0 && r.seq !== this.lastReactionSeq && isWorkerMicroReaction(r.kind)) {
       this.lastReactionSeq = r.seq;
-      if (nowMs - r.at <= 10_000) this.triggerReaction(r.kind);
+      if (!this.microReaction && nowMs - r.at <= 10_000) this.triggerReaction(r.kind);
     }
   }
 
   /** Triggers a one-shot micro-reaction over a smooth ~2s envelope without snapping limbs. */
   triggerReaction(kind: WorkerMicroReaction) {
     if (this.dead || this.leaving || this.dancing) return;
-    const duration = kind === 'breakthrough' || kind === 'puzzled' ? 2.2 : kind === 'fresh_breakage' ? 2.1 : 2.0;
+    let duration = 2.0;
+    if (kind === 'breakthrough' || kind === 'puzzled') duration = 2.2;
+    else if (kind === 'fresh_breakage') duration = 2.1;
     this.microReaction = { kind, t: 0, duration };
   }
 
@@ -2384,10 +2386,10 @@ export class Worker {
     const s = this.pose(act, dt, t);
     let asymBrow = 0;
     let reactionBulbHex: string | null = null;
-    if (this.microReaction && !hopping && !sleeping && !this.visitPose) {
+    if (this.microReaction) {
       const r = this.microReaction;
       r.t += dt;
-      if (r.t >= r.duration) {
+      if (r.t >= r.duration || hopping || sleeping || this.visitPose) {
         this.microReaction = null;
         this.paintBulb();
       } else {
@@ -2516,7 +2518,10 @@ export class Worker {
     this.body.rotation.z = sleeping ? Math.sin(t * 1.5) * 0.05 : s.roll;
     this.props(t);
     this.blink(dt, sleeping ? 0.08 : s.lid);
-    this.bulbScale(this.status === 'needs_input' ? 1 + Math.abs(Math.sin(t * 8)) * 0.45 : reactionBulbHex ? 1 + Math.abs(Math.sin(t * 12)) * 0.32 : 1);
+    let bulbPulse = 1;
+    if (this.status === 'needs_input') bulbPulse = 1 + Math.abs(Math.sin(t * 8)) * 0.45;
+    else if (reactionBulbHex) bulbPulse = 1 + Math.abs(Math.sin(t * 12)) * 0.32;
+    this.bulbScale(bulbPulse);
     const hopLift = hopping ? hopH * 0.55 : 0;
     if (this.bubble) this.bubble.position.y = (this.bubbleIsCard ? 1.74 : 1.95) + hopLift + Math.sin(t * 3) * 0.03;
     if (this.nameTag) this.nameTag.position.y = 1.55 + hopLift;

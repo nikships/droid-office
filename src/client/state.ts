@@ -23,6 +23,7 @@ import type {
   ClientMsg,
 } from '../shared/protocol';
 import { SUBAGENT_DEFAULTS } from '../shared/protocol';
+import { ROOF } from '../shared/rooftop';
 import { WORKER_LABEL_DEFAULTS, type WorkerLabelState } from '../shared/worker-labels';
 import { kittyImageSignature } from '../shared/kitty';
 import { decodeScreenBitmap } from './term-kitty';
@@ -378,7 +379,7 @@ export class Store {
     this.jiraBoard = v.jiraBoard ?? null;
     this.linear = v.linear ?? { autopilot: { ...DEFAULT_AUTOPILOT }, working: 0 };
     this.linearBoard = v.linearBoard ?? null;
-    this.vibes = v.vibes ?? (v.floor && v.floor !== '@roof' ? emptyFloorVibes(v.floor) : null);
+    this.vibes = v.vibes ?? (v.floor && v.floor !== ROOF ? emptyFloorVibes(v.floor) : null);
     this.decor = v.decor;
     this.worktreeSetup = null;
     // The new floor's visits follow in their own message.

@@ -132,6 +132,11 @@ test('redactGeminiSecrets scrubs raw, URL-encoded, bearer and provider tokens', 
   assert.doesNotMatch(scrubbed, /customKeyValue123/);
   assert.doesNotMatch(scrubbed, /fk-1234567890/);
   assert.doesNotMatch(scrubbed, /ghp_1234567890/);
+
+  // Keys ending with '-' or '_' (non-word boundary) are also scrubbed cleanly
+  const dashEnd = redactGeminiSecrets('Token AIzaSyD0123456789abcdefghijk- and fk-1234567890abcdefghij- here');
+  assert.doesNotMatch(dashEnd, /AIzaSyD/);
+  assert.doesNotMatch(dashEnd, /fk-1234567890/);
 });
 
 test('callGeminiDecisions and probeGeminiKey parse real /v1beta/decisions shapes, blocks and errors', async () => {
@@ -329,6 +334,12 @@ test('OfficeVibes enforces strict view-aware cost gating, digest deduplication, 
   });
   t.after(() => vibes.stop());
 
+  // Malformed key is rejected locally without touching the network
+  let badReply: { ok: boolean; error?: string } | undefined;
+  await vibes.connect('not-a-valid-key', 'Owner', (r) => (badReply = r));
+  assert.equal(badReply?.ok, false);
+  assert.equal(apiCalls, 0);
+
   // Connect key (1 probe call)
   let connectReply: { ok: boolean; error?: string } | undefined;
   await vibes.connect(TEST_KEY, 'Owner', (r) => (connectReply = r));
@@ -371,12 +382,12 @@ test('OfficeVibes enforces strict view-aware cost gating, digest deduplication, 
   await vibes.pulseNow();
   assert.equal(apiCalls, 2, 'unchanged snapshot digest skips API call');
 
-  // 5. Terminal changes within 18s cooldown: updates posture/spill, does NOT re-fire twitchy reaction!
+  // 5. Terminal changes within 18s cooldown: updates posture/spill, clears expired one-shot, and does NOT re-fire twitchy reaction!
   tailText = 'Running lint checks...';
-  now += 5000; // only 9s elapsed (< 18s cooldown)
+  now += 5000; // 9s elapsed (> 4.5s grace window, < 18s cooldown)
   await vibes.pulseNow();
   assert.equal(apiCalls, 3);
-  assert.equal(floorBroadcasts.at(-1)?.workers['w-alpha']?.reaction?.seq, 1, 'cooldown prevents back-to-back micro-reactions');
+  assert.equal(floorBroadcasts.at(-1)?.workers['w-alpha']?.reaction, undefined, 'cooldown prevents back-to-back micro-reactions and clears stale reaction');
 
   // 6. After 18s cooldown with high confidence (>= 0.85): fires seq 2!
   tailText = 'All 42 suites passed!';
@@ -391,7 +402,7 @@ test('OfficeVibes enforces strict view-aware cost gating, digest deduplication, 
   now += MICRO_REACTION_COOLDOWN_MS + 1000;
   await vibes.pulseNow();
   assert.equal(apiCalls, 5);
-  assert.equal(floorBroadcasts.at(-1)?.workers['w-alpha']?.reaction?.seq, 2, 'sub-0.85 probability does not fire one-shot reaction');
+  assert.equal(floorBroadcasts.at(-1)?.workers['w-alpha']?.reaction, undefined, 'sub-0.85 probability does not fire one-shot reaction');
 
   // 8. 3D window hidden / closed to menu bar: watching3d drops to 0 and pulses stop immediately!
   vibes.setWatching('3d-1', false);

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { FLOOR_MOOD_LIGHTING, type FloorMood } from '../../shared/gemini-vibes';
+import { FLOOR_MOOD_LIGHTING, isFloorMood, type FloorMood } from '../../shared/gemini-vibes';
 import { FLOOR, SLAB, STREET_Y, WALL_T } from '../../shared/layout';
 import type { SkyState, Weather } from '../../shared/protocol';
 import { guessPlace } from '../../shared/sun';
@@ -481,15 +481,17 @@ export interface ScreenGlow {
   color?: THREE.Color;
 }
 
-const _savedBakeOffice = new THREE.Color();
-/** Temporarily pins `skyOffice` to the neutral clear-night room fill while Remastered GI probes bake, so cached GI never bakes transient mood tints. */
+/** Temporarily pins `skyOffice` to the neutral clear-night room fill and hides dynamic screen glows while Remastered GI probes bake, so cached GI never bakes transient mood or desk tints. */
 export function withBaselineOfficeFill(overhead: number, fn: () => void): void {
-  _savedBakeOffice.copy(uniforms.skyOffice.value);
+  const savedOffice = uniforms.skyOffice.value.clone();
+  const savedScreenCount = uniforms.skyScreenCount.value;
   uniforms.skyOffice.value.copy(C.officeNight).multiplyScalar(NIGHT.office * clamp01(overhead));
+  uniforms.skyScreenCount.value = 0;
   try {
     fn();
   } finally {
-    uniforms.skyOffice.value.copy(_savedBakeOffice);
+    uniforms.skyOffice.value.copy(savedOffice);
+    uniforms.skyScreenCount.value = savedScreenCount;
   }
 }
 
@@ -711,8 +713,9 @@ export class Sky {
 
   /** Sets the studio's atmospheric lighting mood, smoothly crossfaded over ~2.2 seconds in `update`. */
   setMood(mood: FloorMood, snap = false) {
-    this.mood = mood;
-    const spec = FLOOR_MOOD_LIGHTING[mood] ?? FLOOR_MOOD_LIGHTING.calm_planning;
+    const safeMood: FloorMood = isFloorMood(mood) ? mood : 'calm_planning';
+    this.mood = safeMood;
+    const spec = FLOOR_MOOD_LIGHTING[safeMood];
     this.moodTargetColor.set(spec.hex);
     this.moodTargetFill = spec.fillScale;
     if (snap) {

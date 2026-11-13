@@ -33,7 +33,7 @@ import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME } from '../shared/mission-control';
 import { botLine, missionWaiting, missionWorker, orchestratorLine, orchestratorWorker } from './mission';
 import { ORCHESTRATOR_SPOT, PHASE_WORD, missionBadge, missionLinks, missionStand, missionTeamBadge, missionTeamLine, missionView, orchestratorAwake, orchestratorPhase, orchestratorWaiting } from './mission-office';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, ServerMsg, WorkerInfo } from '../shared/protocol';
-import { MONITOR_SPILL_HEX, type MonitorSpillTone } from '../shared/gemini-vibes';
+import { isFloorMood, isMonitorSpillTone, MONITOR_SPILL_HEX, type MonitorSpillTone } from '../shared/gemini-vibes';
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
 import { isPaletteKey } from '../shared/palette';
@@ -1647,7 +1647,7 @@ function syncWorkers() {
       noOutline(desk.group);
       desk.chair.rotation.y = 0;
       const wVibe = store.vibes?.workers[w.id];
-      const initialTone: MonitorSpillTone = wVibe?.spill ?? 'neutral';
+      const initialTone: MonitorSpillTone = wVibe && isMonitorSpillTone(wVibe.spill) ? wVibe.spill : 'neutral';
       v = {
         model,
         laptop,
@@ -4287,7 +4287,7 @@ function syncVibesWatch() {
     vibesWatching = false;
     return;
   }
-  const want = (document.visibilityState === 'visible' || fullRate) && !upTop && Boolean(store.floor && store.floor !== ROOF);
+  const want = document.visibilityState === 'visible' && !upTop && Boolean(store.floor && store.floor !== ROOF);
   if (want === vibesWatching) return;
   vibesWatching = want;
   net.send({ t: 'vibes.watch', active: want });
@@ -4295,18 +4295,26 @@ function syncVibesWatch() {
 
 function syncFloorVibes(snap = false) {
   const vibes = store.vibes;
-  sky.setMood(vibes?.mood ?? 'calm_planning', snap);
+  const nextMood = vibes && isFloorMood(vibes.mood) ? vibes.mood : 'calm_planning';
+  let changed = snap || nextMood !== sky.currentMood;
+  sky.setMood(nextMood, snap);
   const nowMs = store.officeNow();
   for (const [wid, v] of workerViews) {
     const wVibe = vibes?.workers[wid];
-    const tone: MonitorSpillTone = wVibe?.spill ?? 'neutral';
+    const tone: MonitorSpillTone = wVibe && isMonitorSpillTone(wVibe.spill) ? wVibe.spill : 'neutral';
+    if (tone !== v.spillTone) changed = true;
     v.spillTone = tone;
     v.spillTarget.set(MONITOR_SPILL_HEX[tone]);
     if (snap) v.spillColor.copy(v.spillTarget);
+    const prevPosture = v.model.activeVibePosture;
+    const prevReaction = v.model.activeReaction;
     v.model.applyVibe(wVibe, nowMs);
+    if (v.model.activeVibePosture !== prevPosture || v.model.activeReaction !== prevReaction) changed = true;
   }
-  activeAt = performance.now();
-  renderWake();
+  if (changed) {
+    activeAt = performance.now();
+    renderWake();
+  }
 }
 
 net.onStatus((up) => {

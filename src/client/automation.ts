@@ -323,7 +323,17 @@ export function buildSnapshot(raw: RawState): Snapshot {
     })),
     floors: raw.floors.map((f) => ({ id: f.id, name: f.name, waiting: f.waiting, here: f.id === raw.floor })),
     ...(raw.agents ? { agents: raw.agents.map((w) => ({ id: w.id, name: w.name, remote: !!w.remote, status: w.status, waiting: !w.remote && waitingOnSomeone(w), ...(w.task?.name ? { task: w.task.name } : {}) })) } : {}),
-    ...(raw.vibes ? { vibes: raw.vibes } : {}),
+    ...(raw.vibes
+      ? {
+          vibes: {
+            watching3d: raw.vibes.watching3d,
+            calls: raw.vibes.calls,
+            inputTokens: raw.vibes.inputTokens,
+            mood: raw.vibes.mood,
+            workers: raw.vibes.workers.map((w) => ({ ...w })),
+          },
+        }
+      : {}),
   };
 }
 

@@ -74,7 +74,9 @@ export function geminiSettings(net: Net): { card: { desc: Node; below: Node[] };
     intro.classList.toggle('hidden', !editing);
     cancel.classList.toggle('hidden', !g.connected);
     connect.disabled = busy;
-    connect.textContent = busy ? 'Checking…' : g.connected ? 'Use this key' : 'Connect';
+    if (busy) connect.textContent = 'Checking…';
+    else if (g.connected) connect.textContent = 'Use this key';
+    else connect.textContent = 'Connect';
     keyInput.disabled = busy;
     error.classList.toggle('hidden', !failure);
     error.textContent = failure;
@@ -103,7 +105,10 @@ export function geminiSettings(net: Net): { card: { desc: Node; below: Node[] };
       liveGate.textContent += ` · Last note: ${g.lastError}`;
     }
 
-    check.disabled = !!g.checking;
+    const locked = busy || Boolean(g.checking);
+    check.disabled = locked;
+    replace.disabled = locked;
+    remove.disabled = locked;
     check.textContent = g.checking ? 'Checking…' : 'Check again';
   };
 

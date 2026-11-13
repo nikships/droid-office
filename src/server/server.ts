@@ -3112,7 +3112,8 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'vibes.watch':
-        if (!c.dashboard && typeof msg.active === 'boolean') officeVibes.setWatching(c.id, msg.active);
+        if (typeof msg.active !== 'boolean') return stop('Send {"active": true} or {"active": false}.');
+        if (!c.dashboard) officeVibes.setWatching(c.id, msg.active);
         break;
       case 'setup.check':
         setup.message(who, msg);
