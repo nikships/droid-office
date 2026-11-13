@@ -5,6 +5,8 @@ import { coast, fitGrid, fitScale, hitTestKittyTap, isKittyTap, MAX_STEPS, nextE
 import {
   decodeBase64 as androidDecodeBase64,
   decodePlaceholderCell as androidDecodePlaceholder,
+  KITTY_CELL_PX_H as ANDROID_CELL_PX_H,
+  KITTY_CELL_PX_W as ANDROID_CELL_PX_W,
   KITTY_DIACRITICS as ANDROID_DIACRITICS,
   KittyApcSplitter as AndroidSplitter,
   KittyGraphicsStore as AndroidStore,
@@ -12,7 +14,7 @@ import {
 } from '../android/app/src/main/assets/terminal/kitty.js';
 import { THEME } from '../android/app/src/main/assets/terminal/theme.js';
 import { TERM_THEME } from '../src/client/world/laptop.js';
-import { decodeBase64, decodePlaceholderCell, KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
+import { decodeBase64, decodePlaceholderCell, KITTY_CELL_PX_H, KITTY_CELL_PX_W, KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
 import { vendoredPaths } from '../tools/android-terminal.mjs';
 
 test("the phone's vendored xterm.js matches the installed packages (node tools/android-terminal.mjs)", () => {
@@ -120,6 +122,7 @@ test('hitTestKittyTap maps scaled Desktop and Phone terminal taps to the topmost
 
 test("the phone's Kitty graphics and keyboard helpers match src/shared/kitty.ts", () => {
   assert.deepEqual(ANDROID_DIACRITICS, KITTY_DIACRITICS);
+  assert.deepEqual([ANDROID_CELL_PX_W, ANDROID_CELL_PX_H], [KITTY_CELL_PX_W, KITTY_CELL_PX_H]);
   const d2 = String.fromCodePoint(KITTY_DIACRITICS[2]);
   const d4 = String.fromCodePoint(KITTY_DIACRITICS[4]);
   const cell = `${KITTY_PLACEHOLDER_CHAR}${d2}${d4}`;

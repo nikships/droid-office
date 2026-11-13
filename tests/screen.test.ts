@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
-import { KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
+import { KITTY_CELL_PX_H, KITTY_CELL_PX_W, KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
 import { getTerminalKitty, screenSnapshot, setTerminalResponder } from '../src/server/screen.js';
 
 function terminal() {
@@ -61,7 +61,35 @@ test('answers Droid capability probes in exact stream order before DA1 and ignor
   setTerminalResponder(term, (d) => replies.push(d));
   await write('\x1b[?u\x1b]11;?\x07\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b_Ga=q,i=32,e=T,U=1\x1b\\\x1b[16t\x1b[14t\x1b[>0q\x1b[c');
 
-  assert.deepEqual(replies, ['\x1b[?0u', '\x1b]11;rgb:0000/0000/0000\x1b\\', '\x1b_Gi=31;OK\x1b\\', '\x1b_Gi=32,U=1;OK\x1b\\', '\x1b[6;18;9t', '\x1b[4;180;720t', '\x1bP>|droid-office(1.0)\x1b\\', '\x1b[?1;2c']);
+  assert.deepEqual(replies, ['\x1b[?0u', '\x1b]11;rgb:0000/0000/0000\x1b\\', '\x1b_Gi=31;OK\x1b\\', '\x1b_Gi=32,U=1;OK\x1b\\', '\x1b[6;36;18t', '\x1b[4;360;1440t', '\x1bP>|droid-office(1.0)\x1b\\', '\x1b[?1;2c']);
+});
+
+test('reports Retina device-pixel cells, so image CLIs send inline images at twice the old resolution', async () => {
+  const { term, write } = terminal();
+  const replies: string[] = [];
+  setTerminalResponder(term, (d) => replies.push(d));
+  await write('\x1b[16t');
+  // Droid reads `CSI 6 ; height ; width t` and downsamples each image to cols × width by rows × height pixels
+  // (12 rows at most): 9×18 cells capped a 2400×1640 screenshot at 315×215 in the expanded viewer.
+  const [, h, w] = /^\x1b\[6;(\d+);(\d+)t$/.exec(replies[0] ?? '') ?? [];
+  assert.deepEqual([Number(w), Number(h)], [18, 36]);
+  assert.ok(12 * Number(h) >= 2 * 12 * 18, 'a 12-row image gets at least 2× the 1× cell height in pixels');
+});
+
+test('a direct placement without c/r takes its cells from the reported cell size, as every mirror does', async () => {
+  const { term, write } = terminal();
+  await write(`\x1b_Ga=T,f=32,s=${KITTY_CELL_PX_W * 3},v=${KITTY_CELL_PX_H * 2},i=5;AAAA\x1b\\`);
+  const p = getTerminalKitty(term)?.directPlacements[0];
+  assert.deepEqual([p?.cols, p?.rows], [3, 2]);
+  assert.deepEqual([term.buffer.active.cursorX, term.buffer.active.cursorY], [3, 1], 'cursor lands just past the image on its last row');
+});
+
+test('a direct placement with explicit c/r keeps exactly those cells whatever its pixel size', async () => {
+  const { term, write } = terminal();
+  await write('\x1b_Ga=T,f=32,s=900,v=900,c=5,r=3,i=6;AAAA\x1b\\');
+  const p = getTerminalKitty(term)?.directPlacements[0];
+  assert.deepEqual([p?.cols, p?.rows], [5, 3]);
+  assert.deepEqual([term.buffer.active.cursorX, term.buffer.active.cursorY], [5, 2]);
 });
 
 test('Kitty keyboard stack and U=1 inline graphics survive two snapshot hops and clear on RIS', async () => {

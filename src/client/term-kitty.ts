@@ -5,6 +5,8 @@ import {
   decodePlaceholderCell,
   encodeKittyKey,
   isKittyPlaceholderCell,
+  KITTY_CELL_PX_H,
+  KITTY_CELL_PX_W,
   KITTY_PLACEHOLDER_CHAR,
   KittyApcSplitter,
   KittyGraphicsStore,
@@ -465,11 +467,8 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
 
   const placeDirect = (img: KittyImageRecord, req: KittyPlaceRequest): string | undefined => {
     if (req.unicode) return undefined;
-    const geom = cellGeometry();
-    const cellW = geom?.cellW ?? 9;
-    const cellH = geom?.cellH ?? 18;
-    const cols = Math.max(1, req.cols ?? (img.width > 0 ? Math.ceil(img.width / cellW) : 10));
-    const rows = Math.max(1, req.rows ?? (img.height > 0 ? Math.ceil(img.height / cellH) : 5));
+    const cols = Math.max(1, req.cols ?? (img.width > 0 ? Math.ceil(img.width / KITTY_CELL_PX_W) : 10));
+    const rows = Math.max(1, req.rows ?? (img.height > 0 ? Math.ceil(img.height / KITTY_CELL_PX_H) : 5));
     // Per Kitty spec, explicit non-zero `p=` replaces an existing placement with the same `(i, p)`.
     if (req.placementId > 0) {
       clearPlacements((p) => p.imageId === req.imageId && p.placementId === req.placementId);
@@ -718,8 +717,8 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
       if (!bmp || !entry.root) continue;
 
       const obs = observed.get(r.imageId);
-      const totalCols = Math.max(obs?.cols ?? r.cols, rec.cols ?? Math.ceil(bmp.width / geom.cellW));
-      const totalRows = Math.max(obs?.rows ?? r.rows, rec.rows ?? Math.ceil(bmp.height / geom.cellH));
+      const totalCols = Math.max(obs?.cols ?? r.cols, rec.cols ?? Math.ceil(bmp.width / KITTY_CELL_PX_W));
+      const totalRows = Math.max(obs?.rows ?? r.rows, rec.rows ?? Math.ceil(bmp.height / KITTY_CELL_PX_H));
 
       const sx = (r.srcCol / totalCols) * bmp.width;
       const sy = (r.srcRow / totalRows) * bmp.height;

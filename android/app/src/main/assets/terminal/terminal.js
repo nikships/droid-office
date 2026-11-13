@@ -6,7 +6,20 @@
 import { Unicode11Addon } from './vendor/addon-unicode11.mjs';
 import { Terminal } from './vendor/xterm.mjs';
 import { coast, fitGrid, fitScale, hitTestKittyTap, isKittyTap, nextEncoding, RowAccumulator, swipeGoesToProgram, swipeInput, TAP_SLOP_PX } from './input.js';
-import { ALT_BUFFER_MODES, cellUnderlineId, decodeBase64, decodePlaceholderCell, isKittyPlaceholderCell, KITTY_PLACEHOLDER_CHAR, KittyApcSplitter, KittyGraphicsStore, kittyImageSignature, KittyKeyboardState } from './kitty.js';
+import {
+  ALT_BUFFER_MODES,
+  cellUnderlineId,
+  decodeBase64,
+  decodePlaceholderCell,
+  isKittyPlaceholderCell,
+  KITTY_CELL_PX_H,
+  KITTY_CELL_PX_W,
+  KITTY_PLACEHOLDER_CHAR,
+  KittyApcSplitter,
+  KittyGraphicsStore,
+  kittyImageSignature,
+  KittyKeyboardState,
+} from './kitty.js';
 import { THEME } from './theme.js';
 
 /** Readable text, in CSS pixels before the phone's font scale (the native app's 12.5 sp). */
@@ -329,11 +342,8 @@ function gridSize() {
 
 function placeDirect(img, req) {
   if (req.unicode) return undefined;
-  const { cellW, cellH } = gridSize();
-  const cw = cellW || 9;
-  const ch = cellH || 18;
-  const cols = Math.max(1, req.cols ?? (img.width > 0 ? Math.ceil(img.width / cw) : 10));
-  const rows = Math.max(1, req.rows ?? (img.height > 0 ? Math.ceil(img.height / ch) : 5));
+  const cols = Math.max(1, req.cols ?? (img.width > 0 ? Math.ceil(img.width / KITTY_CELL_PX_W) : 10));
+  const rows = Math.max(1, req.rows ?? (img.height > 0 ? Math.ceil(img.height / KITTY_CELL_PX_H) : 5));
   if (req.placementId > 0) clearDirectPlacements((p) => p.imageId === req.imageId && p.placementId === req.placementId);
   const startCol = term.buffer.active.cursorX;
   const marker = term.registerMarker(0);
@@ -453,8 +463,8 @@ function paintKittyOverlay() {
     const bmp = entry.frameIdx === 0 || !entry.frames.length ? entry.root : (entry.frames[entry.frameIdx - 1] ?? entry.root);
     if (!bmp || !entry.root) continue;
     const obs = observed.get(r.imageId);
-    const totalCols = Math.max(obs?.cols ?? r.cols, rec.cols ?? Math.ceil(bmp.width / cellW));
-    const totalRows = Math.max(obs?.rows ?? r.rows, rec.rows ?? Math.ceil(bmp.height / cellH));
+    const totalCols = Math.max(obs?.cols ?? r.cols, rec.cols ?? Math.ceil(bmp.width / KITTY_CELL_PX_W));
+    const totalRows = Math.max(obs?.rows ?? r.rows, rec.rows ?? Math.ceil(bmp.height / KITTY_CELL_PX_H));
     const sx = (r.srcCol / totalCols) * bmp.width;
     const sy = (r.srcRow / totalRows) * bmp.height;
     const sw = (r.cols / totalCols) * bmp.width;

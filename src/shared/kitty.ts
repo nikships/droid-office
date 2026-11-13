@@ -401,6 +401,16 @@ export function isCancelInput(data: string): boolean {
 // 2. Kitty Graphics Protocol (`APC G` + `U=1` Unicode Placeholders)
 // ---------------------------------------------------------------------------
 
+/**
+ * Cell size in device pixels that the PTY owner reports for `CSI 16 t` (and `CSI 14 t` window size): a 9×18 CSS
+ * cell at 2× density, as Kitty and Ghostty report on Retina displays. Image CLIs downsample each inline image to
+ * `cols × cell` by `rows × cell` pixels before sending it (Droid caps images at 12 rows), so this sets the
+ * resolution every mirror and the expanded viewer receive. It is also the implied cell size for placements that
+ * omit `c`/`r`, so every mirror moves the cursor by the same number of cells as the PTY owner.
+ */
+export const KITTY_CELL_PX_W = 18;
+export const KITTY_CELL_PX_H = 36;
+
 /** Unicode Private Use Area character reserved by Kitty for `U=1` virtual image cells. */
 export const KITTY_PLACEHOLDER_CP = 0x10eeee;
 export const KITTY_PLACEHOLDER_CHAR = '\udbfb\udeee';
