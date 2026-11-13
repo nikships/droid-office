@@ -75,8 +75,9 @@ import { officePrompt } from './prompts.js';
 import { Answers } from './answers.js';
 import { WorkerThreadReader } from './worker-thread.js';
 import { WorkerLabels } from './worker-labels.js';
-import { WorkerLabelModel } from './worker-label-model.js';
-import { labelSettings, WorkerLabelPreferences } from './worker-label-settings.js';
+import { LabelModelError, openAiLabel, WorkerLabelModel } from './worker-label-model.js';
+import { WorkerLabelPreferences } from './worker-label-settings.js';
+import { sameEndpointOrigin } from '../shared/worker-labels.js';
 import { FinderDispatch, finderCatalogue, handleFinder, publishFinder } from './finder.js';
 import { RemoteWorkers } from './remote-workers.js';
 import { RemoteOffice } from './remote-office.js';
@@ -607,7 +608,12 @@ export async function startServer(cfg: Config) {
   const labelPreferences = new WorkerLabelPreferences(cfg.dataDir);
   let labelSettingsRevision = 0;
   const labelThreads = new WorkerThreadReader(undefined, { sessions: 500, entries: 0, bytes: 0 }, true);
-  const labelModel = new WorkerLabelModel({ droid: () => agentPath, key: () => factory.office.key(), system: () => officePrompt(prompts, 'office.namer') });
+  const labelModel = new WorkerLabelModel({
+    droid: () => agentPath,
+    key: () => factory.office.key(),
+    endpointApiKey: (settings) => (sameEndpointOrigin(labelPreferences.get().baseUrl, settings.baseUrl) ? labelPreferences.apiKey() : undefined),
+    system: () => officePrompt(prompts, 'office.namer'),
+  });
   const workerLabels = new WorkerLabels({
     settings: () => labelPreferences.get(),
     workers: () =>
@@ -631,7 +637,7 @@ export async function startServer(cfg: Config) {
       ),
     read: (source) => labelThreads.readText(source),
     generate: (input, settings, signal) => {
-      if (setup.state().airgapped && settings.implementation !== 'custom') return Promise.reject(new Error(AIRGAPPED_REASON));
+      if (setup.state().airgapped && settings.implementation !== 'openai') return Promise.reject(new Error(AIRGAPPED_REASON));
       return labelModel.generate(input, settings, signal);
     },
     changed: (state) => broadcast({ t: 'workerLabels', state }),
@@ -2021,10 +2027,10 @@ export async function startServer(cfg: Config) {
     let finished = false;
     // An awaited action calls done() from a later callback. Do not complete the receipt at the end of this turn.
     let pending = false;
-    const done = (error?: string, workerId?: string) => {
+    const done = (error?: string, workerId?: string, note?: string) => {
       if (!requestId || finished) return;
       finished = true;
-      sendTo(c, { t: 'action.result', requestId, ok: !error, ...(error ? { error } : {}), ...(workerId ? { workerId } : {}) });
+      sendTo(c, { t: 'action.result', requestId, ok: !error, ...(error ? { error } : {}), ...(workerId ? { workerId } : {}), ...(note ? { note } : {}) });
     };
     const refuse = (error: string | undefined) => {
       warn(c, error);
@@ -2798,18 +2804,19 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'workerLabels.set': {
-        const next = labelSettings(msg.settings);
-        if (!next) return stop('Choose valid worker label settings.');
-        if (setup.state().airgapped && next.on && next.implementation !== 'custom') return stop(AIRGAPPED_REASON);
+        const resolved = labelPreferences.resolve(msg.settings);
+        if ('error' in resolved) return stop(resolved.error);
+        const next = resolved.settings;
+        if (setup.state().airgapped && next.on && next.implementation !== 'openai') return stop(AIRGAPPED_REASON);
         const revision = ++labelSettingsRevision;
         const save = () => {
           if (revision !== labelSettingsRevision) return stop('Worker label settings changed while verifying this selection. Try again.');
-          const error = labelPreferences.set(next);
+          const error = labelPreferences.set(msg.settings);
           if (error) return stop(error);
           workerLabels.settingsChanged();
           done();
         };
-        if (!next.on || next.implementation === 'custom') {
+        if (!next.on || next.implementation === 'openai') {
           save();
           break;
         }
@@ -2822,6 +2829,29 @@ export async function startServer(cfg: Config) {
             save();
           },
           () => stop('Could not verify the selected label model. Settings are unchanged.'),
+        );
+        break;
+      }
+      case 'workerLabels.test': {
+        const resolved = labelPreferences.resolve(msg.settings);
+        if ('error' in resolved) return stop(resolved.error);
+        if (resolved.settings.implementation !== 'openai') return stop('Choose OpenAI-compatible endpoint to test an endpoint.');
+        // Guard against racing settings updates: reuse the saved key only if it still matches this origin.
+        const keyToSend = msg.settings?.apiKey !== undefined ? resolved.apiKey : sameEndpointOrigin(labelPreferences.get().baseUrl, resolved.settings.baseUrl) ? labelPreferences.apiKey() : undefined;
+        defer();
+        const startedAt = Date.now();
+        void openAiLabel(
+          {
+            text: 'user: Fix the expired-session redirect loop on /dashboard\n\nassistant: Tracing the auth middleware check that sends expired cookies back to /dashboard instead of /login',
+          },
+          resolved.settings,
+          keyToSend,
+          officePrompt(prompts, 'office.namer'),
+          AbortSignal.timeout(15_000),
+          15_000,
+        ).then(
+          (task) => done(undefined, undefined, `Connected (${Date.now() - startedAt} ms) · sample label: “${task.name}” — ${task.summary}`),
+          (err) => stop(err instanceof LabelModelError ? err.message : 'Endpoint test failed.'),
         );
         break;
       }

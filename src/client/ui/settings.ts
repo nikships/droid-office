@@ -980,7 +980,8 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   const labels = disclosure('Configure', workerLabels.element);
   const paintLabels = () => {
     const s = store.workerLabels.settings;
-    labels.meta.textContent = s.on ? `On · ${s.implementation === 'custom' ? 'custom script' : (modelBadge(s.model, undefined) ?? s.model)} · every ${s.intervalSeconds} s` : 'Off';
+    const modelName = s.implementation === 'openai' ? (s.model.length > 28 ? `${s.model.slice(0, 27)}…` : s.model) : (modelBadge(s.model, undefined) ?? s.model);
+    labels.meta.textContent = s.on ? `On · ${modelName} · every ${s.intervalSeconds} s` : 'Off';
   };
   paintLabels();
 

@@ -992,6 +992,7 @@ type ClientMessage =
   /** Hide one model from every device's picker, or show all with a null id and hidden=false. */
   | { t: 'models.hide'; id: string | null; hidden: boolean }
   | { t: 'workerLabels.set'; settings: WorkerLabelSettings }
+  | { t: 'workerLabels.test'; settings: WorkerLabelSettings }
   /** Where the office looks for checkouts from now on; '' goes back to the default. */
   | { t: 'floor.projectsDir'; dir: string }
   /** Rewrite one of the office's prompts; null puts the default back. */
@@ -1042,7 +1043,7 @@ export interface Arrival {
 export type ServerMsg =
   /** `presentation` is how the clients show `entries`: the rows for them, built over everything the office has read (src/shared/thread-presentation.ts). */
   | { t: 'thread.snapshot'; workerId: string; request: string; before?: number; sessionId?: string; entries: ThreadEntry[]; hasMore: boolean; presentation?: ThreadPresentation; error?: string }
-  | { t: 'action.result'; requestId: string; ok: boolean; error?: string; workerId?: string }
+  | { t: 'action.result'; requestId: string; ok: boolean; error?: string; workerId?: string; note?: string }
   | ({
       t: 'welcome';
       /** This connection's transport id; never shown, never a player. */

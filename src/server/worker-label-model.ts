@@ -13,11 +13,11 @@ import {
   type ReasoningEffort,
 } from '@factory/droid-sdk/node';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import type { WorkerTask } from '../shared/protocol.js';
-import { LABEL_TEXT_CHARS, type WorkerLabelRequest, type WorkerLabelSettings } from '../shared/worker-labels.js';
+import { LABEL_TEXT_CHARS, parseLabelEndpointUrl, type WorkerLabelSettings } from '../shared/worker-labels.js';
 import { DROID_SETTINGS_PATH } from './droid-models.js';
 
 export interface LabelInput {
@@ -117,68 +117,171 @@ async function catalogue(transport: ProcessTransport, model: string, signal: Abo
 export interface LabelModelOptions {
   droid: () => string | null;
   key: () => string | undefined;
+  endpointApiKey?: (settings: WorkerLabelSettings) => string | undefined;
+  fetch?: typeof globalThis.fetch;
   system: () => string;
   settingsPath?: string;
 }
 
-/** Custom implementations are trusted local programs, not isolated Droid profiles or sandboxes. */
-export async function scriptLabel(input: LabelInput, settings: WorkerLabelSettings, system: string, cancelled: AbortSignal, timeoutMs = 45_000): Promise<WorkerTask> {
-  if (!settings.command || !path.isAbsolute(settings.command)) throw new LabelModelError('Choose an absolute executable path for the custom label script.');
-  const signal = AbortSignal.any([cancelled, AbortSignal.timeout(timeoutMs)]);
-  if (signal.aborted) throw new LabelModelError('Custom label generation was cancelled or timed out.');
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'office-label-script-'));
+const MAX_ENDPOINT_RESPONSE_BYTES = 256 * 1024;
+
+export function extractCompletionLabel(raw: string): WorkerTask {
+  const cleaned = raw.replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '').trim();
   try {
-    const request: WorkerLabelRequest = { version: 1, system, conversation: input.text.slice(-LABEL_TEXT_CHARS), previousSubject: input.previousSubject?.slice(0, 60), model: settings.model, effort: settings.effort };
-    const output = await new Promise<string>((resolve, reject) => {
-      const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(NEBULA_|DROID_OFFICE_)/.test(name)));
-      const child = spawn(settings.command!, settings.args ?? [], { cwd, env, shell: false, detached: process.platform !== 'win32', windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-      const chunks: Buffer[] = [];
-      let bytes = 0;
-      let failure: string | undefined;
-      const kill = () => {
-        try {
-          if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGKILL');
-          else child.kill('SIGKILL');
-        } catch {
-          // The process may already have exited.
-        }
-      };
-      const abort = () => {
-        failure = 'Custom label generation was cancelled or timed out.';
-        kill();
-      };
-      signal.addEventListener('abort', abort, { once: true });
-      child.on('spawn', () => {
-        if (signal.aborted) abort();
-      });
-      const collect = (data: Buffer, stdout: boolean) => {
-        bytes += data.length;
-        if (bytes > 64 * 1024) {
-          failure = 'The custom label script exceeded its 64 KiB output limit.';
-          kill();
-        } else if (stdout) chunks.push(data);
-      };
-      child.stdout.on('data', (data: Buffer) => collect(data, true));
-      child.stderr.on('data', (data: Buffer) => collect(data, false));
-      child.stdin.on('error', () => {});
-      child.on('error', () => {
-        failure = 'Could not start the custom label script. Check its executable path and permissions.';
-      });
-      child.on('close', (code) => {
-        signal.removeEventListener('abort', abort);
-        kill();
-        if (failure || code !== 0) reject(new LabelModelError(failure ?? 'The custom label script exited unsuccessfully. Check its credentials and configuration.'));
-        else resolve(Buffer.concat(chunks).toString('utf8'));
-      });
-      child.stdin.end(`${JSON.stringify(request)}\n`);
+    return parseLabel(cleaned);
+  } catch (err) {
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start !== -1 && end > start) return parseLabel(cleaned.slice(start, end + 1));
+    throw err;
+  }
+}
+
+function endpointStatusError(status: number, hasKey: boolean, hasEffort: boolean): string {
+  if (status === 401 || status === 403) {
+    return hasKey ? `The label endpoint rejected the API key (HTTP ${status}). Check the key in Settings.` : `The label endpoint requires an API key (HTTP ${status}). Add one in Settings.`;
+  }
+  if (status === 404) return 'Endpoint or model not found (HTTP 404). Check the endpoint URL and model slug.';
+  if (status === 400 || status === 422) {
+    return hasEffort
+      ? `The label endpoint rejected the request (HTTP ${status}). Check the model slug, or set Reasoning effort to Provider default.`
+      : `The label endpoint rejected the request (HTTP ${status}). Check the endpoint URL and model slug.`;
+  }
+  if (status === 429) return 'The label endpoint rate-limited the request (HTTP 429). Worker labels will retry.';
+  if (status >= 500) return `The label endpoint returned a server error (HTTP ${status}). Worker labels will retry.`;
+  return `The label endpoint returned HTTP ${status}.`;
+}
+
+async function readBoundedText(res: Response, signal: AbortSignal): Promise<string> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  const onAbort = () => void reader.cancel().catch(() => {});
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    while (true) {
+      const { done, value } = await abortable(reader.read(), signal);
+      if (done) break;
+      if (!value) continue;
+      bytes += value.byteLength;
+      if (bytes > MAX_ENDPOINT_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new LabelModelError('The label endpoint exceeded its 256 KiB response limit.');
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
+/** Calls any OpenAI /v1/chat/completions-compatible endpoint directly without needing Droid or a Factory key. */
+export async function openAiLabel(
+  input: LabelInput,
+  settings: WorkerLabelSettings,
+  apiKey: string | undefined,
+  system: string,
+  cancelled: AbortSignal,
+  timeoutMs = 45_000,
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+): Promise<WorkerTask> {
+  const resolved = parseLabelEndpointUrl(settings.baseUrl);
+  if ('error' in resolved) throw new LabelModelError(resolved.error);
+  if (!settings.model?.trim()) throw new LabelModelError('Enter a model slug for the label endpoint.');
+  const signal = AbortSignal.any([cancelled, AbortSignal.timeout(timeoutMs)]);
+  if (signal.aborted) throw new LabelModelError('Worker label generation was cancelled or timed out.');
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+  };
+  if (apiKey) {
+    if (/[\p{Cc}\p{Cf}]/u.test(apiKey)) throw new LabelModelError('Enter a valid API key without control characters.');
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+  const body: Record<string, unknown> = {
+    model: settings.model.trim(),
+    messages: [
+      {
+        role: 'system',
+        content: `${system}\nUse only the supplied visible conversation text and previous subject. Never use tools. Return only a JSON object with string fields "name" and "summary".`,
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          ...(input.previousSubject ? { previousSubject: input.previousSubject.slice(0, 60) } : {}),
+          conversation: input.text.slice(-LABEL_TEXT_CHARS),
+        }),
+      },
+    ],
+    stream: false,
+    ...(settings.endpointEffort ? { reasoning_effort: settings.endpointEffort } : {}),
+  };
+
+  let res: Response;
+  try {
+    res = await fetchImpl(resolved.completionsUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      redirect: 'error',
+      signal,
     });
-    return parseLabel(output);
   } catch (error) {
     if (error instanceof LabelModelError) throw error;
-    throw new LabelModelError('Custom label generation failed. Check the script and its configuration.');
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
+    if (signal.aborted) throw new LabelModelError('Worker label generation was cancelled or timed out.');
+    const detail = `${String(error)} ${String((error as { cause?: unknown })?.cause ?? '')}`;
+    if (/redirect/i.test(detail)) {
+      throw new LabelModelError('The label endpoint returned a redirect. Enter the final endpoint URL directly.');
+    }
+    throw new LabelModelError(`Could not reach the label endpoint (${resolved.host}). Check that the server is running and the URL is right.`);
   }
+
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    throw new LabelModelError(endpointStatusError(res.status, !!apiKey, !!settings.endpointEffort));
+  }
+
+  let rawText: string;
+  try {
+    rawText = await readBoundedText(res, signal);
+  } catch (error) {
+    if (error instanceof LabelModelError) throw error;
+    throw new LabelModelError(signal.aborted ? 'Worker label generation was cancelled or timed out.' : 'Failed while reading the label endpoint response.');
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(rawText);
+  } catch {
+    throw new LabelModelError('The label endpoint did not return valid JSON. Check that the URL points to an OpenAI-compatible completions endpoint.');
+  }
+  const envelope = payload as {
+    error?: unknown;
+    choices?: Array<{
+      finish_reason?: unknown;
+      message?: { content?: unknown };
+    }>;
+  } | null;
+  if (envelope?.error) {
+    throw new LabelModelError('The label endpoint returned an error response. Check the model slug and API key.');
+  }
+  const choice = Array.isArray(envelope?.choices) ? envelope.choices[0] : undefined;
+  const rawContent = choice?.message?.content;
+  let content = '';
+  if (typeof rawContent === 'string') {
+    content = rawContent;
+  } else if (Array.isArray(rawContent)) {
+    content = rawContent
+      .filter((part): part is { type?: unknown; text: string } => !!part && typeof part === 'object' && (part.type === 'text' || part.type === undefined) && typeof (part as { text?: unknown }).text === 'string')
+      .map((part) => part.text)
+      .join('\n');
+  }
+  if (!content.trim()) {
+    throw new LabelModelError(choice?.finish_reason === 'length' ? 'The label model ran out of output tokens before returning a label.' : 'The label endpoint returned an empty completion.');
+  }
+  return extractCompletionLabel(content);
 }
 
 /** A fresh, credentialed, disposable profile. Never falls back to the owner's Droid profile. */
@@ -186,7 +289,9 @@ export class WorkerLabelModel {
   constructor(private options: LabelModelOptions) {}
 
   async generate(input: LabelInput, settings: WorkerLabelSettings, cancelled: AbortSignal): Promise<WorkerTask> {
-    if (settings.implementation === 'custom') return scriptLabel(input, settings, this.options.system(), cancelled);
+    if (settings.implementation === 'openai') {
+      return openAiLabel(input, settings, this.options.endpointApiKey?.(settings), this.options.system(), cancelled, 45_000, this.options.fetch);
+    }
     const droid = this.options.droid();
     const key = this.options.key();
     if (!droid || !path.isAbsolute(droid)) throw new LabelModelError('Install Droid to generate worker labels.');
