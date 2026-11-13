@@ -115,6 +115,8 @@ export type HudPanel = 'workers' | 'floor';
 export const HUD_DEFAULTS: Record<HudPanel, boolean> = { workers: true, floor: false };
 
 export interface Settings {
+  /** Remember model and effort selections at desks in this browser. */
+  rememberDeskModels: boolean;
   /** Office sounds, 0–1. */
   volume: number;
   muted: boolean;
@@ -199,9 +201,10 @@ export function spotParams(floor: string | null, at: Spot | null): { x: string; 
 }
 
 export function loadSettings(): Settings {
-  const s: Settings = { volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, alertsMuted: false, hud: { ...HUD_DEFAULTS }, pins: [], sidearm: 'wand', graphics: { ...GRAPHICS_DEFAULTS } };
+  const s: Settings = { rememberDeskModels: true, volume: 0.7, muted: false, music: 0.5, musicMuted: false, notify: true, alertsMuted: false, hud: { ...HUD_DEFAULTS }, pins: [], sidearm: 'wand', graphics: { ...GRAPHICS_DEFAULTS } };
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? 'null');
+    if (typeof saved?.rememberDeskModels === 'boolean') s.rememberDeskModels = saved.rememberDeskModels;
     if (typeof saved?.volume === 'number' && Number.isFinite(saved.volume)) s.volume = Math.max(0, Math.min(1, saved.volume));
     if (typeof saved?.muted === 'boolean') s.muted = saved.muted;
     if (typeof saved?.music === 'number' && Number.isFinite(saved.music)) s.music = Math.max(0, Math.min(1, saved.music));

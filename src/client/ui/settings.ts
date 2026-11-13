@@ -999,9 +999,17 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     agentBack.classList.toggle('hidden', !picked);
     agentBack.textContent = `Back to ${store.project?.agentCmd.split(' ')[0].split(/[\\/]/).pop() ?? 'the --agent'}`;
     if (!agentTouched) agent.set(officeChoice());
-    agentNote.textContent = `What a new worker runs when nobody picks a model. The hire and ask windows remember their own picks per desk.${picked ? '' : ' Now it’s the agent the office started with, on its own default model.'}`;
+    agentNote.textContent = `What a new worker runs when nobody picks a model.${picked ? '' : ' Now it’s the agent the office started with, on its own default model.'}`;
   };
   paintAgent();
+  const rememberDesks = opts.office
+    ? toggle(
+        'Remember models at desks',
+        () => opts.office!.settings.rememberDeskModels,
+        (on) => opts.office!.onChange({ ...opts.office!.settings, rememberDeskModels: on }),
+      )
+    : undefined;
+  rememberDesks?.paint();
   agentSave.addEventListener('click', () => {
     agentTouched = false;
     net.send({ t: 'prompts.agent', choice: agent.choice() });
@@ -1251,6 +1259,9 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       group(
         null,
         card('Default worker', { desc: agentNote, below: [agent.element, agentActions] }),
+        ...(rememberDesks
+          ? [card('Remember models at desks', { desc: desc('Remember each desk’s model and effort in this browser. When off, new hires use the default worker. Saved choices return if you turn it back on.'), control: rememberDesks.el })]
+          : []),
         card('Models shown in pickers', { desc: desc('Hide the models you never use from every picker on desktop, web and Android. Running workers and saved defaults stay as they are.'), below: [pickerModels] }),
       ),
     ],

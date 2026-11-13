@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { HUD_DEFAULTS, loadSettings } from '../src/client/state.js';
+import { rememberedChoice } from '../src/client/ui/models.js';
 
 const mem = new Map<string, string>();
 const storage = {
@@ -42,4 +43,18 @@ test('7 puts the wand in your hand unless you opted into the Magnum', () => {
   assert.equal(loadSettings().sidearm, 'magnum');
   mem.set('droid-office.settings', JSON.stringify({ sidearm: 'bazooka' }));
   assert.equal(loadSettings().sidearm, 'wand');
+});
+
+test('desk model memory defaults on and can be disabled without losing saved choices', () => {
+  mem.clear();
+  mem.set('droid-office.droid-model.desk:desk-1', 'model-a');
+  mem.set('droid-office.droid-effort.desk:desk-1', 'high');
+  mem.set('droid-office.droid-model.ask-models', 'model-b');
+  assert.equal(loadSettings().rememberDeskModels, true);
+  assert.deepEqual(rememberedChoice('desk:desk-1'), { model: 'model-a', effort: 'high' });
+  mem.set('droid-office.settings', JSON.stringify({ rememberDeskModels: false }));
+  assert.deepEqual(rememberedChoice('desk:desk-1'), {});
+  assert.deepEqual(rememberedChoice('ask-models'), { model: 'model-b' });
+  mem.set('droid-office.settings', JSON.stringify({ rememberDeskModels: true }));
+  assert.deepEqual(rememberedChoice('desk:desk-1'), { model: 'model-a', effort: 'high' });
 });

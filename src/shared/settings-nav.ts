@@ -105,6 +105,7 @@ export const SETTINGS_CARDS = [
   { pane: 'workers', title: 'Prompts', keywords: 'prompts edit wording handoffs reviews sign writer subagent visit brief' },
   { pane: 'workers', title: 'Worker labels', keywords: 'subject task summary activity sign writer model reasoning interval refresh conversation' },
   { pane: 'models', title: 'Default worker', keywords: 'default worker model effort agent new hire' },
+  { pane: 'models', title: 'Remember models at desks', keywords: 'remember seat desk model effort hire', on: OFFICE },
   { pane: 'models', title: 'Models shown in pickers', keywords: 'models hide hidden pickers visibility list' },
   { pane: 'subagents', title: 'Office MCP', keywords: 'droid office mcp tools subagents whiteboard cards visits on off' },
   { pane: 'subagents', title: 'Subagents', keywords: 'subagents hire team lead on off team_hire' },

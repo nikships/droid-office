@@ -2,7 +2,7 @@ import type { AgentChoice, AgentEffort } from '../../shared/protocol';
 import { isLabelEffort, type LabelEffort } from '../../shared/worker-labels';
 import { AGENT_EFFORTS } from '../../shared/protocol';
 import { withoutGlyph } from '../world/glyph';
-import { store } from '../state';
+import { loadSettings, store } from '../state';
 import { withToken } from '../token';
 import { h } from './dom';
 import { effortDial } from './effort-dial';
@@ -267,6 +267,7 @@ export function modelBadgeNode(model: string | undefined, effort: AgentEffort | 
 const choiceKey = (kind: 'model' | 'effort', key: string) => `droid-office.droid-${kind}.${key}`;
 
 function rememberedModel(key: string): string | undefined {
+  if (key.startsWith('desk:') && !loadSettings().rememberDeskModels) return undefined;
   try {
     const saved = localStorage.getItem(choiceKey('model', key));
     if (saved && !/[\s\p{Cc}\p{Cf}]/u.test(saved)) return saved;
@@ -277,6 +278,7 @@ function rememberedModel(key: string): string | undefined {
 }
 
 function rememberedEffort(key: string): AgentEffort | undefined {
+  if (key.startsWith('desk:') && !loadSettings().rememberDeskModels) return undefined;
   try {
     const saved = localStorage.getItem(choiceKey('effort', key));
     if (saved && (AGENT_EFFORTS as readonly string[]).includes(saved)) return saved as AgentEffort;
@@ -339,6 +341,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
   const selectedEffort = () => (effortSelect.value ? (effortSelect.value as AgentEffort) : undefined);
   const remember = (kind: 'model' | 'effort', value: string) => {
     if (key === undefined) return;
+    if (key.startsWith('desk:') && !loadSettings().rememberDeskModels) return;
     try {
       if (value) localStorage.setItem(choiceKey(kind, key), value);
       else localStorage.removeItem(choiceKey(kind, key));
