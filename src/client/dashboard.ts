@@ -58,7 +58,7 @@ import { createPane, type Pane, type PaneHost, VIEW_KEY } from './dashboard-pane
 import { createWorkerRoster } from './dashboard-roster';
 import { buildingCounts, buildingRoster, type BuildingWorkerRow } from './dashboard-building';
 import { createBuildingView } from './dashboard-building-view';
-import { buildTriageFloors, filterSwitcherFloors, maxSurfacedBays, nextUrgentTarget, partitionTriageFloors, type TriageFloor, type TriagePartition, unackedDoneBuildingCount } from './dashboard-triage';
+import { buildTriageFloors, filterSwitcherFloors, nextUrgentTarget, partitionTriageFloors, type TriageFloor, type TriagePartition, unackedDoneBuildingCount } from './dashboard-triage';
 import { createWorkerMenu } from './dashboard-worker-menu';
 import { openForkWorker } from './ui/fork-worker';
 import { copy } from './ui/clipboard';
@@ -157,7 +157,6 @@ const topSep = h('span.dash-top-sep', { 'aria-hidden': 'true', hidden: true });
 
 const floors = h('nav.dash-floor-bays', { 'aria-label': 'Floors' });
 const quietLabel = h('span.dash-quiet-label');
-const quietBadges = h('span.dash-quiet-badges');
 let quietOpen = false;
 let quietCursor = 0;
 let quietReturnFocus: HTMLElement | undefined;
@@ -172,7 +171,6 @@ const quietTrigger = h(
     onclick: () => showQuiet(!quietOpen, quietOpen),
   },
   quietLabel,
-  quietBadges,
   h('span.key.dash-quiet-key', { 'aria-hidden': 'true' }, '⌘K'),
   h('span.dash-quiet-caret', { 'aria-hidden': 'true' }, icon('chevron', 11)),
 );
@@ -183,7 +181,7 @@ const addFloorLabel = h('span.dash-floor-add-label', { hidden: true }, 'Add floo
 const addFloorBtn = h('button.dash-end-bay.dash-floor-add', { type: 'button', 'aria-label': 'Add floor', title: 'Add floor', onclick: () => addFloor() }, icon('plus', 13), addFloorLabel);
 const quietInput = h('input.dash-quiet-input', {
   type: 'search',
-  placeholder: 'Jump to quiet floor or search all…',
+  placeholder: 'Jump to an empty floor or search all…',
   'aria-label': 'Search floors',
   autocomplete: 'off',
   spellcheck: 'false',
@@ -898,15 +896,8 @@ if (typeof ResizeObserver === 'function')
     markFloorOverflow();
     if (quietOpen) positionQuietPop();
   }).observe(floors);
-let lastBayCap = maxSurfacedBays(window.innerWidth);
 window.addEventListener('resize', () => {
-  const nextCap = maxSurfacedBays(window.innerWidth);
-  if (nextCap !== lastBayCap) {
-    lastBayCap = nextCap;
-    paint();
-  } else if (quietOpen) {
-    positionQuietPop();
-  }
+  if (quietOpen) positionQuietPop();
 });
 
 function live() {
@@ -971,10 +962,9 @@ const ordered = () => workersByTeam(store.workers.values());
 
 let floorListKey = '';
 let gitPillKey = '';
-let quietBadgesKey = '';
 let shownFloor: string | null | undefined;
 let latestTriageItems: TriageFloor[] = [];
-let latestTriagePart: TriagePartition = { surfaced: [], quiet: [], quietBusy: 0, quietNeeds: 0, quietDone: 0 };
+let latestTriagePart: TriagePartition = { surfaced: [], quiet: [] };
 let latestBuildingRows: BuildingWorkerRow[] = [];
 
 function jumpToUrgent() {
@@ -1001,7 +991,7 @@ function paintQuietPop(up: boolean) {
   const query = quietInput.value;
   const filtered = filterSwitcherFloors(latestTriageItems, latestTriagePart.quiet, query);
   if (query.trim()) quietSectionTitle.textContent = `Matching floors (${filtered.length})`;
-  else if (latestTriagePart.quiet.length > 0) quietSectionTitle.textContent = `Quiet & background floors (${latestTriagePart.quiet.length} of ${latestTriageItems.length})`;
+  else if (latestTriagePart.quiet.length > 0) quietSectionTitle.textContent = `Floors without workers (${latestTriagePart.quiet.length} of ${latestTriageItems.length})`;
   else quietSectionTitle.textContent = `All floors (${latestTriageItems.length})`;
   quietReorderBtn.disabled = !up || store.floors.length < 2;
   quietAddBtn.disabled = !up;
@@ -1055,7 +1045,7 @@ function paintConsole(up: boolean, buildingRows: readonly BuildingWorkerRow[]) {
     workers: store.workers.values(),
     pulls: store.pulls.loading ? undefined : store.pulls.items,
   });
-  latestTriagePart = partitionTriageFloors(latestTriageItems, store.floor, maxSurfacedBays(window.innerWidth));
+  latestTriagePart = partitionTriageFloors(latestTriageItems, store.floor);
 
   // Upper active git context pill
   const activeItem = latestTriageItems.find((item) => item.floor.id === store.floor);
@@ -1138,33 +1128,14 @@ function paintConsole(up: boolean, buildingRows: readonly BuildingWorkerRow[]) {
   if (changedList || shownFloor !== store.floor) floors.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   shownFloor = store.floor;
 
-  // Lower +N QUIET bay & track
+  // Lower +N EMPTY bay & track
   const quietCount = latestTriagePart.quiet.length;
   quietTrigger.hidden = quietCount === 0;
   quietTrigger.disabled = !up;
-  quietTrigger.classList.toggle('has-bg-work', latestTriagePart.quietBusy > 0);
-  quietTrigger.classList.toggle('has-overflow-needs', latestTriagePart.quietNeeds > 0);
-  quietLabel.textContent = `+${quietCount} quiet`;
-  const nextQuietBadgesKey = `${latestTriagePart.quietNeeds}:${latestTriagePart.quietDone}:${latestTriagePart.quietBusy}`;
-  if (nextQuietBadgesKey !== quietBadgesKey) {
-    quietBadgesKey = nextQuietBadgesKey;
-    quietBadges.replaceChildren(
-      ...(latestTriagePart.quietNeeds > 0 ? [h('span.dash-stat-needs', {}, `${latestTriagePart.quietNeeds}!`)] : []),
-      ...(latestTriagePart.quietDone > 0 ? [h('span.dash-stat-done', {}, `${latestTriagePart.quietDone}✓`)] : []),
-      ...(latestTriagePart.quietBusy > 0 ? [h('span.dash-quiet-work', {}, `· ${latestTriagePart.quietBusy}W`)] : []),
-    );
-  }
-  quietTrigger.title = quietCount ? `Show ${quietCount} quiet ${quietCount === 1 ? 'floor' : 'floors'} or search all (⌘ K)` : 'Search floors (⌘ K)';
+  quietLabel.textContent = `+${quietCount} empty`;
 
-  if (!store.floors.length) {
-    floorTrackText.textContent = 'No floors yet — add a project or folder';
-  } else if (quietCount > 0 && counts.needs_input === 0 && latestTriagePart.surfaced.length <= 1) {
-    floorTrackText.textContent = `All ${quietCount} other ${quietCount === 1 ? 'floor' : 'floors'} quiet · zero blockers`;
-  } else if (quietCount > 0) {
-    floorTrackText.textContent = `${quietCount} ${quietCount === 1 ? 'floor' : 'floors'} tucked in quiet menu`;
-  } else {
-    floorTrackText.textContent = '';
-  }
+  quietTrigger.title = quietCount ? `Show ${quietCount} ${quietCount === 1 ? 'floor' : 'floors'} without workers or search all (⌘ K)` : 'Search floors (⌘ K)';
+  floorTrackText.textContent = store.floors.length ? '' : 'No floors yet — add a project or folder';
 
   markFloorOverflow();
   if (quietOpen) {

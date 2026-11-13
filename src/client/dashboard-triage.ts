@@ -27,13 +27,6 @@ export interface TriageFloor {
 export interface TriagePartition {
   surfaced: TriageFloor[];
   quiet: TriageFloor[];
-  quietBusy: number;
-  quietNeeds: number;
-  quietDone: number;
-}
-
-export function maxSurfacedBays(viewportWidth: number): number {
-  return viewportWidth < 1100 ? 4 : 5;
 }
 
 export function floorChord(index: number): string | undefined {
@@ -120,50 +113,22 @@ export function buildTriageFloors(input: { floors: readonly FloorInfo[]; buildin
 }
 
 /**
- * Surfaces the active floor first, then floors with live input blockers, then floors with
- * unacknowledged completed work, capped at `maxBays` so repository names stay legible.
+ * Surfaces the active floor and every floor with workers in any state (working, waiting, done or
+ * asleep), in floor order so a tab keeps its place as statuses change; the strip scrolls when they
+ * overflow. Floors without workers fold into the switcher.
  */
-export function partitionTriageFloors(items: readonly TriageFloor[], currentFloor: string | null, maxBays = 5): TriagePartition {
-  const cap = Math.max(1, maxBays);
+export function partitionTriageFloors(items: readonly TriageFloor[], currentFloor: string | null): TriagePartition {
   const surfaced: TriageFloor[] = [];
-  const picked = new Set<string>();
-
-  const active = currentFloor ? items.find((item) => item.floor.id === currentFloor) : undefined;
-  if (active) {
-    surfaced.push(active);
-    picked.add(active.floor.id);
-  }
-  for (const item of items) {
-    if (surfaced.length >= cap) break;
-    if (!picked.has(item.floor.id) && item.needsInput > 0) {
-      surfaced.push(item);
-      picked.add(item.floor.id);
-    }
-  }
-  for (const item of items) {
-    if (surfaced.length >= cap) break;
-    if (!picked.has(item.floor.id) && item.unackedDone > 0) {
-      surfaced.push(item);
-      picked.add(item.floor.id);
-    }
-  }
-
   const quiet: TriageFloor[] = [];
-  let quietBusy = 0;
-  let quietNeeds = 0;
-  let quietDone = 0;
   for (const item of items) {
-    if (picked.has(item.floor.id)) continue;
-    quiet.push(item);
-    quietBusy += item.busy;
-    quietNeeds += item.needsInput;
-    quietDone += item.unackedDone;
+    const staffed = item.totalWorkers > 0 || item.needsInput > 0 || item.unackedDone > 0 || item.busy > 0;
+    (item.floor.id === currentFloor || staffed ? surfaced : quiet).push(item);
   }
-  return { surfaced, quiet, quietBusy, quietNeeds, quietDone };
+  return { surfaced, quiet };
 }
 
 /**
- * Empty search lists quiet floors (or all floors when none are tucked away so `⌘ K` always has rows);
+ * Empty search lists floors without workers (or all floors when none are tucked away so `⌘ K` always has rows);
  * a non-empty search matches across every floor in the building by number, name, repo, or branch.
  */
 export function filterSwitcherFloors(items: readonly TriageFloor[], quiet: readonly TriageFloor[], query: string): TriageFloor[] {

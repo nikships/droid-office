@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildingRoster } from '../src/client/dashboard-building.js';
-import { buildTriageFloors, filterSwitcherFloors, floorChord, maxSurfacedBays, nextUrgentTarget, partitionTriageFloors, unackedDoneBuildingCount } from '../src/client/dashboard-triage.js';
+import { buildTriageFloors, filterSwitcherFloors, floorChord, nextUrgentTarget, partitionTriageFloors, unackedDoneBuildingCount } from '../src/client/dashboard-triage.js';
 import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 import type { FloorInfo, FloorRoster, GhPull, WorkerInfo } from '../src/shared/protocol.js';
 
@@ -62,12 +62,9 @@ test('floor chords map floors 1–9 and 10 (0) and omit 11+', () => {
   assert.equal(floorChord(9), '⇧ ⌘ 0');
   assert.equal(floorChord(10), undefined);
   assert.equal(floorChord(-1), undefined);
-  assert.equal(maxSurfacedBays(1280), 5);
-  assert.equal(maxSurfacedBays(1100), 5);
-  assert.equal(maxSurfacedBays(1024), 4);
 });
 
-test('10-floor triage pins active first, then needs_input before unacked done, and folds quiet/working floors', () => {
+test('10-floor triage gives every staffed floor a tab and folds only empty floors', () => {
   const floors = [
     makeFloor(0, { id: 'droid-office', name: 'droid-office', workers: 3, busy: 3, waiting: 1 }),
     makeFloor(1, { id: 'droid-proxy', name: 'droid-proxy', workers: 2, busy: 2, waiting: 1 }),
@@ -113,29 +110,34 @@ test('10-floor triage pins active first, then needs_input before unacked done, a
   assert.equal(items[9]?.idleState, 'empty');
   assert.equal(items[9]?.metaLabel, 'plain folder');
 
-  const part = partitionTriageFloors(items, 'droid-office', 5);
+  const part = partitionTriageFloors(items, 'droid-office');
   assert.deepEqual(
     part.surfaced.map((i) => i.floor.id),
-    ['droid-office', 'droid-proxy', 'hyperframes', 'orca', 'muse-agent'],
-    'active first, then needs_input floors in order, then unacked done floors up to cap 5',
+    ['droid-office', 'droid-proxy', 'factory-cli', 'orca', 'screenplay', 'hyperframes', 'browse-mcp', 'muse-agent', 'gemdex'],
+    'every floor with workers gets a tab in floor order, whether working, waiting, done or asleep',
   );
   assert.deepEqual(
     part.quiet.map((i) => i.floor.id),
-    ['factory-cli', 'screenplay', 'browse-mcp', 'gemdex', 'home'],
+    ['home'],
+    'only floors without workers fold into the switcher',
   );
-  assert.equal(part.quietBusy, 4, '2 working on factory-cli + 2 working on screenplay');
-  assert.equal(part.quietNeeds, 0);
 
-  // Narrow viewport cap (4) pushes muse-agent into quiet while tracking quietDone.
-  const narrow = partitionTriageFloors(items, 'droid-office', 4);
+  // The active floor keeps its tab even when it has no workers; with no active floor only staffed floors show.
   assert.deepEqual(
-    narrow.surfaced.map((i) => i.floor.id),
-    ['droid-office', 'droid-proxy', 'hyperframes', 'orca'],
+    partitionTriageFloors(items, 'home').surfaced.map((i) => i.floor.id),
+    part.surfaced.map((i) => i.floor.id).concat('home'),
   );
-  assert.equal(narrow.quietDone, 1);
+  assert.equal(partitionTriageFloors(items, null).surfaced.length, 9);
 
-  // Switcher search: empty query lists quiet floors; non-empty query searches all 10 floors.
-  assert.equal(filterSwitcherFloors(items, part.quiet, '').length, 5);
+  // A floor whose roster has not arrived yet still counts its workers from the floor summary.
+  const unloaded = buildTriageFloors({ floors: [makeFloor(0, { id: 'a', workers: 0 }), makeFloor(1, { id: 'b', workers: 2 })], building: new Map(), currentFloor: 'a', workers: [] });
+  assert.deepEqual(
+    partitionTriageFloors(unloaded, 'a').surfaced.map((i) => i.floor.id),
+    ['a', 'b'],
+  );
+
+  // Switcher search: empty query lists floors without workers; non-empty query searches all 10 floors.
+  assert.equal(filterSwitcherFloors(items, part.quiet, '').length, 1);
   assert.deepEqual(
     filterSwitcherFloors(items, part.quiet, 'release/2.4').map((i) => i.floor.id),
     ['factory-cli'],
