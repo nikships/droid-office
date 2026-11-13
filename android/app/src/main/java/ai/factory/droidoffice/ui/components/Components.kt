@@ -331,7 +331,7 @@ fun Chip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifie
     ) {
         if (leading != null) leading()
         else if (icon != null) Icon(icon, null, Modifier.size(15.dp), tint = if (selected) Palette.Bg else Palette.TextSecondary)
-        Text(text, style = MaterialTheme.typography.labelLarge, color = if (selected) Palette.Bg else Palette.Text, maxLines = 1)
+        Text(text, style = MaterialTheme.typography.labelLarge, color = if (selected) Palette.Bg else Palette.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (badge > 0) {
             Box(Modifier.clip(RoundedCornerShape(4.dp)).background(badgeColor).padding(horizontal = 5.dp, vertical = 1.dp)) {
                 Text("$badge", style = LocalOfficeType.current.eyebrow.copy(color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold))

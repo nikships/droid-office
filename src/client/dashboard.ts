@@ -58,7 +58,8 @@ import { createPane, type Pane, type PaneHost, VIEW_KEY } from './dashboard-pane
 import { createWorkerRoster } from './dashboard-roster';
 import { buildingCounts, buildingRoster, type BuildingWorkerRow } from './dashboard-building';
 import { createBuildingView } from './dashboard-building-view';
-import { buildTriageFloors, filterSwitcherFloors, nextUrgentTarget, partitionTriageFloors, type TriageFloor, type TriagePartition, unackedDoneBuildingCount } from './dashboard-triage';
+import { buildTriageFloors, filterSwitcherFloors, nextUrgentTarget, rankTriageFloors, type TriageFloor, unackedDoneBuildingCount } from './dashboard-triage';
+import { fitTabs } from '../shared/floor-relevance';
 import { createWorkerMenu } from './dashboard-worker-menu';
 import { openForkWorker } from './ui/fork-worker';
 import { copy } from './ui/clipboard';
@@ -181,7 +182,7 @@ const addFloorLabel = h('span.dash-floor-add-label', { hidden: true }, 'Add floo
 const addFloorBtn = h('button.dash-end-bay.dash-floor-add', { type: 'button', 'aria-label': 'Add floor', title: 'Add floor', onclick: () => addFloor() }, icon('plus', 13), addFloorLabel);
 const quietInput = h('input.dash-quiet-input', {
   type: 'search',
-  placeholder: 'Jump to an empty floor or search all…',
+  placeholder: 'Jump to another floor or search all…',
   'aria-label': 'Search floors',
   autocomplete: 'off',
   spellcheck: 'false',
@@ -862,7 +863,7 @@ function goFloor(id: string) {
 }
 lowerDeck.addEventListener('keydown', (event) => {
   if (quietOpen && quietPop.contains(event.target as Node)) return;
-  const buttons = [...lowerDeck.querySelectorAll<HTMLButtonElement>(':scope > nav > button:not(:disabled), :scope > button:not(:disabled):not([hidden])')];
+  const buttons = [...lowerDeck.querySelectorAll<HTMLButtonElement>(':scope > nav > button:not(:disabled):not([hidden]), :scope > button:not(:disabled):not([hidden])')];
   const at = buttons.indexOf(event.target as HTMLButtonElement);
   if (at < 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   const targets: Record<string, number> = { ArrowLeft: at - 1, ArrowRight: at + 1, Home: 0, End: buttons.length - 1 };
@@ -872,30 +873,83 @@ lowerDeck.addEventListener('keydown', (event) => {
   event.stopPropagation();
   buttons[(next + buttons.length) % buttons.length]?.focus();
 });
-floors.addEventListener(
-  'wheel',
-  (event) => {
-    if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY) || floors.scrollWidth <= floors.clientWidth) return;
-    const before = floors.scrollLeft;
-    const unit = event.deltaMode === 1 ? 32 : event.deltaMode === 2 ? floors.clientWidth : 1;
-    floors.scrollLeft += event.deltaY * unit;
-    if (floors.scrollLeft !== before) event.preventDefault();
-  },
-  { passive: false },
-);
-/** Fades whichever edge of the floor strip has more floors past it, so a cut-off name reads as scrollable. */
-function markFloorOverflow() {
-  const max = floors.scrollWidth - floors.clientWidth;
-  floors.classList.toggle('more-start', floors.scrollLeft > 1);
-  floors.classList.toggle('more-end', floors.scrollLeft < max - 1);
+/**
+ * The floor strip's measurements, read only when its tabs change (or fonts load) rather than on every
+ * paint: each tab's full width, the "+N more" button's at its widest count, and what the strip can't use.
+ */
+let stripSize: { deck: number; fixed: number; reserved: number; more: number; tabs: Map<string, number> } | undefined;
+function measureFloorStrip() {
+  const deck = Math.floor(lowerDeck.getBoundingClientRect().width);
+  if (!deck) return undefined;
+  const chips = [...floors.querySelectorAll<HTMLElement>('.dash-floor-chip')];
+  const wasHidden = chips.map((c) => c.hidden);
+  const moreHidden = quietTrigger.hidden;
+  const moreLabel = quietLabel.textContent;
+  for (const c of chips) c.hidden = false;
+  quietTrigger.hidden = false;
+  quietLabel.textContent = `+${Math.max(1, latestTriageItems.length - 1)} more`;
+  floors.classList.remove('squeeze');
+  const width = (el: HTMLElement) => Math.ceil(el.getBoundingClientRect().width);
+  const tabs = new Map<string, number>();
+  let reserved = 0;
+  for (const c of chips) {
+    if (c.dataset.floor) tabs.set(c.dataset.floor, width(c));
+    else reserved += width(c);
+  }
+  stripSize = { deck, fixed: width(reorderFloors) + width(addFloorBtn), reserved, more: width(quietTrigger), tabs };
+  chips.forEach((c, i) => {
+    c.hidden = wasHidden[i] ?? false;
+  });
+  quietTrigger.hidden = moreHidden;
+  quietLabel.textContent = moreLabel;
+  return stripSize;
 }
-floors.addEventListener('scroll', markFloorOverflow, { passive: true });
+/** Shows the most relevant floors' full tabs that fit beside the strip's buttons, and folds the rest into "+N more". */
+function fitFloorStrip() {
+  const size = stripSize ?? measureFloorStrip();
+  if (!size) return;
+  const chips = [...floors.querySelectorAll<HTMLButtonElement>('button.dash-floor-chip')];
+  const available = size.deck - size.fixed - size.reserved;
+  const current = store.floor && store.floor !== ROOF ? store.floor : null;
+  const fit = fitTabs({ widths: chips.map((c) => ({ id: c.dataset.floor ?? '', width: size.tabs.get(c.dataset.floor ?? '') ?? 0 })), ranked: latestRanked, current, available, more: size.more });
+  const shown = new Set(fit.shown);
+  const focused = chips.find((c) => c === document.activeElement);
+  for (const c of chips) c.hidden = !shown.has(c.dataset.floor ?? '');
+  // Narrower than even the current floor's own tab: only then may its name shorten.
+  const alone = fit.shown.length === 1 ? (size.tabs.get(fit.shown[0] ?? '') ?? 0) + (fit.hidden.length ? size.more : 0) : 0;
+  floors.classList.toggle('squeeze', alone > available);
+  const byId = new Map(latestTriageItems.map((item) => [item.floor.id, item]));
+  latestHidden = fit.hidden.flatMap((id) => byId.get(id) ?? []);
+  const more = latestHidden.length;
+  quietTrigger.hidden = more === 0;
+  quietLabel.textContent = `+${more} more`;
+  quietTrigger.title = more ? `Show ${more} more ${more === 1 ? 'floor' : 'floors'} or search all (⌘ K)` : 'Search floors (⌘ K)';
+  // A focused tab that just folded away hands focus to "+N more", where its floor now is.
+  if (focused?.hidden) quietTrigger.focus({ preventScroll: true });
+  if (quietOpen) {
+    paintQuietPop(live());
+    positionQuietPop();
+  }
+}
 if (typeof ResizeObserver === 'function')
   new ResizeObserver(() => {
-    floors.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    markFloorOverflow();
-    if (quietOpen) positionQuietPop();
-  }).observe(floors);
+    const deck = Math.floor(lowerDeck.getBoundingClientRect().width);
+    if (stripSize && deck) stripSize.deck = deck;
+    else stripSize = undefined;
+    fitFloorStrip();
+  }).observe(lowerDeck);
+const remeasureFloorStrip = () => {
+  stripSize = undefined;
+  fitFloorStrip();
+};
+document.fonts?.addEventListener('loadingdone', remeasureFloorStrip);
+// Visits and workers count for less as they age: re-rank now and then even when nothing else changes.
+setInterval(() => {
+  if (!latestTriageItems.length) return;
+  latestRanked = rankTriageFloors(latestTriageItems, Date.now());
+  fitFloorStrip();
+}, 60_000);
+void document.fonts?.ready.then(remeasureFloorStrip);
 window.addEventListener('resize', () => {
   if (quietOpen) positionQuietPop();
 });
@@ -962,9 +1016,10 @@ const ordered = () => workersByTeam(store.workers.values());
 
 let floorListKey = '';
 let gitPillKey = '';
-let shownFloor: string | null | undefined;
 let latestTriageItems: TriageFloor[] = [];
-let latestTriagePart: TriagePartition = { surfaced: [], quiet: [] };
+let latestRanked: string[] = [];
+/** Floors without a tab, most relevant first, for "+N more". */
+let latestHidden: TriageFloor[] = [];
 let latestBuildingRows: BuildingWorkerRow[] = [];
 
 function jumpToUrgent() {
@@ -989,9 +1044,9 @@ function quietRowStatus(item: TriageFloor): HTMLElement {
 function paintQuietPop(up: boolean) {
   if (!quietOpen) return;
   const query = quietInput.value;
-  const filtered = filterSwitcherFloors(latestTriageItems, latestTriagePart.quiet, query);
+  const filtered = filterSwitcherFloors(latestTriageItems, latestHidden, query);
   if (query.trim()) quietSectionTitle.textContent = `Matching floors (${filtered.length})`;
-  else if (latestTriagePart.quiet.length > 0) quietSectionTitle.textContent = `Floors without workers (${latestTriagePart.quiet.length} of ${latestTriageItems.length})`;
+  else if (latestHidden.length > 0) quietSectionTitle.textContent = `More floors (${latestHidden.length} of ${latestTriageItems.length})`;
   else quietSectionTitle.textContent = `All floors (${latestTriageItems.length})`;
   quietReorderBtn.disabled = !up || store.floors.length < 2;
   quietAddBtn.disabled = !up;
@@ -1045,7 +1100,7 @@ function paintConsole(up: boolean, buildingRows: readonly BuildingWorkerRow[]) {
     workers: store.workers.values(),
     pulls: store.pulls.loading ? undefined : store.pulls.items,
   });
-  latestTriagePart = partitionTriageFloors(latestTriageItems, store.floor);
+  latestRanked = rankTriageFloors(latestTriageItems, Date.now());
 
   // Upper active git context pill
   const activeItem = latestTriageItems.find((item) => item.floor.id === store.floor);
@@ -1084,18 +1139,19 @@ function paintConsole(up: boolean, buildingRows: readonly BuildingWorkerRow[]) {
   pulseDone.hidden = unackedDone === 0;
   pulseDone.textContent = `${unackedDone} done`;
 
-  // Lower surfaced triage floor bays
+  // Lower floor tabs: every floor gets one, and fitFloorStrip hides those that don't fit.
   const key = JSON.stringify([
     store.floor === ROOF,
     store.floor,
-    latestTriagePart.surfaced.map((item) => [item.floor.id, item.number, item.floor.name, item.floor.repo, item.branch, item.chord, item.triage, item.needsInput, item.unackedDone, item.busy, item.totalWorkers, item.idleState]),
+    latestTriageItems.map((item) => [item.floor.id, item.number, item.floor.name, item.floor.repo, item.branch, item.chord, item.triage, item.needsInput, item.unackedDone, item.busy, item.totalWorkers, item.idleState]),
   ]);
   const changedList = key !== floorListKey;
+  let focused: string | undefined;
   if (changedList) {
-    const focused = document.activeElement instanceof HTMLElement && floors.contains(document.activeElement) ? document.activeElement.dataset.floor : undefined;
+    focused = document.activeElement instanceof HTMLElement && floors.contains(document.activeElement) ? document.activeElement.dataset.floor : undefined;
     floors.replaceChildren(
       ...(store.floor === ROOF ? [h('span.dash-floor-chip.on.dash-floor-roof', {}, 'Rooftop')] : []),
-      ...latestTriagePart.surfaced.map((item) => {
+      ...latestTriageItems.map((item) => {
         const on = item.floor.id === store.floor;
         let waitingSummary = '';
         if (item.needsInput > 0) waitingSummary = `${item.needsInput} needs you`;
@@ -1117,7 +1173,7 @@ function paintConsole(up: boolean, buildingRows: readonly BuildingWorkerRow[]) {
       }),
     );
     floorListKey = key;
-    if (focused) [...floors.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.dataset.floor === focused)?.focus({ preventScroll: true });
+    stripSize = undefined;
   }
   for (const button of floors.querySelectorAll<HTMLButtonElement>('button')) {
     button.disabled = !up;
@@ -1125,23 +1181,11 @@ function paintConsole(up: boolean, buildingRows: readonly BuildingWorkerRow[]) {
     if (button.dataset.floor === store.floor) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   }
-  if (changedList || shownFloor !== store.floor) floors.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  shownFloor = store.floor;
-
-  // Lower +N EMPTY bay & track
-  const quietCount = latestTriagePart.quiet.length;
-  quietTrigger.hidden = quietCount === 0;
+  // Lower "+N more" bay & track
   quietTrigger.disabled = !up;
-  quietLabel.textContent = `+${quietCount} empty`;
-
-  quietTrigger.title = quietCount ? `Show ${quietCount} ${quietCount === 1 ? 'floor' : 'floors'} without workers or search all (⌘ K)` : 'Search floors (⌘ K)';
   floorTrackText.textContent = store.floors.length ? '' : 'No floors yet — add a project or folder';
-
-  markFloorOverflow();
-  if (quietOpen) {
-    paintQuietPop(up);
-    positionQuietPop();
-  }
+  fitFloorStrip();
+  if (focused) [...floors.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.dataset.floor === focused && !b.hidden)?.focus({ preventScroll: true });
 }
 
 function paint() {

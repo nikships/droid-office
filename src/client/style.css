@@ -2338,15 +2338,13 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-top .dash-layout-trigger.on { border-color: var(--border-strong); background: #141414; color: var(--text); box-shadow: none; }
 
 .dash-top-lower { position: relative; display: flex; align-items: stretch; height: 32px; background: #0a0a0a; }
-.dash-floor-bays { flex: 0 1 auto; min-width: 0; display: flex; align-items: stretch; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
-.dash-floor-bays::-webkit-scrollbar { display: none; }
-.dash-floor-bays.more-end { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
-.dash-floor-bays.more-start { mask-image: linear-gradient(to right, transparent, #000 32px); }
-.dash-floor-bays.more-start.more-end { mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
-.dash-floor-chip { position: relative; flex: 0 1 auto; display: inline-flex; align-items: center; gap: 7px; min-width: 88px; max-width: 220px; height: 100%; padding: 2px var(--space-3) 0; border: 0; border-right: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text-secondary); font: 500 12px/1.1 var(--font-sans); cursor: pointer; white-space: nowrap; transition: background var(--duration) var(--ease), color var(--duration) var(--ease); }
+/* Never scrolls: fitFloorStrip in dashboard.ts shows only the full-width tabs that fit and folds the rest into "+N more". */
+.dash-floor-bays { flex: 0 1 auto; min-width: 0; display: flex; align-items: stretch; overflow: hidden; }
+.dash-floor-chip { position: relative; flex: none; display: inline-flex; align-items: center; gap: 7px; min-width: 88px; height: 100%; padding: 2px var(--space-3) 0; border: 0; border-right: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text-secondary); font: 500 12px/1.1 var(--font-sans); cursor: pointer; white-space: nowrap; transition: background var(--duration) var(--ease), color var(--duration) var(--ease); }
 .dash-floor-chip::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: transparent; }
 .dash-floor-chip:hover:enabled { background: #151515; color: var(--text); }
-.dash-floor-chip.on { flex: none; max-width: 280px; background: #141414; color: #fff; padding-right: 14px; }
+.dash-floor-chip.on { background: #141414; color: #fff; padding-right: 14px; }
+.dash-floor-bays.squeeze > .dash-floor-chip.on { flex: 0 1 auto; min-width: 0; }
 .dash-floor-chip.on::before { background: var(--accent); }
 .dash-floor-chip[data-triage=needs]:not(.on) { background: rgba(239, 68, 68, .055); color: var(--text); }
 .dash-floor-chip[data-triage=needs]:not(.on)::before { background: var(--danger); }
@@ -2358,7 +2356,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-floor-chip.on .dash-floor-number { color: var(--accent); }
 .dash-floor-chip[data-triage=needs]:not(.on) .dash-floor-number { color: #ff8080; }
 .dash-floor-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dash-floor-branch { max-width: 96px; overflow: hidden; padding-left: 6px; border-left: 1px solid var(--border); font: 400 10px/1 var(--font-mono); color: var(--text-tertiary); text-overflow: ellipsis; white-space: nowrap; }
+.dash-floor-branch { min-width: 0; overflow: hidden; padding-left: 6px; border-left: 1px solid var(--border); font: 400 10px/1 var(--font-mono); color: var(--text-tertiary); text-overflow: ellipsis; white-space: nowrap; }
 .dash-floor-stat { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); margin-left: 2px; font: 600 9.5px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
 .dash-stat-needs { padding: 2px var(--space-1); border-radius: var(--radius-xs); background: rgba(239, 68, 68, .2); color: #ff8080; }
 .dash-stat-done { padding: 2px var(--space-1); border-radius: var(--radius-xs); background: rgba(60, 207, 145, .16); color: var(--success); }
@@ -2374,8 +2372,9 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-quiet-key { margin: 0; height: 15px; padding: 0 var(--space-1); font-size: 9px; }
 .dash-quiet-caret { display: grid; place-items: center; color: var(--text-tertiary); transform: rotate(90deg); transition: transform var(--duration) var(--ease); }
 .dash-quiet-bay.open .dash-quiet-caret { transform: rotate(-90deg); }
-.dash-floor-track { flex: 1; min-width: 16px; display: flex; align-items: center; justify-content: flex-end; padding: 0 var(--space-3); overflow: hidden; font: 400 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; color: rgba(255, 255, 255, .24); white-space: nowrap; }
-.dash-floor-track > span { overflow: hidden; text-overflow: ellipsis; }
+.dash-floor-track { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-end; overflow: hidden; font: 400 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .04em; color: rgba(255, 255, 255, .24); white-space: nowrap; }
+.dash-floor-track > span { overflow: hidden; padding: 0 var(--space-3); text-overflow: ellipsis; }
+.dash-floor-track > span:empty { display: none; }
 .dash-end-bay { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 32px; height: 100%; padding: 0; border: 0; border-left: 1px solid var(--border); background: #060606; color: var(--text-tertiary); font: 500 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .08em; cursor: pointer; transition: background var(--duration) var(--ease), color var(--duration) var(--ease); }
 .dash-end-bay.with-label { width: auto; padding: 0 var(--space-3); color: var(--text-secondary); }
 .dash-end-bay:hover:enabled { background: #151515; color: var(--text); }

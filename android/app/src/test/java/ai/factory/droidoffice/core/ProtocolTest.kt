@@ -50,7 +50,7 @@ class ProtocolTest {
 
     private val welcome = """
         {"t":"welcome","connection":"c1","arrival":{"floor":"home","via":"start"},"version":"0.9.120",
-         "floors":[{"id":"home","name":"droid-office","dir":"/x","palette":0,"local":true,"home":true,"workers":2,"busy":1,"waiting":1}],
+         "floors":[{"id":"home","name":"droid-office","dir":"/x","palette":0,"local":true,"home":true,"workers":2,"busy":1,"waiting":1,"lastVisitedAt":1763000000000,"lastWorkerAt":1762999000000,"hires":14}],
          "floor":"home","project":{"name":"droid-office","dir":"/x","branch":"main","forge":"github"},
          "you":{"id":"c1"},"world":{"desks":[]},
          "workers":[
@@ -68,6 +68,9 @@ class ProtocolTest {
         assertEquals("0.9.120", m.version)
         assertEquals("home", m.view.floor)
         assertEquals(1, m.floors.single().waiting)
+        assertEquals(1763000000000L, m.floors.single().lastVisitedAt)
+        assertEquals(1762999000000L, m.floors.single().lastWorkerAt)
+        assertEquals(14, m.floors.single().hires)
         assertEquals("main", m.view.project?.branch)
         val (atlas, bolt) = m.view.workers
         assertEquals(WorkerStatus.NeedsInput, atlas.state)

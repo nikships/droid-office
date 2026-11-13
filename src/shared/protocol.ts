@@ -527,6 +527,12 @@ export interface FloorInfo {
   busy: number;
   /** Workers waiting on someone: a question, a permission, or a finished turn nobody looked at. */
   waiting: number;
+  /** For ranking the companions' floor tabs (src/shared/floor-relevance.ts): when the owner last went there. */
+  lastVisitedAt?: number;
+  /** When the floor last had a worker. */
+  lastWorkerAt?: number;
+  /** Workers ever hired there, counted from when the office first saw the floor. */
+  hires?: number;
 }
 
 /** The workspace folder on the office's machine: where the elevator's "add a project" looks for existing checkouts. Nothing is ever cloned. */
