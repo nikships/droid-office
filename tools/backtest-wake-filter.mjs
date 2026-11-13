@@ -9,7 +9,6 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import vm from 'node:vm';
 import { redactGeminiSecrets } from '../src/server/gemini-decisions.ts';
 import { CHATTER_WINDOW_MS, WakeFilter, wakeGuard } from '../src/server/wake-filter.ts';
 
@@ -22,7 +21,15 @@ const KEY_FILE = arg('--key-file', path.join(os.homedir(), 'office-info/.droid-o
 const TEAM_FILE = arg('--team', path.join(os.homedir(), 'repos/droid-office/.droid-office/team.json'));
 const OUT = arg('--out', path.join(os.tmpdir(), 'wake-filter-backtest'));
 const LIMIT = Number(arg('--limit', '200'));
-const DRY = process.argv.includes('--dry');
+const DRY = process.argv.includes('--dry') || process.argv.includes('--dry-run');
+if (!Number.isFinite(LIMIT) || LIMIT <= 0) {
+  console.error(`--limit must be a positive number (got ${arg('--limit')}).`);
+  process.exit(1);
+}
+if (!DRY && !existsSync(KEY_FILE)) {
+  console.error(`No Gemini key file at ${KEY_FILE}. Connect Gemini Decisions in the office (Settings → Connections) or pass --key-file <gemini.json>; --dry builds requests without one.`);
+  process.exit(1);
+}
 const CAPS = { team_report: 0.42, progress: 0.2, team_note: 0.26, done: 0.1, lead_notify: 0.02 };
 const TOOLS = ['team_report', 'lead_notify', 'team_note', 'visit_message'];
 const PR_RE = /https:\/\/(?:github\.com|gitlab\.com)\/[^\s)<>]+\/(?:pull|merge_requests)\/\d+/;
@@ -38,6 +45,187 @@ const rg = (pattern) => {
   }
 };
 
+/**
+ * Reads one JS object literal starting at `src[start] === '{'` without executing anything: strings,
+ * template literals, numbers, booleans, null, arrays, nested objects, `inputs.<name>` references to
+ * resolved `// @input:` blocks, and `+` concatenation. Anything else throws, which skips the call.
+ */
+function parseLiteral(src, start, inputs) {
+  let i = start;
+  const fail = (why) => {
+    throw new Error(`${why} at ${i}`);
+  };
+  const skip = () => {
+    for (;;) {
+      while (i < src.length && /\s/.test(src[i])) i++;
+      if (src.startsWith('//', i)) {
+        const nl = src.indexOf('\n', i);
+        i = nl < 0 ? src.length : nl + 1;
+      } else if (src.startsWith('/*', i)) {
+        const close = src.indexOf('*/', i + 2);
+        if (close < 0) fail('unterminated comment');
+        i = close + 2;
+      } else return;
+    }
+  };
+  const expect = (ch) => {
+    skip();
+    if (src[i] !== ch) fail(`expected ${ch}`);
+    i++;
+  };
+  const ident = () => {
+    const m = /^[A-Za-z_$][\w$]*/.exec(src.slice(i, i + 256));
+    if (!m) fail('expected identifier');
+    i += m[0].length;
+    return m[0];
+  };
+  const ESCAPES = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v', 0: '\0' };
+  const readEscape = () => {
+    const c = src[i++];
+    if (c === undefined) fail('unterminated escape');
+    if (c in ESCAPES) return ESCAPES[c];
+    if (c === '\n') return '';
+    if (c === 'x') {
+      const hex = src.slice(i, i + 2);
+      if (!/^[0-9a-f]{2}$/i.test(hex)) fail('bad \\x escape');
+      i += 2;
+      return String.fromCharCode(Number.parseInt(hex, 16));
+    }
+    if (c === 'u') {
+      const braced = /^\{([0-9a-f]{1,6})\}/i.exec(src.slice(i, i + 8));
+      if (braced) {
+        i += braced[0].length;
+        return String.fromCodePoint(Number.parseInt(braced[1], 16));
+      }
+      const hex = src.slice(i, i + 4);
+      if (!/^[0-9a-f]{4}$/i.test(hex)) fail('bad \\u escape');
+      i += 4;
+      return String.fromCharCode(Number.parseInt(hex, 16));
+    }
+    return c;
+  };
+  const quoted = (q) => {
+    i++;
+    let out = '';
+    while (i < src.length && src[i] !== q) {
+      if (src[i] === '\n') fail('newline in string');
+      if (src[i] === '\\') {
+        i++;
+        out += readEscape();
+      } else out += src[i++];
+    }
+    if (src[i] !== q) fail('unterminated string');
+    i++;
+    return out;
+  };
+  const reference = () => {
+    if (ident() !== 'inputs') fail('only inputs.<name> references are allowed');
+    skip();
+    let name;
+    if (src[i] === '.') {
+      i++;
+      name = ident();
+    } else if (src[i] === '[') {
+      i++;
+      skip();
+      if (src[i] !== "'" && src[i] !== '"') fail('expected quoted input name');
+      name = quoted(src[i]);
+      expect(']');
+    } else fail('expected inputs.<name>');
+    return Object.hasOwn(inputs, name) ? inputs[name] : undefined;
+  };
+  const template = () => {
+    i++;
+    let out = '';
+    while (i < src.length && src[i] !== '`') {
+      if (src[i] === '\\') {
+        i++;
+        out += readEscape();
+      } else if (src.startsWith('${', i)) {
+        i += 2;
+        skip();
+        const v = reference();
+        expect('}');
+        out += String(v);
+      } else out += src[i++];
+    }
+    if (src[i] !== '`') fail('unterminated template');
+    i++;
+    return out;
+  };
+  const object = () => {
+    i++;
+    const out = {};
+    for (;;) {
+      skip();
+      if (src[i] === '}') {
+        i++;
+        return out;
+      }
+      let key;
+      if (src[i] === "'" || src[i] === '"') key = quoted(src[i]);
+      else if (/\d/.test(src[i] ?? '')) key = String(number());
+      else key = ident();
+      expect(':');
+      const v = value();
+      if (key !== '__proto__') out[key] = v;
+      skip();
+      if (src[i] === ',') i++;
+      else if (src[i] !== '}') fail('expected , or }');
+    }
+  };
+  const array = () => {
+    i++;
+    const out = [];
+    for (;;) {
+      skip();
+      if (src[i] === ']') {
+        i++;
+        return out;
+      }
+      out.push(value());
+      skip();
+      if (src[i] === ',') i++;
+      else if (src[i] !== ']') fail('expected , or ]');
+    }
+  };
+  const number = () => {
+    const m = /^-?(?:\d[\d_]*)(?:\.\d+)?(?:e[+-]?\d+)?/i.exec(src.slice(i, i + 64));
+    if (!m) fail('expected number');
+    i += m[0].length;
+    return Number(m[0].replaceAll('_', ''));
+  };
+  const KEYWORDS = { true: true, false: false, null: null, undefined };
+  const primary = () => {
+    skip();
+    const c = src[i];
+    if (c === '{') return object();
+    if (c === '[') return array();
+    if (c === "'" || c === '"') return quoted(c);
+    if (c === '`') return template();
+    if (c === '-' || /\d/.test(c ?? '')) return number();
+    const word = /^[A-Za-z_$][\w$]*/.exec(src.slice(i, i + 256))?.[0];
+    if (word && Object.hasOwn(KEYWORDS, word)) {
+      i += word.length;
+      return KEYWORDS[word];
+    }
+    if (word === 'inputs') return reference();
+    return fail('unsupported expression');
+  };
+  const value = () => {
+    let v = primary();
+    for (;;) {
+      skip();
+      if (src[i] !== '+') return v;
+      i++;
+      const next = primary();
+      if (typeof v === 'object' || typeof next === 'object') fail('only strings and numbers concatenate');
+      v += next;
+    }
+  };
+  if (src[start] !== '{') fail('expected object');
+  return object();
+}
 /** `droid_office.<tool>({...})` calls inside a Script, with its `// @input:` blocks resolved. */
 function scriptCalls(script) {
   const inputs = {};
@@ -46,29 +234,9 @@ function scriptCalls(script) {
   const out = [];
   const call = /droid_office\.(team_report|lead_notify|team_note|visit_message)\(\s*\{/g;
   for (let m = call.exec(script); m; m = call.exec(script)) {
-    let depth = 0;
-    let end = -1;
-    let quote = '';
-    const start = m.index + m[0].length - 1;
-    for (let i = start; i < script.length; i++) {
-      const ch = script[i];
-      if (quote) {
-        if (ch === '\\') i++;
-        else if (ch === quote) quote = '';
-        continue;
-      }
-      if (ch === '"' || ch === "'" || ch === '`') quote = ch;
-      else if (ch === '{') depth++;
-      else if (ch === '}' && --depth === 0) {
-        end = i;
-        break;
-      }
-    }
-    if (end < 0) continue;
     try {
-      // Agent-authored literals only: a frozen context with nothing but the resolved input blocks.
-      const value = vm.runInNewContext(`(${script.slice(start, end + 1)})`, { inputs: Object.freeze({ ...inputs }) }, { timeout: 50 });
-      if (value && typeof value === 'object' && typeof value.text === 'string') out.push({ tool: m[1], input: JSON.parse(JSON.stringify(value)) });
+      const value = parseLiteral(script, m.index + m[0].length - 1, inputs);
+      if (typeof value.text === 'string') out.push({ tool: m[1], input: value });
     } catch {}
   }
   return out;
@@ -375,7 +543,11 @@ const corpus = [
   ...doneSample.map((d) => ({ ...d, group: `${d.packet.lead.id}|${new Date(d.at).toISOString().slice(0, 13)}` })),
   ...syntheticPackets(sessions),
 ];
-const key = JSON.parse(readFileSync(KEY_FILE, 'utf8')).apiKey;
+const key = existsSync(KEY_FILE) ? JSON.parse(readFileSync(KEY_FILE, 'utf8')).apiKey : undefined;
+if (!DRY && typeof key !== 'string') {
+  console.error(`${KEY_FILE} has no apiKey. Reconnect Gemini Decisions or pass another --key-file.`);
+  process.exit(1);
+}
 const scrub = (v) => redactGeminiSecrets(v, [key]);
 for (const c of corpus) {
   c.packet.message.text = scrub(String(c.packet.message.text));

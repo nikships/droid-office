@@ -565,7 +565,6 @@ export async function startServer(cfg: Config) {
   const wakeFilter = new WakeFilter({
     store: geminiStore,
     airgapped: () => isAirgapped(),
-    onUsage: (inputTokens, latencyMs) => officeVibes.recordUsage(inputTokens, latencyMs),
     onChange: () => {
       wakeTelemetryTimer ??= setTimeout(() => {
         wakeTelemetryTimer = undefined;

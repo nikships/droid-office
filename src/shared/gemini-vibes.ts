@@ -86,6 +86,10 @@ export interface FloorVibesState {
 export type WakeTraffic = 'wake_immediately' | 'hold_for_batch' | 'record_silently' | 'block_and_coach';
 export const WAKE_TRAFFIC: readonly WakeTraffic[] = ['wake_immediately', 'hold_for_batch', 'record_silently', 'block_and_coach'];
 
+export function isWakeTraffic(value: unknown): value is WakeTraffic {
+  return (WAKE_TRAFFIC as readonly unknown[]).includes(value);
+}
+
 /** Live noise gate counters since the office started. */
 export interface WakeFilterTelemetry {
   /** Messages the gate routed (deterministic guardrails included; bypassed and failed-open calls are not). */
@@ -98,12 +102,14 @@ export interface WakeFilterTelemetry {
   siblingFiltered: number;
   /** Calls that failed or timed out and delivered as before. */
   failedOpen: number;
+  /** Input tokens the noise gate spent, kept apart from the view-gated Living 3D usage readout. */
+  inputTokens: number;
   lastLatencyMs?: number;
   lastAt?: number;
 }
 
 export function emptyWakeFilterTelemetry(): WakeFilterTelemetry {
-  return { evaluated: 0, woken: 0, held: 0, silent: 0, blocked: 0, siblingFiltered: 0, failedOpen: 0 };
+  return { evaluated: 0, woken: 0, held: 0, silent: 0, blocked: 0, siblingFiltered: 0, failedOpen: 0, inputTokens: 0 };
 }
 
 export interface GeminiConnectionState {

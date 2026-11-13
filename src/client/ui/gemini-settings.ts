@@ -1,4 +1,4 @@
-import { FLOOR_MOOD_LIGHTING, GEMINI_AI_STUDIO_KEYS_URL, GEMINI_DECISIONS_MODEL } from '../../shared/gemini-vibes';
+import { emptyWakeFilterTelemetry, FLOOR_MOOD_LIGHTING, GEMINI_AI_STUDIO_KEYS_URL, GEMINI_DECISIONS_MODEL } from '../../shared/gemini-vibes';
 import { AIRGAPPED_REASON } from '../../shared/setup';
 import type { Net } from '../net';
 import { store } from '../state';
@@ -25,9 +25,9 @@ export function geminiSettings(net: Net): { card: { desc: Node; below: Node[] };
   const intro = h(
     'small.factory-intro',
     {},
-    'Powers Living 3D worker postures, micro-reactions, monitor spill and room mood lighting, plus the inter-agent noise gate that decides when subagent news wakes a lead, with ',
+    'Powers Living 3D worker postures, micro-reactions, monitor spill and room mood lighting (strictly paused whenever no 3D floor is visible), plus the inter-agent noise gate that decides when subagent news wakes a lead, with ',
     h('code', {}, GEMINI_DECISIONS_MODEL),
-    ' (zero output tokens; strictly paused whenever no 3D floor is visible). Get a key at ',
+    ' (zero output tokens). Get a key at ',
     h('a', { href: GEMINI_AI_STUDIO_KEYS_URL, target: '_blank', rel: 'noopener noreferrer' }, 'aistudio.google.com/apikey'),
     '; it stays on this machine.',
   );
@@ -99,28 +99,34 @@ export function geminiSettings(net: Net): { card: { desc: Node; below: Node[] };
 
     vibesToggle.input.checked = g.vibesOn;
     wakeToggle.input.checked = g.wakeFilterOn;
-    const w = g.wakeFilter;
+    const w = g.wakeFilter ?? emptyWakeFilterTelemetry();
     const routed = w.held + w.silent + w.blocked;
     const saved = w.evaluated ? Math.round((routed / w.evaluated) * 100) : 0;
-    wakeStats.className = `setting-note ${g.wakeFilterOn && !g.rejected ? 'good' : 'info'}`;
-    wakeStats.textContent = !g.wakeFilterOn
-      ? 'Noise gate off: every report, note and update wakes its lead at once, as before.'
-      : w.evaluated
-        ? `Noise gate routed ${w.evaluated.toLocaleString()} ${w.evaluated === 1 ? 'message' : 'messages'} · ${w.woken} woke · ${w.held} held for batch · ${w.silent} recorded silently · ${w.blocked} coached · ${w.siblingFiltered} sibling interrupts skipped · ${saved}% wakeups saved${w.failedOpen ? ` · ${w.failedOpen} delivered as before after a failed call` : ''}${w.lastLatencyMs !== undefined ? ` · ${w.lastLatencyMs} ms` : ''}`
-        : 'Noise gate on: waiting for the first team report, note or update.';
+    const gating = Boolean(g.wakeFilterOn && !g.rejected);
+    wakeStats.classList.toggle('good', gating);
+    wakeStats.classList.toggle('info', !gating);
+    if (!g.wakeFilterOn) {
+      wakeStats.textContent = 'Noise gate off: every report, note and update wakes its lead at once, as before.';
+    } else if (w.evaluated > 0) {
+      const failed = w.failedOpen ? ` · ${w.failedOpen} delivered as before after a failed call` : '';
+      const latency = w.lastLatencyMs !== undefined ? ` · ${w.lastLatencyMs} ms` : '';
+      wakeStats.textContent = `Noise gate routed ${w.evaluated.toLocaleString()} ${w.evaluated === 1 ? 'message' : 'messages'} · ${w.woken} woke · ${w.held} held for batch · ${w.silent} recorded silently · ${w.blocked} coached · ${w.siblingFiltered} sibling interrupts skipped · ${saved}% wakeups saved · ${(w.inputTokens ?? 0).toLocaleString()} input tokens, 0 output tokens${failed}${latency}`;
+    } else {
+      wakeStats.textContent = 'Noise gate on: waiting for the first team report, note or update.';
+    }
     rejected.classList.toggle('hidden', !g.rejected);
     rejected.textContent = g.rejected ? `Key rejected: Google AI Studio turned it down (${g.rejected}). Living 3D pulses are paused until you check again or replace the key.` : '';
 
     const moodLabel = store.vibes ? FLOOR_MOOD_LIGHTING[store.vibes.mood]?.label : undefined;
     const usageTail = `${g.calls.toLocaleString()} ${g.calls === 1 ? 'call' : 'calls'} · ${g.inputTokens.toLocaleString()} input tokens · 0 output tokens${g.lastLatencyMs !== undefined ? ` · ${g.lastLatencyMs} ms` : ''}`;
+    const live = g.vibesOn && g.watching3d > 0;
+    liveGate.classList.toggle('good', live);
+    liveGate.classList.toggle('info', !live);
     if (!g.vibesOn) {
-      liveGate.className = 'setting-note info';
       liveGate.textContent = `Paused by toggle ($0.00 active spend) · ${usageTail}`;
-    } else if (g.watching3d > 0) {
-      liveGate.className = 'setting-note good';
+    } else if (live) {
       liveGate.textContent = `Active on ${g.watching3d} visible 3D ${g.watching3d === 1 ? 'view' : 'views'}${moodLabel ? ` (${moodLabel})` : ''} · ${usageTail}`;
     } else {
-      liveGate.className = 'setting-note info';
       liveGate.textContent = `View-gated pause ($0.00) — no 3D floor is open and visible right now · ${usageTail}`;
     }
     if (g.lastError && !g.rejected && !failure) {

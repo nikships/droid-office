@@ -437,13 +437,6 @@ export class OfficeVibes {
     return undefined;
   }
 
-  /** Counts one noise gate call in the shared Gemini usage readout. */
-  recordUsage(inputTokens: number, latencyMs: number): void {
-    this.calls += 1;
-    this.inputTokens += inputTokens;
-    this.lastLatencyMs = latencyMs;
-  }
-
   setWakeFilterOn(on: boolean): string | undefined {
     const err = this.opts.store.setWakeFilterOn(on);
     if (err) return err;

@@ -14,7 +14,7 @@ import { createOfficeMcp } from '../src/server/office-mcp/index.js';
 import { RemoteMcp, remoteMcpListener } from '../src/server/remote-mcp-http.js';
 import { RemoteOffice, type RemoteFloor } from '../src/server/remote-office.js';
 import { GROK_BOTS_FILE, RemoteWorkers } from '../src/server/remote-workers.js';
-import { Team, type TeamEvent, type TeamWorkers } from '../src/server/team.js';
+import { Team, type TeamEvent, type TeamSignal, type TeamWorkers } from '../src/server/team.js';
 import { Visits } from '../src/server/visits.js';
 import type { WakeGate, WakePacket } from '../src/server/wake-filter.js';
 import { WhiteboardStore } from '../src/server/whiteboard.js';
@@ -884,4 +884,53 @@ test('the noise gate defers routine lead_notify updates, holds batch reports fro
   const urgent = calls.length;
   await aliceClient.callTool({ name: 'visit_message', arguments: { worker: 'Bob', kind: 'tell', text: 'chatter', urgent: true } });
   assert.equal(calls.length, urgent, 'urgent tells skip the gate');
+});
+
+test('a held team event flushes with its live log state, not the copy queued when it was held', async (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'grok-live-event-'));
+  const cleanups: (() => void | Promise<void>)[] = [];
+  const rig: Cleanup = { after: (fn) => cleanups.push(fn) };
+  t.after(async () => {
+    try {
+      for (const fn of cleanups.reverse()) await fn();
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+  const receiver = await startWebhookReceiver(rig);
+  const store = new RemoteWorkers(dir);
+  const listeners = new Set<(signal: TeamSignal) => void>();
+  const log = new Map<number, TeamEvent>();
+  const team = {
+    subscribe: (fn: (signal: TeamSignal) => void) => {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    roster: () => [],
+    eventBySeq: undefined as ((seq: number) => TeamEvent | undefined) | undefined,
+  };
+  const floor = { id: 'alpha', dir, def: { name: 'Droid Office' }, workers: { get: () => undefined, list: () => [] }, team } as unknown as RemoteFloor;
+  const office = new RemoteOffice(store, () => [floor], { webhookDelayMs: 10 });
+  rig.after(() => office.stop());
+  const grok = office.add('grokbot', { webhookUrl: receiver.url, webhookToken: DUMMY_TOKEN });
+  const emit = (signal: TeamSignal) => {
+    for (const fn of listeners) fn(signal);
+  };
+  const event = (seq: number, text: string, gate?: 'held'): TeamEvent => ({ seq, lead: grok.worker.id, worker: 'sub-1', name: 'Worker1', kind: 'report', text, at: 1, ...(gate ? { gate } : {}) });
+  const textOf = (n: number) => (receiver.received[n]!.body.items as { text?: string }[]).map((i) => i.text);
+
+  // Without a live log, the release signal's newer copy replaces the queued one in place.
+  emit({ type: 'gate', event: event(1, 'queued while held', 'held'), traffic: 'hold_for_batch' });
+  emit({ type: 'gate', event: event(1, 'released copy'), traffic: 'wake_immediately' });
+  await receiver.waitForCount(1);
+  assert.deepEqual(textOf(0), ['released copy']);
+
+  // With the team's log, the flushed item reads the event as it stands at delivery time.
+  team.eventBySeq = (seq) => (log.has(seq) ? { ...log.get(seq)! } : undefined);
+  log.set(2, event(2, 'reviewed in the log since'));
+  emit({ type: 'gate', event: event(2, 'queued while held', 'held'), traffic: 'hold_for_batch' });
+  emit({ type: 'gate', event: event(2, 'released copy'), traffic: 'wake_immediately' });
+  await receiver.waitForCount(2);
+  assert.deepEqual(textOf(1), ['reviewed in the log since']);
+  assert.equal(receiver.received.length, 2);
 });

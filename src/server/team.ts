@@ -608,7 +608,11 @@ export class Team {
     this.reported.delete(id);
     this.spoke.delete(id);
     const before = this.log.length;
-    this.log = this.log.filter((e) => e.lead !== id);
+    this.log = this.log.filter((e) => {
+      if (e.lead !== id) return true;
+      this.pendingGates.delete(e.seq);
+      return false;
+    });
     this.nudged.delete(id);
     const hadCursor = this.statusCursors.delete(id);
     clearTimeout(this.timers.get(id));
@@ -633,6 +637,13 @@ export class Team {
     this.timers.clear();
     for (const t of this.holdTimers.values()) clearTimeout(t);
     this.holdTimers.clear();
+    this.pendingGates.clear();
+  }
+
+  /** A copy of the recorded event `seq` as it stands now (gate released, review or seen state updated). */
+  eventBySeq(seq: number): TeamEvent | undefined {
+    const found = this.log.find((e) => e.seq === seq);
+    return found ? { ...found } : undefined;
   }
 
   /** Hears every new event and every subagent change on this floor until the returned function is called. */

@@ -5,7 +5,7 @@
 // deterministic guardrails and two agreeing high-confidence answers) coach the sender instead.
 // Every failure delivers exactly as before.
 
-import { emptyWakeFilterTelemetry, type WakeFilterTelemetry, type WakeTraffic } from '../shared/gemini-vibes.js';
+import { emptyWakeFilterTelemetry, isWakeTraffic, WAKE_TRAFFIC, type WakeFilterTelemetry, type WakeTraffic } from '../shared/gemini-vibes.js';
 import { callGeminiDecisions, type DecisionAnswer, type DecisionQuestion, type FetchLike, type GeminiDecisionsStore, redactGeminiSecrets } from './gemini-decisions.js';
 
 export type WakeChannel = 'team_report' | 'done' | 'lead_notify' | 'team_note' | 'visit_tell';
@@ -320,29 +320,40 @@ export function buildWakeRequest(p: WakePacket, chatter: ChatterStats, secrets: 
 }
 
 const areaKey = (a: string) => a.trim().replace(/[*]+$/, '').replace(/\/+$/, '');
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** An area specific enough to count as cited when prose names it: a file, a subpath, or a long name (not `src/` or `docs/`). */
+function citable(area: string): boolean {
+  return /\.[a-z0-9]{1,8}$/i.test(area) || area.includes('/') || area.length >= 6;
+}
+
+/** `area` appears in `text` as a whole path: not inside a longer path or word, and not as the stem of a different file. */
+function citesArea(text: string, area: string): boolean {
+  return new RegExp(`(?<![\\w./-])${escapeRe(area)}(?![\\w-]|\\.\\w)`, 'i').test(text);
+}
 
 /** Deterministic sibling relevance: the note names this sibling, cites one of its areas, or claims an overlapping area. */
 export function siblingAddressed(p: WakePacket, s: WakeTeammate): boolean {
   const text = p.message.text;
   const name = s.name.replace(/ 🐚$/, '').trim();
-  if (name && new RegExp(`(?:^|[^\\w])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:[^\\w]|$)`, 'i').test(text)) return true;
+  if (name && new RegExp(`(?:^|[^\\w])${escapeRe(name)}(?:[^\\w]|$)`, 'i').test(text)) return true;
   const theirs = (s.areas ?? []).map(areaKey).filter((a) => a.length >= 3);
-  if (theirs.some((a) => a.length >= 4 && text.includes(a))) return true;
+  if (theirs.some((a) => citable(a) && citesArea(text, a))) return true;
   const mine = (p.message.areas ?? []).map(areaKey).filter((a) => a.length >= 3);
   return mine.some((m) => theirs.some((t) => m.startsWith(t) || t.startsWith(m)));
 }
 
 function trafficProbs(ans: DecisionAnswer | undefined): { choice?: WakeTraffic; probs: Partial<Record<WakeTraffic, number>> } {
-  if (ans?.type !== 'choice' || !(ans.choice in TRAFFIC_CRITERIA)) return { probs: {} };
-  const choice = ans.choice as WakeTraffic;
+  if (ans?.type !== 'choice' || !isWakeTraffic(ans.choice)) return { probs: {} };
+  const choice = ans.choice;
   const probs: Partial<Record<WakeTraffic, number>> = {};
-  for (const k of Object.keys(TRAFFIC_CRITERIA) as WakeTraffic[]) if (ans.probabilities[k] !== undefined) probs[k] = ans.probabilities[k];
+  for (const k of WAKE_TRAFFIC) if (ans.probabilities[k] !== undefined) probs[k] = ans.probabilities[k];
   if (probs[choice] === undefined) probs[choice] = ans.confidence;
   return { choice, probs };
 }
 
 export function coachText(p: WakePacket): string {
-  const to = p.channel === 'team_note' ? 'your siblings' : p.channel === 'visit_tell' ? p.lead.name : p.lead.name;
+  const to = p.channel === 'team_note' ? 'your siblings' : p.lead.name;
   return `Noise gate: this read as status chatter with no concrete findings, so it was not delivered to ${to}. Stay heads-down on your task, and send it again once you have concrete outcomes (files, test results, commits or PRs), a blocker, or a question.`;
 }
 
@@ -378,6 +389,9 @@ export function resolveWakeAnswers(p: WakePacket, guard: WakeGuard, answers: Rec
     }
   }
 
+  // Visits hold no persistent store, so every tell the gate does not block is delivered at once.
+  if (p.channel === 'visit_tell' && traffic !== 'block_and_coach' && traffic !== 'wake_immediately') [traffic, reason] = ['wake_immediately', 'visit tells deliver unless blocked as chatter'];
+
   const verdict: WakeVerdict = { ...base, traffic, reason, ...(guard.forced ? { source: 'guard' as const } : {}) };
   if (traffic === 'block_and_coach') verdict.coach = coachText(p);
   if (p.channel === 'team_note') {
@@ -405,8 +419,6 @@ export interface WakeFilterOptions {
   fetchImpl?: FetchLike;
   timeoutMs?: number;
   now?: () => number;
-  /** Shares call accounting with the Gemini settings readout. */
-  onUsage?: (inputTokens: number, latencyMs: number) => void;
   /** Telemetry changed. */
   onChange?: () => void;
   /** Every routed message, for the backtest audit trail. */
@@ -484,7 +496,7 @@ export class WakeFilter implements WakeGate {
         this.opts.onDecision?.(p, verdict);
         return verdict;
       }
-      this.opts.onUsage?.(res.inputTokens, res.latencyMs);
+      this.stats.inputTokens += res.inputTokens;
       verdict = { ...resolveWakeAnswers(p, guard, res.answers, siblingKeys), latencyMs: res.latencyMs, inputTokens: res.inputTokens };
       this.stats.lastLatencyMs = res.latencyMs;
     }

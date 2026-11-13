@@ -18,7 +18,7 @@ export interface RemoteFloor {
   def: { name: string };
   dir: string;
   workers: Pick<WorkerManager, 'get' | 'list' | 'authenticate' | 'releaseLead'> & Partial<Pick<WorkerManager, 'screenLines' | 'screenMenu' | 'write'>>;
-  team: Pick<Team, 'handle' | 'inbox' | 'onWorkerGone' | 'cannotHire' | 'hasNews' | 'leadRested' | TeamViews> & Partial<Pick<Team, 'formerMatches'>>;
+  team: Pick<Team, 'handle' | 'inbox' | 'onWorkerGone' | 'cannotHire' | 'hasNews' | 'leadRested' | TeamViews> & Partial<Pick<Team, 'formerMatches' | 'eventBySeq'>>;
   visits: Pick<Visits, 'handle' | 'onWorkerGone' | 'cannotVisit'>;
   whiteboard: WhiteboardStore;
 }
@@ -309,7 +309,9 @@ export class RemoteOffice {
       map = new Map();
       this.pending.set(leadId, map);
     }
-    if (!map.has(entry.id)) map.set(entry.id, entry);
+    const existing = map.get(entry.id);
+    if (!existing) map.set(entry.id, entry);
+    else if (existing.type === 'team' && entry.type === 'team') existing.event = entry.event;
   }
 
   private scheduleFlush(leadId: string) {
@@ -397,7 +399,9 @@ export class RemoteOffice {
         actionHint: "Acknowledge only this item's ackId after handling this message.",
       };
     }
-    const { floor, event } = entry;
+    const { floor } = entry;
+    // Held events may wait a while; the log entry carries the released gate and any later review or seen state.
+    const event = floor.team.eventBySeq?.(entry.event.seq) ?? entry.event;
     const member = floor.team.roster(leadId).find((m) => m.id === event.worker);
     const worker = floor.workers.get(event.worker);
     const openQuestion = event.kind === 'needs_input' && worker ? terminalQuestion(floor, worker) : undefined;

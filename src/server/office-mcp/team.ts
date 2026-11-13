@@ -217,13 +217,13 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
     },
     officeAccess.subagent,
     async (args, caller) =>
-      reply(await ownFloor(caller).team.handle(caller.worker, { action: 'note', ...args }), (body) =>
-        body.blocked
-          ? String(body.coach)
-          : body.traffic === 'record_silently'
-            ? 'Posted on the team board without interrupting working siblings (the noise gate read it as a routine update). Continue your task; report results to your lead with team_report.'
-            : 'Shared with your siblings. Continue your task; report results to your lead with team_report.',
-      ),
+      reply(await ownFloor(caller).team.handle(caller.worker, { action: 'note', ...args }), (body) => {
+        if (body.blocked) return String(body.coach ?? 'Not shared: the noise gate read this as chatter.');
+        if (body.traffic === 'record_silently') {
+          return 'Posted on the team board without interrupting working siblings (the noise gate read it as a routine update). Continue your task; report results to your lead with team_report.';
+        }
+        return 'Shared with your siblings. Continue your task; report results to your lead with team_report.';
+      }),
   );
   server.tool(
     {

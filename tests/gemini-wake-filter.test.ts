@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { GeminiDecisionsStore, type DecisionAnswer } from '../src/server/gemini-decisions.js';
+import { OfficeVibes } from '../src/server/office-vibes.js';
 import { Team, type TeamOptions, type TeamWorkers } from '../src/server/team.js';
 import {
   asksForAction,
@@ -21,7 +22,7 @@ import {
   type WakePacket,
   type WakeVerdict,
 } from '../src/server/wake-filter.js';
-import { emptyGeminiState, emptyWakeFilterTelemetry } from '../src/shared/gemini-vibes.js';
+import { emptyGeminiState, emptyWakeFilterTelemetry, isWakeTraffic, WAKE_TRAFFIC, type GeminiConnectionState } from '../src/shared/gemini-vibes.js';
 import { SUBAGENT_DEFAULTS, type AgentChoice, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../src/shared/protocol.js';
 
 const KEY = 'AIzaSyWakeFilterTestKey000000000000000';
@@ -141,6 +142,9 @@ test('only two agreeing high-confidence chatter answers on a blockable message b
   assert.equal(resolveWakeAnswers(note, g, { traffic: choice('record_silently', probs(0.45, 0.1, 0.45, 0)) }).traffic, 'wake_immediately');
   assert.equal(resolveWakeAnswers(note, g, {}).traffic, 'wake_immediately');
   assert.equal(resolveWakeAnswers(note, g, { traffic: choice('nonsense', { nonsense: 1 }) }).reason, 'no traffic answer');
+  assert.equal(WAKE_TRAFFIC.every(isWakeTraffic), true);
+  assert.equal(isWakeTraffic('nonsense'), false);
+  assert.equal(isWakeTraffic(undefined), false);
 
   const report = packet();
   const rg = wakeGuard(report);
@@ -200,7 +204,6 @@ function filterRig(
     airgapped: over.airgapped ?? false,
     calls: 0,
     bodies: [] as { input: string; questions: Record<string, unknown> }[],
-    usage: [] as [number, number][],
     changes: 0,
     decisions: 0,
   };
@@ -217,7 +220,6 @@ function filterRig(
       state.bodies.push(body);
       return respond(body, init!);
     },
-    onUsage: (tokens, ms) => state.usage.push([tokens, ms]),
     onChange: () => state.changes++,
     onDecision: () => state.decisions++,
   });
@@ -249,7 +251,7 @@ test('WakeFilter routes in one call, counts telemetry, tracks chatter and pushed
   assert.equal(first.source, 'model');
   assert.equal(first.inputTokens, 915);
   assert.equal(first.latencyMs, 25);
-  assert.deepEqual(state.usage, [[915, 25]]);
+  assert.equal(filter.telemetry().inputTokens, 915);
   assert.equal(JSON.stringify(state.bodies[0]).includes(KEY), false);
 
   const second = await filter.decide(packet({ message: { text: 'Phase two going', progress: true, pushedSha: 'aaaaaaa1111' } }));
@@ -275,6 +277,8 @@ test('WakeFilter routes in one call, counts telemetry, tracks chatter and pushed
   assert.equal(state.calls, 4, 'an announced PR goes to the model');
   const t = filter.telemetry();
   assert.deepEqual([t.evaluated, t.woken, t.held, t.silent, t.blocked, t.siblingFiltered, t.failedOpen, t.lastLatencyMs], [6, 2, 0, 3, 1, 1, 0, 25]);
+  // Four model calls; guard-forced wakes spend nothing.
+  assert.equal(t.inputTokens, 915 * 3 + 1200);
   assert.equal(state.decisions, 6);
   assert.ok(state.changes >= 4);
 });
@@ -308,6 +312,68 @@ test('the wake filter setting persists in gemini.json and defaults on', (t) => {
   assert.equal(JSON.parse(readFileSync(path.join(dir, 'gemini.json'), 'utf8')).wakeFilterOn, false);
   assert.equal(new GeminiDecisionsStore(dir).wakeFilterOn(), false);
   assert.equal(store.vibesOn(), true);
+});
+
+test('noise gate tokens stay in its own telemetry and never touch the view-gated Living 3D readout', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'droid-office-wake-vibes-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { filter } = filterRig({}, () => capture({ traffic: choice('record_silently', probs(0.1, 0, 0.9, 0)) }, 640));
+  const broadcasts: GeminiConnectionState[] = [];
+  const vibes = new OfficeVibes({
+    store: new GeminiDecisionsStore(dir),
+    airgapped: () => false,
+    clients: () => [],
+    floors: () => [],
+    floor: () => undefined,
+    broadcastGemini: (s) => broadcasts.push(s),
+    emitFloorVibes() {},
+    wakeTelemetry: () => filter.telemetry(),
+  });
+  t.after(() => vibes.stop());
+  assert.equal('recordUsage' in vibes, false);
+  await filter.decide(packet({ message: { text: 'Phase one green', progress: true } }));
+  await filter.decide(packet({ message: { text: 'Phase two green', progress: true } }));
+  const s = vibes.geminiState();
+  assert.equal(s.wakeFilter.inputTokens, 1280);
+  assert.equal(s.wakeFilter.evaluated, 2);
+  assert.equal(s.watching3d, 0);
+  assert.equal(s.calls, 0);
+  assert.equal(s.inputTokens, 0);
+  assert.equal(s.lastLatencyMs, undefined);
+  assert.equal(broadcasts.length, 0);
+  assert.equal(emptyWakeFilterTelemetry().inputTokens, 0);
+});
+
+test('a visit tell the gate does not block is delivered and counted as woken, never held or silent', async () => {
+  const tell = packet({ channel: 'visit_tell', teammates: [], lead: { id: 'bob', name: 'Bob', status: 'working' }, message: { kind: 'tell', text: 'Still on it, all good!' } });
+  const g = wakeGuard(tell);
+  for (const c of ['record_silently', 'hold_for_batch'] as const) {
+    const v = resolveWakeAnswers(tell, g, { traffic: choice(c, c === 'record_silently' ? probs(0.1, 0, 0.9, 0) : probs(0.1, 0.9, 0, 0)) });
+    assert.equal(v.traffic, 'wake_immediately', c);
+    assert.equal(v.reason, 'visit tells deliver unless blocked as chatter');
+  }
+  const blocked = resolveWakeAnswers(tell, g, { traffic: choice('block_and_coach', probs(0.02, 0, 0.03, 0.95)), pure_chatter: noul(0.97) });
+  assert.equal(blocked.traffic, 'block_and_coach');
+  assert.match(blocked.coach!, /not delivered to Bob/);
+
+  const { filter } = filterRig({}, () => capture({ traffic: choice('record_silently', probs(0.1, 0, 0.9, 0)), pure_chatter: noul(0.2) }));
+  assert.equal((await filter.decide(tell)).traffic, 'wake_immediately');
+  const tm = filter.telemetry();
+  assert.deepEqual([tm.evaluated, tm.woken, tm.held, tm.silent, tm.blocked], [1, 1, 0, 0, 0]);
+});
+
+test('prose citing a bare top-level folder does not address every sibling; files, subpaths and long names do', () => {
+  const s = (areas: string[]) => ({ id: 'sib', name: 'Quill', status: 'working', areas });
+  const note = (text: string) => packet({ channel: 'team_note', message: { text } });
+  assert.equal(siblingAddressed(note('Cleaned up a helper under src/ and a typo in docs/'), s(['src/', 'docs/'])), false);
+  assert.equal(siblingAddressed(note('Cleaned up a helper under src/'), s(['src/**'])), false);
+  assert.equal(siblingAddressed(note('Changed the contract in src/server/team.ts'), s(['src/server/'])), true);
+  assert.equal(siblingAddressed(note('Changed src/server.ts only'), s(['src/server'])), false);
+  assert.equal(siblingAddressed(note('Touched tests/src/server/fixtures'), s(['src/server'])), false);
+  assert.equal(siblingAddressed(note('Edited README.md.'), s(['README.md'])), true);
+  assert.equal(siblingAddressed(note('The android build needs a fresh Gradle cache'), s(['android/'])), true);
+  // Declared overlapping areas still count, however broad.
+  assert.equal(siblingAddressed(packet({ channel: 'team_note', message: { text: 'mine', areas: ['src/client/x.ts'] } }), s(['src/'])), true);
 });
 
 // --- Team integration ---
@@ -632,4 +698,47 @@ test('flushHolds wakes every lead holding a batch at once, including answers sti
   r.team.flushHolds();
   await sleep(20);
   assert.equal(r.leadPrompts().length, 1, 'nothing held, nothing new');
+});
+
+test('a lead leaving drops pending gate answers for its events, and stop clears the rest', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', task: 'One' });
+  await r.call('lead', { action: 'hire', task: 'Two' });
+  r.set('sub1', 'working');
+  r.set('sub2', 'working');
+  const pendingGates = (team: Team) => (team as unknown as { pendingGates: Set<number> }).pendingGates;
+  let answer!: (v: WakeVerdict) => void;
+  r.gate.route = () => new Promise<WakeVerdict>((resolve) => (answer = resolve));
+  const pending = r.call('sub1', { action: 'report', text: 'Done with one.' });
+  await sleep(5);
+  const seq = r.team.news('lead')[0]!.seq;
+  assert.equal(r.team.eventBySeq(seq)?.gate, 'held');
+  const copy = r.team.eventBySeq(seq)!;
+  copy.text = 'changed';
+  assert.equal(r.team.eventBySeq(seq)?.text, 'Done with one.', 'eventBySeq returns a copy');
+  assert.equal(pendingGates(r.team).size, 1);
+
+  await r.fake.kill('lead');
+  r.team.onWorkerGone('lead');
+  assert.equal(pendingGates(r.team).size, 0);
+  assert.equal(r.team.eventBySeq(seq), undefined);
+  answer({ traffic: 'hold_for_batch', source: 'model', reason: 'batch' });
+  await pending;
+  await sleep(20);
+  assert.equal(r.leadPrompts().length, 0);
+
+  const r2 = rig(t);
+  await r2.call('lead', { action: 'hire', task: 'One' });
+  await r2.call('lead', { action: 'hire', task: 'Two' });
+  r2.set('sub1', 'working');
+  r2.set('sub2', 'working');
+  let answer2!: (v: WakeVerdict) => void;
+  r2.gate.route = () => new Promise<WakeVerdict>((resolve) => (answer2 = resolve));
+  const pending2 = r2.call('sub1', { action: 'report', text: 'Done with one.' });
+  await sleep(5);
+  assert.equal(pendingGates(r2.team).size, 1);
+  r2.team.stop();
+  assert.equal(pendingGates(r2.team).size, 0);
+  answer2({ traffic: 'hold_for_batch', source: 'model', reason: 'batch' });
+  await pending2;
 });
