@@ -315,17 +315,18 @@ export class Store {
   missionControl: MissionControlState | undefined;
   /** The last speech bubble said during a visit, for whoever shows it ('visitSay'). */
   lastSay: { visit: string; worker: string; text: string } | null = null;
-  private subs = new Map<Topic, Set<() => void>>();
+  private subs = new Map<Topic, Set<(workerId?: string) => void>>();
 
-  on(topic: Topic, fn: () => void) {
+  /** Screen updates identify the worker, including images that finish decoding after the message. */
+  on(topic: Topic, fn: (workerId?: string) => void) {
     let set = this.subs.get(topic);
     if (!set) this.subs.set(topic, (set = new Set()));
     set.add(fn);
     return () => set!.delete(fn);
   }
 
-  emit(topic: Topic) {
-    this.subs.get(topic)?.forEach((fn) => fn());
+  emit(topic: Topic, workerId?: string) {
+    this.subs.get(topic)?.forEach((fn) => fn(workerId));
   }
 
   /** The floor you're on. */
@@ -571,7 +572,7 @@ export class Store {
                 if (prev?.source && 'close' in prev.source && typeof prev.source.close === 'function') prev.source.close();
                 map.set(id, { source: bmp, width: bmp.width, height: bmp.height, sig });
                 cur.version++;
-                this.emit('screens');
+                this.emit('screens', wid);
               })
               .catch(() => undefined);
           }
@@ -582,7 +583,7 @@ export class Store {
         }
         if (changed) {
           s.version++;
-          this.emit('screens');
+          this.emit('screens', msg.workerId);
         }
         break;
       }

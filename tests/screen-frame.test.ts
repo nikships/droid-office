@@ -203,3 +203,45 @@ test('client store skips redundant screen repaints when incoming frames match ex
     store.apply({ t: 'worker.remove', workerId: wid });
   }
 });
+
+test('screen events identify both synchronous updates and delayed image-only updates', async (t) => {
+  const { Store } = await import('../src/client/state.js');
+  const store = new Store();
+  const events: (string | undefined)[] = [];
+  store.on('screens', (workerId) => events.push(workerId));
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'createImageBitmap');
+  const bitmap = { width: 1, height: 1, close() {} } as ImageBitmap;
+  let finishDecode!: (value: ImageBitmap) => void;
+  const decoded = new Promise<ImageBitmap>((resolve) => {
+    finishDecode = resolve;
+  });
+  Object.defineProperty(globalThis, 'createImageBitmap', { configurable: true, value: () => decoded });
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, 'createImageBitmap', original);
+    else Reflect.deleteProperty(globalThis, 'createImageBitmap');
+  });
+
+  const frame = { t: 'screen', workerId: 'boss-shell', cols: 80, rows: 4, full: true, lines: {}, cursor: [0, 0] } as const;
+  store.apply({ ...frame, cursor: [0, 0] });
+  assert.deepEqual(events, ['boss-shell']);
+  events.length = 0;
+  const version = store.screens.get(frame.workerId)!.version;
+  store.apply({
+    ...frame,
+    full: false,
+    cursor: [0, 0],
+    images: { 1: { format: 100, width: 1, height: 1, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6rS8AAAAASUVORK5CYII=' } },
+  });
+  assert.deepEqual(events, [], 'unchanged text does not wake before decoding finishes');
+  const painted = new Promise<void>((resolve) => {
+    const off = store.on('screens', () => {
+      off();
+      resolve();
+    });
+  });
+  finishDecode(bitmap);
+  await painted;
+  assert.deepEqual(events, ['boss-shell'], 'a decoded image wakes its own screen without another WebSocket message');
+  assert.equal(store.screens.get(frame.workerId)!.version, version + 1);
+  assert.equal(store.screens.get(frame.workerId)!.bitmaps?.get(1)?.source, bitmap);
+});

@@ -1103,10 +1103,14 @@ const NO_SCENE_WAKE = new Set<ServerMsg['t']>([
   'setup',
 ]);
 
+// Decoded Kitty images arrive after the WebSocket handler, but still need a prompt draw.
+store.on('screens', (workerId) => {
+  if (!upTop && workerId && (workerId === OFFICE_SHELL_ID || workerViews.has(workerId))) renderWake();
+});
+
 net.onMessage((msg) => {
   // The floor you asked to come back to (see Net.connect), to tell if the office put you somewhere else.
   const wasOn = msg.t === 'welcome' ? (store.floor ?? lastFloor()) : null;
-  const prevScreenVersion = msg.t === 'screen' ? store.screens.get(msg.workerId)?.version : undefined;
   if (msg.t === 'welcome' || msg.t === 'floor.enter') {
     departures.clear();
     casualties.clear();
@@ -1234,9 +1238,7 @@ net.onMessage((msg) => {
     }
   }
   // The terminal canvas updates on its own. Everything that changes the 3D picture draws promptly.
-  if (msg.t === 'screen') {
-    if (!upTop && store.screens.get(msg.workerId)?.version !== prevScreenVersion && (msg.workerId === OFFICE_SHELL_ID || workerViews.has(msg.workerId))) renderWake();
-  } else if (!NO_SCENE_WAKE.has(msg.t)) {
+  if (msg.t !== 'screen' && !NO_SCENE_WAKE.has(msg.t)) {
     renderWake();
   }
 });
