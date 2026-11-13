@@ -1,4 +1,4 @@
-import { linearColumns, linearPromptVars, linkUrl, PRIORITY_NAMES, type LinearComment, type LinearTicket, type LinearTicketDetail } from '../../shared/linear';
+import { linearColumns, linearImagePath, linearPromptVars, linkUrl, PRIORITY_NAMES, type LinearComment, type LinearTicket, type LinearTicketDetail } from '../../shared/linear';
 import type { ClientMsg, ServerMsg } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store } from '../state';
@@ -110,8 +110,25 @@ export function autopilotSummary(): string {
   return autopilot.on ? `Autopilot on · ${working} of ${autopilot.max} working` : 'Autopilot off';
 }
 
+/** Ticket Markdown with `uploads.linear.app` images routed through `/api/linear/image`. */
+function linearMarkdown(src: string): HTMLElement {
+  const el = markdown(src);
+  for (const img of el.querySelectorAll<HTMLImageElement>('img[src]')) {
+    const raw = img.getAttribute('src') ?? '';
+    const proxied = linearImagePath(raw, store.floor);
+    if (!proxied) continue;
+    const resolved = withToken(proxied);
+    img.src = resolved;
+    const parent = img.parentElement;
+    if (parent instanceof HTMLAnchorElement && linearImagePath(parent.getAttribute('href') ?? '', store.floor) === proxied) {
+      parent.href = resolved;
+    }
+  }
+  return el;
+}
+
 function commentCard(c: LinearComment) {
-  return h('article.gh-card', {}, h('header', {}, h('b', {}, c.author), h('span', {}, 'commented'), h('span.when', { title: new Date(c.createdAt).toLocaleString() }, timeAgo(c.createdAt))), markdown(c.body));
+  return h('article.gh-card', {}, h('header', {}, h('b', {}, c.author), h('span', {}, 'commented'), h('span.when', { title: new Date(c.createdAt).toLocaleString() }, timeAgo(c.createdAt))), linearMarkdown(c.body));
 }
 
 /** The task a worker gets for a ticket: the "Linear ticket" prompt with its description. */
@@ -162,7 +179,7 @@ export function openLinearTicket(first: LinearTicket, actions: LinearActions) {
   };
   const section = (label: string, rows: Node[]) => h('article.gh-card', {}, h('header', {}, h('b', {}, label)), h('ul.linear-list', {}, ...rows));
   const render = () => {
-    thread.replaceChildren(h('article.gh-card', {}, h('header', {}, h('b', {}, 'Description')), detail ? markdown(detail.description || '_(No description.)_') : h('p.gh-quiet', {}, error ? '' : 'Loading…')));
+    thread.replaceChildren(h('article.gh-card', {}, h('header', {}, h('b', {}, 'Description')), detail ? linearMarkdown(detail.description || '_(No description.)_') : h('p.gh-quiet', {}, error ? '' : 'Loading…')));
     if (error) {
       thread.append(emptyState('⚠️', `Couldn't load ${it.identifier} from Linear`, error, h('button.btn', { type: 'button', onclick: () => load() }, 'Try again')));
       return;
