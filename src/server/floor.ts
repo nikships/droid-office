@@ -71,7 +71,7 @@ export interface FloorContext {
   /** The office's prompts and the worker a new one starts on when nobody picks, as set in Settings. */
   prompts: PromptSource;
   /** To everyone on this floor. */
-  emit(floor: Floor, msg: ServerMsg, droppable?: boolean): void;
+  emit(floor: Floor, msg: ServerMsg, droppable?: boolean): unknown;
   /** To everyone on this floor; `workerId` names the worker it is about, when one is. */
   toast(floor: Floor, text: string, level?: ToastLevel, workerId?: string): void;
   /** A worker's terminal output, for whoever has that terminal open. */
@@ -299,8 +299,9 @@ export class Floor {
         },
         data: (workerId, data, connectionIds) => ctx.termData(workerId, data, connectionIds),
         screen: (workerId, frame) => {
-          ctx.emit(this, { t: 'screen', workerId, ...frame }, true);
+          const dropped = ctx.emit(this, { t: 'screen', workerId, ...frame }, true);
           if (this.workers.get(workerId)?.status === 'needs_input') ctx.offFloorScreen?.(this, workerId);
+          return dropped;
         },
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
         checkout: (branch) => {

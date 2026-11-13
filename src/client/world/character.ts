@@ -2134,6 +2134,8 @@ export class Worker {
     this.labelAlpha = labelFade(d);
   }
 
+  private sitPose = { y: 0, z: 0, lean: 0 };
+
   /**
    * Called every frame, since the card is redrawn whenever what it says changes. Opacity only:
    * `visible` belongs to whoever hides the labels outright (a heavenly ascent).
@@ -2142,7 +2144,8 @@ export class Worker {
     // A line said on a visit stands in for the card and the name tag (its chip names who says it), and
     // stays readable from right beside it.
     const alpha = this.speech ? 0 : this.labelAlpha;
-    for (const sprite of [this.bubble, this.nameTag]) if (sprite) sprite.material.opacity = alpha;
+    if (this.bubble) this.bubble.material.opacity = alpha;
+    if (this.nameTag) this.nameTag.material.opacity = alpha;
     if (this.speech) this.speech.sprite.material.opacity = Math.max(this.labelAlpha, 0.85);
   }
 
@@ -2150,9 +2153,21 @@ export class Worker {
     const want = this.wantSit();
     this.sitK += (want - this.sitK) * Math.min(1, dt * 10);
     if (Math.abs(want - this.sitK) < 1e-3) this.sitK = want;
-    if (this.seat === 'plinth') return { y: -0.085, z: 0, lean: 0 };
-    if (this.seat === 'beanbag') return { y: -0.44 * this.sitK, z: -0.02 * this.sitK, lean: -0.1 * this.sitK };
-    return { y: -0.436 * this.sitK, z: 0.025 * this.sitK, lean: 0 };
+    const out = this.sitPose;
+    if (this.seat === 'plinth') {
+      out.y = -0.085;
+      out.z = 0;
+      out.lean = 0;
+    } else if (this.seat === 'beanbag') {
+      out.y = -0.44 * this.sitK;
+      out.z = -0.02 * this.sitK;
+      out.lean = -0.1 * this.sitK;
+    } else {
+      out.y = -0.436 * this.sitK;
+      out.z = 0.025 * this.sitK;
+      out.lean = 0;
+    }
+    return out;
   }
 
   private applyLegs(sit: number, tap: number, kick: number, hopStretch = 0) {
@@ -2174,15 +2189,12 @@ export class Worker {
 
   private applyStride(phase: number) {
     const s = Math.sin(phase);
-    const legs: [THREE.Group, THREE.Group, THREE.Group, number][] = [
-      [this.thighL, this.shinL, this.footL, s],
-      [this.thighR, this.shinR, this.footR, -s],
-    ];
-    for (const [thigh, shin, foot, step] of legs) {
-      thigh.rotation.x += step * 0.56;
-      shin.rotation.x += Math.max(0, -step) * 0.68 + 0.08;
-      foot.rotation.x += step * 0.2;
-    }
+    this.thighL.rotation.x += s * 0.56;
+    this.shinL.rotation.x += Math.max(0, -s) * 0.68 + 0.08;
+    this.footL.rotation.x += s * 0.2;
+    this.thighR.rotation.x -= s * 0.56;
+    this.shinR.rotation.x += Math.max(0, s) * 0.68 + 0.08;
+    this.footR.rotation.x -= s * 0.2;
   }
 
   update(dt: number, t: number) {
@@ -2432,9 +2444,12 @@ export class Worker {
     const seatBaseZ = (this.seat === 'beanbag' ? -0.02 : 0.025) * seatSit;
 
     // Arms and the body's sway head for these, so one move runs into the next.
-    let armX = [-2.55, -2.55];
-    let armZ = [-0.25, 0.25];
-    let foreX = [-0.35, -0.35];
+    let armXL = -2.55;
+    let armXR = -2.55;
+    let armZL = -0.25;
+    let armZR = 0.25;
+    let foreXL = -0.35;
+    let foreXR = -0.35;
     let lift = 0;
     let sway = 0;
     let twist = 0;
@@ -2448,36 +2463,45 @@ export class Worker {
       sway = s * 0.2;
       twist = s * 0.3;
       step = s;
-      armX = [-1.55 - c * 1.1, -1.55 + c * 1.1];
-      foreX = [-0.55 + c * 0.3, -0.55 - c * 0.3];
-      armZ = [-0.35, 0.35];
+      armXL = -1.55 - c * 1.1;
+      armXR = -1.55 + c * 1.1;
+      foreXL = -0.55 + c * 0.3;
+      foreXR = -0.55 - c * 0.3;
+      armZL = -0.35;
+      armZR = 0.35;
     } else if (beat >= 4 && beat < 6) {
       // A twirl on the spot, arms out wide.
       const u = (beat - 4) / 2;
       twist = u * u * (3 - 2 * u) * Math.PI * 2;
       lift = Math.sin(u * Math.PI) * 0.18;
-      armX = [-0.3, -0.3];
-      foreX = [-0.2, -0.2];
-      armZ = [-1.35, 1.35];
+      armXL = -0.3;
+      armXR = -0.3;
+      foreXL = -0.2;
+      foreXR = -0.2;
+      armZL = -1.35;
+      armZR = 1.35;
     } else if (beat >= 6) {
       // Two big star jumps, arms high.
       lift = Math.abs(Math.sin((beat - 6) * Math.PI)) * 0.45;
-      foreX = [-0.2, -0.2];
-      armZ = [-0.35, 0.35];
+      foreXL = -0.2;
+      foreXR = -0.2;
+      armZL = -0.35;
+      armZR = 0.35;
     }
     this.armL.position.copy(WORKER_PIVOTS.armL);
     this.armR.position.copy(WORKER_PIVOTS.armR);
     this.rotor.rotation.z -= dt * 14;
-    for (const prop of [this.papers.group, this.globe.group]) prop.visible = false;
+    this.papers.group.visible = false;
+    this.globe.group.visible = false;
     const k = 1 - Math.exp(-dt * 18);
-    [this.armL, this.armR].forEach((a, i) => {
-      a.rotation.x += (armX[i] - a.rotation.x) * k;
-      a.rotation.z += (armZ[i] - a.rotation.z) * k;
-    });
-    [this.forearmL, this.forearmR].forEach((f, i) => {
-      f.rotation.x += (foreX[i] - f.rotation.x) * k;
-      f.rotation.z += -f.rotation.z * k;
-    });
+    this.armL.rotation.x += (armXL - this.armL.rotation.x) * k;
+    this.armL.rotation.z += (armZL - this.armL.rotation.z) * k;
+    this.armR.rotation.x += (armXR - this.armR.rotation.x) * k;
+    this.armR.rotation.z += (armZR - this.armR.rotation.z) * k;
+    this.forearmL.rotation.x += (foreXL - this.forearmL.rotation.x) * k;
+    this.forearmL.rotation.z += -this.forearmL.rotation.z * k;
+    this.forearmR.rotation.x += (foreXR - this.forearmR.rotation.x) * k;
+    this.forearmR.rotation.z += -this.forearmR.rotation.z * k;
     this.applyLegs(seatSit, 0, 0);
     if (beat >= 0) {
       const kneeL = Math.max(0, step) * 0.65;

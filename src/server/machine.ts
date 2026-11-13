@@ -35,6 +35,9 @@ export function parseWorkerLimit(v: unknown): number | undefined {
   return typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= MAX_WORKER_LIMIT ? n : undefined;
 }
 
+const TOTAL_MEM = os.totalmem();
+const CPU_CORES = os.cpus().length;
+
 /** Every core's busy and idle time so far; two of these a few seconds apart give how busy it was. */
 function cpuTimes(): { idle: number; total: number } {
   let idle = 0;
@@ -123,14 +126,13 @@ export class Machine implements Capacity {
   }
 
   state(): MachineState {
-    const memTotal = os.totalmem();
     return {
       cpu: this.cpu,
-      cores: os.cpus().length,
+      cores: CPU_CORES,
       memUsed: this.memUsed,
-      memTotal,
+      memTotal: TOTAL_MEM,
       history: this.history.slice(),
-      pressure: this.pressure(memTotal),
+      pressure: this.pressure(TOTAL_MEM),
       workers: this.count(),
       limit: this.limit,
       ceiling: this.ceiling,

@@ -32,7 +32,7 @@ import { OFFICE_SHELL_ID } from '../shared/office-shell';
 import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME } from '../shared/mission-control';
 import { botLine, missionWaiting, missionWorker, orchestratorLine, orchestratorWorker } from './mission';
 import { ORCHESTRATOR_SPOT, PHASE_WORD, missionBadge, missionLinks, missionStand, missionTeamBadge, missionTeamLine, missionView, orchestratorAwake, orchestratorPhase, orchestratorWaiting } from './mission-office';
-import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, WorkerInfo } from '../shared/protocol';
+import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, ServerMsg, WorkerInfo } from '../shared/protocol';
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
 import { isPaletteKey } from '../shared/palette';
@@ -303,18 +303,44 @@ const propsReady = loadPropManifest()
 const sky = new Sky(scene, { sun, hemi, ambient }, office.night);
 /** The laptop screens that light the room, reused every frame (see Sky.setScreens). */
 const screenGlows: ScreenGlow[] = [];
+const peopleScratch: { x: number; y: number; z: number }[] = [];
+const climbersScratch: [{ x: number; y: number; z: number; grip: Grip | null }] = [{ x: 0, y: 0, z: 0, grip: null }];
 store.on('sky', () => store.sky && sky.set(store.sky));
 
+const NO_OUTLINE = { visible: false };
 const noOutline = (obj: THREE.Object3D) =>
   obj.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
     const geo = m.geometry;
     const flat = geo instanceof THREE.PlaneGeometry || geo instanceof THREE.CircleGeometry;
-    const mats = Array.isArray(m.material) ? m.material : [m.material];
-    for (const mat of mats) if (flat || mat instanceof THREE.MeshBasicMaterial) mat.userData.outlineParameters = { visible: false };
+    if (Array.isArray(m.material)) {
+      for (let i = 0; i < m.material.length; i++) {
+        const mat = m.material[i];
+        if (flat || mat instanceof THREE.MeshBasicMaterial) mat.userData.outlineParameters = NO_OUTLINE;
+      }
+    } else {
+      const mat = m.material;
+      if (flat || mat instanceof THREE.MeshBasicMaterial) mat.userData.outlineParameters = NO_OUTLINE;
+    }
   });
 noOutline(office.group);
+
+const hiddenMatrixHooked = new WeakSet<THREE.Object3D>();
+function skipHiddenMatrixWorld(root: THREE.Object3D) {
+  if (hiddenMatrixHooked.has(root)) return;
+  hiddenMatrixHooked.add(root);
+  root.updateMatrixWorld(true);
+  let wasHidden = !root.visible;
+  root.updateMatrixWorld = function (force?: boolean) {
+    if (!this.visible) {
+      wasHidden = true;
+      return;
+    }
+    THREE.Object3D.prototype.updateMatrixWorld.call(this, force || wasHidden);
+    wasHidden = false;
+  };
+}
 
 // Boards: each draws onto a canvas texture, redrawn whenever what it shows changes.
 /** How much of its light a wall board gives off in the dark room: dim, but its text stays easy to read. */
@@ -485,6 +511,7 @@ function theRoof(): Rooftop {
     roof.group.visible = false;
     scene.add(roof.group);
     noOutline(roof.group);
+    skipHiddenMatrixWorld(roof.group);
   }
   return roof;
 }
@@ -627,6 +654,7 @@ interface WorkerView {
   action?: string;
   /** False until the first sync, so a failure already on screen doesn't ding when the page opens. */
   heard: boolean;
+  worldReady?: boolean;
 }
 const workerViews = new Map<string, WorkerView>();
 /** Workers a `worker.remove` is taking out of the store right now. They walk out of the building; a worker that's gone because you changed floors just vanishes. */
@@ -1035,6 +1063,51 @@ net.onStatus((up) => {
   $('conn').classList.toggle('hidden', up);
   store.whiteboard.status(up);
 });
+/** WebSocket messages that only update DOM windows, RPC callbacks, or other floors' state, never the 3D scene. */
+const NO_SCENE_WAKE = new Set<ServerMsg['t']>([
+  'term.data',
+  'term.snapshot',
+  'thread.snapshot',
+  'action.result',
+  'pong',
+  'building.worker',
+  'building.remove',
+  'building.pulls',
+  'floor.branches',
+  'floor.repos',
+  'floor.folders',
+  'floor.added',
+  'projectsDir',
+  'worker.worktree',
+  'worktreeSetup',
+  'changes',
+  'changes.diff',
+  'gh.merged',
+  'gh.commented',
+  'gh.closed',
+  'gh.labeled',
+  'pipelines.detail',
+  'pipelines.done',
+  'jira.setup',
+  'linear.setup',
+  'factory.setup',
+  'whiteboard.pinged',
+  'whiteboard.renderer',
+  'toast',
+  'upgrade',
+  'leaveOnMerge',
+  'subagents',
+  'models.hidden',
+  'workerLabels',
+  'prompts',
+  'setup',
+]);
+
+// Decoded Kitty images arrive after the WebSocket handler, but still need a prompt draw.
+store.on('screens', (workerId) => {
+  if (!upTop && workerId && (workerId === OFFICE_SHELL_ID || workerViews.has(workerId))) renderWake();
+});
+
 net.onMessage((msg) => {
   // The floor you asked to come back to (see Net.connect), to tell if the office put you somewhere else.
   const wasOn = msg.t === 'welcome' ? (store.floor ?? lastFloor()) : null;
@@ -1164,8 +1237,10 @@ net.onMessage((msg) => {
       break;
     }
   }
-  // The terminal canvas updates on its own. Everything else can change the picture, so draw promptly.
-  if (msg.t !== 'term.data' && msg.t !== 'term.snapshot') renderWake();
+  // The terminal canvas updates on its own. Everything that changes the 3D picture draws promptly.
+  if (msg.t !== 'screen' && !NO_SCENE_WAKE.has(msg.t)) {
+    renderWake();
+  }
 });
 
 function renderUpgrade() {
@@ -1267,9 +1342,14 @@ function whereNow(): Spot | null {
   return firstWelcome ? lastSpot() : spotHere();
 }
 
+let lastSavedSpotKey = '';
 function saveSpot() {
   const s = spotHere();
-  if (s) rememberSpot(s);
+  if (!s) return;
+  const key = `${s.floor}\0${s.name}\0${s.x}\0${s.y}\0${s.z}\0${s.facing}`;
+  if (key === lastSavedSpotKey) return;
+  lastSavedSpotKey = key;
+  rememberSpot(s);
 }
 // Closing the tab, or reloading: the frame loop saves it every second, and here's the last word.
 window.addEventListener('pagehide', saveSpot);
@@ -3351,10 +3431,18 @@ const REACH: Record<InteractKind, number> = {
   orchestrator: 7,
   bot: 4,
 };
+const MAX_REACH = Math.max(...Object.values(REACH));
 /** What the ray through `ndc` lands on first, whether it is within reach (plus `slack` meters), and where it hit. */
 function aimedAt(ndc: THREE.Vector2, slack = 0): { it: Interactable; near: boolean; hit: THREE.Intersection } | null {
   raycaster.setFromCamera(ndc, camera);
-  const hit = firstVisibleIntersection(raycaster, upTop && roof ? roof.pickables : [office.group]);
+  const prevFar = raycaster.far;
+  raycaster.far = Math.min(prevFar, MAX_REACH + slack + 0.01);
+  let hit: THREE.Intersection | null;
+  try {
+    hit = firstVisibleIntersection(raycaster, upTop && roof ? roof.pickables : [office.group]);
+  } finally {
+    raycaster.far = prevFar;
+  }
   if (!hit) return null;
   let it: Interactable | undefined;
   let shown = true;
@@ -3699,9 +3787,12 @@ function renderWarmup(s: WarmupStatus | null) {
 /** The Mac's whole-GPU load from the office's server, when this page runs on the office's own Mac. */
 let systemGpu: number | null = null;
 let systemGpuPoll = 0;
+let systemGpuBusy = false;
 /** The overhead lights' brightness last applied; -1 before the first time, when the renderer isn't set up yet. */
 let appliedOverhead = -1;
 async function pollSystemGpu() {
+  if (systemGpuBusy) return;
+  systemGpuBusy = true;
   try {
     const res = await fetch(withToken('/api/gpu'), { credentials: 'same-origin', cache: 'no-store' });
     const body = res.ok ? ((await res.json()) as { stats?: { device?: unknown } | null }) : null;
@@ -3709,6 +3800,8 @@ async function pollSystemGpu() {
     systemGpu = typeof device === 'number' && Number.isFinite(device) ? device : null;
   } catch {
     systemGpu = null;
+  } finally {
+    systemGpuBusy = false;
   }
 }
 /** Graphics settings to the renderer and the overlay. The counter's text still updates while hidden: recording rigs read it. */
@@ -3726,7 +3819,7 @@ function applyGraphics() {
   systemGpu = null;
   if (settings.graphics.stats) {
     void pollSystemGpu();
-    systemGpuPoll = window.setInterval(() => document.visibilityState === 'visible' && void pollSystemGpu(), 1000);
+    systemGpuPoll = window.setInterval(() => document.visibilityState === 'visible' && renderLoop.mode !== 'paused' && void pollSystemGpu(), 1000);
   }
 }
 applyGraphics();
@@ -3823,7 +3916,7 @@ function gpuRendererName(): string {
 /** A worker walking, hopping, mid-turn, leaving, or being carried out. */
 function workerMoving(): boolean {
   for (const v of workerViews.values()) if (v.model.animating) return true;
-  return departures.positions().length > 0 || casualties.active || visitors.moving || mission.animating;
+  return departures.hasLeavers || casualties.active || visitors.moving || mission.animating;
 }
 
 /** Traffic is the thing you're looking at, not just the street outside the windows. */
@@ -3890,6 +3983,11 @@ function currentPace(): RenderPace {
   });
 }
 
+let lastBakeParams: typeof remasterParams | null = null;
+let lastBakeOverhead = Number.NaN;
+let lastBakeHash = '\0';
+let cachedBakeKey = '';
+
 function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean }) {
   const frameStart = performance.now();
   framesDrawn++;
@@ -3911,7 +4009,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
         // Frames skipped while queries were in flight count at the timed frames' average.
         gpu: gpuMs === null ? null : { ms: gpuMs, busy: gpuBusy(gpuMs * fpsFrames, windowMs) },
         gpuNote: gpuScene.supported ? 'timing…' : 'timing unavailable in this browser',
-        pacing: pacingText(frameStats.report({ fpsCap: settings.graphics.fpsCap, refreshMs: renderLoop.refreshMs, since: frame.at - PACING_WINDOW_MS })),
+        pacing: pacingText(frameStats.pacing({ fpsCap: settings.graphics.fpsCap, refreshMs: renderLoop.refreshMs, since: frame.at - PACING_WINDOW_MS })),
         system: systemGpu,
         render,
         output,
@@ -3952,11 +4050,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   }
   // Pulled away with the gun out (off up the ladder, into the elevator, up to the roof): it goes back.
   if (gunOut && (trip || hanger.active || climber.active || upTop)) holsterGun(true);
-  me.root.position.copy(player.pos);
-  me.root.position.y += player.stepOffset;
-  me.root.rotation.y = player.facing;
   const grip = climber.grip;
-  me.setGrip(grip);
   // Switched in Settings with one drawn: the other comes out in its place.
   if (gunOut && drawnArm !== settings.sidearm) {
     holsterGun(true);
@@ -3965,10 +4059,16 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   updateShotCharge(now);
   const gunCuesNow = gunMotion.update(dt);
   const wandCuesNow = wandMotion.update(dt);
-  me.setGunPose(gunMotion.pose);
+  if (me.root.visible || me.emoteId) {
+    me.root.position.copy(player.pos);
+    me.root.position.y += player.stepOffset;
+    me.root.rotation.y = player.facing;
+    me.setGrip(grip);
+    me.setGunPose(gunMotion.pose);
+    me.update(dt, t, (player.moving && player.grounded) || (grip === 'ladder' && player.moving), !player.grounded && !grip);
+  }
   hands.setGunPose(gunMotion.pose);
   hands.setWandPose(wandMotion.pose);
-  me.update(dt, t, (player.moving && player.grounded) || (grip === 'ladder' && player.moving), !player.grounded && !grip);
   hands.update(dt, t, { yaw: player.camYaw, pitch: player.lookPitch, walkPhase: player.walkPhase, walking: player.moving && player.grounded, airborne: !player.grounded, jitter: player.jitter, grip });
   gunCues(gunCuesNow);
   wandCues(wandCuesNow);
@@ -4001,7 +4101,13 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   for (const [id, v] of workerViews) {
     const desk = DESK_BY_ID.get(v.deskId)!;
     // A jumping worker holds still while you're near enough to read its card, and jumps again once you walk away.
-    const d = v.model.root.getWorldPosition(workerPos).distanceTo(player.pos);
+    if (!v.worldReady || v.model.animating || visitors.moving) {
+      v.model.root.getWorldPosition(workerPos);
+      v.worldReady = true;
+    } else {
+      workerPos.setFromMatrixPosition(v.model.root.matrixWorld);
+    }
+    const d = workerPos.distanceTo(player.pos);
     v.model.held = d < (v.model.held ? HOLD_LEAVE : HOLD_NEAR);
     workerPos.y += WORKER_HEAD;
     v.model.seenFrom(workerPos.distanceTo(camPos));
@@ -4032,8 +4138,16 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     puffs.splice(i, 1);
   }
   if (!upTop) {
-    office.update(t, dt, [player.pos, ...departures.positions()]);
-    office.stack.update(dt, [{ x: player.pos.x, y: player.pos.y, z: player.pos.z, grip }], camera.position);
+    peopleScratch.length = 1;
+    peopleScratch[0] = player.pos;
+    departures.fillPositions(peopleScratch);
+    office.update(t, dt, peopleScratch);
+    const climberState = climbersScratch[0];
+    climberState.x = player.pos.x;
+    climberState.y = player.pos.y;
+    climberState.z = player.pos.z;
+    climberState.grip = grip;
+    office.stack.update(dt, climbersScratch, camera.position);
     office.jukebox.update(t, dt, sound.beat());
   }
   smoke.update(dt, camera);
@@ -4070,7 +4184,14 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     remaster.gi.paused = upTop;
     remaster.gi.budgetMs = bakeBudget(settings.graphics.fpsCap, renderLoop.refreshMs);
     // The welcome paints the floor's palette (`paintFloor`): a bake started before it would save the default room's colours.
-    remaster.gi.setKey(bakeKey(remasterParams, settings.graphics.overhead, bootVersion ? SCENE_HASH : ''));
+    const bakedHash = bootVersion ? SCENE_HASH : '';
+    if (remasterParams !== lastBakeParams || settings.graphics.overhead !== lastBakeOverhead || bakedHash !== lastBakeHash) {
+      lastBakeParams = remasterParams;
+      lastBakeOverhead = settings.graphics.overhead;
+      lastBakeHash = bakedHash;
+      cachedBakeKey = bakeKey(remasterParams, settings.graphics.overhead, bakedHash);
+    }
+    remaster.gi.setKey(cachedBakeKey);
     remaster.draw(() => effect.render(scene, camera));
   } else upscaler.draw(camera, () => effect.render(scene, camera));
   const sceneEnd = performance.now();
@@ -4187,6 +4308,13 @@ const shadersReady = propsReady
       extras,
       pulse: () => loading.stillGoing(),
     });
+    office.freezeStatics([teamLines.group, mission.group, gallery.group]);
+    skipHiddenMatrixWorld(office.group);
+    if (roof) skipHiddenMatrixWorld(roof.group);
+    skipHiddenMatrixWorld(me.root);
+    skipHiddenMatrixWorld(confetti.mesh);
+    skipHiddenMatrixWorld(teamLines.group);
+    for (const { id } of BEANBAGS) skipHiddenMatrixWorld(office.desks.get(id)!.group);
     shadersWarmed = true;
   })
   .catch((err) => console.warn('office: shader warmup failed', err));

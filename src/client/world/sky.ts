@@ -70,6 +70,16 @@ const screenSlots = new Slots(MAX_SCREENS, 4);
 const screenDirSlots = new Slots(MAX_SCREENS, 3);
 const screenColorSlots = new Slots(MAX_SCREENS, 3);
 const _lampColor = new THREE.Color();
+const _screenOrder: number[] = [];
+const _screenDist: number[] = [];
+let _appliedLampsOwner: Sky | null = null;
+let _appliedLampsSeq = -1;
+let _appliedLampsOn = Number.NaN;
+let _appliedOverhead = Number.NaN;
+let _appliedRoof: boolean | null = null;
+let _appliedBulbs = -1;
+let _appliedWindows = -1;
+let _appliedHalos = -1;
 
 const uniforms = {
   /** Off while drawing your hands in first person, which live in a scene of their own. */
@@ -632,11 +642,14 @@ export class Sky {
     this.snap = true;
   }
 
+  private lampsSeq = 0;
+
   /**
    * The lamps' pools of light, and the box around all of them. The ones down by the street are as
    * far down as the street is from the floor you're on.
    */
   private placeLamps() {
+    this.lampsSeq++;
     this.street = this.night.street;
     const drop = STREET_Y - this.street;
     uniforms.skyDrop.value = drop;
@@ -647,17 +660,27 @@ export class Sky {
     const indoorHi = uniforms.skyIndoorLampMax.value.set(-Infinity, -Infinity, -Infinity);
     this.outdoorLamps = this.night.lamps.filter((l) => !l.indoor).slice(0, MAX_LAMPS);
     this.indoorLamps = this.night.lamps.filter((l) => l.indoor).slice(0, MAX_INDOOR_LAMPS);
-    this.outdoorLamps.forEach((l, i) => {
+    for (let i = 0; i < this.outdoorLamps.length; i++) {
+      const l = this.outdoorLamps[i];
       const y = l.ground ? l.y - drop : l.y;
       lampSlots.set(i, l.x, y, l.z, l.reach);
-      lo.min(new THREE.Vector3(l.x - l.reach, y - l.reach, l.z - l.reach));
-      hi.max(new THREE.Vector3(l.x + l.reach, y + l.reach, l.z + l.reach));
-    });
-    this.indoorLamps.forEach((l, i) => {
+      lo.x = Math.min(lo.x, l.x - l.reach);
+      lo.y = Math.min(lo.y, y - l.reach);
+      lo.z = Math.min(lo.z, l.z - l.reach);
+      hi.x = Math.max(hi.x, l.x + l.reach);
+      hi.y = Math.max(hi.y, y + l.reach);
+      hi.z = Math.max(hi.z, l.z + l.reach);
+    }
+    for (let i = 0; i < this.indoorLamps.length; i++) {
+      const l = this.indoorLamps[i];
       indoorLampSlots.set(i, l.x, l.y, l.z, l.reach);
-      indoorLo.min(new THREE.Vector3(l.x - l.reach, l.y - l.reach, l.z - l.reach));
-      indoorHi.max(new THREE.Vector3(l.x + l.reach, l.y + l.reach, l.z + l.reach));
-    });
+      indoorLo.x = Math.min(indoorLo.x, l.x - l.reach);
+      indoorLo.y = Math.min(indoorLo.y, l.y - l.reach);
+      indoorLo.z = Math.min(indoorLo.z, l.z - l.reach);
+      indoorHi.x = Math.max(indoorHi.x, l.x + l.reach);
+      indoorHi.y = Math.max(indoorHi.y, l.y + l.reach);
+      indoorHi.z = Math.max(indoorHi.z, l.z + l.reach);
+    }
   }
 
   /** Dims the office's ceiling lights, 0 (off) to 1 (as built): the fixtures' glow and the room's fill light. */
@@ -682,13 +705,18 @@ export class Sky {
    * shine (the shader has room for MAX_SCREENS). `power` is how open each lid is, 0–1.
    */
   setScreens(glows: readonly ScreenGlow[], count: number, eye: THREE.Vector3) {
-    const near = glows
-      .slice(0, count)
-      .sort((p, q) => p.pos.distanceToSquared(eye) - q.pos.distanceToSquared(eye))
-      .slice(0, MAX_SCREENS);
+    const n = Math.min(count, glows.length);
+    _screenOrder.length = n;
+    for (let i = 0; i < n; i++) {
+      _screenOrder[i] = i;
+      _screenDist[i] = glows[i].pos.distanceToSquared(eye);
+    }
+    if (n > 1) _screenOrder.sort((a, b) => _screenDist[a] - _screenDist[b]);
+    const shown = Math.min(n, MAX_SCREENS);
     const lo = uniforms.skyScreenMin.value.set(Infinity, Infinity, Infinity);
     const hi = uniforms.skyScreenMax.value.set(-Infinity, -Infinity, -Infinity);
-    near.forEach((g, i) => {
+    for (let i = 0; i < shown; i++) {
+      const g = glows[_screenOrder[i]];
       screenSlots.set(i, g.pos.x, g.pos.y, g.pos.z, SCREEN_REACH);
       screenDirSlots.set(i, g.dir.x, g.dir.y, g.dir.z);
       screenColorSlots.setColor(i, C.screen, SCREEN_POWER * g.power);
@@ -698,8 +726,8 @@ export class Sky {
       hi.x = Math.max(hi.x, g.pos.x + SCREEN_REACH);
       hi.y = Math.max(hi.y, g.pos.y + SCREEN_REACH);
       hi.z = Math.max(hi.z, g.pos.z + SCREEN_REACH);
-    });
-    uniforms.skyScreenCount.value = this.roof ? 0 : near.length;
+    }
+    uniforms.skyScreenCount.value = this.roof ? 0 : shown;
   }
 
   /** Under a roof, out of the rain: the building, unless you're up on top of it. */
@@ -734,18 +762,16 @@ export class Sky {
     const step = (x: number, to: number, secs: number) => (snap ? to : ease(x, to, dt, secs));
 
     // The weather, easing from one spell to the next.
-    const want = {
-      cover: { clear: 0, cloudy: k, rain: 0.8 + 0.2 * k, storm: 1, snow: 0.85, fog: 0.5 }[weather],
-      rain: weather === 'rain' ? k : weather === 'storm' ? Math.max(0.8, k) : 0,
-      snow: weather === 'snow' ? k : 0,
-      fog: weather === 'fog' ? k : weather === 'rain' ? 0.12 * k : weather === 'snow' ? 0.3 * k : 0,
-      storm: weather === 'storm' ? 1 : 0,
-    };
-    this.cover = step(this.cover, want.cover, 20);
-    this.rain = step(this.rain, want.rain, 12);
-    this.snow = step(this.snow, want.snow, 12);
-    this.fog = step(this.fog, want.fog, 20);
-    this.storm = step(this.storm, want.storm, 10);
+    const wantCover = weather === 'clear' ? 0 : weather === 'cloudy' ? k : weather === 'rain' ? 0.8 + 0.2 * k : weather === 'storm' ? 1 : weather === 'snow' ? 0.85 : 0.5;
+    const wantRain = weather === 'rain' ? k : weather === 'storm' ? Math.max(0.8, k) : 0;
+    const wantSnow = weather === 'snow' ? k : 0;
+    const wantFog = weather === 'fog' ? k : weather === 'rain' ? 0.12 * k : weather === 'snow' ? 0.3 * k : 0;
+    const wantStorm = weather === 'storm' ? 1 : 0;
+    this.cover = step(this.cover, wantCover, 20);
+    this.rain = step(this.rain, wantRain, 12);
+    this.snow = step(this.snow, wantSnow, 12);
+    this.fog = step(this.fog, wantFog, 20);
+    this.storm = step(this.storm, wantStorm, 10);
     // Wet ground dries off slowly; snow piles up over a few minutes and takes a while to melt.
     this.wet = snap ? (this.rain > 0.05 ? 1 : 0) : ease(this.wet, this.rain > 0.05 ? 1 : 0, dt, this.rain > 0.05 ? 30 : 400);
     this.lying = snap ? (this.snow > 0.05 ? 1 : 0) : ease(this.lying, this.snow > 0.05 ? 1 : 0, dt, this.snow > 0.05 ? 120 : 900);
@@ -772,19 +798,45 @@ export class Sky {
     this.level = clamp01((hemiI + ambI + 0.6 * moonI) / FULL_DAY);
 
     // The lamps are always on: the ones outside, and the office's and the garage's faint fill (set up in the constructor).
-    const lamps = this.outdoorLamps.length;
-    uniforms.skyLampCount.value = this.roof ? 0 : lamps;
-    for (let i = 0; i < lamps; i++) {
-      const l = this.outdoorLamps[i];
-      lampColorSlots.setColor(i, _lampColor.set(l.color), l.power * this.lampsOn);
-    }
-    uniforms.skyIndoorLampCount.value = this.roof ? 0 : this.indoorLamps.length;
-    this.indoorLamps.forEach((l, i) => indoorLampColorSlots.setColor(i, _lampColor.set(l.color), l.power * this.lampsOn));
-    for (const b of this.night.bulbs) b.mat.emissiveIntensity = lerp(b.day, 1, this.lampsOn) * (b.overhead ? this.overhead : 1);
-    for (const m of this.night.windows) m.emissiveIntensity = this.lampsOn * 1.1;
-    for (const h of this.halos) {
-      h.material.opacity = this.lampsOn * 0.85;
-      h.visible = !this.roof;
+    if (
+      _appliedLampsOwner !== this ||
+      _appliedLampsSeq !== this.lampsSeq ||
+      _appliedLampsOn !== this.lampsOn ||
+      _appliedOverhead !== this.overhead ||
+      _appliedRoof !== this.roof ||
+      _appliedBulbs !== this.night.bulbs.length ||
+      _appliedWindows !== this.night.windows.length ||
+      _appliedHalos !== this.halos.length
+    ) {
+      _appliedLampsOwner = this;
+      _appliedLampsSeq = this.lampsSeq;
+      _appliedLampsOn = this.lampsOn;
+      _appliedOverhead = this.overhead;
+      _appliedRoof = this.roof;
+      _appliedBulbs = this.night.bulbs.length;
+      _appliedWindows = this.night.windows.length;
+      _appliedHalos = this.halos.length;
+      const lamps = this.outdoorLamps.length;
+      uniforms.skyLampCount.value = this.roof ? 0 : lamps;
+      for (let i = 0; i < lamps; i++) {
+        const l = this.outdoorLamps[i];
+        lampColorSlots.setColor(i, _lampColor.set(l.color), l.power * this.lampsOn);
+      }
+      uniforms.skyIndoorLampCount.value = this.roof ? 0 : this.indoorLamps.length;
+      for (let i = 0; i < this.indoorLamps.length; i++) {
+        const l = this.indoorLamps[i];
+        indoorLampColorSlots.setColor(i, _lampColor.set(l.color), l.power * this.lampsOn);
+      }
+      for (let i = 0; i < this.night.bulbs.length; i++) {
+        const b = this.night.bulbs[i];
+        b.mat.emissiveIntensity = lerp(b.day, 1, this.lampsOn) * (b.overhead ? this.overhead : 1);
+      }
+      for (let i = 0; i < this.night.windows.length; i++) this.night.windows[i].emissiveIntensity = this.lampsOn * 1.1;
+      for (let i = 0; i < this.halos.length; i++) {
+        const h = this.halos[i];
+        h.material.opacity = this.lampsOn * 0.85;
+        h.visible = !this.roof;
+      }
     }
 
     // The sky's color, and the fog, which fades far things into it.
@@ -868,7 +920,13 @@ export class Sky {
         this.drops[d + 1] = y;
         this.drops[d + 2] = z;
         const len = this.sheltered(x, z) ? 0 : 0.5;
-        a.set([x, y, z, x - slant * len, y + len, z], i * 6);
+        const o = i * 6;
+        a[o] = x;
+        a[o + 1] = y;
+        a[o + 2] = z;
+        a[o + 3] = x - slant * len;
+        a[o + 4] = y + len;
+        a[o + 5] = z;
       }
       pos.needsUpdate = true;
       this.rainLines.geometry.setDrawRange(0, rainN * 2);
@@ -893,7 +951,10 @@ export class Sky {
         this.flakeState[f] = x;
         this.flakeState[f + 1] = y;
         this.flakeState[f + 2] = z;
-        a.set([x, this.sheltered(x, z) ? -1000 : y, z], i * 3);
+        const o = i * 3;
+        a[o] = x;
+        a[o + 1] = this.sheltered(x, z) ? -1000 : y;
+        a[o + 2] = z;
       }
       pos.needsUpdate = true;
       this.flakes.geometry.setDrawRange(0, snowN);

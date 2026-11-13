@@ -26,7 +26,7 @@ export type ShellFrame = ScreenFrame;
 
 /** What the office does with the boss shell's output. `screen` is the monitor; `data` is an open terminal. */
 export interface ShellEvents {
-  screen(frame: ShellFrame): void;
+  screen(frame: ShellFrame): unknown;
   data(data: string, connectionIds: string[]): void;
 }
 
@@ -47,6 +47,7 @@ export class OfficeShell {
   private screenDirty = false;
   private lastLines: string[] = [];
   private keyframeAt = 0;
+  private needsKeyframe = false;
   private unsaved = false;
   private closing = false;
   private started = false;
@@ -206,12 +207,16 @@ export class OfficeShell {
     term.loadAddon(ser as any);
     term.loadAddon(new unicode11.Unicode11Addon() as any);
     term.unicode.activeVersion = '11';
+    term.onWriteParsed(() => {
+      this.screenDirty = true;
+    });
     this.term?.dispose();
     this.term = term;
     this.ser = ser;
     this.snapshot = screenSnapshot(term, ser);
     this.lastLines = [];
     this.screenDirty = true;
+    this.needsKeyframe = false;
     if (prelude) term.write(prelude);
   }
 
@@ -253,15 +258,19 @@ export class OfficeShell {
   private flush() {
     if (!this.term) return;
     const now = Date.now();
-    if (now - this.keyframeAt > KEYFRAME_MS) {
+    if (this.needsKeyframe && now - this.keyframeAt > KEYFRAME_MS) {
       this.keyframeAt = now;
+      this.needsKeyframe = false;
       this.lastLines = [];
       this.screenDirty = true;
     }
     if (!this.screenDirty) return;
     this.screenDirty = false;
     const frame = snapshotScreen(this.term, this.lastLines);
-    if (frame) this.events.screen(frame);
+    if (frame) {
+      if (frame.full) this.keyframeAt = now;
+      if (this.events.screen(frame) === true) this.needsKeyframe = true;
+    }
   }
 
   private saveState() {

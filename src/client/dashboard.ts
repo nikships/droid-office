@@ -1242,15 +1242,18 @@ function paint() {
   paintWorkspace();
 }
 
+let bannerKey = '';
+let sideSubKey = '';
+
 function paintBanner() {
   let tone = '';
   let text = '';
   let glyph: IconName = 'alert';
-  const actions: HTMLElement[] = [];
+  let actionKind = '';
   if (authorized && !net.up) {
     tone = 'warn';
     text = navigator.onLine ? 'Disconnected from the office. What you see may be out of date, and nothing you type is queued. Reconnecting…' : 'This computer is offline. Worker actions and terminal input are off; nothing will be replayed.';
-    actions.push(h('button.btn.sm', { type: 'button', onclick: () => void net.connect() }, icon('refresh', 14), 'Reconnect'));
+    actionKind = 'reconnect';
   } else if (switching) {
     tone = 'info';
     glyph = 'refresh';
@@ -1258,6 +1261,19 @@ function paintBanner() {
   } else if (notice) {
     tone = 'info';
     text = notice;
+    actionKind = 'dismiss';
+  } else if (authorized && !credential && where !== 'local') {
+    tone = 'accent';
+    glyph = 'key';
+    text = 'This browser is using the office’s link for this start. Pair it to keep access after the office restarts.';
+    actionKind = 'pair';
+  }
+  const key = `${tone}\0${glyph}\0${text}\0${actionKind}`;
+  if (key === bannerKey) return;
+  bannerKey = key;
+  const actions: HTMLElement[] = [];
+  if (actionKind === 'reconnect') actions.push(h('button.btn.sm', { type: 'button', onclick: () => void net.connect() }, icon('refresh', 14), 'Reconnect'));
+  else if (actionKind === 'dismiss') {
     actions.push(
       h(
         'button.btn.ghost.sm',
@@ -1272,12 +1288,7 @@ function paintBanner() {
         '✕',
       ),
     );
-  } else if (authorized && !credential && where !== 'local') {
-    tone = 'accent';
-    glyph = 'key';
-    text = 'This browser is using the office’s link for this start. Pair it to keep access after the office restarts.';
-    actions.push(h('button.btn.accent.sm', { type: 'button', onclick: () => accessDialog() }, 'Pair this browser'));
-  }
+  } else if (actionKind === 'pair') actions.push(h('button.btn.accent.sm', { type: 'button', onclick: () => accessDialog() }, 'Pair this browser'));
   banner.hidden = !text;
   banner.dataset.tone = tone;
   bannerIcon.replaceChildren(icon(glyph, 16));
@@ -1365,8 +1376,13 @@ function paintSide() {
   sideTitle.textContent = store.floor === ROOF ? 'Rooftop' : (here?.name ?? 'No floor');
   sideTitle.title = sideTitle.textContent;
   const where = here ? [here.repo ?? 'Not a git repository', here.branch].filter(Boolean).join(' · ') : store.floors.length ? 'Choose a floor above.' : 'No floors yet. Add a floor above.';
+  const subText = here?.repo && here.branch ? here.branch : where;
+  const nextSubKey = `${where}\0${subText}`;
   // The floor name above already says which repository this is, so the line under it is the branch.
-  sideSub.replaceChildren(icon('branch', 12), h('span', { title: where }, here?.repo && here.branch ? here.branch : where));
+  if (nextSubKey !== sideSubKey) {
+    sideSubKey = nextSubKey;
+    sideSub.replaceChildren(icon('branch', 12), h('span', { title: where }, subText));
+  }
   roster.update({ floor, workers: [...store.workers.values()], focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id), mission: store.missionControl });
   missionRoster.update({ mission: store.missionControl, floor, focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id), here: (id) => store.workers.get(id), shortcut: '⌘ O' });
 }

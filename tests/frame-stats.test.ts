@@ -102,3 +102,26 @@ test('only about the last minute at 120 FPS is kept', () => {
   for (const s of frames(Array(8000).fill(R120))) stats.record(s);
   assert.equal(stats.report({ fpsCap: 120, refreshMs: R120 }).frames, 7199);
 });
+
+test('pacing matches report across ring-buffer wraparound, since windows and out-of-order samples', () => {
+  const stats = new FrameStats();
+  const seq = frames([...Array(7500).fill(R120), 2 * R120, 3 * R120]);
+  for (const s of seq) stats.record(s);
+  const since = seq[seq.length - 200]!.at;
+  const full = stats.report({ fpsCap: 120, refreshMs: R120, since });
+  const fast = stats.pacing({ fpsCap: 120, refreshMs: R120, since });
+  assert.deepEqual(fast.frameTime, full.frameTime);
+  assert.equal(fast.missed, full.missed);
+  assert.equal(fast.repeated, full.repeated);
+  assert.equal(pacingText(fast), pacingText(full));
+
+  // Non-monotonic timestamp falls back to linear scan cleanly without losing window accuracy.
+  stats.record({ at: since - 50, paced: false, cpu });
+  const afterOutOfOrder = stats.pacing({ fpsCap: 120, refreshMs: R120, since });
+  const fullOutOfOrder = stats.report({ fpsCap: 120, refreshMs: R120, since });
+  assert.deepEqual(afterOutOfOrder, {
+    frameTime: fullOutOfOrder.frameTime,
+    missed: fullOutOfOrder.missed,
+    repeated: fullOutOfOrder.repeated,
+  });
+});

@@ -233,6 +233,11 @@ export class ProbeGI {
     return this.full;
   }
 
+  /** Whether `step()` has any probe restore or bake slice to run this frame. */
+  get activeStep(): boolean {
+    return Boolean(this.grid && !this.paused && (this.restoring !== null || this.full));
+  }
+
   /** `spacing` is the meters between probes. */
   configure(on: boolean, spacing: number, bounces: number) {
     if (!on) {
@@ -420,6 +425,9 @@ export class Remaster {
   private graded: THREE.WebGLRenderTarget | null = null;
   private readonly quad = new FullScreenQuad();
   private readonly outputSize = new THREE.Vector2();
+  private readonly sizesOut = { render: { width: 1, height: 1 }, output: { width: 1, height: 1 } };
+  private lastTemp = Number.NaN;
+  private lastTint = Number.NaN;
   private ramp = '';
   private readonly grade = shader(GRADE, {
     tColor: { value: null },
@@ -472,10 +480,16 @@ export class Remaster {
   /** What the scene is drawn at and what it is shown at, in device pixels: the output at the resolution scale, within the GPU's texture limit. */
   sizes(resolution = this.settings.resolution): { render: { width: number; height: number }; output: { width: number; height: number } } {
     this.renderer.getDrawingBufferSize(this.outputSize);
-    const output = { width: this.outputSize.x, height: this.outputSize.y };
-    const longest = Math.max(output.width, output.height) * resolution;
+    const outW = this.outputSize.x;
+    const outH = this.outputSize.y;
+    const longest = Math.max(outW, outH) * resolution;
     const scale = Math.min(resolution, (resolution * this.renderer.capabilities.maxTextureSize) / Math.max(1, longest));
-    return { render: { width: Math.max(1, Math.round(output.width * scale)), height: Math.max(1, Math.round(output.height * scale)) }, output };
+    const out = this.sizesOut;
+    out.output.width = outW;
+    out.output.height = outH;
+    out.render.width = Math.max(1, Math.round(outW * scale));
+    out.render.height = Math.max(1, Math.round(outH * scale));
+    return out;
   }
 
   /** The peak the image is tone mapped to: the HDR peak once HDR is on screen, else white. */
@@ -553,17 +567,22 @@ export class Remaster {
     this.ensure(render);
     const sceneRT = this.sceneRT!;
     const { sun, hemi, ambient } = this.lights;
-    const lit = [sun.intensity, hemi.intensity, ambient.intensity] as const;
-    sun.intensity *= s.moon;
-    hemi.intensity *= s.skyFill;
-    ambient.intensity *= s.ambientFill;
+    const sun0 = sun.intensity;
+    const hemi0 = hemi.intensity;
+    const amb0 = ambient.intensity;
+    sun.intensity = sun0 * s.moon;
+    hemi.intensity = hemi0 * s.skyFill;
+    ambient.intensity = amb0 * s.ambientFill;
     try {
-      if (s.gi) {
+      if (s.gi && this.gi.activeStep) {
         const u = remasterUniforms;
-        const glow = [u.bakeGlow.value, u.emissive.value] as const;
-        const now = [sun.intensity, hemi.intensity, ambient.intensity] as const;
+        const bakeGlow0 = u.bakeGlow.value;
+        const emissive0 = u.emissive.value;
+        const sunNow = sun.intensity;
+        const hemiNow = hemi.intensity;
+        const ambNow = ambient.intensity;
         u.bakeGlow.value = s.giGlow;
-        u.emissive.value *= s.giGlow;
+        u.emissive.value = emissive0 * s.giGlow;
         // Baked under a clear night's moon and sky, so the weather and a lightning flash never end up in a saved bake.
         sun.intensity = CLEAR_NIGHT.moon * s.moon;
         hemi.intensity = CLEAR_NIGHT.hemi * s.skyFill;
@@ -571,15 +590,20 @@ export class Remaster {
         try {
           this.gi.step(r);
         } finally {
-          [u.bakeGlow.value, u.emissive.value] = glow;
-          [sun.intensity, hemi.intensity, ambient.intensity] = now;
+          u.bakeGlow.value = bakeGlow0;
+          u.emissive.value = emissive0;
+          sun.intensity = sunNow;
+          hemi.intensity = hemiNow;
+          ambient.intensity = ambNow;
         }
       }
       r.setRenderTarget(sceneRT);
       drawScene();
     } finally {
       // A throw mid-draw must not leave the lights turned up for the next frame.
-      [sun.intensity, hemi.intensity, ambient.intensity] = lit;
+      sun.intensity = sun0;
+      hemi.intensity = hemi0;
+      ambient.intensity = amb0;
       r.setRenderTarget(null);
     }
 
@@ -588,7 +612,12 @@ export class Remaster {
     g.exposure.value = s.exposure * (this.peak > 1 ? s.paperWhite : 1);
     // Paper white only counts once HDR is on screen, which configure() can't know, so your hands get it here.
     r.toneMappingExposure = g.exposure.value;
-    g.balance.value.set(...whiteBalance(s.temperature, s.tint));
+    if (s.temperature !== this.lastTemp || s.tint !== this.lastTint) {
+      this.lastTemp = s.temperature;
+      this.lastTint = s.tint;
+      const wb = whiteBalance(s.temperature, s.tint);
+      g.balance.value.set(wb[0], wb[1], wb[2]);
+    }
     g.contrast.value = s.contrast;
     g.saturation.value = s.saturation;
     g.vibrance.value = s.vibrance;
