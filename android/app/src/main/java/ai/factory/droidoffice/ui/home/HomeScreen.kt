@@ -32,7 +32,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -42,10 +41,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -111,6 +108,7 @@ import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.components.Chip
+import ai.factory.droidoffice.ui.components.HireFab
 import ai.factory.droidoffice.ui.components.EffortDialMark
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.GlyphMark
@@ -177,13 +175,7 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, selected: String?, onCloseWorker:
                     onRetry = connection::retryNow,
                     onFloor = connection::goFloor,
                 )
-                if (!(data.synced && data.workers.isEmpty()) && link.phase != Phase.Unauthorized) FloatingActionButton(
-                    onClick = { hiring = true },
-                    containerColor = Palette.Accent,
-                    contentColor = Palette.Bg,
-                    shape = CircleShape,
-                    modifier = Modifier.align(Alignment.BottomEnd).windowInsetsPadding(WindowInsets.navigationBars).padding(18.dp).tagged(Tags.Home.HIRE),
-                ) { Icon(Icons.Default.Add, "Hire") }
+                if (!(data.synced && data.workers.isEmpty()) && link.phase != Phase.Unauthorized) HireFab(Tags.Home.HIRE) { hiring = true }
             }
             if (wide) {
                 Box(Modifier.width(1.dp).fillMaxHeight().background(Palette.Border))
