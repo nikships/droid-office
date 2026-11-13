@@ -40,83 +40,9 @@ interface RawCell {
   phBg?: number;
 }
 
-function extractRow(line: BufferLine | undefined, cols: number, cell: BufferCell): { runs: Run[]; spans: RowSpan[] } {
-  const runs: Run[] = [];
-  const spans: RowSpan[] = [];
-  if (line) {
-    const cells: RawCell[] = [];
-    let prevPh: DecodedPlaceholder | undefined;
-    let curSpan: RowSpan | null = null;
-    for (let x = 0; x < cols; x++) {
-      line.getCell(x, cell);
-      const width = cell.getWidth();
-      if (width === 0) continue;
-      const raw = cell.getChars() || ' ';
-      let ch = raw;
-      let fg = cell.isFgDefault() ? -1 : cell.isFgRGB() ? RGB_FLAG | cell.getFgColor() : cell.getFgColor();
-      let bg = cell.isBgDefault() ? -1 : cell.isBgRGB() ? RGB_FLAG | cell.getBgColor() : cell.getBgColor();
-      let flags = (cell.isBold() ? FLAG_BOLD : 0) | (cell.isInverse() ? FLAG_INVERSE : 0) | (cell.isDim() ? FLAG_DIM : 0);
-      let phBg: number | undefined;
+const EMPTY_SPANS: readonly RowSpan[] = [];
 
-      if (isKittyPlaceholderCell(raw)) {
-        const fgLow24 = cell.isFgDefault() ? 0 : cell.getFgColor();
-        const ph = decodePlaceholderCell(raw, fgLow24, cellUnderlineId(cell), prevPh);
-        prevPh = ph;
-        if (bg !== -1 && !(flags & FLAG_INVERSE)) phBg = bg;
-        ch = ' ';
-        fg = -1;
-        bg = -1;
-        flags &= ~FLAG_INVERSE;
-        if (ph) {
-          if (curSpan && curSpan.id === ph.imageId && curSpan.placementId === ph.placementId && curSpan.srcRow === ph.row && curSpan.x + curSpan.cols === x && curSpan.srcCol + curSpan.cols === ph.col) {
-            curSpan.cols++;
-          } else {
-            curSpan = { id: ph.imageId, placementId: ph.placementId, x, cols: 1, srcCol: ph.col, srcRow: ph.row };
-            spans.push(curSpan);
-          }
-        } else {
-          curSpan = null;
-        }
-      } else {
-        prevPh = undefined;
-        curSpan = null;
-      }
-
-      cells.push({ x, width, ch, fg, bg, flags, phBg });
-    }
-
-    // Drop container background fill from empty space around inline images so it blends into OLED black,
-    // while keeping distinct accent bars (such as a 1-col prompt border) and real text backgrounds.
-    if (spans.length) {
-      const imgStart = Math.min(...spans.map((s) => s.x));
-      let lastVisibleCol = 0;
-      for (const c of cells) {
-        if (c.ch.trim() || c.flags & FLAG_INVERSE) lastVisibleCol = c.x + c.width;
-      }
-      const blankFrom = Math.max(imgStart, lastVisibleCol);
-      for (let i = 0; i < cells.length; i++) {
-        const phBg = cells[i].phBg;
-        if (phBg === undefined) continue;
-        for (let j = i - 1; j >= 0; j--) {
-          const left = cells[j];
-          if (left.ch.trim() || left.flags & FLAG_INVERSE || left.bg !== phBg) break;
-          left.bg = -1;
-        }
-      }
-      for (const c of cells) {
-        if (c.x >= blankFrom && !c.ch.trim() && !(c.flags & FLAG_INVERSE)) c.bg = -1;
-      }
-    }
-
-    let cur: Run | null = null;
-    for (const { ch, fg, bg, flags } of cells) {
-      if (cur && cur[1] === fg && cur[2] === bg && cur[3] === flags) cur[0] += ch;
-      else {
-        cur = [ch, fg, bg, flags];
-        runs.push(cur);
-      }
-    }
-  }
+function trimRuns(runs: Run[]) {
   // Trim trailing default-styled whitespace to keep frames small.
   while (runs.length) {
     const r = runs[runs.length - 1];
@@ -128,7 +54,119 @@ function extractRow(line: BufferLine | undefined, cols: number, cell: BufferCell
     }
     runs.pop();
   }
+}
+
+function extractKittyRow(line: BufferLine, cols: number, cell: BufferCell): { runs: Run[]; spans: readonly RowSpan[] } {
+  const runs: Run[] = [];
+  const spans: RowSpan[] = [];
+  const cells: RawCell[] = [];
+  let prevPh: DecodedPlaceholder | undefined;
+  let curSpan: RowSpan | null = null;
+  for (let x = 0; x < cols; x++) {
+    line.getCell(x, cell);
+    const width = cell.getWidth();
+    if (width === 0) continue;
+    const raw = cell.getChars() || ' ';
+    let ch = raw;
+    let fg = cell.isFgDefault() ? -1 : cell.isFgRGB() ? RGB_FLAG | cell.getFgColor() : cell.getFgColor();
+    let bg = cell.isBgDefault() ? -1 : cell.isBgRGB() ? RGB_FLAG | cell.getBgColor() : cell.getBgColor();
+    let flags = (cell.isBold() ? FLAG_BOLD : 0) | (cell.isInverse() ? FLAG_INVERSE : 0) | (cell.isDim() ? FLAG_DIM : 0);
+    let phBg: number | undefined;
+
+    if (isKittyPlaceholderCell(raw)) {
+      const fgLow24 = cell.isFgDefault() ? 0 : cell.getFgColor();
+      const ph = decodePlaceholderCell(raw, fgLow24, cellUnderlineId(cell), prevPh);
+      prevPh = ph;
+      if (bg !== -1 && !(flags & FLAG_INVERSE)) phBg = bg;
+      ch = ' ';
+      fg = -1;
+      bg = -1;
+      flags &= ~FLAG_INVERSE;
+      if (ph) {
+        if (curSpan && curSpan.id === ph.imageId && curSpan.placementId === ph.placementId && curSpan.srcRow === ph.row && curSpan.x + curSpan.cols === x && curSpan.srcCol + curSpan.cols === ph.col) {
+          curSpan.cols++;
+        } else {
+          curSpan = { id: ph.imageId, placementId: ph.placementId, x, cols: 1, srcCol: ph.col, srcRow: ph.row };
+          spans.push(curSpan);
+        }
+      } else {
+        curSpan = null;
+      }
+    } else {
+      prevPh = undefined;
+      curSpan = null;
+    }
+
+    cells.push({ x, width, ch, fg, bg, flags, phBg });
+  }
+
+  // Drop container background fill from empty space around inline images so it blends into OLED black,
+  // while keeping distinct accent bars (such as a 1-col prompt border) and real text backgrounds.
+  if (spans.length) {
+    let imgStart = Infinity;
+    for (let i = 0; i < spans.length; i++) imgStart = Math.min(imgStart, spans[i].x);
+    let lastVisibleCol = 0;
+    for (const c of cells) {
+      if (c.ch.trim() || c.flags & FLAG_INVERSE) lastVisibleCol = c.x + c.width;
+    }
+    const blankFrom = Math.max(imgStart, lastVisibleCol);
+    for (let i = 0; i < cells.length; i++) {
+      const phBg = cells[i].phBg;
+      if (phBg === undefined) continue;
+      for (let j = i - 1; j >= 0; j--) {
+        const left = cells[j];
+        if (left.ch.trim() || left.flags & FLAG_INVERSE || left.bg !== phBg) break;
+        left.bg = -1;
+      }
+    }
+    for (const c of cells) {
+      if (c.x >= blankFrom && !c.ch.trim() && !(c.flags & FLAG_INVERSE)) c.bg = -1;
+    }
+  }
+
+  let cur: Run | null = null;
+  for (const { ch, fg, bg, flags } of cells) {
+    if (cur && cur[1] === fg && cur[2] === bg && cur[3] === flags) cur[0] += ch;
+    else {
+      cur = [ch, fg, bg, flags];
+      runs.push(cur);
+    }
+  }
+  trimRuns(runs);
   return { runs, spans };
+}
+
+function extractRow(line: BufferLine | undefined, cols: number, cell: BufferCell): { runs: Run[]; spans: readonly RowSpan[] } {
+  if (!line) return { runs: [], spans: EMPTY_SPANS };
+  const runs: Run[] = [];
+  let curText = '';
+  let curFg = -2;
+  let curBg = -2;
+  let curFlags = -1;
+  for (let x = 0; x < cols; x++) {
+    line.getCell(x, cell);
+    const width = cell.getWidth();
+    if (width === 0) continue;
+    const raw = cell.getChars() || ' ';
+    if (isKittyPlaceholderCell(raw)) {
+      return extractKittyRow(line, cols, cell);
+    }
+    const fg = cell.isFgDefault() ? -1 : cell.isFgRGB() ? RGB_FLAG | cell.getFgColor() : cell.getFgColor();
+    const bg = cell.isBgDefault() ? -1 : cell.isBgRGB() ? RGB_FLAG | cell.getBgColor() : cell.getBgColor();
+    const flags = (cell.isBold() ? FLAG_BOLD : 0) | (cell.isInverse() ? FLAG_INVERSE : 0) | (cell.isDim() ? FLAG_DIM : 0);
+    if (fg === curFg && bg === curBg && flags === curFlags) {
+      curText += raw;
+    } else {
+      if (curFlags >= 0) runs.push([curText, curFg, curBg, curFlags]);
+      curText = raw;
+      curFg = fg;
+      curBg = bg;
+      curFlags = flags;
+    }
+  }
+  if (curFlags >= 0) runs.push([curText, curFg, curBg, curFlags]);
+  trimRuns(runs);
+  return { runs, spans: EMPTY_SPANS };
 }
 
 interface MergedSpan extends RowSpan {
@@ -158,7 +196,11 @@ export function snapshotScreen(term: HeadlessTerminal, last: string[]): ScreenFr
   const merged: MergedSpan[] = [];
   const activeByKey = new Map<string, MergedSpan>();
 
-  const pushRowSpans = (yRel: number, spans: RowSpan[]) => {
+  const pushRowSpans = (yRel: number, spans: readonly RowSpan[]) => {
+    if (!spans.length) {
+      if (activeByKey.size) activeByKey.clear();
+      return;
+    }
     const nextActive = new Map<string, MergedSpan>();
     for (const s of spans) {
       const k = `${s.id}:${s.placementId}:${s.x}:${s.cols}:${s.srcCol}`;

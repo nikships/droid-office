@@ -224,6 +224,9 @@ interface Worker {
   lastLines: string[];
   leftNeedsInputAt: number;
   keyframeAt: number;
+  needsKeyframe: boolean;
+  termSeq: number;
+  screenParse?: { term: HeadlessTerminal; seq: number; state: DroidScreen | undefined };
   hookToken: string;
   /** Droid never reported SessionStart: it's stuck on a login or hooks screen. */
   bootBlocked?: boolean;
@@ -298,7 +301,7 @@ export interface WorkerEvents {
   update(info: WorkerInfo): void;
   remove(workerId: string, shot?: boolean): void;
   data(workerId: string, data: string, connectionIds: string[]): void;
-  screen(workerId: string, frame: ScreenFrame): void;
+  screen(workerId: string, frame: ScreenFrame): unknown;
   /** `workerId` names the worker it is about, when one is (a shot worker's dismissal). */
   toast(text: string, level: 'info' | 'warn' | 'error', workerId?: string): void;
   /** The office moved the project's checkout onto `branch` (see Worktrees.freshen). */
@@ -2707,18 +2710,27 @@ export class WorkerManager {
    * fired while the office was down are replayed from the spool, so this should rarely act; each
    * time it does, it says so in the log. Runs every second; `now` is for tests.
    */
+  private droidScreen(w: Worker): DroidScreen | undefined {
+    const term = w.term;
+    if (!term) return undefined;
+    if (w.screenParse && w.screenParse.term === term && w.screenParse.seq === w.termSeq) return w.screenParse.state;
+    const state = readDroidScreen(screenRows(term));
+    w.screenParse = { term, seq: w.termSeq, state };
+    return state;
+  }
+
   reconcile(now = Date.now()) {
     for (const w of this.workers.values()) {
       const { info } = w;
       // No SessionStart came for it (the hook can't reach the office), but droid's input box is up.
-      if (w.launchPrompt && w.pty && w.term && now - w.launchPrompt.at >= LAUNCH_PROMPT_FALLBACK_MS && readDroidScreen(screenRows(w.term)) === 'idle') this.sendLaunchPrompt(w);
+      if (w.launchPrompt && w.pty && w.term && now - w.launchPrompt.at >= LAUNCH_PROMPT_FALLBACK_MS && this.droidScreen(w) === 'idle') this.sendLaunchPrompt(w);
       if (info.kind !== 'agent' || !w.pty || !w.term || w.bootBlocked || !info.sessionId || info.status === 'starting') {
         w.screenSeen = undefined;
         continue;
       }
       // A Stop whose grace timer hasn't fired yet (a test's clock, a busy event loop).
       if (w.stopAt !== undefined && now - w.stopAt >= STOP_GRACE_MS) this.settleStop(w, w.stopAt, now);
-      const state = readDroidScreen(screenRows(w.term));
+      const state = this.droidScreen(w);
       if (!state) {
         w.screenSeen = undefined;
         continue;
@@ -2965,12 +2977,22 @@ export class WorkerManager {
     term.loadAddon(new unicode11.Unicode11Addon() as any);
     term.unicode.activeVersion = '11';
     term.onTitleChange((title: string) => this.setTitle(w, title));
+    term.onWriteParsed(() => {
+      w.termSeq++;
+      w.screenDirty = true;
+    });
+    term.onResize(() => {
+      w.termSeq++;
+    });
     w.term?.dispose();
     w.term = term;
     w.ser = ser;
     w.snapshot = screenSnapshot(term, ser);
+    w.termSeq++;
+    w.screenParse = undefined;
     w.lastLines = [];
     w.screenDirty = true;
+    w.needsKeyframe = false;
     w.fresh = undefined;
     return term;
   }
@@ -3196,16 +3218,20 @@ export class WorkerManager {
     const now = Date.now();
     for (const w of this.workers.values()) {
       if (!w.term) continue;
-      // Diffs can be dropped for slow clients, so resend the whole screen now and then.
-      if (now - w.keyframeAt > KEYFRAME_MS) {
+      // Diffs can be dropped for slow clients, so resend the whole screen after a drop settles.
+      if (w.needsKeyframe && now - w.keyframeAt > KEYFRAME_MS) {
         w.keyframeAt = now;
+        w.needsKeyframe = false;
         w.lastLines = [];
         w.screenDirty = true;
       }
       if (!w.screenDirty) continue;
       w.screenDirty = false;
       const frame = snapshotScreen(w.term, w.lastLines);
-      if (frame) this.events.screen(w.info.id, frame);
+      if (frame) {
+        if (frame.full) w.keyframeAt = now;
+        if (this.events.screen(w.info.id, frame) === true) w.needsKeyframe = true;
+      }
       if (w.bootBlocked) this.bootAsk(w);
     }
   }
@@ -3468,6 +3494,8 @@ function newWorker(info: WorkerInfo, hookToken = randomBytes(16).toString('hex')
     lastLines: [],
     leftNeedsInputAt: 0,
     keyframeAt: 0,
+    needsKeyframe: false,
+    termSeq: 0,
     hookToken,
     failStreak: 0,
     taskEpoch: 0,

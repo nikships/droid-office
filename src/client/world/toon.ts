@@ -536,6 +536,8 @@ export function mergeByMaterial(root: THREE.Object3D): THREE.Group {
     // to skip its triangles; the crosshair checks the office every frame.
     merged.computeBoundingBox();
     const solid = mesh(merged, mat);
+    solid.updateMatrix();
+    solid.matrixAutoUpdate = false;
     boundStaticRaycast(solid, chunks);
     out.add(solid);
     for (const geo of geos) geo.dispose();

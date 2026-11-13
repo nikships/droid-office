@@ -285,13 +285,19 @@ export async function startServer(cfg: Config) {
   const sendTo = (c: Client, msg: ServerMsg) => {
     if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(msg));
   };
-  const broadcast = (msg: ServerMsg, except?: string, droppable = false) => {
-    const json = JSON.stringify(msg);
+  const broadcast = (msg: ServerMsg, except?: string, droppable = false): boolean => {
+    let json: string | undefined;
+    let dropped = false;
     for (const c of clients.values()) {
       if (c.id === except || c.ws.readyState !== WebSocket.OPEN) continue;
-      if (droppable && c.ws.bufferedAmount > 4 * 1024 * 1024) continue;
+      if (droppable && c.ws.bufferedAmount > 4 * 1024 * 1024) {
+        dropped = true;
+        continue;
+      }
+      json ??= JSON.stringify(msg);
       c.ws.send(json);
     }
+    return dropped;
   };
   /** The toasts an external worker's owner action raises, through every callback that action starts. */
   const acting = new AsyncLocalStorage<(text: string) => void>();
@@ -330,13 +336,19 @@ export async function startServer(cfg: Config) {
     return undefined;
   };
   /** To everyone on one floor. */
-  const toFloor = (floor: Floor, msg: ServerMsg, droppable = false) => {
-    const json = JSON.stringify(msg);
+  const toFloor = (floor: Floor, msg: ServerMsg, droppable = false): boolean => {
+    let json: string | undefined;
+    let dropped = false;
     for (const c of clients.values()) {
       if (c.floor !== floor.id || c.ws.readyState !== WebSocket.OPEN) continue;
-      if (droppable && c.ws.bufferedAmount > 4 * 1024 * 1024) continue;
+      if (droppable && c.ws.bufferedAmount > 4 * 1024 * 1024) {
+        dropped = true;
+        continue;
+      }
+      json ??= JSON.stringify(msg);
       c.ws.send(json);
     }
+    return dropped;
   };
   const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info', workerId?: string) => {
     if (!floor) return;

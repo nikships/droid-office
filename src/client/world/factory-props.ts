@@ -156,6 +156,7 @@ export function placeFactoryProps(kit: DressingKit): Dressing {
   const waiting: Waiting[] = [];
   const updates: ((t: number, dt: number) => void)[] = [];
   const rack = buildRack(kit, waiting, updates);
+  rack.userData.dynamicSubtree = true;
   kit.group.add(rack);
   return {
     update(t, dt) {

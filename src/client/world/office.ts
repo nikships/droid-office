@@ -160,6 +160,8 @@ export interface Office {
   setLevel(index: number, count: number): void;
   /** Lights, windows and glass for the sky to change with the time of day and the weather. */
   night: NightParts;
+  /** Freezes local matrices on static architecture and props once initial models are installed. */
+  freezeStatics(extraDynamicSubtrees?: readonly THREE.Object3D[]): void;
   /** Animates the office; doors open for anyone in `people` who comes up to them. */
   update(t: number, dt: number, people: Iterable<{ x: number; y: number; z: number }>): void;
 }
@@ -1406,10 +1408,18 @@ export function buildOffice(): Office {
   setLevel(0, 1);
 
   const update = (t: number, dt: number, people: Iterable<{ x: number; y: number; z: number }>) => {
-    const near = new Set<Door>();
-    for (const p of people) for (const d of doors) if (Math.abs(p.y - d.y) < 1.6 && Math.hypot(p.x - d.x, p.z - d.z) < 2.4) near.add(d);
-    for (const d of doors) {
-      const want = near.has(d) && !d.locked ? 1 : 0;
+    for (let i = 0; i < doors.length; i++) {
+      const d = doors[i];
+      let isNear = false;
+      if (!d.locked) {
+        for (const p of people) {
+          if (Math.abs(p.y - d.y) < 1.6 && Math.hypot(p.x - d.x, p.z - d.z) < 2.4) {
+            isNear = true;
+            break;
+          }
+        }
+      }
+      const want = isNear ? 1 : 0;
       if (d.open === want) continue;
       d.open = want > d.open ? Math.min(1, d.open + dt * 2.5) : Math.max(0, d.open - dt * 1.6);
       d.show(d.open);
@@ -1420,6 +1430,35 @@ export function buildOffice(): Office {
   };
 
   const occupants = [...desks].flatMap(([id, d]): THREE.Object3D[] => (beanbags.has(id) ? [d.group] : [d.laptopAnchor, d.seatAnchor, d.stage, d.vacancy]));
+
+  const freezeStatics = (extraDynamicSubtrees: readonly THREE.Object3D[] = []) => {
+    group.updateMatrixWorld(true);
+    const dynamicSubtrees = new Set<THREE.Object3D>([
+      ...extraDynamicSubtrees,
+      stack.group,
+      tower.group,
+      elevator.group,
+      gong.group,
+      jukebox.group,
+      shelf.group,
+      exit.group,
+      bossChair,
+      bossLaptopAnchor,
+      ...occupants,
+      ...[...desks.values()].map((d) => d.chair),
+    ]);
+    const dynamicSelfOnly = new Set<THREE.Object3D>([group, ground]);
+    const visit = (node: THREE.Object3D) => {
+      if (dynamicSubtrees.has(node) || node.userData.dynamicSubtree || node.name === 'factory-floor') return;
+      if (!dynamicSelfOnly.has(node)) {
+        node.updateMatrix();
+        node.matrixAutoUpdate = false;
+      }
+      const children = node.children;
+      for (let i = 0; i < children.length; i++) visit(children[i]);
+    };
+    visit(group);
+  };
 
   return {
     group,
@@ -1448,6 +1487,7 @@ export function buildOffice(): Office {
     setPlain,
     setLevel,
     night,
+    freezeStatics,
     update,
   };
 }
@@ -1511,6 +1551,7 @@ function buildGlassRoom(group: THREE.Group, colliders: Collider[], doors: Door[]
     leaf.add(mesh(box(0.03, 0.4, 0.07), toon(PALETTE.brushed), -side * (half / 2 - 0.1), 1.05, 0));
     const x0 = dx + (side * half) / 2;
     leaf.position.set(x0, 0, R.minZ - T / 2 - 0.04);
+    leaf.userData.dynamicSubtree = true;
     group.add(leaf);
     leaves.push([leaf, x0]);
   }

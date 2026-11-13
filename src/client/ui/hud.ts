@@ -9,11 +9,14 @@ import { TEAM_MARK, teamStanding, teamSummary, workersByTeam } from '../../share
 import { creditsNote } from '../../shared/factory-sessions';
 import { workerActivity } from '../../shared/status';
 
+let lastWorkersKey = '';
+let openWorkerHandler: (id: string) => void = () => {};
+
 export function renderWorkers(onOpen: (id: string) => void) {
+  openWorkerHandler = onOpen;
   const ul = $('workers');
-  ul.replaceChildren();
   const workers = workersByTeam(store.workers.values());
-  for (const w of workers) {
+  const rows = workers.map((w) => {
     const lead = w.lead ? store.workers.get(w.lead) : undefined;
     const team = store.teamOf(w.id);
     const model = w.kind === 'agent' ? (w.activeModel ?? w.model) : undefined;
@@ -34,14 +37,24 @@ export function renderWorkers(onOpen: (id: string) => void) {
     ]
       .filter(Boolean)
       .join(' · ');
+    const roleClass = lead ? 'subagent' : team.length ? 'lead' : '';
+    const leadColor = lead ? lead.color : '';
+    const title = w.cloud ? `Open ${w.name}'s window: its session runs on ${w.cloud.computerName}` : lead ? `Open ${w.name}'s terminal (a subagent of ${lead.name})` : `Open ${w.name}'s terminal`;
+    return { w, model, sub, roleClass, leadColor, title };
+  });
+  const key = rows.map((r) => `${r.w.id}\0${r.w.name}\0${r.w.color}\0${r.w.status}\0${r.w.lost ? 1 : 0}\0${r.model ?? ''}\0${r.roleClass}\0${r.leadColor}\0${r.title}\0${r.sub}`).join('\n');
+  if (key === lastWorkersKey && ul.childElementCount > 0) return;
+  lastWorkersKey = key;
+  ul.replaceChildren();
+  for (const { w, model, sub, roleClass, leadColor, title } of rows) {
     ul.append(
       h(
         'li',
         {
-          onclick: () => onOpen(w.id),
-          title: w.cloud ? `Open ${w.name}'s window: its session runs on ${w.cloud.computerName}` : lead ? `Open ${w.name}'s terminal (a subagent of ${lead.name})` : `Open ${w.name}'s terminal`,
-          class: lead ? 'subagent' : team.length ? 'lead' : undefined,
-          style: lead ? `--lead:${lead.color}` : undefined,
+          onclick: () => openWorkerHandler(w.id),
+          title,
+          class: roleClass || undefined,
+          style: leadColor ? `--lead:${leadColor}` : undefined,
         },
         h('span.dot', { style: `background:${w.color}` }),
         h('span.name', {}, w.name, sub ? h('span.sub', {}, model ? modelLogo({ id: model, name: droidDisplayName(model) }) : null, withoutGlyph(sub)) : null),

@@ -13,6 +13,8 @@ import type {
   ProjectsDirState,
   PromptsState,
   RepoChoice,
+  Run,
+  ScreenPlacement,
   ServerMsg,
   SkyState,
   SubagentsState,
@@ -241,6 +243,9 @@ let whiteboardSend: (msg: ClientMsg) => boolean = () => false;
 export function connectWhiteboard(send: (msg: ClientMsg) => boolean) {
   whiteboardSend = send;
 }
+
+/** Shared empty row for blank terminal lines so `s.lines` stays dense (`length === rows`) without allocating per row. */
+const EMPTY_RUNS: Run[] = [];
 
 export class Store {
   /** This connection's transport id; never shown, never a player. */
@@ -494,21 +499,55 @@ export class Store {
       }
       case 'screen': {
         let s = this.screens.get(msg.workerId);
-        if (!s || msg.full || s.cols !== msg.cols || s.rows !== msg.rows) {
+        let changed = false;
+        let fresh = false;
+        if (!s || s.cols !== msg.cols || s.rows !== msg.rows) {
           s = {
             cols: msg.cols,
             rows: msg.rows,
-            lines: [],
+            lines: Array.from({ length: msg.rows }, () => EMPTY_RUNS),
             placements: msg.full ? msg.placements : s?.placements,
             bitmaps: s?.bitmaps,
             cursor: msg.cursor,
-            version: (s?.version ?? 0) + 1,
+            version: s?.version ?? 0,
           };
           this.screens.set(msg.workerId, s);
+          changed = true;
+          fresh = true;
+        } else if (msg.full) {
+          for (let y = 0; y < msg.rows; y++) {
+            const next = msg.lines[y] ?? EMPTY_RUNS;
+            if (!sameRuns(s.lines[y], next)) {
+              s.lines[y] = next;
+              changed = true;
+            }
+          }
+          if (s.lines.length > msg.rows) {
+            s.lines.length = msg.rows;
+            changed = true;
+          }
+          if (!samePlacements(s.placements, msg.placements)) {
+            s.placements = msg.placements;
+            changed = true;
+          }
         }
-        for (const [k, v] of Object.entries(msg.lines)) s.lines[Number(k)] = v;
-        if (msg.above) s.above = msg.above;
-        if (msg.placements !== undefined) s.placements = msg.placements;
+        if (!msg.full || fresh) {
+          for (const [k, v] of Object.entries(msg.lines)) {
+            const y = Number(k);
+            if (!sameRuns(s.lines[y], v)) {
+              s.lines[y] = v;
+              changed = true;
+            }
+          }
+        }
+        if (msg.above !== undefined && !sameAbove(s.above, msg.above)) {
+          s.above = msg.above;
+          changed = true;
+        }
+        if (!msg.full && msg.placements !== undefined && !samePlacements(s.placements, msg.placements)) {
+          s.placements = msg.placements;
+          changed = true;
+        }
         if (msg.images) {
           const bitmaps = s.bitmaps ?? (s.bitmaps = new Map<number, ScreenBitmap>());
           for (const [rawId, img] of Object.entries(msg.images)) {
@@ -537,9 +576,14 @@ export class Store {
               .catch(() => undefined);
           }
         }
-        s.cursor = msg.cursor;
-        s.version++;
-        this.emit('screens');
+        if (s.cursor[0] !== msg.cursor[0] || s.cursor[1] !== msg.cursor[1]) {
+          s.cursor = msg.cursor;
+          changed = true;
+        }
+        if (changed) {
+          s.version++;
+          this.emit('screens');
+        }
         break;
       }
       case 'gh.issues':
@@ -658,6 +702,41 @@ export class Store {
 }
 
 export const store = new Store();
+
+function sameRuns(a: Run[] | undefined, b: Run[] | undefined): boolean {
+  if (a === b) return true;
+  const al = a?.length ?? 0;
+  const bl = b?.length ?? 0;
+  if (al !== bl) return false;
+  for (let i = 0; i < al; i++) {
+    const ar = a![i];
+    const br = b![i];
+    if (ar[0] !== br[0] || ar[1] !== br[1] || ar[2] !== br[2] || ar[3] !== br[3]) return false;
+  }
+  return true;
+}
+
+function sameAbove(a: Run[][] | undefined, b: Run[][] | undefined): boolean {
+  if (a === b) return true;
+  const al = a?.length ?? 0;
+  const bl = b?.length ?? 0;
+  if (al !== bl) return false;
+  for (let i = 0; i < al; i++) if (!sameRuns(a![i], b![i])) return false;
+  return true;
+}
+
+function samePlacements(a: ScreenPlacement[] | undefined, b: ScreenPlacement[] | undefined): boolean {
+  if (a === b) return true;
+  const al = a?.length ?? 0;
+  const bl = b?.length ?? 0;
+  if (al !== bl) return false;
+  for (let i = 0; i < al; i++) {
+    const ap = a![i];
+    const bp = b![i];
+    if (ap.id !== bp.id || ap.x !== bp.x || ap.y !== bp.y || ap.cols !== bp.cols || ap.rows !== bp.rows || ap.srcCol !== bp.srcCol || ap.srcRow !== bp.srcRow || ap.totalCols !== bp.totalCols || ap.totalRows !== bp.totalRows) return false;
+  }
+  return true;
+}
 
 /** How the floor you're on names things: GitHub's PRs and gh, or GitLab's MRs and glab. */
 export function words(): ForgeWords {

@@ -68,7 +68,25 @@ export interface ScreenState {
   version: number;
 }
 
-const runLen = (runs: Run[] | undefined) => (runs ? runs.reduce((n, r) => n + [...r[0]].length, 0) : 0);
+function codePointCount(text: string): number {
+  let n = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {
+      const lo = text.charCodeAt(i + 1);
+      if (lo >= 0xdc00 && lo <= 0xdfff) i++;
+    }
+    n++;
+  }
+  return n;
+}
+
+const runLen = (runs: Run[] | undefined) => {
+  if (!runs) return 0;
+  let n = 0;
+  for (let i = 0; i < runs.length; i++) n += codePointCount(runs[i][0]);
+  return n;
+};
 const filled = (runs: Run[] | undefined) => !!runs?.some((r) => r[0].trim() || r[2] !== -1);
 const CHAR_WIDTH = 0.6;
 const LINE_HEIGHT = 1.25;
@@ -139,6 +157,10 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
   const fontSize = Math.max(4, Math.min(cellW / CHAR_WIDTH, cellH / LINE_HEIGHT));
   const charW = fontSize * CHAR_WIDTH;
   const lineH = fontSize * LINE_HEIGHT;
+  const font400 = `400 ${fontSize}px ${TERM_FONT}`;
+  const font700 = `700 ${fontSize}px ${TERM_FONT}`;
+  const placements = s.placements?.length ? s.placements : undefined;
+  let curFont = '';
   // A terminal starts at the top-left, even when its natural cell aspect leaves unused space.
   // Anchor the viewport, not its occupied rows, so prompts don't drift as output arrives.
   ctx.textAlign = 'left';
@@ -147,25 +169,34 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
     const row = win.top + y;
     const runs = row < win.above ? s.above?.[row] : s.lines[row - win.above];
     if (!runs) continue;
-    const rowPlacements = s.placements?.filter((p) => p.cols > 0 && p.rows > 0 && win.above + p.y <= row && row < win.above + p.y + p.rows);
+    const rowPlacements = placements?.filter((p) => p.cols > 0 && p.rows > 0 && win.above + p.y <= row && row < win.above + p.y + p.rows);
     let blankFrom = Infinity;
     if (rowPlacements?.length) {
-      const imgStart = Math.min(...rowPlacements.map((p) => Math.max(0, p.x)));
+      let imgStart = Infinity;
+      for (let i = 0; i < rowPlacements.length; i++) imgStart = Math.min(imgStart, Math.max(0, rowPlacements[i].x));
       let lastVisibleCol = 0;
       let col = 0;
       for (const [text, , , flags] of runs) {
-        const chars = [...text];
-        for (let i = 0; i < chars.length; i++) {
-          if (chars[i].trim() || flags & FLAG_INVERSE) lastVisibleCol = col + i + 1;
+        const inv = !!(flags & FLAG_INVERSE);
+        for (let i = 0; i < text.length; i++) {
+          const c = text.charCodeAt(i);
+          let step = 0;
+          if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {
+            const lo = text.charCodeAt(i + 1);
+            if (lo >= 0xdc00 && lo <= 0xdfff) step = 1;
+          }
+          const ch = step ? text.slice(i, i + 2) : text[i];
+          col++;
+          if (inv || ch.trim()) lastVisibleCol = col;
+          i += step;
         }
-        col += chars.length;
       }
       blankFrom = Math.max(imgStart, lastVisibleCol);
     }
     let x = 0;
     const py = pad + y * lineH;
     for (const [text, fgc, bgc, flags] of runs) {
-      const len = [...text].length;
+      const len = codePointCount(text);
       let fg = color(fgc, TERM_THEME.foreground);
       let bg = bgc < 0 ? null : color(bgc, SCREEN_BLACK);
       if (flags & FLAG_INVERSE) {
@@ -192,11 +223,16 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
         }
       }
       if (text.trim()) {
-        ctx.font = `${flags & FLAG_BOLD ? 700 : 400} ${fontSize}px ${TERM_FONT}`;
-        ctx.globalAlpha = flags & FLAG_DIM ? 0.55 : 1;
+        const nextFont = flags & FLAG_BOLD ? font700 : font400;
+        if (nextFont !== curFont) {
+          curFont = nextFont;
+          ctx.font = nextFont;
+        }
+        const dim = !!(flags & FLAG_DIM);
+        if (dim) ctx.globalAlpha = 0.55;
         ctx.fillStyle = fg;
         ctx.fillText(text, px, py + (lineH - fontSize) / 2);
-        ctx.globalAlpha = 1;
+        if (dim) ctx.globalAlpha = 1;
       }
       x += len;
     }
@@ -364,6 +400,10 @@ export class Laptop {
   private drawnFonts = -1;
   private paintedAt = 0;
   private openT = 0;
+  private glowDirty = true;
+  private glowParent: THREE.Object3D | null = null;
+  private glowPos = new THREE.Vector3();
+  private glowDir = new THREE.Vector3();
   private placeholder = 'booting…';
 
   /** `size` is the screen canvas in pixels: smaller for a laptop only ever seen from across a room (the web companion's map). */
@@ -432,9 +472,16 @@ export class Laptop {
    * how lit it is, 0–1: nothing until the lid has swung most of the way up.
    */
   glow(pos: THREE.Vector3, dir: THREE.Vector3): number {
-    this.lid.localToWorld(pos.set(0, LID_H / 2, 0.05));
-    dir.set(0, 0, 1).transformDirection(this.lid.matrixWorld);
-    return Math.max(0, (this.openT - 0.6) / 0.4);
+    if (this.openT <= 0.6) return 0;
+    if (this.glowDirty || this.root.parent !== this.glowParent) {
+      this.glowDirty = false;
+      this.glowParent = this.root.parent;
+      this.lid.localToWorld(this.glowPos.set(0, LID_H / 2, 0.05));
+      this.glowDir.set(0, 0, 1).transformDirection(this.lid.matrixWorld);
+    }
+    pos.copy(this.glowPos);
+    dir.copy(this.glowDir);
+    return (this.openT - 0.6) / 0.4;
   }
 
   /** Folds the lid down a little further (it snaps shut at the end); true once it's closed. */
@@ -481,6 +528,7 @@ export class Laptop {
     this.openT = open;
     const e = 1 - (1 - open) ** 3;
     this.lid.rotation.x = Math.PI / 2 - e * (Math.PI / 2 + LID_LEAN);
+    this.glowDirty = true;
   }
 
   dispose() {

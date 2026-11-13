@@ -28,8 +28,8 @@ function positionVersion(position: CachedBounds['position']): number {
 
 /** Keep triangle order and the original geometry: a leaf only narrows the exact raycaster's draw range. */
 function boundsFor(object: THREE.Object3D): TriangleBounds | null {
-  if (!(object instanceof THREE.Mesh) || object.raycast !== THREE.Mesh.prototype.raycast || object.getVertexPosition !== THREE.Mesh.prototype.getVertexPosition || Array.isArray(object.material)) return null;
-  const geometry = object.geometry;
+  if (!(object as THREE.Mesh).isMesh || object.raycast !== THREE.Mesh.prototype.raycast || (object as THREE.Mesh).getVertexPosition !== THREE.Mesh.prototype.getVertexPosition || Array.isArray((object as THREE.Mesh).material)) return null;
+  const geometry = (object as THREE.Mesh).geometry;
   const position = geometry.getAttribute('position');
   const index = geometry.index;
   const count = index?.count ?? position?.count ?? 0;
@@ -137,17 +137,25 @@ export function firstVisibleIntersection(ray: THREE.Raycaster, roots: readonly T
   return intersections(ray, roots, true)[0] ?? null;
 }
 
+const _local = new THREE.Ray();
+const _inverse = new THREE.Matrix4();
+const _sphere = new THREE.Sphere();
+const _sphereHit = new THREE.Vector3();
+let scratchBusy = false;
+
 function intersections(ray: THREE.Raycaster, roots: readonly THREE.Object3D[], firstOnly: boolean): THREE.Intersection[] {
   const hits: THREE.Intersection[] = [];
-  const local = new THREE.Ray();
-  const inverse = new THREE.Matrix4();
-  const sphere = new THREE.Sphere();
-  const sphereHit = new THREE.Vector3();
+  const pooled = !scratchBusy;
+  if (pooled) scratchBusy = true;
+  const local = pooled ? _local : new THREE.Ray();
+  const inverse = pooled ? _inverse : new THREE.Matrix4();
+  const sphere = pooled ? _sphere : new THREE.Sphere();
+  const sphereHit = pooled ? _sphereHit : new THREE.Vector3();
   const far = ray.far;
   let checked = 0;
   const visit = (object: THREE.Object3D) => {
     if (!object.visible) return;
-    if (object.layers.test(ray.layers)) {
+    if (object.raycast !== THREE.Object3D.prototype.raycast && object.layers.test(ray.layers)) {
       const tree = boundsFor(object);
       let propagate: unknown;
       if (tree) boundedIntersections(object as THREE.Mesh, tree, ray, hits, local, inverse, sphere, sphereHit);
@@ -161,10 +169,12 @@ function intersections(ray: THREE.Raycaster, roots: readonly THREE.Object3D[], f
       }
       if (propagate === false) return;
     }
-    for (const child of object.children) visit(child);
+    const children = object.children;
+    for (let i = 0; i < children.length; i++) visit(children[i]);
   };
   try {
-    for (const root of roots) {
+    for (let i = 0; i < roots.length; i++) {
+      const root = roots[i];
       if (firstOnly) {
         let shown = true;
         for (let parent = root.parent; parent; parent = parent.parent) if (!parent.visible) shown = false;
@@ -172,8 +182,9 @@ function intersections(ray: THREE.Raycaster, roots: readonly THREE.Object3D[], f
       }
       visit(root);
     }
-    return hits.sort((a, b) => a.distance - b.distance);
+    return hits.length > 1 ? hits.sort((a, b) => a.distance - b.distance) : hits;
   } finally {
     if (firstOnly) ray.far = far;
+    if (pooled) scratchBusy = false;
   }
 }

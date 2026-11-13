@@ -143,3 +143,63 @@ test('snapshotScreen clears grey container background beside and behind inline K
   );
   term.dispose();
 });
+
+test('client store skips redundant screen repaints when incoming frames match existing state', async () => {
+  const { store } = await import('../src/client/state.js');
+  const wid = '__perf_test_screen__';
+  let emits = 0;
+  const unsub = store.on('screens', () => {
+    emits++;
+  });
+  try {
+    store.apply({
+      t: 'screen',
+      workerId: wid,
+      cols: 80,
+      rows: 4,
+      full: true,
+      lines: { 0: [['prompt > ', -1, -1, 0]] },
+      cursor: [9, 0],
+    });
+    assert.equal(emits, 1);
+    assert.equal(store.screens.get(wid)?.version, 1);
+
+    // Identical keyframe and diff must not bump version or wake screen listeners.
+    store.apply({
+      t: 'screen',
+      workerId: wid,
+      cols: 80,
+      rows: 4,
+      full: true,
+      lines: { 0: [['prompt > ', -1, -1, 0]] },
+      cursor: [9, 0],
+    });
+    store.apply({
+      t: 'screen',
+      workerId: wid,
+      cols: 80,
+      rows: 4,
+      full: false,
+      lines: { 0: [['prompt > ', -1, -1, 0]] },
+      cursor: [9, 0],
+    });
+    assert.equal(emits, 1);
+    assert.equal(store.screens.get(wid)?.version, 1);
+
+    // Changing text or cursor bumps version once and notifies listeners.
+    store.apply({
+      t: 'screen',
+      workerId: wid,
+      cols: 80,
+      rows: 4,
+      full: false,
+      lines: { 0: [['prompt > ls', -1, -1, 0]] },
+      cursor: [11, 0],
+    });
+    assert.equal(emits, 2);
+    assert.equal(store.screens.get(wid)?.version, 2);
+  } finally {
+    unsub();
+    store.apply({ t: 'worker.remove', workerId: wid });
+  }
+});

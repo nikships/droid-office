@@ -50,7 +50,7 @@ export interface OrchestratorOptions {
   /** Its state changed: Mission Control is due a broadcast. */
   changed(): void;
   data(workerId: string, data: string, connectionIds: string[]): void;
-  screen(workerId: string, frame: ScreenFrame): void;
+  screen(workerId: string, frame: ScreenFrame): unknown;
   toast(text: string, level: 'info' | 'warn' | 'error'): void;
 }
 

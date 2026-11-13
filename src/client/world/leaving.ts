@@ -201,20 +201,34 @@ export class Departures {
     for (const l of leavers) this.drop(l);
   }
 
+  /** Whether any sent-home worker is still walking out. */
+  get hasLeavers(): boolean {
+    return this.leavers.length > 0;
+  }
+
   /** Where each of them is, for the doors to open. */
   positions(): THREE.Vector3[] {
     return this.leavers.map((l) => l.model.root.position);
   }
 
+  /** Appends each leaver's position to `out` without allocating an array. */
+  fillPositions(out: { x: number; y: number; z: number }[]) {
+    for (let i = 0; i < this.leavers.length; i++) out.push(this.leavers[i].model.root.position);
+  }
+
   update(dt: number, t: number) {
-    this.laptops = this.laptops.filter((c) => {
-      if (!c.laptop.shut(dt)) return true;
-      c.gone = Math.min(1, c.gone + dt / LAPTOP_GONE);
-      c.laptop.root.scale.setScalar(Math.max(0.001, 1 - c.gone * c.gone));
-      if (c.gone < 1) return true;
-      this.dropLaptop(c);
-      return false;
-    });
+    if (!this.laptops.length && !this.leavers.length) return;
+    if (this.laptops.length) {
+      this.laptops = this.laptops.filter((c) => {
+        if (!c.laptop.shut(dt)) return true;
+        c.gone = Math.min(1, c.gone + dt / LAPTOP_GONE);
+        c.laptop.root.scale.setScalar(Math.max(0.001, 1 - c.gone * c.gone));
+        if (c.gone < 1) return true;
+        this.dropLaptop(c);
+        return false;
+      });
+    }
+    if (!this.leavers.length) return;
     this.leavers = this.leavers.filter((l) => {
       const here = this.step(l, dt);
       l.model.update(dt, t);
