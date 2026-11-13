@@ -182,11 +182,18 @@ test('team_watch wakes Grok Bot on independent floor worker turns, terminal asks
   }
 
   const received: GrokWebhookPayload[] = [];
+  const webhookWaiters: Array<() => void> = [];
+  const waitForWebhookCount = async (count: number) => {
+    while (received.length < count) {
+      await new Promise<void>((resolve) => webhookWaiters.push(resolve));
+    }
+  };
   const webhookServer = createServer(async (req, res) => {
     assert.equal(req.headers.authorization, `Bearer ${WEBHOOK_SECRET}`);
     received.push((await readJsonBody(req)) as GrokWebhookPayload);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end('{"ok":true}');
+    for (const notify of webhookWaiters.splice(0)) notify();
   });
   const webhookUrl = `${await listening(t, webhookServer)}/hooks/droid-office`;
 
@@ -430,7 +437,7 @@ test('team_watch wakes Grok Bot on independent floor worker turns, terminal asks
     questions: [{ question: 'Which combat tick rate should we target?', options: ['60 Hz', '120 Hz'] }],
   };
   survive.floor.team.onWorker(soloA);
-  await delay(60);
+  await waitForWebhookCount(1);
 
   assert.equal(received.length, 1, 'terminal question from watched worker wakes Grok Bot');
   assert.equal(received[0].event, 'needs_input');
@@ -453,7 +460,7 @@ test('team_watch wakes Grok Bot on independent floor worker turns, terminal asks
   soloA.status = 'done';
   soloA.task = { name: 'Combat loop', summary: '60 Hz fixed timestep shipped with tests' };
   survive.floor.team.onWorker(soloA);
-  await delay(60);
+  await waitForWebhookCount(1);
 
   assert.equal(received.length, 1);
   assert.equal(received[0].event, 'done');
@@ -466,7 +473,7 @@ test('team_watch wakes Grok Bot on independent floor worker turns, terminal asks
   const prUrl = 'https://github.com/nikships/survive/pull/77';
   soloA.pr = { number: 77, url: prUrl };
   survive.floor.team.onPullState(soloA, { number: 77, url: prUrl, title: 'feat: 60 Hz combat loop', state: 'open' });
-  await delay(60);
+  await waitForWebhookCount(1);
   assert.equal(received.length, 1);
   assert.equal(received[0].event, 'pr');
   assert.match(received[0].summary, /PR: Opened PR #77: feat: 60 Hz combat loop/);
@@ -474,13 +481,23 @@ test('team_watch wakes Grok Bot on independent floor worker turns, terminal asks
 
   received.length = 0;
   now += 1000;
-  const waitPr = callGrok('team_wait', { floor: 'survive', events: ['pr'], timeoutSeconds: 5 });
-  await delay(15);
+  const beforeMergeCursor = `team:survive:${survive.floor.team.latest()}`;
+  const waitSubscribed = new Promise<void>((resolve) => {
+    const origSubscribe = survive.floor.team.subscribe.bind(survive.floor.team);
+    survive.floor.team.subscribe = (fn) => {
+      survive.floor.team.subscribe = origSubscribe;
+      const unsub = origSubscribe(fn);
+      resolve();
+      return unsub;
+    };
+  });
+  const waitPr = callGrok('team_wait', { floor: 'survive', until: ['pr'], since: beforeMergeCursor, timeoutSec: 5 });
+  await waitSubscribed;
   survive.floor.team.onPullState(soloA, { number: 77, url: prUrl, title: 'feat: 60 Hz combat loop', state: 'merged' });
   const waitedPr = await waitPr;
   assert.equal(waitedPr.isError, false, waitedPr.text);
   assert.match(waitedPr.text, /Merged PR #77/);
-  await delay(60);
+  await waitForWebhookCount(1);
   assert.equal(received.length, 1);
   assert.equal(received[0].event, 'pr');
   assert.match(received[0].summary, /PR: Merged PR #77: feat: 60 Hz combat loop/);
@@ -494,14 +511,14 @@ test('team_watch wakes Grok Bot on independent floor worker turns, terminal asks
   received.length = 0;
   orca.floor.team.onPullState(orcaA, { number: 12, url: 'https://github.com/nikships/orca/pull/12', title: 'old pr', state: 'merged', createdAt: 500 }, { initialScan: true });
   orca.floor.team.onPullState(orcaA, { number: 99, url: 'https://github.com/nikships/orca/pull/99', title: 'fast merge', state: 'merged', createdAt: orcaA.createdAt + 10 });
-  await delay(60);
+  await waitForWebhookCount(1);
   assert.equal(received.length, 1, 'initialScan PR is silent, live worker-created fast-merged PR fires');
   assert.match(received[0].summary, /Merged PR #99: fast merge/);
 
   received.length = 0;
   orca.people.delete(orcaB.id);
   orca.floor.team.onWorkerGone(orcaB.id);
-  await delay(60);
+  await waitForWebhookCount(1);
   assert.equal(received.length, 1, 'watched worker departure wakes Grok Bot');
   assert.equal(received[0].event, 'left');
   assert.equal(orca.floor.team.isWatching(grok.worker.id, orcaB.id), false, 'gone worker removed from watched set');
