@@ -36,6 +36,7 @@ import { hasOwnerAccess, ownerInstructions, register as registerOwner, type Owne
 import type { RemoteOffice } from '../remote-office.js';
 import type { RemoteKeyId } from '../remote-workers.js';
 import type { OfficeImageStore } from '../office-images.js';
+import type { WakeGate } from '../wake-filter.js';
 
 export { sendResponse } from './node-http.js';
 
@@ -55,7 +56,7 @@ export interface OfficeMcpFloor {
   dir: string;
   /** Without the screen methods, questions_list shows no terminal questions. */
   workers: Pick<WorkerManager, 'authenticate' | 'get' | 'list'> & Partial<Pick<WorkerManager, 'screenLines' | 'screenMenu' | 'write' | 'queueState' | 'clearQueue' | 'promoteQueue' | 'blockingTool' | 'stagedPicture'>>;
-  team: Pick<Team, 'handle' | 'cannotHire' | 'hasNews' | TeamViews>;
+  team: Pick<Team, 'handle' | 'cannotHire' | 'hasNews' | TeamViews> & Partial<Pick<Team, 'wakeContext'>>;
   visits: Pick<Visits, 'handle' | 'cannotVisit'>;
   whiteboard: WhiteboardStore;
   /** The floor's Linear team and the tickets its workers took; none in tests that leave Linear out. */
@@ -89,6 +90,8 @@ export interface OfficeMcpDeps {
   answers: Pick<Answers, 'answer'>;
   /** The office's Linear workspace: the linear_* tools are listed only while it's connected. */
   linear?: LinearOffice;
+  /** The inter-agent noise gate for lead_notify updates and visit tells (docs/office-mcp.md#inter-agent-noise-gate). */
+  wakeFilter?: WakeGate;
   /** Optional override for the per-call server hold cap in team_wait (ms); defaults to WAIT_HOLD_MAX_SEC * 1000. */
   waitHoldMaxMs?: number;
 }

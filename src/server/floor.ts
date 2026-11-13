@@ -27,6 +27,7 @@ import { landedWorkers } from './leave-on-merge.js';
 import type { Capacity } from './machine.js';
 import type { PromptSource } from './prompts.js';
 import { Team } from './team.js';
+import type { WakeGate, WakeLeadView, WakeTeammate } from './wake-filter.js';
 import { Visits } from './visits.js';
 import type { DroidModelCatalogue } from './droid-models.js';
 import type { SubagentSettings } from '../shared/protocol.js';
@@ -118,6 +119,12 @@ export interface FloorContext {
   renderer?: WhiteboardRenderers;
   /** Office-wide image store so Tailnet-uploaded image ids work on any floor's local or cloud workers. */
   sharedImages?: SharedDropImages;
+  /** The office's inter-agent noise gate (docs/office-mcp.md#inter-agent-noise-gate). */
+  wakeFilter?: WakeGate;
+  /** What a building agent leading subagents here is doing, for the noise gate. */
+  leadView?(lead: string): Partial<WakeLeadView> | undefined;
+  /** A building lead's subagents on every other open floor. */
+  teammatesElsewhere?(floor: Floor, lead: string, rich: boolean): WakeTeammate[];
 }
 
 /** The open pull request on a floor's board whose head is `branch`. */
@@ -440,6 +447,9 @@ export class Floor {
         ...(ctx.recheckModels ? { recheckModels: ctx.recheckModels.bind(ctx) } : {}),
         prompts: ctx.prompts,
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
+        ...(ctx.wakeFilter ? { wakeFilter: ctx.wakeFilter } : {}),
+        leadView: (lead) => ctx.leadView?.(lead),
+        teammatesElsewhere: (lead, rich) => ctx.teammatesElsewhere?.(this, lead, rich) ?? [],
       },
     );
 

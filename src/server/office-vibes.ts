@@ -10,6 +10,7 @@ import {
   isValidGeminiApiKey,
   isWorkerMicroReaction,
   isWorkerVibePosture,
+  emptyWakeFilterTelemetry,
   MICRO_REACTION_CONFIDENCE_MIN,
   MICRO_REACTION_COOLDOWN_MS,
   MOOD_CONFIDENCE_MIN,
@@ -17,6 +18,7 @@ import {
   POSTURE_CONFIDENCE_MIN,
   SPILL_CONFIDENCE_MIN,
   type TriggeredMicroReaction,
+  type WakeFilterTelemetry,
   type WorkerVibePosture,
   type WorkerVibeState,
 } from '../shared/gemini-vibes.js';
@@ -58,6 +60,8 @@ export interface OfficeVibesOptions {
   floors: () => Iterable<VibesFloorView>;
   floor: (id: string) => VibesFloorView | undefined;
   broadcastGemini: (state: GeminiConnectionState) => void;
+  /** Inter-agent noise gate counters shown beside the Living 3D telemetry. */
+  wakeTelemetry?: () => WakeFilterTelemetry;
   emitFloorVibes: (floorId: string, state: FloorVibesState) => void;
   fetchImpl?: FetchLike;
   pulseMs?: number;
@@ -242,12 +246,15 @@ export class OfficeVibes {
       return {
         ...emptyGeminiState(),
         vibesOn: this.opts.store.vibesOn(),
+        wakeFilterOn: this.opts.store.wakeFilterOn(),
       };
     }
     const { totalViewers } = this.watchedFloorMap();
     return {
       connected: this.opts.store.connected(),
       vibesOn: this.opts.store.vibesOn(),
+      wakeFilterOn: this.opts.store.wakeFilterOn(),
+      wakeFilter: this.opts.wakeTelemetry?.() ?? emptyWakeFilterTelemetry(),
       ...(this.opts.store.fingerprint() ? { fingerprint: this.opts.store.fingerprint() } : {}),
       ...(this.opts.store.at() !== undefined ? { at: this.opts.store.at() } : {}),
       ...(this.opts.store.checkedAt() !== undefined ? { checkedAt: this.opts.store.checkedAt() } : {}),
@@ -426,6 +433,13 @@ export class OfficeVibes {
     this.lastError = undefined;
     this.resetAllFloorsToNeutral();
     this.reconcileSchedule(false);
+    this.opts.broadcastGemini(this.geminiState());
+    return undefined;
+  }
+
+  setWakeFilterOn(on: boolean): string | undefined {
+    const err = this.opts.store.setWakeFilterOn(on);
+    if (err) return err;
     this.opts.broadcastGemini(this.geminiState());
     return undefined;
   }

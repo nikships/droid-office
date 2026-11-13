@@ -285,6 +285,7 @@ export async function probeGeminiKey(
 interface PersistedGeminiData {
   apiKey?: string;
   vibesOn?: boolean;
+  wakeFilterOn?: boolean;
   at?: number;
   by?: string;
   checkedAt?: number;
@@ -299,6 +300,7 @@ export class GeminiDecisionsStore {
   private readonly file: string;
   private savedKey?: string;
   private vibes = true;
+  private wakeFilter = true;
   private connectedAt?: number;
   private connectedBy?: string;
   private lastCheckedAt?: number;
@@ -311,6 +313,7 @@ export class GeminiDecisionsStore {
       if (raw && typeof raw === 'object') {
         if (isValidGeminiApiKey(raw.apiKey)) this.savedKey = raw.apiKey.trim();
         if (typeof raw.vibesOn === 'boolean') this.vibes = raw.vibesOn;
+        if (typeof raw.wakeFilterOn === 'boolean') this.wakeFilter = raw.wakeFilterOn;
         if (typeof raw.at === 'number' && Number.isFinite(raw.at)) this.connectedAt = raw.at;
         if (typeof raw.by === 'string' && raw.by) this.connectedBy = raw.by;
         if (typeof raw.checkedAt === 'number' && Number.isFinite(raw.checkedAt)) this.lastCheckedAt = raw.checkedAt;
@@ -331,6 +334,10 @@ export class GeminiDecisionsStore {
 
   vibesOn(): boolean {
     return this.vibes;
+  }
+
+  wakeFilterOn(): boolean {
+    return this.wakeFilter;
   }
 
   fingerprint(): string | undefined {
@@ -378,6 +385,15 @@ export class GeminiDecisionsStore {
     return err;
   }
 
+  setWakeFilterOn(on: boolean): string | undefined {
+    if (this.wakeFilter === on) return undefined;
+    const prev = this.wakeFilter;
+    this.wakeFilter = on;
+    const err = this.persist();
+    if (err) this.wakeFilter = prev;
+    return err;
+  }
+
   disconnect(): string | undefined {
     const prev = this.snapshot();
     this.savedKey = undefined;
@@ -394,6 +410,7 @@ export class GeminiDecisionsStore {
     return {
       apiKey: this.savedKey,
       vibesOn: this.vibes,
+      wakeFilterOn: this.wakeFilter,
       at: this.connectedAt,
       by: this.connectedBy,
       checkedAt: this.lastCheckedAt,
@@ -404,6 +421,7 @@ export class GeminiDecisionsStore {
   private restore(s: PersistedGeminiData): void {
     this.savedKey = s.apiKey;
     this.vibes = s.vibesOn ?? true;
+    this.wakeFilter = s.wakeFilterOn ?? true;
     this.connectedAt = s.at;
     this.connectedBy = s.by;
     this.lastCheckedAt = s.checkedAt;
@@ -414,6 +432,7 @@ export class GeminiDecisionsStore {
     const temp = `${this.file}.${randomUUID()}.tmp`;
     const disk: PersistedGeminiData = {
       vibesOn: this.vibes,
+      wakeFilterOn: this.wakeFilter,
       ...(this.savedKey ? { apiKey: this.savedKey } : {}),
       ...(this.connectedAt !== undefined ? { at: this.connectedAt } : {}),
       ...(this.connectedBy ? { by: this.connectedBy } : {}),

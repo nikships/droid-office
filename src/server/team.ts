@@ -38,6 +38,8 @@ import {
   type WorkerTaskLabel,
 } from './worker-status.js';
 import { formatBlockingSteerWarning, type BlockingToolState, type WorkerQueueState } from './worker-queue.js';
+import type { WakeTraffic } from '../shared/gemini-vibes.js';
+import { isActiveTeammate, type WakeGate, type WakeLeadView, type WakePacket, type WakeTeammate, type WakeVerdict } from './wake-filter.js';
 
 /** What the team needs from the floor's workers. Narrow on purpose, so a test can fake it. */
 export interface TeamWorkers {
@@ -100,7 +102,18 @@ export interface TeamOptions {
   /** How long news waits before a lead at rest is told, so a report and the turn ending with it go as one. */
   nudgeDelayMs?: number;
   now?: () => number;
+  /** The inter-agent noise gate (docs/office-mcp.md#inter-agent-noise-gate); none delivers every event at once, as before. */
+  wakeFilter?: WakeGate;
+  /** What a lead that is not on this floor (a building agent) is doing, for the noise gate. */
+  leadView?(lead: string): Partial<WakeLeadView> | undefined;
+  /** A building lead's subagents on the other open floors; `rich` adds tasks, areas, notes and reports. */
+  teammatesElsewhere?(lead: string, rich: boolean): WakeTeammate[];
+  /** The longest a held completion waits for its batch before waking its lead anyway. */
+  holdMaxMs?: number;
 }
+
+/** Ten minutes: a hung teammate never strands its lead behind a held batch. */
+export const HOLD_MAX_MS = 10 * 60_000;
 
 export type TeamEventKind = 'report' | 'question' | 'pr' | 'done' | 'needs_input' | 'stopped' | 'left' | 'sent_home';
 
@@ -130,7 +143,11 @@ export const REVIEW_VERDICTS: readonly ReviewVerdict[] = ['approve', 'request_ch
 export type TeamState = WorkerStatus | 'blocked_on_question';
 
 /** Delivered to subscribers (team_wait) as it happens: news for a lead, or a subagent's changed status. */
-export type TeamSignal = { type: 'event'; event: TeamEvent } | { type: 'worker'; worker: WorkerInfo };
+export type TeamSignal =
+  | { type: 'event'; event: TeamEvent }
+  | { type: 'worker'; worker: WorkerInfo }
+  /** The noise gate routed an event recorded earlier: woken (released) leads hear it now; held or silent ones wait. */
+  | { type: 'gate'; event: TeamEvent; traffic: WakeTraffic };
 
 /** Something a lead hasn't heard yet about one of its subagents. */
 export interface TeamEvent {
@@ -160,6 +177,11 @@ export interface TeamEvent {
   images?: StoredImageMeta[];
   result?: WorkerResult;
   review?: WorkerReview;
+  /**
+   * Noise gate routing: `held` waits for its batch (or for the gate's answer) before waking the lead,
+   * `silent` never wakes it. Either way it is recorded and readable through status, reports and inbox.
+   */
+  gate?: 'held' | 'silent';
 }
 
 /** A subagent (or watched floor worker) as the team tools show it. */
@@ -398,6 +420,10 @@ export class Team {
   private idleSince = new Map<string, number>();
   private notes = new Map<string, TeamNote>();
   private subagents = new Map<string, SubagentRecord>();
+  /** Per lead: the max-hold ceiling of its held batch. */
+  private holdTimers = new Map<string, NodeJS.Timeout>();
+  /** Gated events whose noise gate answer has not come back yet. */
+  private pendingGates = new Set<number>();
 
   constructor(
     private workers: TeamWorkers,
@@ -450,6 +476,7 @@ export class Team {
     this.observe(w);
     // After any news it made, so a waiter sees the event before the state it left behind.
     if (w.lead || this.watchersOf(w.id).length) this.emit({ type: 'worker', worker: w });
+    if (w.lead) this.recheckHolds(w.lead);
   }
 
   private observe(w: WorkerInfo) {
@@ -476,7 +503,10 @@ export class Team {
     if (!kind) return;
     const text = kind === 'needs_input' ? w.activity : kind === 'done' ? (w.task?.summary ?? w.activity) : w.exitCode !== undefined ? `exit code ${w.exitCode}` : undefined;
     for (const leadId of recipients) {
-      this.push({ lead: leadId, worker: w.id, name: w.name, kind, ...(text ? { text } : {}), ...(leadId !== w.lead ? { watched: true as const } : {}) });
+      const gating = kind === 'done' && leadId === w.lead && this.gateOn();
+      const packet = gating ? this.wakePacket('done', leadId, w, { text: text ?? 'Finished its turn without sending a report.' }) : undefined;
+      const event = this.push({ lead: leadId, worker: w.id, name: w.name, kind, ...(text ? { text } : {}), ...(leadId !== w.lead ? { watched: true as const } : {}) }, gating);
+      if (packet) void this.gateEvent(event, packet);
     }
   }
 
@@ -545,6 +575,8 @@ export class Team {
     }
     this.known.delete(id);
     this.idleSince.delete(id);
+    clearTimeout(this.holdTimers.get(id));
+    this.holdTimers.delete(id);
     const hadNote = this.notes.delete(id);
     const hadSubagent = this.subagents.has(id);
     let droppedFormer = false;
@@ -576,12 +608,17 @@ export class Team {
     this.reported.delete(id);
     this.spoke.delete(id);
     const before = this.log.length;
-    this.log = this.log.filter((e) => e.lead !== id);
+    this.log = this.log.filter((e) => {
+      if (e.lead !== id) return true;
+      this.pendingGates.delete(e.seq);
+      return false;
+    });
     this.nudged.delete(id);
     const hadCursor = this.statusCursors.delete(id);
     clearTimeout(this.timers.get(id));
     this.timers.delete(id);
     if (this.log.length !== before || hadCursor || hadNote || hadSubagent || droppedFormer || hadWatch || hadPullState) this.persist();
+    if (previous?.lead) this.recheckHolds(previous.lead);
   }
 
   /** Runs `send`, which may send worker `id` home, so its lead hears who did it. */
@@ -598,6 +635,15 @@ export class Team {
   stop() {
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
+    for (const t of this.holdTimers.values()) clearTimeout(t);
+    this.holdTimers.clear();
+    this.pendingGates.clear();
+  }
+
+  /** A copy of the recorded event `seq` as it stands now (gate released, review or seen state updated). */
+  eventBySeq(seq: number): TeamEvent | undefined {
+    const found = this.log.find((e) => e.seq === seq);
+    return found ? { ...found } : undefined;
   }
 
   /** Hears every new event and every subagent change on this floor until the returned function is called. */
@@ -704,7 +750,7 @@ export class Team {
       case 'board':
         return ok({ members: this.board(caller.lead ?? caller.id), you: caller.id });
       case 'note':
-        return this.note(caller, b);
+        return await this.note(caller, b);
       case 'hire':
         return this.hire(caller, b);
       case 'models':
@@ -1028,21 +1074,153 @@ export class Team {
     return `## Siblings at hire time\n${text.length > 2400 ? `${text.slice(0, 2399)}…` : text}\nCurrent context: team_board.`;
   }
 
-  private note(w: WorkerInfo, b: Record<string, unknown>): TeamReply {
+  private async note(w: WorkerInfo, b: Record<string, unknown>): Promise<TeamReply> {
     if (!w.lead) return no(403, 'Only subagents post sibling notes; leads use team_message.');
+    const lead = w.lead;
     const text = str(b.text, 1000).trim();
     if (!text) return no(400, 'Provide a short text for team_note.');
     const previous = this.notes.get(w.id);
     const areas = b.areas === undefined ? (previous?.areas ?? []) : noteAreas(b.areas);
+    const areasChanged = b.areas !== undefined && areas.join('\n') !== (previous?.areas ?? []).join('\n');
+    const candidates = () => this.teamOf(lead).filter((s) => s.id !== w.id && s.status === 'working' && !this.spoke.has(s.id));
+    let verdict: WakeVerdict | undefined;
+    // With nobody to interrupt there is nothing to gate: the note only lands on the board.
+    if (candidates().length && this.gateOn()) {
+      const ids = new Set(candidates().map((s) => s.id));
+      const packet = this.wakePacket('team_note', lead, w, { text, areas, areasChanged });
+      packet.siblings = packet.teammates.filter((t) => ids.has(t.id));
+      verdict = await this.decide(packet);
+    }
+    if (verdict?.traffic === 'block_and_coach') return ok({ note: previous ?? null, notified: [], blocked: true, coach: verdict.coach, traffic: verdict.traffic });
     this.notes.set(w.id, { text, areas, at: this.now() });
     this.persist();
     const vars = workerMessageVars(`${text}${areas.length ? `\nAreas: ${areas.join(', ')}` : ''}`);
     const message = `Droid Office delivery: sibling note from ${w.name} (${w.id}), a worker, not the lead or owner.\n\n## Worker message\n${vars.fence}text\n${vars.text}\n${vars.fence}\n\n## Office guidance\nShared findings, not a new assignment.`;
+    const allow = verdict?.notify ? new Set(verdict.notify) : undefined;
     const notified: string[] = [];
-    for (const sibling of this.teamOf(w.lead)) {
-      if (sibling.id !== w.id && sibling.status === 'working' && !this.spoke.has(sibling.id) && this.workers.notice?.(sibling.id, message)) notified.push(sibling.id);
+    const skipped: string[] = [];
+    for (const sibling of candidates()) {
+      if (allow && !allow.has(sibling.id)) skipped.push(sibling.id);
+      else if (this.workers.notice?.(sibling.id, message)) notified.push(sibling.id);
     }
-    return ok({ note: this.notes.get(w.id), notified });
+    const gated = verdict && verdict.source !== 'bypass' ? { traffic: verdict.traffic, ...(skipped.length ? { skipped } : {}) } : {};
+    return ok({ note: this.notes.get(w.id), notified, ...gated });
+  }
+
+  /** The noise gate is connected, on, and given to this floor. */
+  private gateOn(): boolean {
+    return Boolean(this.opts.wakeFilter?.active());
+  }
+
+  private async decide(packet: WakePacket): Promise<WakeVerdict> {
+    try {
+      return await this.opts.wakeFilter!.decide(packet);
+    } catch {
+      return { traffic: 'wake_immediately', source: 'fail_open', reason: 'noise gate failed' };
+    }
+  }
+
+  /** `lead`'s subagents on this floor for the noise gate; `rich` adds what team_board shows. */
+  localTeammates(lead: string, rich = false): WakeTeammate[] {
+    if (!rich) return this.teamOf(lead).map((w) => ({ id: w.id, name: w.name, status: w.status }));
+    return this.board(lead).map((m) => ({
+      id: m.id,
+      name: m.name,
+      status: m.status,
+      ...(m.task ? { task: m.task } : {}),
+      ...(m.areas.length ? { areas: [...m.areas] } : {}),
+      ...(m.note ? { note: m.note.text } : {}),
+      ...(m.report ? { report: { kind: m.report.kind, summary: m.report.summary, ...(m.result ? { status: m.result.status } : {}) } } : {}),
+    }));
+  }
+
+  /** Every teammate of `lead` (across floors for a building lead) besides `exclude`. */
+  private wakeTeammates(lead: string, exclude: string | undefined, rich: boolean): WakeTeammate[] {
+    return [...this.localTeammates(lead, rich), ...(this.opts.teammatesElsewhere?.(lead, rich) ?? [])].filter((t) => t.id !== exclude);
+  }
+
+  /** What `lead` waits on: its task, TodoWrite plan, status and recent terminal. */
+  wakeLead(lead: string): WakeLeadView {
+    const w = this.workers.get(lead);
+    const view = this.opts.leadView?.(lead);
+    const steps = view?.steps ?? this.workers.runtime?.(lead)?.todoSteps?.map((s) => ({ content: s.content, status: s.status }));
+    const tail = view?.tail ?? this.workers.tail(lead, 30);
+    const task = view?.task ?? (w?.task ? `${w.task.name}: ${w.task.summary}` : undefined);
+    const building = view?.building ?? this.workers.buildingAgent?.(lead);
+    const status = view?.status ?? w?.status;
+    return {
+      id: lead,
+      name: view?.name ?? w?.name ?? lead,
+      ...(building ? { building: true } : {}),
+      ...(status ? { status } : {}),
+      ...(task ? { task } : {}),
+      ...(steps?.length ? { steps } : {}),
+      ...(tail ? { tail } : {}),
+    };
+  }
+
+  /** The lead view, team board and sender for one message from `sender` to `lead` (lead_notify builds its packet from this). */
+  wakeContext(lead: string, sender: WorkerInfo): Pick<WakePacket, 'lead' | 'sender' | 'teammates'> {
+    const areas = this.notes.get(sender.id)?.areas;
+    return {
+      lead: this.wakeLead(lead),
+      sender: { id: sender.id, name: sender.name, ...(sender.task ? { task: `${sender.task.name}: ${sender.task.summary}` } : {}), ...(areas?.length ? { areas: [...areas] } : {}) },
+      teammates: this.wakeTeammates(lead, sender.id, true),
+    };
+  }
+
+  private wakePacket(channel: WakePacket['channel'], lead: string, sender: WorkerInfo, message: WakePacket['message']): WakePacket {
+    return { channel, ...this.wakeContext(lead, sender), message };
+  }
+
+  /** Routes an event pushed held: it stays recorded whatever the answer; only when its lead hears of it changes. */
+  private async gateEvent(event: TeamEvent, packet: WakePacket): Promise<WakeVerdict> {
+    const verdict = await this.decide(packet);
+    if (!this.pendingGates.delete(event.seq)) return verdict;
+    const e = this.log.find((x) => x.seq === event.seq);
+    // Something woke the lead meanwhile, which released this event with it.
+    if (e?.gate !== 'held') return verdict;
+    if (verdict.traffic === 'hold_for_batch') {
+      this.emit({ type: 'gate', event: { ...e }, traffic: 'hold_for_batch' });
+      if (!this.holdTimers.has(e.lead)) {
+        const timer = setTimeout(() => this.releaseHolds(e.lead), this.opts.holdMaxMs ?? HOLD_MAX_MS);
+        timer.unref?.();
+        this.holdTimers.set(e.lead, timer);
+      }
+      this.recheckHolds(e.lead);
+    } else if (verdict.traffic === 'record_silently' || verdict.traffic === 'block_and_coach') {
+      e.gate = 'silent';
+      this.persist();
+      this.emit({ type: 'gate', event: { ...e }, traffic: 'record_silently' });
+    } else this.releaseHolds(e.lead);
+    return verdict;
+  }
+
+  /** A held batch is complete once none of the lead's teammates is mid-turn: it wakes the lead once for all of it. */
+  recheckHolds(lead: string) {
+    if (!this.log.some((e) => e.lead === lead && e.gate === 'held' && !this.pendingGates.has(e.seq))) return;
+    if (this.wakeTeammates(lead, undefined, false).some(isActiveTeammate)) return;
+    this.releaseHolds(lead);
+  }
+
+  /** The noise gate stopped routing: every lead holding a batch on this floor hears it now. */
+  flushHolds() {
+    for (const lead of new Set(this.log.filter((e) => e.gate === 'held').map((e) => e.lead))) this.releaseHolds(lead);
+  }
+
+  /** Everything held for `lead` (pending answers included) wakes it now, as one batch. */
+  private releaseHolds(lead: string) {
+    clearTimeout(this.holdTimers.get(lead));
+    this.holdTimers.delete(lead);
+    const released = this.log.filter((e) => e.lead === lead && e.gate === 'held');
+    if (!released.length) return;
+    for (const e of released) {
+      delete e.gate;
+      this.pendingGates.delete(e.seq);
+    }
+    this.persist();
+    this.scheduleNudge(lead);
+    for (const e of released) this.emit({ type: 'gate', event: { ...e }, traffic: 'wake_immediately' });
   }
 
   /** Structured, noise-free state snapshot for any worker on this floor (`office_look`, `worker_log`, `team_status`). */
@@ -1795,17 +1973,35 @@ export class Team {
     const result = buildWorkerResult(parsedResult, { status: question ? 'blocked' : progress ? 'partial' : 'ok', summary: clip(text, 240), prUrl: resultPrUrl, prNumber, sha });
     const images = restoreStoredImages(b.images);
     const provenance = { ...(sha ? { pushedSha: sha } : {}), ...(prUrl ? { prUrl } : {}), ...(images ? { images } : {}) };
-    this.push({
-      lead: lead.id,
-      worker: w.id,
-      name: w.name,
-      kind: question ? 'question' : 'report',
-      text,
-      ...(options.length ? { options } : {}),
-      ...provenance,
-      ...(progress ? { progress: true as const } : {}),
-      result,
-    });
+    // Questions always wake at once; everything else is recorded now and routed by the noise gate.
+    const gating = !question && this.gateOn();
+    const packet = gating
+      ? this.wakePacket('team_report', lead.id, w, {
+          text,
+          ...(progress ? { progress: true } : {}),
+          resultStatus: result.status,
+          ...(result.conflicts?.length ? { conflicts: result.conflicts.length } : {}),
+          ...(sha ? { pushedSha: sha } : {}),
+          ...(prUrl ? { prUrl } : {}),
+          ...(parsedResult?.artifacts?.commits?.length ? { commits: parsedResult.artifacts.commits.length } : {}),
+          ...(result.artifacts?.files?.length ? { files: result.artifacts.files.slice(0, 20) } : {}),
+          ...(images?.length ? { images: images.length } : {}),
+        })
+      : undefined;
+    const event = this.push(
+      {
+        lead: lead.id,
+        worker: w.id,
+        name: w.name,
+        kind: question ? 'question' : 'report',
+        text,
+        ...(options.length ? { options } : {}),
+        ...provenance,
+        ...(progress ? { progress: true as const } : {}),
+        result,
+      },
+      gating,
+    );
     for (const watcherId of this.watchersOf(w.id)) {
       if (watcherId !== lead.id) {
         this.push({
@@ -1826,8 +2022,9 @@ export class Team {
     }
     if (!question) this.reported.add(w.id);
     this.spoke.add(w.id);
+    const verdict = packet ? await this.gateEvent(event, packet) : undefined;
     this.opts.toast(`${question ? `❓ ${w.name} asked ${lead.name}` : progress ? `⏳ ${w.name} reported progress to ${lead.name}` : `📨 ${w.name} reported to ${lead.name}`}: “${clip(text, 90)}”`, 'info', w.id);
-    return ok({ lead: lead.name, ...provenance, ...(progress ? { progress: true } : {}), result: cloneWorkerResult(result) });
+    return ok({ lead: lead.name, ...provenance, ...(progress ? { progress: true } : {}), result: cloneWorkerResult(result), ...(verdict && verdict.source !== 'bypass' ? { traffic: verdict.traffic } : {}) });
   }
 
   private review(lead: WorkerInfo, b: Record<string, unknown>): TeamReply {
@@ -1872,17 +2069,22 @@ export class Team {
     return ok({ worker: w ? this.member(this.workers.get(w.id) ?? w, lead.id) : this.formerMember(record), review: { ...review }, reportSeq: last.seq, notified, ...(notifyNote ? { notifyNote } : {}) });
   }
 
-  private push(e: Omit<TeamEvent, 'seq' | 'at'>) {
-    const event: TeamEvent = { ...e, seq: ++this.seq, at: this.now() };
+  /** Records news for a lead; `gated` keeps it from waking the lead until the noise gate routes it. */
+  private push(e: Omit<TeamEvent, 'seq' | 'at' | 'gate'>, gated = false): TeamEvent {
+    const event: TeamEvent = { ...e, seq: ++this.seq, at: this.now(), ...(gated ? { gate: 'held' as const } : {}) };
     this.log.push(event);
     if (this.log.length > LOG_MAX) {
       // What's been heard goes first.
       const heard = this.log.findIndex((x) => x.seen);
       this.log.splice(heard >= 0 ? heard : 0, 1);
     }
+    if (gated) this.pendingGates.add(event.seq);
+    // News that wakes its lead brings everything held for it along.
+    else this.releaseHolds(e.lead);
     this.persist();
-    this.scheduleNudge(e.lead);
+    if (!gated) this.scheduleNudge(e.lead);
     this.emit({ type: 'event', event: { ...event } });
+    return event;
   }
 
   private emit(signal: TeamSignal) {
@@ -1909,7 +2111,7 @@ export class Team {
   /** News for `lead` it hasn't heard or been woken for. */
   private unnudged(lead: string): TeamEvent[] {
     const after = this.nudged.get(lead) ?? 0;
-    return this.log.filter((e) => e.lead === lead && !e.seen && e.seq > after);
+    return this.log.filter((e) => e.lead === lead && !e.seen && !e.gate && e.seq > after);
   }
 
   private scheduleNudge(lead: string) {
@@ -2034,6 +2236,8 @@ export class Team {
           ...(typeof x.prUrl === 'string' ? { prUrl: x.prUrl.slice(0, 2000) } : {}),
           ...(x.progress === true ? { progress: true as const } : {}),
           ...(x.watched === true ? { watched: true as const } : {}),
+          // A batch held across a restart wakes its lead: the max-hold ceiling did not survive.
+          ...(x.gate === 'silent' ? { gate: 'silent' as const } : {}),
           ...(restoredImages ? { images: restoredImages } : {}),
           ...(restoreWorkerResult(x.result) ? { result: restoreWorkerResult(x.result) } : {}),
           ...(restoreWorkerReview(x.review) ? { review: restoreWorkerReview(x.review) } : {}),
