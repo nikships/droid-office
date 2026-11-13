@@ -290,7 +290,18 @@ test('WakeFilter fails open on HTTP errors, network failures, timeouts and safet
   const cases: [string, (body: unknown, init: RequestInit) => Promise<Response> | Response][] = [
     ['http', () => new Response(JSON.stringify({ error: { message: `quota for ${KEY}` } }), { status: 503 })],
     ['network', () => Promise.reject(new Error(`connect ECONNREFUSED ${KEY}`))],
-    ['timeout', (_b, init) => new Promise<Response>((_r, reject) => init.signal?.addEventListener('abort', () => reject(new Error('aborted'))))],
+    [
+      'timeout',
+      (_b, init) =>
+        new Promise<Response>((_r, reject) => {
+          // The client unrefs its abort timer, so this ref'd ceiling keeps the event loop alive the way a real socket would.
+          const hold = setTimeout(() => reject(new Error('test safety ceiling')), 5_000);
+          init.signal?.addEventListener('abort', () => {
+            clearTimeout(hold);
+            reject(new Error('aborted'));
+          });
+        }),
+    ],
     ['blocked', () => new Response(JSON.stringify({ promptFeedback: { blockReason: 'SAFETY' } }), { status: 200 })],
   ];
   for (const [name, respond] of cases) {
