@@ -585,3 +585,51 @@ test('a building lead sees teammates on other floors and its own view through th
   assert.equal((await r.call('sub1', { action: 'report', text: 'Done.' })).body.traffic, 'hold_for_batch');
   assert.deepEqual(r.team.localTeammates('lead'), [{ id: 'sub1', name: 'Pixel', status: 'working' }]);
 });
+
+test('flushHolds wakes every lead holding a batch at once, including answers still in flight', async (t) => {
+  const r = rig(t);
+  await r.call('lead', { action: 'hire', task: 'One' });
+  await r.call('lead', { action: 'hire', task: 'Two' });
+  await r.call('lead', { action: 'hire', task: 'Three' });
+  r.set('sub1', 'working');
+  r.set('sub2', 'working');
+  r.set('sub3', 'working');
+  const signals: string[] = [];
+  const off = r.team.subscribe((s) => {
+    if (s.type === 'gate') signals.push(`${s.event.worker}:${s.traffic}`);
+  });
+  t.after(off);
+  await r.call('sub1', { action: 'report', text: 'Done with one.' });
+  let answer!: (v: WakeVerdict) => void;
+  r.gate.route = () => new Promise<WakeVerdict>((resolve) => (answer = resolve));
+  const pending = r.call('sub2', { action: 'report', text: 'Done with two.' });
+  await sleep(5);
+  assert.deepEqual(
+    r.team.news('lead').map((e) => e.gate),
+    ['held', 'held'],
+  );
+  await sleep(20);
+  assert.equal(r.leadPrompts().length, 0);
+
+  r.team.flushHolds();
+  assert.equal(
+    r.team.news('lead').some((e) => e.gate),
+    false,
+  );
+  assert.deepEqual(signals, ['sub1:hold_for_batch', 'sub1:wake_immediately', 'sub2:wake_immediately']);
+  // A late hold answer for a flushed report changes nothing.
+  answer({ traffic: 'hold_for_batch', source: 'model', reason: 'batch' });
+  await pending;
+  await sleep(30);
+  assert.equal(
+    r.team.news('lead').some((e) => e.gate),
+    false,
+  );
+  const prompts = r.leadPrompts();
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0]!, /Pixel/);
+  assert.match(prompts[0]!, /Byte/);
+  r.team.flushHolds();
+  await sleep(20);
+  assert.equal(r.leadPrompts().length, 1, 'nothing held, nothing new');
+});

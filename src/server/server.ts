@@ -557,6 +557,10 @@ export async function startServer(cfg: Config) {
   const geminiStore = new GeminiDecisionsStore(cfg.dataDir);
   let isAirgapped = () => false;
   let wakeTelemetryTimer: NodeJS.Timeout | undefined;
+  // With the gate off, nothing would ever route a held batch again.
+  const flushWakeHolds = () => {
+    for (const f of floors.values()) f.team.flushHolds();
+  };
   // The inter-agent noise gate (docs/office-mcp.md#inter-agent-noise-gate): routes team traffic, failing open.
   const wakeFilter = new WakeFilter({
     store: geminiStore,
@@ -713,6 +717,7 @@ export async function startServer(cfg: Config) {
       droidModels.forget();
       workerLabels.settingsChanged();
       officeVibes.syncViewers(!on);
+      if (on) flushWakeHolds();
     },
     broadcast: (state) => {
       broadcast({ t: 'setup', state });
@@ -3150,6 +3155,7 @@ export async function startServer(cfg: Config) {
       case 'gemini.disconnect': {
         const err = officeVibes.disconnect();
         if (err) return stop(err);
+        flushWakeHolds();
         toastAll(`${who} disconnected Gemini Decisions`);
         done();
         break;
@@ -3168,6 +3174,7 @@ export async function startServer(cfg: Config) {
         if (typeof msg.on !== 'boolean') return stop('Send {"on": true} or {"on": false}.');
         const err = officeVibes.setWakeFilterOn(msg.on);
         if (err) return stop(err);
+        if (!msg.on) flushWakeHolds();
         done();
         break;
       }
@@ -3563,6 +3570,7 @@ export async function startServer(cfg: Config) {
     for (const f of floors.values()) f.shutdown(keep);
     orchestrator.shutdown(keep);
     clearTimeout(missionTimer);
+    clearTimeout(wakeTelemetryTimer);
     void renderer?.close();
     for (const c of clients.values()) c.ws.close();
     server.close();

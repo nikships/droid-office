@@ -1192,6 +1192,11 @@ export class Team {
     this.releaseHolds(lead);
   }
 
+  /** The noise gate stopped routing: every lead holding a batch on this floor hears it now. */
+  flushHolds() {
+    for (const lead of new Set(this.log.filter((e) => e.gate === 'held').map((e) => e.lead))) this.releaseHolds(lead);
+  }
+
   /** Everything held for `lead` (pending answers included) wakes it now, as one batch. */
   private releaseHolds(lead: string) {
     clearTimeout(this.holdTimers.get(lead));
