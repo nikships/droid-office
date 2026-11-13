@@ -67,6 +67,7 @@ test('every setting is in a category', () => {
     ['DroidProxy', 'connections'],
     ['Accounts', 'connections'],
     ['Models in Droid', 'connections'],
+    ['Gemini Decisions API', 'connections'],
     ['Linear', 'connections'],
     ["This floor's Linear team", 'connections'],
     ['Linear autopilot', 'connections'],
@@ -216,7 +217,7 @@ test('the companions leave out what only the 3D office has, and only the Mac app
     titles('mac-companion'),
     SETTINGS_CARDS.map((c) => c.title as string).filter((t) => !officeOnly.includes(t)),
   );
-  for (const kept of ['Workspace folder', 'Host desktop app', 'Droid', 'Factory API key', 'DroidProxy', 'Worktree setup', 'Default worker']) assert.ok(titles('companion').includes(kept), kept);
+  for (const kept of ['Workspace folder', 'Host desktop app', 'Droid', 'Factory API key', 'Gemini Decisions API', 'DroidProxy', 'Worktree setup', 'Default worker']) assert.ok(titles('companion').includes(kept), kept);
 });
 
 test('a companion’s blurbs only promise what it shows', () => {

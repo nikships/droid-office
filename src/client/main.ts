@@ -33,6 +33,7 @@ import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME } from '../shared/mission-control';
 import { botLine, missionWaiting, missionWorker, orchestratorLine, orchestratorWorker } from './mission';
 import { ORCHESTRATOR_SPOT, PHASE_WORD, missionBadge, missionLinks, missionStand, missionTeamBadge, missionTeamLine, missionView, orchestratorAwake, orchestratorPhase, orchestratorWaiting } from './mission-office';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, ServerMsg, WorkerInfo } from '../shared/protocol';
+import { isFloorMood, isMonitorSpillTone, MONITOR_SPILL_HEX, type MonitorSpillTone } from '../shared/gemini-vibes';
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
 import { isPaletteKey } from '../shared/palette';
@@ -655,6 +656,10 @@ interface WorkerView {
   /** False until the first sync, so a failure already on screen doesn't ding when the page opens. */
   heard: boolean;
   worldReady?: boolean;
+  /** Current and target monitor bounce-light spill color from Gemini Decision 1. */
+  spillTone: MonitorSpillTone;
+  spillColor: THREE.Color;
+  spillTarget: THREE.Color;
 }
 const workerViews = new Map<string, WorkerView>();
 /** Workers a `worker.remove` is taking out of the store right now. They walk out of the building; a worker that's gone because you changed floors just vanishes. */
@@ -1487,6 +1492,7 @@ function setPlace() {
   camera.far = up ? 700 : FAR;
   camera.updateProjectionMatrix();
   if (hanger.active) hanger.cancel();
+  syncVibesWatch();
   hintKey = 'stale';
 }
 
@@ -1640,7 +1646,20 @@ function syncWorkers() {
       desk.laptopAnchor.add(laptop.root);
       noOutline(desk.group);
       desk.chair.rotation.y = 0;
-      v = { model, laptop, deskId: w.deskId, status: '', acked: true, heard: false };
+      const wVibe = store.vibes?.workers[w.id];
+      const initialTone: MonitorSpillTone = wVibe && isMonitorSpillTone(wVibe.spill) ? wVibe.spill : 'neutral';
+      v = {
+        model,
+        laptop,
+        deskId: w.deskId,
+        status: '',
+        acked: true,
+        heard: false,
+        spillTone: initialTone,
+        spillColor: new THREE.Color(MONITOR_SPILL_HEX[initialTone]),
+        spillTarget: new THREE.Color(MONITOR_SPILL_HEX[initialTone]),
+      };
+      model.applyVibe(wVibe, store.officeNow());
       workerViews.set(w.id, v);
     }
     if (v.status !== w.status || v.acked !== w.acked) {
@@ -3913,9 +3932,13 @@ function gpuRendererName(): string {
   return String((ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '');
 }
 
-/** A worker walking, hopping, mid-turn, leaving, or being carried out. */
+/** A worker walking, hopping, mid-turn, leaving, or being carried out, or room/desk mood lighting crossfading. */
 function workerMoving(): boolean {
-  for (const v of workerViews.values()) if (v.model.animating) return true;
+  if (sky.moodTransitioning) return true;
+  for (const v of workerViews.values()) {
+    if (v.model.animating) return true;
+    if (Math.abs(v.spillColor.r - v.spillTarget.r) + Math.abs(v.spillColor.g - v.spillTarget.g) + Math.abs(v.spillColor.b - v.spillTarget.b) > 1e-3) return true;
+  }
   return departures.hasLeavers || casualties.active || visitors.moving || mission.animating;
 }
 
@@ -4113,12 +4136,15 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     v.model.seenFrom(workerPos.distanceTo(camPos));
     v.model.update(dt, t);
     v.laptop.update(dt, store.screens.get(id), Math.hypot(desk.x - camPos.x, desk.z - camPos.z));
+    v.spillColor.lerp(v.spillTarget, 1 - Math.exp(-dt / 0.9));
     const glow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
     glow.power = v.laptop.glow(glow.pos, glow.dir);
+    glow.color = v.spillColor;
     if (glow.power > 0.01) screens++;
   }
   const bossGlow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
   bossGlow.power = bossLaptop.glow(bossGlow.pos, bossGlow.dir);
+  bossGlow.color = undefined;
   if (bossGlow.power > 0.01) screens++;
   for (const v of mission.views.values()) {
     const d = v.model.root.getWorldPosition(workerPos).distanceTo(player.pos);
@@ -4182,6 +4208,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   const drawStart = performance.now();
   if (remaster.active) {
     remaster.gi.paused = upTop;
+    remaster.gi.overhead = settings.graphics.overhead;
     remaster.gi.budgetMs = bakeBudget(settings.graphics.fpsCap, renderLoop.refreshMs);
     // The welcome paints the floor's palette (`paintFloor`): a bake started before it would save the default room's colours.
     const bakedHash = bootVersion ? SCENE_HASH : '';
@@ -4253,14 +4280,69 @@ async function startWhenReady() {
   startLoop();
 }
 
+/** Strict view-aware cost gating for Gemini Decision 1: active only while this 3D canvas is open, visible, and on an indoor floor. */
+let vibesWatching = false;
+function syncVibesWatch() {
+  if (!net.up) {
+    vibesWatching = false;
+    return;
+  }
+  const want = document.visibilityState === 'visible' && !upTop && Boolean(store.floor && store.floor !== ROOF);
+  if (want === vibesWatching) return;
+  vibesWatching = want;
+  net.send({ t: 'vibes.watch', active: want });
+}
+
+function syncFloorVibes(snap = false) {
+  const vibes = store.vibes;
+  const nextMood = vibes && isFloorMood(vibes.mood) ? vibes.mood : 'calm_planning';
+  let changed = snap || nextMood !== sky.currentMood;
+  sky.setMood(nextMood, snap);
+  const nowMs = store.officeNow();
+  for (const [wid, v] of workerViews) {
+    const wVibe = vibes?.workers[wid];
+    const tone: MonitorSpillTone = wVibe && isMonitorSpillTone(wVibe.spill) ? wVibe.spill : 'neutral';
+    if (tone !== v.spillTone) changed = true;
+    v.spillTone = tone;
+    v.spillTarget.set(MONITOR_SPILL_HEX[tone]);
+    if (snap) v.spillColor.copy(v.spillTarget);
+    const prevPosture = v.model.activeVibePosture;
+    const prevReaction = v.model.activeReaction;
+    v.model.applyVibe(wVibe, nowMs);
+    if (v.model.activeVibePosture !== prevPosture || v.model.activeReaction !== prevReaction) changed = true;
+  }
+  if (changed) {
+    activeAt = performance.now();
+    renderWake();
+  }
+}
+
+net.onStatus((up) => {
+  if (!up) vibesWatching = false;
+  syncVibesWatch();
+});
+store.on('floor', () => {
+  syncFloorVibes(true);
+  syncVibesWatch();
+});
+store.on('vibes', () => syncFloorVibes(false));
+
 // A background tab and a fully covered window both show up as visibilityState "hidden".
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') activeAt = performance.now();
+  syncVibesWatch();
   renderWake();
 });
 window.addEventListener('pageshow', () => {
   activeAt = performance.now();
+  syncVibesWatch();
   renderWake();
+});
+window.addEventListener('pagehide', () => {
+  if (vibesWatching && net.up) {
+    vibesWatching = false;
+    net.send({ t: 'vibes.watch', active: false });
+  }
 });
 // Typing in a window is the terminal's canvas, not the 3D scene.
 window.addEventListener('keydown', () => {
@@ -4420,6 +4502,26 @@ const automation = createAutomation({
     gun: gunOut,
     gunMove: drawnArm === 'wand' ? wandMotion.doing : gunMotion.doing,
     sidearm: settings.sidearm,
+    ...(store.gemini.connected
+      ? {
+          vibes: {
+            watching3d: store.gemini.watching3d,
+            calls: store.gemini.calls,
+            inputTokens: store.gemini.inputTokens,
+            mood: sky.currentMood,
+            workers: [...store.workers.values()].map((w) => {
+              const v = workerViews.get(w.id);
+              return {
+                id: w.id,
+                name: w.name,
+                posture: v?.model.activeVibePosture ?? 'steady',
+                spill: v?.spillTone ?? 'neutral',
+                reaction: v?.model.activeReaction ?? null,
+              };
+            }),
+          },
+        }
+      : {}),
   }),
   busy: () => (trip ? 'riding to another floor' : climber.active ? 'on the ladder: interact("E") gets off it' : !store.floor ? 'not on a floor yet: ride the elevator first' : null),
   blocked: (x, z, y) => player.blockedAt(x, z, y),

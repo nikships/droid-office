@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FLOOR_MOOD_LIGHTING, isFloorMood, type FloorMood } from '../../shared/gemini-vibes';
 import { FLOOR, SLAB, STREET_Y, WALL_T } from '../../shared/layout';
 import type { SkyState, Weather } from '../../shared/protocol';
 import { guessPlace } from '../../shared/sun';
@@ -472,11 +473,26 @@ function moonTexture(): THREE.CanvasTexture {
 /** How strong the sun and the sky's light are on a clear day: what "fully lit" means for your hands and the rain. */
 const FULL_DAY = 1.5 + 0.5 + 0.6 * 2.2;
 
-/** A laptop screen as a light: where it is, which way it faces, and how lit it is, 0–1. */
+/** A laptop screen as a light: where it is, which way it faces, how lit it is (0–1), and its optional spill tint. */
 export interface ScreenGlow {
   pos: THREE.Vector3;
   dir: THREE.Vector3;
   power: number;
+  color?: THREE.Color;
+}
+
+/** Temporarily pins `skyOffice` to the neutral clear-night room fill and hides dynamic screen glows while Remastered GI probes bake, so cached GI never bakes transient mood or desk tints. */
+export function withBaselineOfficeFill(overhead: number, fn: () => void): void {
+  const savedOffice = uniforms.skyOffice.value.clone();
+  const savedScreenCount = uniforms.skyScreenCount.value;
+  uniforms.skyOffice.value.copy(C.officeNight).multiplyScalar(NIGHT.office * clamp01(overhead));
+  uniforms.skyScreenCount.value = 0;
+  try {
+    fn();
+  } finally {
+    uniforms.skyOffice.value.copy(savedOffice);
+    uniforms.skyScreenCount.value = savedScreenCount;
+  }
 }
 
 export interface SkyLights {
@@ -514,6 +530,12 @@ export class Sky {
   readonly lampsOn = 1;
   /** The office's ceiling lights, 0–1 (Settings → Display): their glow, and the fill light they give the room. */
   private overhead = 1;
+  /** Floor mood from Gemini Decision 1, crossfaded smoothly over ~2s without touching GI probe bakes. */
+  private mood: FloorMood = 'calm_planning';
+  private readonly moodColor = new THREE.Color(FLOOR_MOOD_LIGHTING.calm_planning.hex);
+  private readonly moodTargetColor = new THREE.Color(FLOOR_MOOD_LIGHTING.calm_planning.hex);
+  private moodFill = 1;
+  private moodTargetFill = 1;
   /** Up on the roof: out in the open, over the whole city (see setRoof). */
   private roof = false;
   /** Where the street is from up there (the roof is at 0), for the haze. */
@@ -686,7 +708,34 @@ export class Sky {
   /** Dims the office's ceiling lights, 0 (off) to 1 (as built): the fixtures' glow and the room's fill light. */
   setOverhead(k: number) {
     this.overhead = clamp01(k);
-    uniforms.skyOffice.value.copy(C.officeNight).multiplyScalar(NIGHT.office * this.overhead);
+    this.applyOfficeFill();
+  }
+
+  /** Sets the studio's atmospheric lighting mood, smoothly crossfaded over ~2.2 seconds in `update`. */
+  setMood(mood: FloorMood, snap = false) {
+    const safeMood: FloorMood = isFloorMood(mood) ? mood : 'calm_planning';
+    this.mood = safeMood;
+    const spec = FLOOR_MOOD_LIGHTING[safeMood];
+    this.moodTargetColor.set(spec.hex);
+    this.moodTargetFill = spec.fillScale;
+    if (snap) {
+      this.moodColor.copy(this.moodTargetColor);
+      this.moodFill = this.moodTargetFill;
+      this.applyOfficeFill();
+    }
+  }
+
+  get currentMood(): FloorMood {
+    return this.mood;
+  }
+
+  /** True while the room mood fill is still crossfading toward its target. */
+  get moodTransitioning(): boolean {
+    return Math.abs(this.moodFill - this.moodTargetFill) > 1e-3 || Math.abs(this.moodColor.r - this.moodTargetColor.r) + Math.abs(this.moodColor.g - this.moodTargetColor.g) + Math.abs(this.moodColor.b - this.moodTargetColor.b) > 1e-3;
+  }
+
+  private applyOfficeFill() {
+    uniforms.skyOffice.value.copy(this.moodColor).multiplyScalar(NIGHT.office * this.overhead * this.moodFill);
   }
 
   /**
@@ -719,7 +768,7 @@ export class Sky {
       const g = glows[_screenOrder[i]];
       screenSlots.set(i, g.pos.x, g.pos.y, g.pos.z, SCREEN_REACH);
       screenDirSlots.set(i, g.dir.x, g.dir.y, g.dir.z);
-      screenColorSlots.setColor(i, C.screen, SCREEN_POWER * g.power);
+      screenColorSlots.setColor(i, g.color ?? C.screen, SCREEN_POWER * g.power);
       lo.x = Math.min(lo.x, g.pos.x - SCREEN_REACH);
       lo.y = Math.min(lo.y, g.pos.y - SCREEN_REACH);
       lo.z = Math.min(lo.z, g.pos.z - SCREEN_REACH);
@@ -760,6 +809,12 @@ export class Sky {
     const snap = this.snap;
     this.snap = false;
     const step = (x: number, to: number, secs: number) => (snap ? to : ease(x, to, dt, secs));
+    if (this.moodTransitioning) {
+      const kMood = snap ? 1 : 1 - Math.exp(-dt / 2.2);
+      this.moodColor.lerp(this.moodTargetColor, kMood);
+      this.moodFill = step(this.moodFill, this.moodTargetFill, 2.2);
+      this.applyOfficeFill();
+    }
 
     // The weather, easing from one spell to the next.
     const wantCover = weather === 'clear' ? 0 : weather === 'cloudy' ? k : weather === 'rain' ? 0.8 + 0.2 * k : weather === 'storm' ? 1 : weather === 'snow' ? 0.85 : 0.5;

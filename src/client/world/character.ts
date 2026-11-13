@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
+import { isWorkerMicroReaction, isWorkerVibePosture, type WorkerMicroReaction, type WorkerVibePosture, type WorkerVibeState } from '../../shared/gemini-vibes';
 import type { CarriedIssue, TeamBadge, TodoProgress, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
 import { isAsleep, type WorkerPr } from '../../shared/status';
 import { todoCount, todoFraction, todoLine } from '../../shared/todos';
@@ -875,10 +876,11 @@ function cardChip(status: WorkerStatus, pr: PrBadge | undefined, lost: boolean):
 }
 
 /**
- * What a worker's body is doing: resting, arms up for joy, arms crossed waiting on you, typing, or
- * acting out its latest tool call.
+ * What a worker's body is doing: resting, arms up for joy, arms crossed waiting on you, typing,
+ * acting out its latest tool call, or holding a continuous Gemini Decision 1 desk posture.
  */
-type Act = 'rest' | 'up' | 'waiting' | 'type' | WorkerAction | VisitPose;
+type VibeAct = 'vibe_flow' | 'vibe_investigating' | 'vibe_debugging' | 'vibe_waiting';
+type Act = 'rest' | 'up' | 'waiting' | 'type' | WorkerAction | VisitPose | VibeAct;
 
 /** How it holds itself on a visit to another worker's desk (see visitors.ts): on its feet, or talking with a hand out. */
 export type VisitPose = 'stand' | 'talk';
@@ -1163,6 +1165,107 @@ function stanceOf(act: Act, t: number, seated: boolean, s: Stance): Stance {
       s.mouthW = 0.76;
       s.mouthH = 0.5;
       s.frown = 0.6;
+      break;
+    }
+    case 'vibe_flow': {
+      // Locked-in flow state: brisk rhythmic cadence, forward lean, subtle musical head-nod groove.
+      s.armLx = -1.26 + Math.sin(t * 18) * 0.065;
+      s.armRx = -1.26 + Math.sin(t * 18 + 1.7) * 0.065;
+      s.armLz = -0.02;
+      s.armRz = 0.02;
+      s.forearmLx = -0.72 + Math.sin(t * 36) * 0.21;
+      s.forearmRx = -0.72 + Math.sin(t * 36 + 2.0) * 0.21;
+      s.forearmLz = 0.36;
+      s.forearmRz = -0.36;
+      s.reach = 0.46;
+      s.lean = 0.16;
+      s.headX = 0.09 + Math.sin(t * 4.6) * 0.045;
+      s.headY = Math.sin(t * 2.3) * 0.05;
+      s.headZ = Math.sin(t * 2.3 + 0.8) * 0.035;
+      s.lid = 0.86;
+      s.look = -0.008;
+      s.lookX = Math.sin(t * 5.4) * 0.009;
+      s.browLift = -0.005;
+      s.browTilt = 0.24;
+      s.mouthW = 0.72;
+      s.mouthH = 0.6;
+      s.lift = Math.abs(Math.sin(t * 18)) * 0.022;
+      break;
+    }
+    case 'vibe_investigating': {
+      // Thoughtful investigation: leaning back in the task chair, right hand at chin, eyes scanning wide output.
+      s.armLx = seated ? -0.96 : -0.28;
+      s.armLz = -0.06;
+      s.forearmLx = seated ? -0.68 : -0.26;
+      s.forearmLz = 0.24;
+      s.armRx = -1.48;
+      s.armRz = -0.14;
+      s.forearmRx = -1.56 + Math.sin(t * 2.2) * 0.04;
+      s.forearmRz = -0.44;
+      s.reach = 0.22;
+      s.lean = -0.12;
+      s.headX = 0.04 + Math.sin(t * 1.4) * 0.03;
+      s.headY = Math.sin(t * 1.1) * 0.14;
+      s.headZ = -0.07;
+      s.lid = 1.04;
+      s.lookX = Math.sin(t * 2.2) * 0.015;
+      s.look = -0.004 + Math.cos(t * 1.5) * 0.006;
+      s.browLift = 0.007;
+      s.browTilt = -0.06;
+      s.mouthW = 0.78;
+      s.mouthH = 0.68;
+      break;
+    }
+    case 'vibe_debugging': {
+      // Focused trace inspection: leaning in close with a quizzical head-tilt and restless finger/foot tap.
+      const tap = Math.max(0, Math.sin(t * 18));
+      s.armLx = -1.2;
+      s.armLz = -0.02;
+      s.forearmLx = -0.68;
+      s.forearmLz = 0.34;
+      s.armRx = -1.22;
+      s.armRz = 0.04;
+      s.forearmRx = -0.68 + Math.max(0, Math.sin(t * 24)) * 0.16;
+      s.forearmRz = -0.34;
+      s.reach = 0.42;
+      s.lean = 0.19;
+      s.headX = 0.12;
+      s.headY = Math.sin(t * 2.0) * 0.05;
+      s.headZ = 0.14;
+      s.tap = tap * 0.85;
+      s.lid = 0.72;
+      s.look = -0.01;
+      s.lookX = Math.sin(t * 6.0) * 0.011;
+      s.browLift = -0.004;
+      s.browTilt = 0.28;
+      s.mouthW = 0.7;
+      s.mouthH = 0.52;
+      s.frown = 0.35;
+      s.lift = tap * 0.008;
+      break;
+    }
+    case 'vibe_waiting': {
+      // Relaxed build/test wait: easy shoulder roll, leaning back and glancing up toward Pipelines / windows.
+      s.armLx = seated ? -0.88 : -0.22;
+      s.armRx = seated ? -0.88 : -0.22;
+      s.armLz = -0.14 + Math.sin(t * 1.6) * 0.04;
+      s.armRz = 0.14 - Math.sin(t * 1.6) * 0.04;
+      s.forearmLx = seated ? -0.56 : -0.22;
+      s.forearmRx = seated ? -0.56 : -0.22;
+      s.forearmLz = 0.22;
+      s.forearmRz = -0.22;
+      s.drop = (Math.sin(t * 2.1) + 1) * 0.012;
+      s.lean = -0.15;
+      s.roll = Math.sin(t * 1.3) * 0.04;
+      s.headX = -0.15;
+      s.headY = 0.22 + Math.sin(t * 0.85) * 0.1;
+      s.headZ = Math.sin(t * 1.3) * 0.05;
+      s.kick = 0.65;
+      s.look = 0.012;
+      s.lookX = 0.008;
+      s.browLift = 0.005;
+      s.mouthW = 1.08;
+      s.mouthH = 1.05;
       break;
     }
   }
@@ -1606,6 +1709,7 @@ export class Worker {
       !!this.leaving ||
       this.cheerT > 0 ||
       this.twirlT >= 0 ||
+      this.microReaction !== null ||
       Math.abs(this.wantSit() - this.sitK) > 1e-3 ||
       this.status === 'working' ||
       this.status === 'needs_input' ||
@@ -1617,6 +1721,10 @@ export class Worker {
   private nextAction: WorkerAction | undefined;
   private action: WorkerAction | undefined;
   private actionT = 0;
+  /** Continuous posture and one-shot micro-reaction driven by Gemini Decision 1 on visible 3D floors. */
+  private vibePosture: WorkerVibePosture = 'steady';
+  private microReaction: { kind: WorkerMicroReaction; t: number; duration: number } | null = null;
+  private lastReactionSeq = 0;
   /** How much of each act is in its stance right now, blending from one to the next. */
   private acts = new Map<Act, number>();
   private stance = {} as Stance;
@@ -1804,6 +1912,33 @@ export class Worker {
     this.nextAction = action;
   }
 
+  /** Applies continuous desk posture and any newly sequenced high-confidence micro-reaction. */
+  applyVibe(vibe: WorkerVibeState | undefined, nowMs = Date.now()) {
+    this.vibePosture = vibe && isWorkerVibePosture(vibe.posture) ? vibe.posture : 'steady';
+    const r = vibe?.reaction;
+    if (r && r.seq > 0 && r.seq !== this.lastReactionSeq && isWorkerMicroReaction(r.kind)) {
+      this.lastReactionSeq = r.seq;
+      if (!this.microReaction && nowMs - r.at <= 10_000) this.triggerReaction(r.kind);
+    }
+  }
+
+  /** Triggers a one-shot micro-reaction over a smooth ~2s envelope without snapping limbs. */
+  triggerReaction(kind: WorkerMicroReaction) {
+    if (this.dead || this.leaving || this.dancing) return;
+    let duration = 2.0;
+    if (kind === 'breakthrough' || kind === 'puzzled') duration = 2.2;
+    else if (kind === 'fresh_breakage') duration = 2.1;
+    this.microReaction = { kind, t: 0, duration };
+  }
+
+  get activeVibePosture(): WorkerVibePosture {
+    return this.vibePosture;
+  }
+
+  get activeReaction(): WorkerMicroReaction | null {
+    return this.microReaction?.kind ?? null;
+  }
+
   /** A newly forked twin peels away from the source into its own seat. */
   splitFrom(from: THREE.Vector3) {
     this.split = { from: from.clone(), t: 0 };
@@ -1890,6 +2025,8 @@ export class Worker {
    */
   dance(stage: Stage) {
     if (this.leaving || this.dead || this.split || this.levitating !== null || this.visitPose) return;
+    this.microReaction = null;
+    this.paintBulb();
     const d = this.dancing;
     if (!d) {
       this.dancing = { stage, t: 0 };
@@ -1962,6 +2099,7 @@ export class Worker {
   /** Sent home: its light goes out, its face falls, and its things pop into a box in its arms. `farewell` goes over its head. */
   leave(farewell: string) {
     if (this.leaving) return;
+    this.microReaction = null;
     this.hush();
     this.visitPose = null;
     this.stopDancing();
@@ -2055,6 +2193,7 @@ export class Worker {
    */
   die(asleep = false) {
     if (this.dead) return;
+    this.microReaction = null;
     this.hush();
     this.visitPose = null;
     this.dead = true;
@@ -2242,8 +2381,77 @@ export class Worker {
       this.actionT = 0;
     }
     const sleeping = isAsleep(this.status);
-    const act: Act = hopping ? 'up' : (this.visitPose ?? (this.bouncing && this.status === 'done' ? 'up' : this.status === 'needs_input' ? 'waiting' : this.status === 'working' ? (this.action ?? 'type') : 'rest'));
+    let workingAct: Act = this.action ?? 'type';
+    if (this.vibePosture !== 'steady') {
+      const propCameo = (this.action === 'web' || this.action === 'read') && this.actionT < 3.2;
+      if (!propCameo) workingAct = `vibe_${this.vibePosture}`;
+    }
+    const act: Act = hopping ? 'up' : (this.visitPose ?? (this.bouncing && this.status === 'done' ? 'up' : this.status === 'needs_input' ? 'waiting' : this.status === 'working' ? workingAct : 'rest'));
     const s = this.pose(act, dt, t);
+    let asymBrow = 0;
+    let reactionBulbHex: string | null = null;
+    if (this.microReaction) {
+      const r = this.microReaction;
+      r.t += dt;
+      if (r.t >= r.duration || hopping || sleeping || this.visitPose) {
+        this.microReaction = null;
+        this.paintBulb();
+      } else {
+        const env = emoteEnvelope(r.t, r.duration);
+        if (r.kind === 'breakthrough') {
+          const pump = Math.sin(r.t * 14) * 0.24;
+          s.armLx = THREE.MathUtils.lerp(s.armLx, -2.36 - pump, env);
+          s.armRx = THREE.MathUtils.lerp(s.armRx, -2.36 + pump, env);
+          s.armLz = THREE.MathUtils.lerp(s.armLz, -0.24, env);
+          s.armRz = THREE.MathUtils.lerp(s.armRz, 0.24, env);
+          s.forearmLx = THREE.MathUtils.lerp(s.forearmLx, -0.78, env);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -0.78, env);
+          s.lean -= 0.09 * env;
+          s.lift += Math.abs(Math.sin(r.t * 8.5)) * 0.14 * env;
+          s.headX = THREE.MathUtils.lerp(s.headX, -0.12, env);
+          s.browLift = THREE.MathUtils.lerp(s.browLift, 0.009, env);
+          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 1.38, env);
+          s.mouthH = THREE.MathUtils.lerp(s.mouthH, 1.48, env);
+          s.frown = THREE.MathUtils.lerp(s.frown, 0, env);
+          reactionBulbHex = '#34d399';
+        } else if (r.kind === 'fresh_breakage') {
+          // Blend the double-take flinch into the facepalm instead of snapping at the phase boundary.
+          const slump = THREE.MathUtils.smoothstep(r.t, 0.35, 0.55);
+          s.lean = THREE.MathUtils.lerp(s.lean, THREE.MathUtils.lerp(-0.18, 0.24, slump), env);
+          s.lid = THREE.MathUtils.lerp(s.lid, THREE.MathUtils.lerp(1.22, 0.64, slump), env);
+          s.headY = THREE.MathUtils.lerp(s.headY, THREE.MathUtils.lerp(Math.sin(r.t * 26) * 0.18, Math.sin(r.t * 14) * 0.14, slump), env);
+          s.armRx = THREE.MathUtils.lerp(s.armRx, -1.84, env * slump);
+          s.armRz = THREE.MathUtils.lerp(s.armRz, -0.12, env * slump);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -1.9, env * slump);
+          s.forearmRz = THREE.MathUtils.lerp(s.forearmRz, -0.52, env * slump);
+          s.headX = THREE.MathUtils.lerp(s.headX, 0.2, env * slump);
+          s.browTilt = THREE.MathUtils.lerp(s.browTilt, -0.34, env);
+          s.frown = THREE.MathUtils.lerp(s.frown, 1, env);
+          reactionBulbHex = '#f43f5e';
+        } else if (r.kind === 'puzzled') {
+          s.headZ = THREE.MathUtils.lerp(s.headZ, 0.24, env);
+          s.headY = THREE.MathUtils.lerp(s.headY, -0.1, env);
+          s.armRx = THREE.MathUtils.lerp(s.armRx, -1.96, env);
+          s.armRz = THREE.MathUtils.lerp(s.armRz, 0.18, env);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -1.62 + Math.sin(r.t * 18) * 0.18, env);
+          s.forearmRz = THREE.MathUtils.lerp(s.forearmRz, -0.36, env);
+          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 0.68, env);
+          s.mouthH = THREE.MathUtils.lerp(s.mouthH, 0.55, env);
+          asymBrow = 0.008 * env;
+          reactionBulbHex = '#f59e0b';
+        } else if (r.kind === 'team_sync') {
+          s.turn = THREE.MathUtils.lerp(s.turn, 0.28, env);
+          s.headY = THREE.MathUtils.lerp(s.headY, 0.2, env);
+          s.headX = THREE.MathUtils.lerp(s.headX, Math.sin(r.t * 9) * 0.09, env);
+          s.armRx = THREE.MathUtils.lerp(s.armRx, -1.66, env);
+          s.armRz = THREE.MathUtils.lerp(s.armRz, 0.24, env);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -0.76 + Math.sin(r.t * 12) * 0.22, env);
+          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 1.22, env);
+          s.mouthH = THREE.MathUtils.lerp(s.mouthH, 1.25, env);
+          reactionBulbHex = '#38bdf8';
+        }
+      }
+    }
 
     this.armL.rotation.set(s.armLx, 0, s.armLz);
     this.armR.rotation.set(s.armRx, 0, s.armRz);
@@ -2269,10 +2477,14 @@ export class Worker {
     this.head.rotation.set(s.headX + sleepNod, s.headY, sleeping ? Math.sin(t * 1.2) * 0.06 : s.headZ);
     this.pupilGroups[0].position.set(PUPIL_LOCAL_L.x + s.lookX, PUPIL_LOCAL_L.y + s.look, PUPIL_LOCAL_L.z);
     this.pupilGroups[1].position.set(PUPIL_LOCAL_R.x + s.lookX, PUPIL_LOCAL_R.y + s.look, PUPIL_LOCAL_R.z);
-    this.browMeshes[0].position.set(BROW_LOCAL_L.x, BROW_LOCAL_L.y + s.browLift, BROW_LOCAL_L.z);
-    this.browMeshes[1].position.set(BROW_LOCAL_R.x, BROW_LOCAL_R.y + s.browLift, BROW_LOCAL_R.z);
+    this.browMeshes[0].position.set(BROW_LOCAL_L.x, BROW_LOCAL_L.y + s.browLift - asymBrow, BROW_LOCAL_L.z);
+    this.browMeshes[1].position.set(BROW_LOCAL_R.x, BROW_LOCAL_R.y + s.browLift + asymBrow, BROW_LOCAL_R.z);
     this.browMeshes[0].rotation.z = -s.browTilt;
     this.browMeshes[1].rotation.z = s.browTilt;
+    if (reactionBulbHex) {
+      this.bulb.mat.color.set(reactionBulbHex);
+      this.bulb.mat.emissive.set(reactionBulbHex).multiplyScalar(0.85);
+    }
     const chattering = this.speech !== null && act !== 'talk';
     const mw = sleeping ? 0.5 : s.mouthW;
     const mh = sleeping ? 0.45 + Math.sin(t * 2) * 0.12 : chattering ? 0.55 + Math.abs(Math.sin(t * 13)) * 0.9 : s.mouthH;
@@ -2304,7 +2516,10 @@ export class Worker {
     this.body.rotation.z = sleeping ? Math.sin(t * 1.5) * 0.05 : s.roll;
     this.props(t);
     this.blink(dt, sleeping ? 0.08 : s.lid);
-    this.bulbScale(this.status === 'needs_input' ? 1 + Math.abs(Math.sin(t * 8)) * 0.45 : 1);
+    let bulbPulse = 1;
+    if (this.status === 'needs_input') bulbPulse = 1 + Math.abs(Math.sin(t * 8)) * 0.45;
+    else if (reactionBulbHex) bulbPulse = 1 + Math.abs(Math.sin(t * 12)) * 0.32;
+    this.bulbScale(bulbPulse);
     const hopLift = hopping ? hopH * 0.55 : 0;
     if (this.bubble) this.bubble.position.y = (this.bubbleIsCard ? 1.74 : 1.95) + hopLift + Math.sin(t * 3) * 0.03;
     if (this.nameTag) this.nameTag.position.y = 1.55 + hopLift;

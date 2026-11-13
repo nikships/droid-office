@@ -23,6 +23,7 @@ import type {
   ClientMsg,
 } from '../shared/protocol';
 import { SUBAGENT_DEFAULTS } from '../shared/protocol';
+import { ROOF } from '../shared/rooftop';
 import { WORKER_LABEL_DEFAULTS, type WorkerLabelState } from '../shared/worker-labels';
 import { kittyImageSignature } from '../shared/kitty';
 import { decodeScreenBitmap } from './term-kitty';
@@ -35,6 +36,7 @@ import { forgeWords, type ForgeWords } from '../shared/floors';
 import type { JiraBoardState, JiraFloorState } from '../shared/jira';
 import { DEFAULT_AUTOPILOT, type LinearBoardState, type LinearFloorState } from '../shared/linear';
 import { emptyFactoryState, type FactoryState } from '../shared/factory';
+import { emptyFloorVibes, emptyGeminiState, type FloorVibesState, type GeminiConnectionState } from '../shared/gemini-vibes';
 import { emptySetupState, type SetupState } from '../shared/setup';
 import { emptySubscriptionsState, type SubscriptionsState } from '../shared/subscriptions';
 import { teamOf } from '../shared/team';
@@ -73,6 +75,8 @@ export type Topic =
   | 'linear'
   | 'linearBoard'
   | 'factory'
+  | 'gemini'
+  | 'vibes'
   | 'setup'
   | 'subscriptions'
   | 'worktreeSetup'
@@ -303,6 +307,10 @@ export class Store {
   prompts: PromptsState = { custom: {} };
   /** The office's Factory connection and every Factory feature's read state (see docs/factory.md). */
   factory: FactoryState = emptyFactoryState();
+  /** Google Gemini Decisions (`gemini-decision-1`) connection and Living 3D Studio telemetry. */
+  gemini: GeminiConnectionState = emptyGeminiState();
+  /** Living 3D worker postures, micro-reactions, monitor spill and room mood lighting on this floor. */
+  vibes: FloorVibesState | null = null;
   /** Droid installed and signed in, and whether the owner has been through the welcome (docs/subscriptions.md). */
   setup: SetupState = emptySetupState();
   /** DroidProxy, the subscriptions it serves, and which of their models can run now. */
@@ -371,11 +379,12 @@ export class Store {
     this.jiraBoard = v.jiraBoard ?? null;
     this.linear = v.linear ?? { autopilot: { ...DEFAULT_AUTOPILOT }, working: 0 };
     this.linearBoard = v.linearBoard ?? null;
+    this.vibes = v.vibes ?? (v.floor && v.floor !== ROOF ? emptyFloorVibes(v.floor) : null);
     this.decor = v.decor;
     this.worktreeSetup = null;
     // The new floor's visits follow in their own message.
     this.visits = [];
-    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jira', 'jiraBoard', 'linear', 'linearBoard', 'worktreeSetup', 'visits'] as Topic[]) this.emit(t);
+    for (const t of ['floor', 'project', 'workers', 'issues', 'pulls', 'pipelines', 'decor', 'jira', 'jiraBoard', 'linear', 'linearBoard', 'vibes', 'worktreeSetup', 'visits'] as Topic[]) this.emit(t);
   }
 
   /** When the track started on this page's clock: from the office's clock once it's known, else from `elapsed`. */
@@ -428,12 +437,14 @@ export class Store {
         this.emit('hiddenModels');
         this.prompts = msg.prompts ?? { custom: {} };
         this.factory = msg.factory ?? emptyFactoryState();
+        this.gemini = msg.gemini ?? emptyGeminiState();
         this.setup = msg.setup ?? emptySetupState();
         this.subscriptions = msg.subscriptions ?? emptySubscriptionsState();
         this.missionControl = msg.missionControl;
         this.building = new Map((msg.building ?? []).map((r) => [r.floor, { floor: r.floor, workers: [...r.workers], pulls: [...r.pulls] }]));
         this.enter(msg);
-        for (const t of ['upgrade', 'machine', 'floors', 'building', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'prompts', 'factory', 'setup', 'subscriptions', 'missionControl'] as Topic[]) this.emit(t);
+        for (const t of ['upgrade', 'machine', 'floors', 'building', 'projectsDir', 'sky', 'jukebox', 'leaveOnMerge', 'freshMain', 'subagents', 'prompts', 'factory', 'gemini', 'setup', 'subscriptions', 'missionControl'] as Topic[])
+          this.emit(t);
         break;
       case 'floor.enter':
         this.arrival = msg.arrival;
@@ -672,6 +683,15 @@ export class Store {
       case 'factory':
         this.factory = msg.state;
         this.emit('factory');
+        break;
+      case 'gemini':
+        this.gemini = msg.state;
+        this.emit('gemini');
+        break;
+      case 'vibes':
+        if (msg.state.floor !== this.floor) break;
+        this.vibes = msg.state;
+        this.emit('vibes');
         break;
       case 'setup':
         this.setup = msg.state;

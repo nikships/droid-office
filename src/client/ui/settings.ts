@@ -14,6 +14,7 @@ import { subagentModelPicker } from './subagent-models';
 import { openPromptEditor, rewrittenPrompts } from './prompts';
 import { hotReloadSettings } from './hot-reload';
 import { factoryKeySettings } from './factory-settings';
+import { geminiSettings } from './gemini-settings';
 import { subscriptionsSettings } from './subscriptions-settings';
 import { droidSettings } from './droid-settings';
 import { hiddenModelSettings } from './hidden-models';
@@ -1210,9 +1211,11 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   // ---- Connections --------------------------------------------------------------------------------
   const droid = droidSettings(net);
   const factoryKey = factoryKeySettings(net);
+  const gemini = geminiSettings(net);
   const subscriptions = subscriptionsSettings(net);
   const subscriptionGroup = group('Subscriptions', card('DroidProxy', subscriptions.proxy), card('Accounts', subscriptions.accounts), card('Models in Droid', subscriptions.models));
   subscriptions.hideWhenUnsupported(subscriptionGroup);
+  const geminiGroup = group('Google AI', card('Gemini Decisions API', gemini.card));
 
   // ---- Office & floors ----------------------------------------------------------------------------
   // Where the elevator looks for existing git projects on the office's machine.
@@ -1272,7 +1275,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       group('Visits', card('Visits between workers', { desc: visitsNote, control: visitsOn.el })),
     ],
     orchestrator: [orcBlocked, group(null, card('Orchestrator', { desc: orcNote, control: orcOn.el }), orcOptions)],
-    connections: [group('Factory', card('Droid', droid.parts), card('Factory API key', factoryKey.key)), subscriptions.unsupported, subscriptionGroup, ...(only ? [only.linear, only.jira] : [])],
+    connections: [group('Factory', card('Droid', droid.parts), card('Factory API key', factoryKey.key)), subscriptions.unsupported, subscriptionGroup, geminiGroup, ...(only ? [only.linear, only.jira] : [])],
     office: [
       group(null, card('Workspace folder', { desc: dirNote, below: [dirRow] }), ...(only?.outside ? [only.outside] : [])),
       group(
@@ -1463,6 +1466,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       for (const off of offStore) off();
       only?.dispose();
       factoryKey.dispose();
+      gemini.dispose();
       subscriptions.dispose();
       droid.dispose();
       modelVisibility.dispose();

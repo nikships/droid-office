@@ -5,7 +5,7 @@ import { FLOOR, WALL_HEIGHT } from '../../shared/layout';
 import { BAKE_BUDGET_MAX_MS, probeCount, type RenderParams, type ToneMap, whiteBalance } from '../remaster-settings';
 import { HdrPresenter } from './hdr-present';
 import { axisProbeTexture, axisProbeUniforms } from './probe-axis';
-import { CLEAR_NIGHT, remasterUniforms } from './sky';
+import { CLEAR_NIGHT, remasterUniforms, withBaselineOfficeFill } from './sky';
 import { setToonRamp } from './toon';
 import { surfaceUniforms } from './surface';
 
@@ -204,6 +204,8 @@ export class ProbeGI {
   paused = false;
   /** What changes from one floor to the next: hidden while the probes are baked. */
   hideWhileBaking: () => THREE.Object3D[] = () => [];
+  /** Overhead lights brightness (0–1) so probe bakes ignore transient runtime floor moods. */
+  overhead = 1;
   /** How long a bake slice may take of each frame, in ms of the main thread (`bakeBudget` for the frame rate limit). */
   budgetMs = BAKE_BUDGET_MAX_MS;
   private spacing: number | null = null;
@@ -334,7 +336,7 @@ export class ProbeGI {
     const surface = surfaceUniforms.rmSurface.value;
     surfaceUniforms.rmSurface.value = 0;
     try {
-      bake();
+      withBaselineOfficeFill(this.overhead, bake);
     } finally {
       surfaceUniforms.rmSurface.value = surface;
       hide.forEach((o, i) => {

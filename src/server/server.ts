@@ -86,6 +86,8 @@ import type { RemoteMcpState } from '../shared/remote-mcp.js';
 import { Orchestrator } from './orchestrator.js';
 import { missionTeam, type BuildingAgents } from './building-agent.js';
 import { buildWorkerInspection, inspectTerminalRetry } from './worker-status.js';
+import { GeminiDecisionsStore } from './gemini-decisions.js';
+import { OfficeVibes, type VibesFloorView } from './office-vibes.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -655,6 +657,32 @@ export async function startServer(cfg: Config) {
     changed: (state) => broadcast({ t: 'workerLabels', state }),
   });
 
+  const geminiStore = new GeminiDecisionsStore(cfg.dataDir);
+  const vibesFloorView = (f: Floor): VibesFloorView => ({
+    id: f.id,
+    name: f.def.name,
+    workers: f.everyone(),
+    pulls: f.board.pulls.items,
+    pipelines: f.pipelines.state,
+    tail: (workerId, lines) => f.workers.tail(workerId, lines),
+  });
+  let isAirgapped = () => false;
+  const officeVibes = new OfficeVibes({
+    store: geminiStore,
+    airgapped: () => isAirgapped(),
+    clients: () => clients.values(),
+    floors: () => [...floors.values()].map(vibesFloorView),
+    floor: (id) => {
+      const f = floors.get(id);
+      return f ? vibesFloorView(f) : undefined;
+    },
+    broadcastGemini: (state) => broadcast({ t: 'gemini', state }),
+    emitFloorVibes: (floorId, state) => {
+      const f = floors.get(floorId);
+      if (f) toFloor(f, { t: 'vibes', state });
+    },
+  });
+
   // Droid installed and signed in, and the welcome a fresh office opens with (docs/subscriptions.md).
   const setup = mountSetup({
     dataDir: cfg.dataDir,
@@ -667,6 +695,7 @@ export async function startServer(cfg: Config) {
       factory.setPaused(on);
       droidModels.forget();
       workerLabels.settingsChanged();
+      officeVibes.syncViewers(!on);
     },
     broadcast: (state) => {
       broadcast({ t: 'setup', state });
@@ -895,6 +924,7 @@ export async function startServer(cfg: Config) {
   }
 
   /** Everything on a floor, for whoever just arrived there. */
+  isAirgapped = () => Boolean(setup.state().airgapped);
   const floorView = (floor: Floor | undefined): FloorView => ({
     floor: floor?.id ?? null,
     project: floor?.project ?? null,
@@ -907,6 +937,7 @@ export async function startServer(cfg: Config) {
     jiraBoard: floor?.jira.board ?? null,
     linear: floor?.linear.state() ?? { connection: linear.connection(), autopilot: DEFAULT_AUTOPILOT, working: 0 },
     linearBoard: floor?.linear.board ?? null,
+    ...(floor ? { vibes: officeVibes.floorState(floor.id) } : {}),
   });
   /** The roof: nobody works up there, so it has none of a floor's things. */
   const roofView = (): FloorView => ({ ...floorView(undefined), floor: ROOF });
@@ -1781,6 +1812,7 @@ export async function startServer(cfg: Config) {
       workerAnswerMultiSelect: true,
       prompts: prompts.state(),
       factory: factory.state(),
+      gemini: officeVibes.geminiState(),
       setup: setup.state(),
       subscriptions: subscriptions.state(),
       missionControl: missionState(),
@@ -1820,6 +1852,7 @@ export async function startServer(cfg: Config) {
         f.changes.unwatchAll(id);
       }
       factory.drop(id);
+      officeVibes.dropClient(id);
       floorsChanged();
     });
     ws.on('error', () => ws.terminate());
@@ -1921,6 +1954,7 @@ export async function startServer(cfg: Config) {
     sendTo(c, { t: 'visits', visits: floor.visits.list() });
     floor.arrived();
     floor.workers.wakeAll();
+    officeVibes.syncViewers(true);
     floorsChanged();
   };
 
@@ -1931,6 +1965,7 @@ export async function startServer(cfg: Config) {
     c.floor = ROOF;
     const spot = left.spot;
     sendTo(c, { t: 'floor.enter', arrival: { floor: ROOF, at: { x: spot.x, y: spot.y, z: spot.z, rotY: spot.rotY }, via: 'elevator' }, ...roofView() });
+    officeVibes.syncViewers(false);
     floorsChanged();
   };
 
@@ -1939,6 +1974,7 @@ export async function startServer(cfg: Config) {
     leave(c);
     c.floor = null;
     sendTo(c, { t: 'floor.enter', arrival: { floor: null, via: 'lobby' }, ...floorView(undefined) });
+    officeVibes.syncViewers(false);
   };
 
   /**
@@ -1960,6 +1996,7 @@ export async function startServer(cfg: Config) {
       } else sendTo(c, { t: 'toast', text: `🛗 ${who} took ${name} off the building`, level: 'info' });
     }
     floors.delete(floor.id);
+    officeVibes.dropFloor(floor.id);
     remoteOffice.syncWatches();
     floor.shutdown();
     floorsChanged();
@@ -3054,6 +3091,30 @@ export async function startServer(cfg: Config) {
       case 'factory.watch':
         factory.message(c.id, who, msg, (reply) => sendTo(c, reply));
         break;
+      case 'gemini.connect':
+        void officeVibes.connect(str(msg.key, 512), who, (reply) => sendTo(c, reply)).catch(() => sendTo(c, { t: 'gemini.setup', ok: false, error: 'Gemini connection check failed.' }));
+        break;
+      case 'gemini.disconnect': {
+        const err = officeVibes.disconnect();
+        if (err) return stop(err);
+        toastAll(`${who} disconnected Gemini Decisions`);
+        done();
+        break;
+      }
+      case 'gemini.check':
+        void officeVibes.check((reply) => sendTo(c, reply)).catch(() => sendTo(c, { t: 'gemini.setup', ok: false, error: 'Gemini connection check failed.' }));
+        break;
+      case 'gemini.vibes': {
+        if (typeof msg.on !== 'boolean') return stop('Send {"on": true} or {"on": false}.');
+        const err = officeVibes.setVibesOn(msg.on);
+        if (err) return stop(err);
+        done();
+        break;
+      }
+      case 'vibes.watch':
+        if (typeof msg.active !== 'boolean') return stop('Send {"active": true} or {"active": false}.');
+        if (!c.dashboard) officeVibes.setWatching(c.id, msg.active);
+        break;
       case 'setup.check':
         setup.message(who, msg);
         subscriptions.message(who, { t: 'subscriptions.refresh' });
@@ -3436,6 +3497,7 @@ export async function startServer(cfg: Config) {
     machine.stop();
     sky.stop();
     factory.stop();
+    officeVibes.stop();
     setup.stop();
     subscriptions.stop();
     for (const f of floors.values()) f.shutdown(keep);
