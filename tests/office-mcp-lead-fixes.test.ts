@@ -193,8 +193,14 @@ test('overlapping webhook runs read payload-scoped office_inbox items, see acked
 
   // Webhook delivery #2: queued direct message + Byte's report in a concurrent batch.
   now += 1000;
-  assert.equal(office.tell(grok.worker.id, 'Owner note: hold deploy until Friday.', 'alpha'), undefined);
-  await sub2.callTool({ name: 'team_report', arguments: { text: 'Task B finished cleanly.' } });
+  // Hold the debounce clock until the network report flushes the batch, regardless of HTTP latency.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    assert.equal(office.tell(grok.worker.id, 'Owner note: hold deploy until Friday.', 'alpha'), undefined);
+    await sub2.callTool({ name: 'team_report', arguments: { text: 'Task B finished cleanly.' } });
+  } finally {
+    t.mock.timers.reset();
+  }
   assert.equal(deliveries.length, 2);
   const post2 = deliveries[1];
   assert.match(String(post2.deliveryId), /^whk-[0-9a-f]{16}$/);
