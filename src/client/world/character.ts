@@ -14,7 +14,8 @@ import { Muzzle, SPIN_AT, disposeGun, magnum, setCylinder } from './gun';
 import type { GunPose } from './gun-motion';
 import { glyphFlat } from './glyph3d';
 import { isTeamKitGeometry, setTeamKitModel, TeamKit } from './team-kit';
-import { cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, toon, toonUnique } from './toon';
+import { ANISOTROPY } from './texture-quality';
+import { beveledBox, cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, toon, toonUnique } from './toon';
 import { mergeWorkerPaint, type WorkerPart } from './worker-parts';
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
@@ -1037,23 +1038,23 @@ function stanceOf(act: Act, t: number, seated: boolean, s: Stance): Stance {
       s.lift = Math.abs(Math.sin(t * 17)) * 0.02;
       break;
     case 'read': {
-      // Cradling the bound stack of papers in front of the visor, pupils scanning across each line.
+      // Both hands pinching the sides of the clipboard notepad below visor height, pupils scanning across each line.
       const lineFrac = (t * 0.85) % 1;
-      s.armLx = s.armRx = -1.22;
-      s.armLz = 0.14;
-      s.armRz = -0.14;
-      s.forearmLx = s.forearmRx = -0.74;
-      s.forearmLz = 0.22;
-      s.forearmRz = -0.22;
-      s.reach = 0.2;
-      s.lean = -0.04;
-      s.headX = 0.14;
-      s.headZ = -0.05;
-      s.lookX = (lineFrac - 0.5) * 0.014;
-      s.look = -0.006 - Math.floor((t * 0.85) % 4) * 0.004;
+      s.armLx = s.armRx = -0.88;
+      s.armLz = 0.13;
+      s.armRz = -0.13;
+      s.forearmLx = s.forearmRx = -1.16;
+      s.forearmLz = 0.28;
+      s.forearmRz = -0.28;
+      s.reach = 0.15;
+      s.lean = -0.05;
+      s.headX = 0.19;
+      s.headZ = -0.04;
+      s.lookX = (0.5 - lineFrac) * 0.014;
+      s.look = -0.008 - Math.floor((t * 0.85) % 4) * 0.004;
       s.browLift = 0.006;
-      s.mouthW = 0.75;
-      s.mouthH = 0.65;
+      s.mouthW = 0.78;
+      s.mouthH = 0.68;
       break;
     }
     case 'test':
@@ -1286,28 +1287,87 @@ const ease = (x: number) => x * x * (3 - 2 * x);
 /** 0 → 1 with a little overshoot, for props popping in. */
 const popIn = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 + 2.7 * (x - 1) ** 3 + 1.7 * (x - 1) ** 2);
 
-/** A stack of papers held up to read, bound at the top. The sheets face -z. */
+let notepadMats: {
+  board: THREE.MeshToonMaterial;
+  edge: THREE.MeshToonMaterial;
+  print: THREE.MeshToonMaterial;
+  clip: THREE.MeshToonMaterial;
+  tab: THREE.MeshToonMaterial;
+} | null = null;
+
+/** Shared materials for the worker's clipboard notepad, with a crisp ruled sheet drawn once onto a canvas texture. */
+function notepadMaterials() {
+  if (notepadMats) return notepadMats;
+  const W = 256;
+  const H = 320;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const g = canvas.getContext('2d')!;
+  g.fillStyle = '#fbf7ec';
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = '#efe9da';
+  g.fillRect(0, 0, W, 28);
+  g.fillStyle = '#d4ccba';
+  g.fillRect(0, 27, W, 2);
+  g.fillStyle = '#e3ddd0';
+  for (let y = 60; y < H - 14; y += 22) g.fillRect(14, y, W - 28, 2);
+  g.fillStyle = '#eb8c7f';
+  g.fillRect(40, 29, 2, H - 41);
+  g.fillStyle = '#ee6018';
+  g.fillRect(18, 41, 14, 12);
+  g.fillStyle = '#252830';
+  g.fillRect(48, 42, 114, 10);
+  let seed = 19;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let row = 0, y = 73; y < H - 22; row++, y += 22) {
+    if (row === 4) continue;
+    const end = row === 3 || row === 8 ? 110 + rand() * 55 : W - 22 - rand() * 24;
+    g.fillStyle = row === 0 || row === 5 ? '#ee6018' : '#8a93a6';
+    g.fillRect(22, y + 1, 8, 6);
+    g.fillStyle = row % 3 === 0 ? '#353b48' : '#586070';
+    for (let x = 48; x < end - 8; ) {
+      const w = Math.min(14 + rand() * 32, end - x);
+      g.fillRect(x, y, w, 7);
+      x += w + 7;
+    }
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = ANISOTROPY;
+  const print = toonUnique('#ffffff');
+  print.map = tex;
+  print.emissive = new THREE.Color('#46433c');
+  print.userData.outlineParameters = { visible: false };
+  const edge = toonUnique('#e8e1d3');
+  edge.emissive = new THREE.Color('#2a2824');
+  edge.userData.outlineParameters = { visible: false };
+  const tab = toonUnique('#d8dee6');
+  tab.userData.outlineParameters = { visible: false };
+  notepadMats = {
+    board: toon('#b58050'),
+    edge,
+    print,
+    clip: toon('#b8c0c8'),
+    tab,
+  };
+  return notepadMats;
+}
+
+/** A clipboard notepad held in both hands: hardboard backing (+z), ruled paper pad (-z, facing the visor), and top steel clip. */
 function papers(): { group: THREE.Group } {
   const group = new THREE.Group();
-  const W = 0.27;
-  const H = 0.32;
-  const paper = toon('#fffaf3');
-  const ink = toon('#8d99ae');
-  ['#f1ece2', '#f7f3ea', '#fffaf3'].forEach((c, i) => {
-    const sheet = mesh(new THREE.BoxGeometry(W, H, 0.008), toon(c), (i - 1) * 0.01, -H / 2 - i * 0.005, 0.018 - i * 0.01);
-    sheet.rotation.z = (i - 1) * 0.04;
-    group.add(sheet);
-  });
-  const lines = (on: THREE.Object3D, z: number) => {
-    for (let i = 0; i < 6; i++) {
-      const short = i % 3 === 2;
-      on.add(mesh(new THREE.BoxGeometry(W * (short ? 0.45 : 0.72), 0.014, 0.004), ink, short ? -W * 0.135 : 0, -0.055 - i * 0.04, z));
-    }
-  };
-  lines(group, -0.01);
-  group.add(mesh(new THREE.BoxGeometry(W, H, 0.008), paper, 0, -H / 2, -0.016));
-  lines(group, -0.022);
-  group.add(mesh(new THREE.BoxGeometry(W * 0.5, 0.04, 0.042), toon('#adb5bd'), 0, 0, 0));
+  group.name = 'worker-notepad';
+  const BW = 0.22;
+  const BH = 0.264;
+  const { board, edge, print, clip, tab } = notepadMaterials();
+  group.add(mesh(beveledBox(BW, BH, 0.006, 0.0025), board, 0, 0, 0.003));
+  // Box faces go +x, -x, +y, -y, +z, -z: the printed sheet faces -z toward the worker's visor.
+  const pad = new THREE.Mesh(new THREE.BoxGeometry(BW - 0.022, BH - 0.022, 0.005), [edge, edge, edge, edge, edge, print]);
+  pad.position.set(0, -0.003, -0.0025);
+  group.add(pad);
+  group.add(mesh(beveledBox(0.088, 0.024, 0.015, 0.0025), clip, 0, BH / 2 - 0.012, 0.0005));
+  group.add(mesh(beveledBox(0.034, 0.013, 0.01, 0.002), tab, 0, BH / 2 + 0.003, 0.001));
   return { group };
 }
 
@@ -1826,10 +1886,10 @@ export class Worker {
     setupLeg(this.thighL, this.upperLegL, this.shinL, this.lowerLegL, this.footL, WORKER_PIVOTS.thighL, SHIN_LOCAL_L, FOOT_LOCAL_L);
     setupLeg(this.thighR, this.upperLegR, this.shinR, this.lowerLegR, this.footR, WORKER_PIVOTS.thighR, SHIN_LOCAL_R, FOOT_LOCAL_R);
 
-    // What it acts out with: papers in its hands, and a globe beside its laptop.
+    // What it acts out with: a clipboard notepad in its hands, and a globe beside its laptop.
     this.papers = papers();
-    this.papers.group.position.set(0, 1.13, 0.3);
-    this.papers.group.rotation.x = 0.24;
+    this.papers.group.position.set(0, 0.94, 0.364);
+    this.papers.group.rotation.x = 0.54;
     this.body.add(this.papers.group);
     this.globe = globe();
     for (const prop of [this.papers.group, this.globe.group]) prop.visible = false;
