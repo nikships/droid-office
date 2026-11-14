@@ -150,12 +150,7 @@ export function openFilePreviewModal(opts: FilePreviewOptions): Modal {
       const [res] = await Promise.all([fetch(url, { signal: controller.signal }), preloadCodeLanguage(opts.path)]);
       if (controller.signal.aborted || !win.isConnected) return;
 
-      let json: unknown = null;
-      try {
-        json = await res.json();
-      } catch {
-        json = null;
-      }
+      const json: unknown = await res.json().catch(() => null);
       if (controller.signal.aborted || !win.isConnected) return;
 
       const parsed = normalizeFilePreviewResponse(json, opts.path);
@@ -215,7 +210,8 @@ export function openFilePreviewModal(opts: FilePreviewOptions): Modal {
 
       const table = h('table.wt-file-lines', {}, tbody);
       const scroller = h('div.wt-file-scroll', { tabindex: 0, 'aria-label': `Contents of ${parsed.path}` }, table);
-      body.replaceChildren(...([banner, scroller].filter(Boolean) as HTMLElement[]));
+      if (banner) body.replaceChildren(banner, scroller);
+      else body.replaceChildren(scroller);
 
       const shownCount = parsed.totalLines ?? parsed.lines.length;
       metaEl.textContent = [`${shownCount} line${shownCount === 1 ? '' : 's'}`, sizeText, parsed.truncated ? 'truncated' : ''].filter(Boolean).join(' · ');

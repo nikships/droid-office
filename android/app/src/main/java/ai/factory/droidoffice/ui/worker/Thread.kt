@@ -1394,13 +1394,9 @@ private fun formatDiffLines(lines: List<ThreadDiffLine>): AnnotatedString {
                 return@forEachIndexed
             }
             when (line.kind) {
-                DiffLineKind.Hunk -> {
-                    withStyle(SpanStyle(color = Palette.Info)) {
-                        append("$blankNum $blankNum   $clean")
-                    }
-                }
-                DiffLineKind.Note -> {
-                    withStyle(SpanStyle(color = Palette.TextSecondary)) {
+                DiffLineKind.Hunk, DiffLineKind.Note -> {
+                    val gutter = if (line.kind == DiffLineKind.Hunk) Palette.Info else Palette.TextSecondary
+                    withStyle(SpanStyle(color = gutter)) {
                         append("$blankNum $blankNum   $clean")
                     }
                 }

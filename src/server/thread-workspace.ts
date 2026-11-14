@@ -87,14 +87,15 @@ async function walkWorkspace(root: string): Promise<{ files: string[]; dirs: str
   const files: string[] = [];
   const seenDirs = new Set<string>();
   const queue: [string, number][] = [['', 0]];
+  let head = 0;
   let truncated = false;
 
-  while (queue.length) {
+  while (head < queue.length) {
     if (files.length >= MAX_EMPTY_QUERY_RESULTS) {
       truncated = true;
       break;
     }
-    const [rel, depth] = queue.shift()!;
+    const [rel, depth] = queue[head++];
     let entries: Dirent[];
     try {
       entries = await readdir(path.join(root, rel), { withFileTypes: true });
@@ -294,8 +295,10 @@ export class WorkspaceTexts {
         const stamp = `${info.ino}:${info.size}:${info.mtimeMs}`;
         stamps.push(`${filePath}@${stamp}`);
         const hit = this.cache.get(resolved.abs);
-        let text = hit?.stamp === stamp ? hit.text : undefined;
-        if (hit?.stamp !== stamp) {
+        let text: string | undefined;
+        if (hit?.stamp === stamp) {
+          text = hit.text;
+        } else {
           const raw = await readFile(resolved.abs).catch(() => undefined);
           text = raw && !isBinaryBuffer(raw) ? raw.toString('utf8') : undefined;
           this.remember(resolved.abs, stamp, text);

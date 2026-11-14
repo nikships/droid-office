@@ -231,8 +231,7 @@ function aggregateExploreActionsLabel(actions: readonly ThreadModelAction[]): st
     const pair = EXPLORE_COUNTS[kind] ?? EXPLORE_COUNTS.other;
     return count === 1 ? pair[0] : pair[1].replace('%d', String(count));
   });
-  const folded = new Set(entries.slice(3).map(([kind]) => kind));
-  const more = counted.filter((a) => folded.has(a.category)).length;
+  const more = entries.slice(3).reduce((total, [, count]) => total + count, 0);
   if (more) parts.push(`${more} more`);
   return parts.join(' · ') || 'Thought';
 }
@@ -252,11 +251,17 @@ export function summarizeExplorationBlocks(blocks: readonly ThreadBlock[], rowLi
   }
 
   const allActions = toolBlocks.flatMap((b) => b.actions);
-  const label = toolBlocks.length === 1 ? toolBlocks[0].label : toolBlocks.every((b) => b.label === 'Earlier tools') ? 'Earlier tools' : aggregateExploreActionsLabel(allActions);
+  let label: string;
+  if (toolBlocks.length === 1) label = toolBlocks[0].label;
+  else if (toolBlocks.every((b) => b.label === 'Earlier tools')) label = 'Earlier tools';
+  else label = aggregateExploreActionsLabel(allActions);
 
   const cancelled = allActions.filter((a) => a.state === 'cancelled' && !a.causedBy).length;
   const noResult = allActions.filter((a) => a.state === 'incomplete').length;
-  const status = [cancelled ? `${cancelled} cancelled` : '', noResult ? `${noResult} no result` : ''].filter(Boolean).join(' · ');
+  const statusParts: string[] = [];
+  if (cancelled) statusParts.push(`${cancelled} cancelled`);
+  if (noResult) statusParts.push(`${noResult} no result`);
+  const status = statusParts.join(' · ');
 
   return {
     label,
@@ -296,7 +301,8 @@ export function renderToolDisclosure(item: ThreadModelAction, entry: ThreadEntry
   const images = entry ? pictures(entry, item.title, item.detail, owner) : null;
   const output = entry && images ? threadOutputText(entry) : entry?.output;
   const argText = entry && item.arguments ? threadArgumentsText(entry.input, item.arguments) : '';
-  const argLang = item.arguments?.field === 'command' ? 'sh' : item.arguments?.field === 'patch' || item.arguments?.field === 'input' ? 'diff' : item.detail;
+  const argField = item.arguments?.field;
+  const argLang = argField === 'command' ? 'sh' : argField === 'patch' || argField === 'input' ? 'diff' : item.detail;
 
   const details = h(
     'details.wt-tool',
@@ -413,7 +419,7 @@ export function renderFileChangeCard(action: ThreadModelAction, entry: ThreadEnt
 
     const kindBadge = change.kind === 'added' ? h('span.wt-change-kind.is-added', {}, 'Added') : change.kind === 'deleted' ? h('span.wt-change-kind.is-deleted', {}, 'Deleted') : null;
     const genBadge = change.generated ? h('span.wt-change-gen', {}, 'Generated') : null;
-    const stats = h('span.wt-diff-stats', { 'aria-label': `${change.additions} additions, ${change.deletions} deletions` }, h('span.wt-diff-add', {}, `+${change.additions}`), h('span.wt-diff-del', {}, `-${change.deletions}`));
+    const stats = diffStats(change.additions, change.deletions);
     const statePill = action.changes!.length === 1 ? cardStatePill(action.state) : null;
 
     const summary = h('summary.wt-change-summary', {}, h('span.wt-change-head-main', {}, pathEl, kindBadge, genBadge), stats, statePill, chevronNode());

@@ -84,8 +84,9 @@ export function rankWorkspacePaths(files: readonly string[], dirs: readonly stri
   const seenDirs = new Set<string>();
   const seenFiles = new Set<string>();
 
+  const toSlashPath = (raw: string): string => raw.trim().replace(/\\/g, '/');
   for (const rawDir of dirs) {
-    const trimmed = rawDir.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+    const trimmed = toSlashPath(rawDir).replace(/^\.\//, '');
     if (!trimmed) continue;
     const withSlash = trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
     if (seenDirs.has(withSlash)) continue;
@@ -94,7 +95,7 @@ export function rankWorkspacePaths(files: readonly string[], dirs: readonly stri
   }
 
   for (const rawFile of files) {
-    const trimmed = rawFile.trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+    const trimmed = toSlashPath(rawFile).replace(/^\.\//, '').replace(/\/+$/, '');
     if (!trimmed || seenFiles.has(trimmed)) continue;
     seenFiles.add(trimmed);
     candidates.push({ path: trimmed, kind: 'file' });
@@ -102,7 +103,7 @@ export function rankWorkspacePaths(files: readonly string[], dirs: readonly stri
 
   if (!candidates.length) return [];
 
-  const rawQuery = query.trim().replace(/^@+/, '').replace(/\\/g, '/').replace(/^\.\//, '');
+  const rawQuery = toSlashPath(query).replace(/^@+/, '').replace(/^\.\//, '');
 
   if (!rawQuery) {
     return [...candidates]
@@ -157,7 +158,8 @@ export function applyMention(value: string, start: number, end: number, picked: 
   const s = Math.max(0, Math.min(value.length, Math.trunc(start)));
   const e = Math.max(s, Math.min(value.length, Math.trunc(end)));
   const clean = picked.trim().replace(/^@+/, '');
-  const prefix = value[s] === '@' ? '@' : s > 0 && value[s - 1] === '@' ? '' : '@';
+  let prefix = '@';
+  if (value[s] !== '@' && s > 0 && value[s - 1] === '@') prefix = '';
   const isDir = clean.endsWith('/');
 
   if (isDir) {

@@ -358,7 +358,12 @@ object TexMath {
         return if (layout(tex, Shift.None, bold = false, upright = false, out, 0)) merge(out) else null
     }
 
-    private fun simple(src: String): Boolean = src.trim().length == 1 || Regex("""^\\?[A-Za-z]+$|^\d+(\.\d+)?$""").matches(src.trim())
+    private val simpleArg = Regex("""^\\?[A-Za-z]+$|^\d+(\.\d+)?$""")
+
+    private fun simple(src: String): Boolean {
+        val trimmed = src.trim()
+        return trimmed.length == 1 || simpleArg.matches(trimmed)
+    }
 
     private fun layout(src: String, shift: Shift, bold: Boolean, upright: Boolean, out: MutableList<Run>, depth: Int): Boolean {
         if (depth > 8) return false
@@ -483,7 +488,7 @@ object TexMath {
         for (r in runs) {
             if (r.text.isEmpty()) continue
             val last = out.lastOrNull()
-            if (last != null && last.copy(text = "") == r.copy(text = "")) out[out.size - 1] = last.copy(text = last.text + r.text) else out += r
+            if (last != null && last.shift == r.shift && last.italic == r.italic && last.bold == r.bold) out[out.size - 1] = last.copy(text = last.text + r.text) else out += r
         }
         return out
     }

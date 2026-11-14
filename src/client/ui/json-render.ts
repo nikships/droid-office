@@ -318,9 +318,33 @@ function buildLoadingCard(): HTMLElement {
   return h('div.jr-root.wt-json-loading', { role: 'status', 'aria-live': 'polite' }, h('span.spinner', { 'aria-hidden': 'true' }), h('span.wt-json-loading-label', {}, 'Rendering widget…'));
 }
 
+// Maps rather than object literals: these keys come from model output, and `toString` or `constructor` must not resolve.
+const BOX_DIRECTIONS = new Map([
+  ['row', 'jr-row'],
+  ['row-reverse', 'jr-row-reverse'],
+  ['column-reverse', 'jr-col-reverse'],
+]);
+const TREND_MARKS = new Map<string, [cls: string, label: string, glyph: string]>([
+  ['up', ['is-up', 'Trend up', '↑']],
+  ['down', ['is-down', 'Trend down', '↓']],
+  ['flat', ['is-flat', 'Trend flat', '→']],
+  ['neutral', ['is-flat', 'Trend flat', '→']],
+]);
+const TIMELINE_STATUS = new Map<string, 'done' | 'active' | 'error'>([
+  ['completed', 'done'],
+  ['done', 'done'],
+  ['success', 'done'],
+  ['in_progress', 'active'],
+  ['active', 'active'],
+  ['working', 'active'],
+  ['current', 'active'],
+  ['error', 'error'],
+  ['failed', 'error'],
+]);
+
 function renderBox(props: Record<string, unknown>, childNodes: HTMLElement[]): HTMLElement {
   const dirRaw = typeof props.flexDirection === 'string' ? props.flexDirection.trim().toLowerCase() : 'column';
-  const dirCls = dirRaw === 'row' ? 'jr-row' : dirRaw === 'row-reverse' ? 'jr-row-reverse' : dirRaw === 'column-reverse' ? 'jr-col-reverse' : 'jr-col';
+  const dirCls = BOX_DIRECTIONS.get(dirRaw) ?? 'jr-col';
   const el = h(`div.jr-box.${dirCls}` as `div.${string}`, {}, ...childNodes);
   applySpaceProp(el, props.padding, 'pad');
   applySpaceProp(el, props.gap, 'gap');
@@ -596,14 +620,8 @@ function renderMetric(props: Record<string, unknown>): HTMLElement | null {
   const value = textScalar(props.value);
   if ((label === null || !label.trim()) && (value === null || !value.trim())) return null;
   const rawTrend = typeof props.trend === 'string' ? props.trend.trim().toLowerCase() : '';
-  const trendNode =
-    rawTrend === 'up'
-      ? h('span.jr-metric-trend.is-up', { 'aria-label': 'Trend up' }, '↑')
-      : rawTrend === 'down'
-        ? h('span.jr-metric-trend.is-down', { 'aria-label': 'Trend down' }, '↓')
-        : rawTrend === 'flat' || rawTrend === 'neutral'
-          ? h('span.jr-metric-trend.is-flat', { 'aria-label': 'Trend flat' }, '→')
-          : null;
+  const trend = TREND_MARKS.get(rawTrend);
+  const trendNode = trend ? h(`span.jr-metric-trend.${trend[0]}` as `span.${string}`, { 'aria-label': trend[1] }, trend[2]) : null;
 
   return h('div.jr-metric', {}, label ? h('span.jr-metric-label', {}, label) : null, h('div.jr-metric-main', {}, value !== null ? h('span.jr-metric-value', {}, value) : null, trendNode));
 }
@@ -639,14 +657,7 @@ function renderTimeline(props: Record<string, unknown>): HTMLElement | null {
     if (!title?.trim()) continue;
     const desc = textScalar(raw.description);
     const rawStatus = typeof raw.status === 'string' ? raw.status.trim().toLowerCase() : 'pending';
-    const status =
-      rawStatus === 'completed' || rawStatus === 'done' || rawStatus === 'success'
-        ? 'done'
-        : rawStatus === 'in_progress' || rawStatus === 'active' || rawStatus === 'working' || rawStatus === 'current'
-          ? 'active'
-          : rawStatus === 'error' || rawStatus === 'failed'
-            ? 'error'
-            : 'pending';
+    const status = TIMELINE_STATUS.get(rawStatus) ?? 'pending';
     rows.push(
       h(`li.jr-timeline-item.is-${status}` as `li.${string}`, {}, h('span.jr-timeline-dot', { 'aria-hidden': 'true' }), h('div.jr-timeline-content', {}, h('b.jr-timeline-title', {}, title), desc ? h('p.jr-timeline-desc', {}, desc) : null)),
     );

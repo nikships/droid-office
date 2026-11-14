@@ -34,7 +34,6 @@ object WorkspaceMention {
         var start = pos
         while (start > 0 && !value[start - 1].isWhitespace()) start--
         if (start >= pos || value[start] != '@') return null
-        if (start > 0 && !value[start - 1].isWhitespace()) return null
         var end = pos
         while (end < value.length && !value[end].isWhitespace()) end++
         val query = value.substring(start + 1, pos)
@@ -77,6 +76,8 @@ object WorkspaceMention {
 
     private fun clean(item: Item) = if (item.kind == Kind.Dir) item.path.dropLast(1) else item.path
 
+    private fun normalize(raw: String): String = raw.trim().replace('\\', '/').removePrefix("./")
+
     /**
      * The worker's files and folders for an `@<query>`: a bare `@` lists top-level folders and root
      * files first; a query ending in `/` lists that folder's children, nearest first; anything else
@@ -88,14 +89,14 @@ object WorkspaceMention {
         val seenDirs = HashSet<String>()
         val seenFiles = HashSet<String>()
         for (raw in dirs) {
-            val trimmed = raw.trim().replace('\\', '/').removePrefix("./")
+            val trimmed = normalize(raw)
             if (trimmed.isEmpty()) continue
             val withSlash = if (trimmed.endsWith('/')) trimmed else "$trimmed/"
             if (!seenDirs.add(withSlash)) continue
             candidates += Item(withSlash, Kind.Dir)
         }
         for (raw in files) {
-            val trimmed = raw.trim().replace('\\', '/').removePrefix("./").trimEnd('/')
+            val trimmed = normalize(raw).trimEnd('/')
             if (trimmed.isEmpty() || !seenFiles.add(trimmed)) continue
             candidates += Item(trimmed, Kind.File)
         }

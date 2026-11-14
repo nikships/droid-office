@@ -78,8 +78,8 @@ function uniqueMathPrefix(src: string): string {
   return prefix;
 }
 
-function matchFenceOpen(src: string, lineStart: number, lineEnd: number): { ch: '`' | '~'; len: number } | null {
-  let i = lineStart;
+function skipFenceIndent(src: string, pos: number, lineEnd: number): number {
+  let i = pos;
   while (i < lineEnd) {
     let spaces = 0;
     while (i < lineEnd && src[i] === ' ' && spaces < 3) {
@@ -93,6 +93,11 @@ function matchFenceOpen(src: string, lineStart: number, lineEnd: number): { ch: 
     }
     break;
   }
+  return i;
+}
+
+function matchFenceOpen(src: string, lineStart: number, lineEnd: number): { ch: '`' | '~'; len: number } | null {
+  let i = skipFenceIndent(src, lineStart, lineEnd);
   if (i >= lineEnd) return null;
   const ch = src[i];
   if (ch !== '`' && ch !== '~') return null;
@@ -107,20 +112,7 @@ function matchFenceOpen(src: string, lineStart: number, lineEnd: number): { ch: 
 }
 
 function isFenceClose(src: string, lineStart: number, lineEnd: number, fence: { ch: '`' | '~'; len: number }): boolean {
-  let i = lineStart;
-  while (i < lineEnd) {
-    let spaces = 0;
-    while (i < lineEnd && src[i] === ' ' && spaces < 3) {
-      i++;
-      spaces++;
-    }
-    if (i < lineEnd && src[i] === '>') {
-      i++;
-      if (i < lineEnd && src[i] === ' ') i++;
-      continue;
-    }
-    break;
-  }
+  let i = skipFenceIndent(src, lineStart, lineEnd);
   let count = 0;
   while (i < lineEnd && src[i] === fence.ch) {
     count++;

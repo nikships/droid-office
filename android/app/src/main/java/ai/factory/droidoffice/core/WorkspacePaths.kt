@@ -73,18 +73,11 @@ object WorkspacePaths {
         var work = raw
         var line: Long? = null
         var endLine: Long? = null
-        val hash = hashLine.find(work)
-        if (hash != null) {
-            line = hash.groupValues[1].toLongOrNull()
-            hash.groupValues[2].takeIf { it.isNotEmpty() }?.toLongOrNull()?.let { endLine = maxOf(line ?: 0, it) }
-            work = work.substring(0, hash.range.first)
-        } else {
-            val colon = colonLine.find(work)
-            if (colon != null) {
-                line = colon.groupValues[1].toLongOrNull()
-                colon.groupValues[2].takeIf { it.isNotEmpty() }?.toLongOrNull()?.let { endLine = maxOf(line ?: 0, it) }
-                work = work.substring(0, colon.range.first)
-            }
+        val suffix = hashLine.find(work) ?: colonLine.find(work)
+        if (suffix != null) {
+            line = suffix.groupValues[1].toLongOrNull()
+            suffix.groupValues[2].takeIf { it.isNotEmpty() }?.toLongOrNull()?.let { endLine = maxOf(line ?: 0, it) }
+            work = work.substring(0, suffix.range.first)
         }
         if (line != null && (line < 1 || line > Int.MAX_VALUE)) return null
 

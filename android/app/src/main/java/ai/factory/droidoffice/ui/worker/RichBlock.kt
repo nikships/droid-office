@@ -88,10 +88,12 @@ private object Drawings {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Drawing>?) = size > MAX
     }
 
-    operator fun get(kind: RichPage.Kind, source: String): Drawing? = cache["${kind.wire}/$source"]
+    private fun key(kind: RichPage.Kind, source: String) = "${kind.wire}/$source"
+
+    operator fun get(kind: RichPage.Kind, source: String): Drawing? = cache[key(kind, source)]
 
     operator fun set(kind: RichPage.Kind, source: String, d: Drawing) {
-        cache["${kind.wire}/$source"] = d
+        cache[key(kind, source)] = d
     }
 }
 

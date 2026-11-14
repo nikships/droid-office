@@ -222,13 +222,14 @@ export function threadArguments(entry: ThreadEntry): ThreadArgumentsRef | undefi
   if (!raw || raw === '{}') return;
   const args = argumentsOf(entry);
   const name = leaf(entry.name);
+  const isPatch = name === 'applypatch' || name === 'apply_patch';
   if (str(args.command)) return { label: 'Command', field: 'command' };
   if (str(args.script)) return { label: 'Script', field: 'script' };
   if (str(args.code)) return { label: 'Script', field: 'code' };
-  if ((name === 'applypatch' || name === 'apply_patch') && str(args.input)) return { label: 'Patch', field: 'input' };
-  if ((name === 'applypatch' || name === 'apply_patch') && str(args.patch)) return { label: 'Patch', field: 'patch' };
+  if (isPatch && str(args.input)) return { label: 'Patch', field: 'input' };
+  if (isPatch && str(args.patch)) return { label: 'Patch', field: 'patch' };
   try {
-    if (typeof JSON.parse(raw) === 'string') return { label: name === 'script' ? 'Script' : name === 'applypatch' || name === 'apply_patch' ? 'Patch' : 'Arguments', field: '.' };
+    if (typeof JSON.parse(raw) === 'string') return { label: name === 'script' ? 'Script' : isPatch ? 'Patch' : 'Arguments', field: '.' };
   } catch {
     /* Older tools can record plain-text arguments. */
   }
@@ -745,20 +746,18 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean, op
     if (!items.length) return;
     actions.push(...items);
 
-    const groups: { card?: ThreadCardKind; items: ThreadAction[]; wired: ThreadModelAction[] }[] = [];
-    let exploration: { items: ThreadAction[]; wired: ThreadModelAction[] } | undefined;
+    const groups: { card?: ThreadCardKind; items: ThreadAction[] }[] = [];
+    let exploration: { items: ThreadAction[] } | undefined;
     for (const item of items) {
-      const wiredItem = modelAction(item, options.fileText);
-      if (wiredItem.card) {
+      const card = cardKindFor(item.category);
+      if (card) {
         exploration = undefined;
-        groups.push({ card: wiredItem.card, items: [item], wired: [wiredItem] });
-      } else {
-        if (!exploration) {
-          exploration = { items: [], wired: [] };
-          groups.push(exploration);
-        }
+        groups.push({ card, items: [item] });
+      } else if (exploration) {
         exploration.items.push(item);
-        exploration.wired.push(wiredItem);
+      } else {
+        exploration = { items: [item] };
+        groups.push(exploration);
       }
     }
 
@@ -767,19 +766,20 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean, op
     if (changedPlan) lastPlan = planKey;
 
     for (const [groupIndex, group] of groups.entries()) {
+      const wired = group.items.map((item) => modelAction(item, options.fileText));
       const isLast = groupIndex === groups.length - 1;
-      const blockLive = live && (isLast || group.wired.some((a) => a.state === 'working'));
+      const blockLive = live && (isLast || wired.some((a) => a.state === 'working'));
       const includePlan = groupIndex === 0 ? changedPlan : undefined;
       blockActions.set(`tools:${group.items[0].entry.id}`, group.items);
       blocks.push({
         kind: 'tools',
         id: `tools:${group.items[0].entry.id}`,
         label: activityLabel(group.items),
-        state: activityState(group.wired, blockLive),
+        state: activityState(wired, blockLive),
         live: blockLive,
         open: false,
         ...(group.card ? { card: group.card } : {}),
-        actions: group.wired,
+        actions: wired,
         ...(includePlan ? { plan: includePlan } : {}),
       });
     }

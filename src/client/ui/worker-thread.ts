@@ -488,8 +488,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const scopeKey = `${opts.floor ?? ''}:${worker.id}`;
     fetchWorkspaceFiles(found.query);
 
-    const validBase = filesCache && filesCache.key === scopeKey && Date.now() - filesCache.at < FILES_CACHE_TTL_MS ? filesCache : undefined;
-    const source = found.query && validBase?.truncated && latestFilteredFiles?.key === scopeKey && latestFilteredFiles.query === found.query ? latestFilteredFiles : (validBase ?? (filesCache?.key === scopeKey ? filesCache : undefined));
+    const cached = filesCache?.key === scopeKey ? filesCache : undefined;
+    const validBase = cached && Date.now() - cached.at < FILES_CACHE_TTL_MS ? cached : undefined;
+    const source = found.query && validBase?.truncated && latestFilteredFiles?.key === scopeKey && latestFilteredFiles.query === found.query ? latestFilteredFiles : cached;
 
     mentionShown = source ? rankWorkspacePaths(source.files, source.dirs, found.query, 12) : [];
     mentionCursor = Math.min(mentionCursor, Math.max(0, mentionShown.length - 1));
@@ -1137,19 +1138,11 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       const activity = child.activity || (last?.kind === 'activity' ? last.label : last?.kind === 'message' ? loaded.get(last.id)?.text : last?.text) || child.title || 'No recent activity';
       card.activity.textContent = activity.split('\n')[0].slice(0, 200);
       card.activity.title = card.activity.textContent;
-      card.note.textContent = member.error
-        ? `Conversation unavailable: ${member.error}`
-        : child.lost
-          ? 'This worker’s checkout is unavailable.'
-          : !child.sessionId
-            ? 'Waiting for a local session…'
-            : !member.received
-              ? teamSection.open
-                ? 'Reading the conversation…'
-                : 'Expand Team activity to read recent messages and tools.'
-              : rows.length
-                ? 'Recent activity only. Open the worker thread for more messages and recorded patches.'
-                : 'No conversation recorded yet.';
+      if (member.error) card.note.textContent = `Conversation unavailable: ${member.error}`;
+      else if (child.lost) card.note.textContent = 'This worker’s checkout is unavailable.';
+      else if (!child.sessionId) card.note.textContent = 'Waiting for a local session…';
+      else if (!member.received) card.note.textContent = teamSection.open ? 'Reading the conversation…' : 'Expand Team activity to read recent messages and tools.';
+      else card.note.textContent = rows.length ? 'Recent activity only. Open the worker thread for more messages and recorded patches.' : 'No conversation recorded yet.';
       const keep = new Set(rows.map((row) => row.id));
       const selection = document.getSelection();
       const pinned = new Set<string>();
@@ -1405,15 +1398,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       return cloud ? `Queue a message for after this turn…` : `Steer ${worker.name}, or queue for after this turn…`;
     };
     input.placeholder = placeholder();
-    hint.replaceChildren(
-      ...(cloud
-        ? [shortcut('Enter', busy ? 'queue' : 'send'), shortcut('⇧ Enter', 'new line')]
-        : busy
-          ? [shortcut('Enter', 'steer'), shortcut('Ctrl Enter', 'queue'), shortcut('⇧ Enter', 'new line')]
-          : worker.kind === 'agent'
-            ? [shortcut('Enter', 'send'), shortcut('⇧ Enter', 'new line'), shortcut('@', 'files'), shortcut('/', 'commands')]
-            : [shortcut('Enter', 'send'), shortcut('⇧ Enter', 'new line'), shortcut('/', 'commands')]),
-    );
+    if (cloud) hint.replaceChildren(shortcut('Enter', busy ? 'queue' : 'send'), shortcut('⇧ Enter', 'new line'));
+    else if (busy) hint.replaceChildren(shortcut('Enter', 'steer'), shortcut('Ctrl Enter', 'queue'), shortcut('⇧ Enter', 'new line'));
+    else if (worker.kind === 'agent') hint.replaceChildren(shortcut('Enter', 'send'), shortcut('⇧ Enter', 'new line'), shortcut('@', 'files'), shortcut('/', 'commands'));
+    else hint.replaceChildren(shortcut('Enter', 'send'), shortcut('⇧ Enter', 'new line'), shortcut('/', 'commands'));
     earlier.disabled = !!pending || !connected;
     retry.classList.toggle('hidden', !error);
     retry.disabled = !connected || !!pending;

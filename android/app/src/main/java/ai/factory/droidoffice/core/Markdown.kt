@@ -292,7 +292,7 @@ object Markdown {
 
     private data class FenceSpec(val ch: Char, val len: Int)
 
-    private fun matchFenceOpen(src: String, lineStart: Int, lineEnd: Int): FenceSpec? {
+    private fun skipFencePrefix(src: String, lineStart: Int, lineEnd: Int): Int {
         var i = lineStart
         while (i < lineEnd) {
             var spaces = 0
@@ -307,6 +307,11 @@ object Markdown {
             }
             break
         }
+        return i
+    }
+
+    private fun matchFenceOpen(src: String, lineStart: Int, lineEnd: Int): FenceSpec? {
+        var i = skipFencePrefix(src, lineStart, lineEnd)
         if (i >= lineEnd) return null
         val ch = src[i]
         if (ch != '`' && ch != '~') return null
@@ -321,20 +326,7 @@ object Markdown {
     }
 
     private fun isFenceClose(src: String, lineStart: Int, lineEnd: Int, active: FenceSpec): Boolean {
-        var i = lineStart
-        while (i < lineEnd) {
-            var spaces = 0
-            while (i < lineEnd && src[i] == ' ' && spaces < 3) {
-                i++
-                spaces++
-            }
-            if (i < lineEnd && src[i] == '>') {
-                i++
-                if (i < lineEnd && src[i] == ' ') i++
-                continue
-            }
-            break
-        }
+        var i = skipFencePrefix(src, lineStart, lineEnd)
         var count = 0
         while (i < lineEnd && src[i] == active.ch) {
             count++
@@ -486,15 +478,11 @@ object Markdown {
         URLEncoder.encode(value, StandardCharsets.UTF_8.name()).replace("+", "%20")
 
     private fun buildMailtoUri(email: Block.Email): String {
-        val recipients = if (email.to.isEmpty()) "" else email.to.split(',')
-            .mapNotNull { part ->
-                val trimmed = part.trim()
-                if (trimmed.isEmpty()) null else {
-                    val addr = angleAddr.find(trimmed)?.groupValues?.get(1) ?: trimmed
-                    urlEncodeComponent(addr).replace("%40", "@")
-                }
-            }
-            .joinToString(",")
+        val recipients = email.to.split(',').mapNotNull { part ->
+            val trimmed = part.trim().ifEmpty { return@mapNotNull null }
+            val addr = angleAddr.find(trimmed)?.groupValues?.get(1) ?: trimmed
+            urlEncodeComponent(addr).replace("%40", "@")
+        }.joinToString(",")
         val params = ArrayList<String>(4)
         email.cc?.takeIf { it.isNotEmpty() }?.let { params += "cc=${urlEncodeComponent(it)}" }
         email.bcc?.takeIf { it.isNotEmpty() }?.let { params += "bcc=${urlEncodeComponent(it)}" }

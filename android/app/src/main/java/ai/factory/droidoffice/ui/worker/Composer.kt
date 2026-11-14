@@ -165,13 +165,12 @@ fun Composer(
         value = next
     }
     fun typed(next: TextFieldValue) {
-        val paste = if (w.isShell) null else ThreadCompose.inserted(value.text, value.selection.start, value.selection.end, next.text, next.selection.end)
-            ?.takeIf { ThreadCompose.isLargePaste(it.text) }
-        if (paste == null) return edit(next)
+        if (w.isShell) return edit(next)
+        val paste = ThreadCompose.inserted(value.text, value.selection.start, value.selection.end, next.text, next.selection.end)
+            ?.takeIf { ThreadCompose.isLargePaste(it.text) } ?: return edit(next)
         val held = ThreadCompose.pastedText(++pasteSeq, paste.text)
         pastes += held
-        val before = value.text
-        edit(TextFieldValue(before.substring(0, paste.start) + held.token + before.substring(paste.end), TextRange(paste.start + held.token.length)))
+        edit(TextFieldValue(value.text.replaceRange(paste.start, paste.end, held.token), TextRange(paste.start + held.token.length)))
     }
     // The built-in commands at once; the worker's skills and custom commands once its droid lists them.
     var slashList by remember(w.id) { mutableStateOf(SlashCommands.ALL) }

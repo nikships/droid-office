@@ -206,10 +206,12 @@ object ThreadView {
     fun workspacePath(raw: String, floorDir: String?): String? {
         val norm = raw.trim().replace('\\', '/')
         if (norm.isEmpty()) return null
-        val candidate = worktreePath.find(norm)?.groupValues?.get(1) ?: if (norm.startsWith("/")) {
+        val candidate = worktreePath.find(norm)?.groupValues?.get(1) ?: run {
+            if (!norm.startsWith("/")) return@run norm
             val floor = floorDir?.trim()?.replace('\\', '/')?.trimEnd('/')
-            if (!floor.isNullOrEmpty() && norm.startsWith("$floor/")) norm.substring(floor.length + 1) else return null
-        } else norm
+            if (floor.isNullOrEmpty() || !norm.startsWith("$floor/")) return null
+            norm.substring(floor.length + 1)
+        }
         val rel = candidate.removePrefix("./").trimEnd('/')
         if (rel.isEmpty() || rel.startsWith("/") || Regex("^[a-zA-Z]:").containsMatchIn(rel)) return null
         if (parentStep.containsMatchIn(rel) || insideRepoInternals.containsMatchIn(rel)) return null
@@ -387,8 +389,11 @@ object ThreadView {
     object Open {
         private const val SOURCE = "source:"
 
+        private fun isSourceOpen(sourceIds: List<String>, choices: Map<String, Boolean>): Boolean =
+            sourceIds.any { choices[SOURCE + it] == true }
+
         fun activity(a: ThreadRow.Activity, choices: Map<String, Boolean>): Boolean =
-            choices[a.id] ?: (a.sourceIds.any { choices[SOURCE + it] == true } || a.open)
+            choices[a.id] ?: (isSourceOpen(a.sourceIds, choices) || a.open)
 
         fun block(b: ThreadBlock, choices: Map<String, Boolean>): Boolean = choices[b.id] ?: b.open
 

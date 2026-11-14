@@ -155,7 +155,7 @@ private fun FilePreviewSheet(w: WorkerInfo, floor: String?, ref: WorkspacePaths.
                     val p = s.preview
                     val size = WorkspacePaths.formatBytes(p.size)
                     when {
-                        p.binary -> FileNote("Binary file", if (size.isNotEmpty()) "${p.path} is a binary file ($size) and cannot be previewed as text." else "${p.path} is a binary file and cannot be previewed as text.")
+                        p.binary -> FileNote("Binary file", "${p.path} is a binary file${if (size.isNotEmpty()) " ($size)" else ""} and cannot be previewed as text.")
                         p.lines.isEmpty() -> FileNote("Empty file", "${p.path} is empty.")
                         else -> FileLines(p, ref, language, size, Modifier.weight(1f))
                     }
@@ -193,14 +193,18 @@ private fun FileLines(p: WorkspacePaths.Preview, ref: WorkspacePaths.Ref, langua
     val numberWidth = (digits * 8 + 14).dp
     Column(modifier.fillMaxWidth()) {
         if (p.truncated) Text(
-            if (size.isNotEmpty()) "Showing the first ${p.lines.size} lines of ${p.path} ($size total, truncated for preview)." else "Showing the first ${p.lines.size} lines of ${p.path} (truncated for preview).",
+            "Showing the first ${p.lines.size} lines of ${p.path} (${if (size.isNotEmpty()) "$size total, " else ""}truncated for preview).",
             style = MaterialTheme.typography.bodySmall.copy(color = Palette.Info),
             modifier = Modifier.fillMaxWidth().background(Palette.Info.copy(alpha = 0.08f)).padding(horizontal = 16.dp, vertical = 8.dp).tagged(Tags.Worker.THREAD_FILE_STATUS),
         )
         LazyColumn(Modifier.weight(1f).fillMaxWidth().tagged(Tags.Worker.THREAD_FILE_LINES), state = list) {
             itemsIndexed(p.lines, key = { i, _ -> i }) { i, line ->
                 val n = i + 1
-                val marked = start != null && stop != null && n in start..stop || (target == n && start != null && start > p.lines.size)
+                val marked = when {
+                    start == null -> false
+                    start > p.lines.size -> n == p.lines.size
+                    else -> n in start..(stop ?: start)
+                }
                 val code = remember(line, language) { highlightedCode(line, language) }
                 Row(
                     Modifier.fillMaxWidth().background(if (marked) Palette.Accent.copy(alpha = 0.14f) else Palette.Surface)

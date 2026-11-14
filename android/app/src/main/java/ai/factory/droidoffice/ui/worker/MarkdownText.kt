@@ -194,7 +194,7 @@ private fun CodeBlockCard(b: Markdown.Block.Code, mono: FontFamily) {
 /** A code block's highlighted text, scrolling sideways rather than wrapping. */
 @Composable
 internal fun CodeBody(text: String, language: String?, mono: FontFamily) {
-    val highlighted = remember(text, language, mono) { highlightedCode(text, language) }
+    val highlighted = remember(text, language) { highlightedCode(text, language) }
     CodeScroll(Palette.Surface, bordered = false) { scroll ->
         Text(
             highlighted,

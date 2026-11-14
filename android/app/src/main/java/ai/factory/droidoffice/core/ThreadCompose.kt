@@ -96,10 +96,9 @@ object ThreadCompose {
 
     /** `selected` as Markdown quote lines, without the blank lines around it or trailing spaces. */
     fun quoteLines(selected: String): String {
-        val lines = normalize(selected).replace('\u00a0', ' ').split('\n').map { it.trimEnd() }.toMutableList()
-        while (lines.isNotEmpty() && lines.first().isEmpty()) lines.removeAt(0)
-        while (lines.isNotEmpty() && lines.last().isEmpty()) lines.removeAt(lines.size - 1)
-        return lines.joinToString("\n") { if (it.isNotEmpty()) "> $it" else ">" }
+        val lines = normalize(selected).replace('\u00a0', ' ').split('\n').map { it.trimEnd() }
+            .dropWhile { it.isEmpty() }.dropLastWhile { it.isEmpty() }
+        return lines.joinToString("\n") { if (it.isEmpty()) ">" else "> $it" }
     }
 
     /**
@@ -110,8 +109,8 @@ object ThreadCompose {
     fun insertQuote(value: String, start: Int, end: Int, selected: String): Edit? {
         val quote = quoteLines(selected)
         if (quote.isEmpty()) return null
-        val from = maxOf(0, minOf(start, end, value.length))
-        val to = maxOf(from, minOf(maxOf(start, end), value.length))
+        val from = minOf(start, end).coerceIn(0, value.length)
+        val to = maxOf(start, end).coerceIn(from, value.length)
         val before = value.substring(0, from)
         val after = value.substring(to)
         val lead = if (before.isEmpty() || before.endsWith("\n\n")) "" else if (before.endsWith("\n")) "\n" else "\n\n"

@@ -38,12 +38,12 @@ export interface ThreadFileChange {
 
 const baseName = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').at(-1) || path;
 
+const normalizeSlashes = (value: string): string => value.trim().replace(/\\/g, '/');
+
 export function threadShortPath(path: string): string {
-  const root = path.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  const root = normalizeSlashes(path).replace(/\/+$/, '');
   if (/\/\.droid-office\/worktrees\/[^/]+$/.test(root)) return baseName(root);
-  const short = path
-    .trim()
-    .replace(/\\/g, '/')
+  const short = normalizeSlashes(path)
     .replace(/^.*?\/\.droid-office\/worktrees\/[^/]+\//, '')
     .replace(/^\/(?:Users|home)\/[^/]+\//, '~/');
   const parts = short.split('/').filter(Boolean);
@@ -99,7 +99,7 @@ function splitContentLines(text: string): string[] {
 function splitPairLines(oldRaw: string, newRaw: string): [string[], string[]] {
   const oldNorm = normalizeLf(oldRaw);
   const newNorm = normalizeLf(newRaw);
-  const stripTrailing = (oldNorm.endsWith('\n') && newNorm.endsWith('\n')) || (oldNorm === '' && newNorm.endsWith('\n')) || (newNorm === '' && oldNorm.endsWith('\n'));
+  const stripTrailing = (oldNorm === '' || oldNorm.endsWith('\n')) && (newNorm === '' || newNorm.endsWith('\n'));
   const toLines = (s: string) => {
     if (!s) return [];
     return (stripTrailing && s.endsWith('\n') ? s.slice(0, -1) : s).split('\n');

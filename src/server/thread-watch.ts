@@ -87,17 +87,13 @@ export class ThreadWatchHub {
       clientSet = new Set();
       this.byClient.set(clientId, clientSet);
     }
-    if (clientSet.has(workerId)) {
-      clientSet.delete(workerId);
-      clientSet.add(workerId);
-    } else {
-      while (clientSet.size >= this.maxPerClient) {
-        const oldest = clientSet.values().next().value;
-        if (!oldest) break;
-        this.removeSubscription(clientId, oldest);
-      }
-      clientSet.add(workerId);
+    clientSet.delete(workerId);
+    while (clientSet.size >= this.maxPerClient) {
+      const oldest = clientSet.values().next().value;
+      if (!oldest) break;
+      this.removeSubscription(clientId, oldest);
     }
+    clientSet.add(workerId);
 
     let entry = this.byWorker.get(workerId);
     if (!entry) {
@@ -148,15 +144,13 @@ export class ThreadWatchHub {
   unwatchWorker(workerId: string): void {
     const entry = this.byWorker.get(workerId);
     if (!entry) return;
-    for (const clientId of entry.clients) {
-      const set = this.byClient.get(clientId);
-      if (set) {
-        set.delete(workerId);
-        if (!set.size) this.byClient.delete(clientId);
-      }
+    for (const clientId of [...entry.clients]) {
+      this.removeSubscription(clientId, workerId);
     }
-    this.teardown(entry);
-    this.byWorker.delete(workerId);
+    if (this.byWorker.get(workerId) === entry) {
+      this.teardown(entry);
+      this.byWorker.delete(workerId);
+    }
   }
 
   watchedCount(clientId?: string): number {
@@ -215,7 +209,7 @@ export class ThreadWatchHub {
 
   private applyPaths(entry: WorkerWatch, paths: { file?: string; dir: string; root: string }): boolean {
     let changed = false;
-    const wantDir = existsSync(paths.dir) ? paths.dir : existsSync(paths.root) ? paths.root : existsSync(path.dirname(paths.root)) ? path.dirname(paths.root) : undefined;
+    const wantDir = [paths.dir, paths.root, path.dirname(paths.root)].find((p) => existsSync(p));
     if (entry.dirPath !== wantDir) {
       this.closeDirWatcher(entry);
       if (wantDir) {

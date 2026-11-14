@@ -214,14 +214,7 @@ export function renderThreadMermaid(source: string): HTMLElement {
     activateDiagram(cached);
   } else {
     void renderMermaidSvg(source)
-      .then((svg) => {
-        if (!card.isConnected && stage.childElementCount === 0) {
-          // Still populate stage so if the caller mounts `card` after microtask resolution, it's ready.
-          activateDiagram(svg);
-          return;
-        }
-        activateDiagram(svg);
-      })
+      .then(activateDiagram)
       .catch(() => {
         // Incomplete or invalid Mermaid (e.g. mid-stream): keep highlighted source without noisy broken-SVG boxes.
       });
