@@ -14,7 +14,6 @@ export interface VibesSwitchPalette {
   capEmissive: string;
   capIntensity: number;
   ring: string;
-  floorRing: string;
   emblem: string;
   latchedDrop: number;
   spin: boolean;
@@ -26,7 +25,6 @@ export const VIBES_SWITCH_PALETTE: Record<VibesSwitchState, VibesSwitchPalette> 
     capEmissive: '#16a34a',
     capIntensity: 0.85,
     ring: '#34d399',
-    floorRing: '#22c55e',
     emblem: '#ecfdf5',
     latchedDrop: 0.005,
     spin: true,
@@ -36,7 +34,6 @@ export const VIBES_SWITCH_PALETTE: Record<VibesSwitchState, VibesSwitchPalette> 
     capEmissive: '#dc2626',
     capIntensity: 0.8,
     ring: '#f87171',
-    floorRing: '#ef4444',
     emblem: '#fee2e2',
     latchedDrop: 0,
     spin: false,
@@ -46,7 +43,6 @@ export const VIBES_SWITCH_PALETTE: Record<VibesSwitchState, VibesSwitchPalette> 
     capEmissive: '#000000',
     capIntensity: 0,
     ring: '#52525b',
-    floorRing: '#3f3f46',
     emblem: '#71717a',
     latchedDrop: 0,
     spin: false,
@@ -56,7 +52,6 @@ export const VIBES_SWITCH_PALETTE: Record<VibesSwitchState, VibesSwitchPalette> 
     capEmissive: '#3b2006',
     capIntensity: 0.25,
     ring: '#f59e0b',
-    floorRing: '#d97706',
     emblem: '#fbbf24',
     latchedDrop: 0,
     spin: false,
@@ -66,7 +61,6 @@ export const VIBES_SWITCH_PALETTE: Record<VibesSwitchState, VibesSwitchPalette> 
     capEmissive: '#000000',
     capIntensity: 0,
     ring: '#3a3a40',
-    floorRing: '#2e2e34',
     emblem: '#52525b',
     latchedDrop: 0,
     spin: false,
@@ -131,19 +125,6 @@ export function buildVibesSwitch(): VibesSwitch {
   statics.add(mesh(new THREE.CylinderGeometry(buttonRadius + 0.008, buttonRadius + 0.008, 0.01, 32), toon('#09090b'), 0, bezelCenterY + bezelH / 2 - 0.003, 0));
   group.add(mergeByMaterial(statics));
 
-  // Flush floor status ring around the base plate, echoing the overhead glyph's alignment on the slab.
-  const floorRingMat = toonUnique('#3f3f46');
-  floorRingMat.emissive.set('#000000');
-  floorRingMat.polygonOffset = true;
-  floorRingMat.polygonOffsetFactor = -2;
-  floorRingMat.polygonOffsetUnits = -2;
-  floorRingMat.userData.outlineParameters = { visible: false };
-  const floorRingGeo = new THREE.RingGeometry(baseRadius + 0.025, baseRadius + 0.055, 48);
-  floorRingGeo.rotateX(-Math.PI / 2);
-  const floorRing = mesh(floorRingGeo, floorRingMat, 0, 0.014, 0);
-  floorRing.renderOrder = 1;
-  group.add(floorRing);
-
   // 360-degree status collar just below the bezel + luminous halo ring on the bezel rim.
   const ringMat = new THREE.MeshBasicMaterial({ color: '#52525b' });
   ringMat.userData.outlineParameters = { visible: false };
@@ -177,18 +158,31 @@ export function buildVibesSwitch(): VibesSwitch {
   const emblem = mesh(emblemGeo, emblemMat, 0, capH + crownH + 0.0015, 0);
   plunger.add(emblem);
 
-  // Expanding horizontal pulse ring when pressed (shares gong.ts's warmed transparent ring shader).
+  // Soft radial bezel bloom when pressed, feathered to zero at both inner and outer edges.
+  const rippleInnerR = outerBezelR * 0.84;
+  const rippleOuterR = outerBezelR * 1.52;
+  const rippleGeo = new THREE.RingGeometry(rippleInnerR, rippleOuterR, 48, 6);
+  rippleGeo.rotateX(-Math.PI / 2);
+  const ripplePos = rippleGeo.getAttribute('position') as THREE.BufferAttribute;
+  const rippleCol = new Float32Array(ripplePos.count * 3);
+  for (let i = 0; i < ripplePos.count; i++) {
+    const r = Math.hypot(ripplePos.getX(i), ripplePos.getZ(i));
+    const u = THREE.MathUtils.clamp((r - rippleInnerR) / (rippleOuterR - rippleInnerR), 0, 1);
+    const w = Math.sin(u * Math.PI) ** 2.2;
+    rippleCol[i * 3] = rippleCol[i * 3 + 1] = rippleCol[i * 3 + 2] = w;
+  }
+  rippleGeo.setAttribute('color', new THREE.BufferAttribute(rippleCol, 3));
   const rippleMat = new THREE.MeshBasicMaterial({
     color: '#34d399',
+    vertexColors: true,
     transparent: true,
     opacity: 0,
     depthWrite: false,
+    blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
-    forceSinglePass: true,
+    toneMapped: false,
   });
   rippleMat.userData.outlineParameters = { visible: false };
-  const rippleGeo = new THREE.RingGeometry(outerBezelR * 0.98, outerBezelR * 1.16, 48);
-  rippleGeo.rotateX(-Math.PI / 2);
   const ripple = mesh(rippleGeo, rippleMat, 0, bezelCenterY + bezelH / 2 + 0.004, 0);
   ripple.visible = false;
   group.add(ripple);
@@ -211,6 +205,7 @@ export function buildVibesSwitch(): VibesSwitch {
   let current: VibesSwitchState = 'disconnected';
   let pressDepth = 0;
   let rippleT = Infinity;
+  let ripplePeak = 0.36;
 
   const applyPalette = (next: VibesSwitchState) => {
     current = next;
@@ -219,9 +214,6 @@ export function buildVibesSwitch(): VibesSwitch {
     capMat.emissive.set(p.capEmissive);
     capMat.emissiveIntensity = p.capIntensity;
     ringMat.color.set(p.ring);
-    floorRingMat.color.set(p.floorRing);
-    floorRingMat.emissive.set(p.capIntensity > 0 ? p.floorRing : '#000000');
-    floorRingMat.emissiveIntensity = p.capIntensity > 0 ? 0.35 : 0;
     emblemMat.color.set(p.emblem);
     plunger.position.y = plungerRestY - p.latchedDrop - pressDepth;
   };
@@ -231,7 +223,7 @@ export function buildVibesSwitch(): VibesSwitch {
     group,
     collider,
     interactable,
-    bakeHidden: [floorRing, stemCollar, bezelHalo, plunger, ripple],
+    bakeHidden: [stemCollar, bezelHalo, plunger, ripple],
     get state() {
       return current;
     },
@@ -256,10 +248,11 @@ export function buildVibesSwitch(): VibesSwitch {
     },
     ripple(feedback) {
       rippleT = 0;
+      ripplePeak = feedback === 'blocked' ? 0.22 : 0.36;
       rippleMat.color.set(RIPPLE_COLORS[feedback]);
       ripple.visible = true;
-      ripple.scale.setScalar(1);
-      rippleMat.opacity = feedback === 'blocked' ? 0.42 : 0.72;
+      ripple.scale.setScalar(0.96);
+      rippleMat.opacity = ripplePeak;
     },
     press(feedback) {
       this.depress();
@@ -283,8 +276,8 @@ export function buildVibesSwitch(): VibesSwitch {
         } else {
           const u = rippleT / 0.55;
           ripple.visible = true;
-          ripple.scale.setScalar(1 + u * 1.45);
-          rippleMat.opacity = 0.7 * (1 - u) * (1 - u);
+          ripple.scale.setScalar(0.96 + u * 0.2);
+          rippleMat.opacity = ripplePeak * (1 - u) * (1 - u);
         }
       }
     },

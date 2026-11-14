@@ -756,11 +756,11 @@ export class Sky {
    * Washes the whole room in `hex` for `seconds`, pulsing `pulses` times at `gain` (1 is as bright as
    * the room's own fill). A later flash replaces one still playing.
    */
-  flashRoom(hex: string, seconds = 2.4, pulses = 1, gain = 1.6) {
+  flashRoom(hex: string, seconds = 2.4, pulses = 1, gain = 0.65) {
     this.flashColor.set(hex);
     this.flashSeconds = Number.isFinite(seconds) ? Math.max(0.2, seconds) : 2.4;
     this.flashPulses = Number.isFinite(pulses) ? Math.max(1, Math.round(pulses)) : 1;
-    this.flashGain = Number.isFinite(gain) ? Math.max(0, gain) : 1.6;
+    this.flashGain = Number.isFinite(gain) ? Math.max(0, gain) : 0.65;
     this.flashT = 0;
   }
 
