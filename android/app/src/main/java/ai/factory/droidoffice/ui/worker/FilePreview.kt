@@ -113,8 +113,12 @@ private fun FilePreviewSheet(w: WorkerInfo, floor: String?, ref: WorkspacePaths.
             onSuccess = { (code, body) ->
                 val json = runCatching { OfficeJson.parseToJsonElement(body) }.getOrNull()
                 val parsed = WorkspacePaths.preview(json, ref.path)
-                if (code !in 200..299 || parsed.error != null) FileState.Failed(parsed.error ?: "Couldn’t load ${ref.path} (HTTP $code).")
-                else FileState.Loaded(parsed)
+                when {
+                    // An office from before Thread file previews answers with its plain "Not found".
+                    code == 404 && json == null -> FileState.Failed("Update Droid Office on your computer to preview files here.")
+                    code !in 200..299 || parsed.error != null -> FileState.Failed(parsed.error ?: "Couldn’t load ${ref.path} (HTTP $code).")
+                    else -> FileState.Loaded(parsed)
+                }
             },
             onFailure = { FileState.Failed(it.message ?: "Network error while reading file.") },
         )
