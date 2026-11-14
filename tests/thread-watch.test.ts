@@ -118,10 +118,12 @@ test('local fs.watch pushes coalesced snapshots on JSONL appends, busy transitio
   );
   await waitUntil(() => sent.some((s) => s.msg.entries.some((e) => e.id === 'tool:call-2')));
 
-  const beforeIdle = sent.length;
   targets.set('w1', { kind: 'local', floorId: 'f1', busy: false, local: source });
   hub.notifyWorker('w1');
-  await waitUntil(() => sent.length > beforeIdle);
+  await waitUntil(() => {
+    const last = sent.at(-1)?.msg.presentation?.rows.at(-1);
+    return last?.kind === 'activity' && last.live === false;
+  });
   const idleSnap = sent.at(-1)!.msg;
   const trailing = idleSnap.presentation?.rows.at(-1);
   assert.ok(trailing?.kind === 'activity');
@@ -271,4 +273,76 @@ test('cloud stream events notify ThreadWatchHub and push coalesced snapshots wit
   assert.equal(restMessagesCalls, 0, 'held CloudStream state serves thread pushes without REST calls');
   assert.equal(sent.at(-1)?.push, true);
   assert.equal(sent.at(-1)?.entries.at(-1)?.text, 'Working on the fix.');
+});
+
+test('flush re-runs cleanly when busy flips from true to false mid-read instead of poisoning lastDigest', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'office-thread-watch-race-'));
+  const sessionsDir = path.join(root, 'sessions');
+  const cwd = path.join(root, 'proj');
+  await mkdir(cwd, { recursive: true });
+  const source = { sessionId: 'sess-race-1', cwd };
+  const slugDir = path.join(sessionsDir, cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
+  await mkdir(slugDir, { recursive: true });
+  await writeFile(
+    path.join(slugDir, `${source.sessionId}.jsonl`),
+    jsonl(
+      { type: 'session_start', id: source.sessionId, cwd },
+      {
+        type: 'message',
+        id: 'm1',
+        timestamp: '2026-11-13T12:00:01.000Z',
+        message: { role: 'assistant', content: [{ type: 'tool_use', id: 'call-race', name: 'Read', input: { file_path: '/tmp/r.ts' } }] },
+      },
+    ),
+  );
+
+  const realReader = new WorkerThreadReader(sessionsDir);
+  const targets = new Map<string, WatchedThreadTarget>([['w1', { kind: 'local', floorId: 'f1', busy: true, local: source }]]);
+  const sent: ThreadPushMsg[] = [];
+
+  let flippedMidRead = false;
+  let hubRef: ThreadWatchHub | undefined;
+  const racingReader = new Proxy(realReader, {
+    get(target, prop, receiver) {
+      if (prop === 'read') {
+        return async (...args: Parameters<WorkerThreadReader['read']>) => {
+          const page = await target.read(...args);
+          if (!flippedMidRead) {
+            flippedMidRead = true;
+            targets.set('w1', { kind: 'local', floorId: 'f1', busy: false, local: source });
+            hubRef?.notifyWorker('w1');
+          }
+          return page;
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+
+  const hub = new ThreadWatchHub({
+    workerThreads: racingReader,
+    resolveWorker: (id) => targets.get(id),
+    send: (_clientId, msg) => sent.push(msg),
+    localCoalesceMs: 15,
+  });
+  hubRef = hub;
+
+  t.after(async () => {
+    hub.close();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  hub.watch('c1', 'w1', true);
+  hub.notifyWorker('w1');
+
+  await waitUntil(() => {
+    const last = sent.at(-1)?.presentation?.rows.at(-1);
+    return last?.kind === 'activity' && last.live === false;
+  });
+  assert.equal(flippedMidRead, true);
+  assert.equal(sent.length, 1, 'stale mid-transition page was not pushed before final idle snapshot');
+  const finalRow = sent[0].presentation?.rows.at(-1);
+  assert.ok(finalRow?.kind === 'activity');
+  assert.equal(finalRow.live, false);
+  assert.equal(finalRow.state, 'incomplete');
 });

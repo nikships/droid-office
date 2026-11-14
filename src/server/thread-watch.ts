@@ -292,6 +292,7 @@ export class ThreadWatchHub {
         return;
       }
       nextDelay = target.kind === 'cloud' ? this.cloudCoalesceMs : this.localCoalesceMs;
+      const busy = target.busy;
       const key = sessionKeyOf(target);
       if (entry.sessionKey !== key) {
         this.closeWatchers(entry);
@@ -309,15 +310,15 @@ export class ThreadWatchHub {
         const paths = await this.opts.workerThreads.sessionPaths(target.local);
         if (this.stopped || entry.closed || !entry.clients.size) return;
         if (paths) this.applyPaths(entry, paths);
-        const page = await this.opts.workerThreads.read(target.local, undefined, target.busy);
+        const page = await this.opts.workerThreads.read(target.local, undefined, busy);
         if (this.stopped || entry.closed || !entry.clients.size) return;
         const after = this.opts.resolveWorker(entry.workerId);
-        if (!after || sessionKeyOf(after) !== key) {
+        if (!after || sessionKeyOf(after) !== key || after.busy !== busy) {
           entry.again = true;
           return;
         }
         if (page.error && entry.lastDigest === undefined) return;
-        const digest = threadPageDigest(page, after.busy);
+        const digest = threadPageDigest(page, busy);
         if (digest === entry.lastDigest) return;
         entry.lastDigest = digest;
         this.push(entry, page);
@@ -328,8 +329,12 @@ export class ThreadWatchHub {
       if (!page || this.stopped || entry.closed || !entry.clients.size) return;
       const after = this.opts.resolveWorker(entry.workerId);
       if (after?.kind !== 'cloud') return;
+      if (after.busy !== busy) {
+        entry.again = true;
+        return;
+      }
       if (page.error && entry.lastDigest === undefined) return;
-      const digest = threadPageDigest(page, after.busy);
+      const digest = threadPageDigest(page, busy);
       if (digest === entry.lastDigest) return;
       entry.lastDigest = digest;
       this.push(entry, page);
