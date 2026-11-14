@@ -224,6 +224,8 @@ object Tags {
         const val PAIR_AGAIN = "home.pair_again"
         const val LOADING = "home.loading"
         const val LIST = "home.list"
+        /** The floors side by side, each page [floorPage]; drag it sideways to slide to the next or previous floor. */
+        const val PAGER = "home.pager"
         const val EMPTY = "home.empty"
         const val HIRE = "home.hire"
         const val HIRE_FIRST = "home.hire_first"
@@ -244,6 +246,7 @@ object Tags {
         const val CARD_TODOS = "home.worker.todos"
 
         fun floor(id: String) = "home.floor/$id"
+        fun floorPage(id: String) = "home.floor_page/$id"
         fun floorMore(id: String) = "home.floor_more/$id"
         fun worker(id: String) = "home.worker/$id"
     }
