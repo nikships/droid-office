@@ -181,6 +181,7 @@ class ThreadGoldenTest {
                     put("state", b.state.wire)
                     put("live", b.live)
                     put("open", b.open)
+                    b.card?.let { put("card", it.wire) }
                     put("actions", buildJsonArray { b.actions.forEach { add(encode(it)) } })
                     b.plan?.let { steps ->
                         put("plan", buildJsonArray {
@@ -211,6 +212,46 @@ class ThreadGoldenTest {
             }
             put("result", a.result)
             put("open", a.open)
+            a.card?.let { put("card", it.wire) }
+            a.changes?.let { changes ->
+                put("changes", buildJsonArray {
+                    for (c in changes) add(encode(c))
+                })
+            }
+            a.command?.let { cmd ->
+                put("command", buildJsonObject {
+                    put("command", cmd.command)
+                    cmd.summary?.let { put("summary", it) }
+                })
+            }
+            a.delegation?.let { del ->
+                put("delegation", buildJsonObject {
+                    put("agent", del.agent)
+                    del.role?.let { put("role", it) }
+                    put("summary", del.summary)
+                    del.workerId?.let { put("workerId", it) }
+                    del.workerName?.let { put("workerName", it) }
+                    del.branch?.let { put("branch", it) }
+                })
+            }
+        }
+
+        private fun encode(c: ThreadFileChange): JsonObject = buildJsonObject {
+            put("path", c.path)
+            put("shortPath", c.shortPath)
+            put("kind", c.kind.wire)
+            put("additions", c.additions)
+            put("deletions", c.deletions)
+            put("generated", c.generated)
+            if (c.truncated) put("truncated", true)
+            put("lines", buildJsonArray {
+                for (l in c.lines) add(buildJsonObject {
+                    put("kind", l.kind.wire)
+                    put("text", l.text)
+                    l.oldLine?.let { put("oldLine", it) }
+                    l.newLine?.let { put("newLine", it) }
+                })
+            })
         }
     }
 }

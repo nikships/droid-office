@@ -135,4 +135,7 @@ object OfficeIcons {
     )
     val Search = icon("Search", "M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14z", "M16.2 16.2L20.5 20.5")
     val Repo = icon("Repo", "M5 4.5A2 2 0 0 1 7 2.5h12v17H7a2 2 0 0 0-2 2V4.5z", "M5 19.5h14", "M9 6.5h6", "M9 10h4")
+    val Check = icon("Check", "M5 12.5l4.5 4.5L19 7.5")
+    val Mail = icon("Mail", "M3.5 6.5a1.5 1.5 0 0 1 1.5-1.5h14a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5z", "M4 7l8 5.5L20 7")
+    val File = icon("File", "M6.5 3.5h7.5l4.5 4.5V19a1.5 1.5 0 0 1-1.5 1.5H6.5A1.5 1.5 0 0 1 5 19V5a1.5 1.5 0 0 1 1.5-1.5z", "M14 3.5V8h4.5")
 }

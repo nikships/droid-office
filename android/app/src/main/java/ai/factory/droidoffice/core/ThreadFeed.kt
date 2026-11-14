@@ -242,12 +242,13 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
         )
     }
 
-    /** Applies an answer when it is to a request still out from this feed. True when it was. */
+    /** Applies an answer when it is to a request still out from this feed, or a pushed latest snapshot. True when it was. */
     fun receive(msg: ServerMsg.ThreadSnapshot): Boolean {
         if (msg.workerId != workerId) return false
         val isLatest = msg.before == null && latest?.request == msg.request
+        val isPush = msg.push && msg.before == null && state.phase != ThreadPhase.Unavailable
         val isEarlier = earlier?.let { it.request == msg.request && it.before == msg.before } == true
-        if (!isLatest && !isEarlier) return false
+        if (!isLatest && !isPush && !isEarlier) return false
         answered = true
         if (isEarlier) {
             val before = earlier?.before
@@ -362,7 +363,7 @@ class ThreadFeed(val workerId: String, private val prefix: String = UUID.randomU
                     is ThreadBlock.Thought -> block.takeIf { held(block.id) }
                     is ThreadBlock.Tools -> block.actions.filter { held(it.id) }.takeIf { it.isNotEmpty() }?.let { actions ->
                         if (actions.size == block.actions.size) block
-                        else block.copy(label = "Earlier tools", state = state(actions), live = false, actions = actions)
+                        else block.copy(label = "Earlier tools", state = state(actions), live = false, card = block.card, actions = actions)
                     }
                 }
             }

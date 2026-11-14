@@ -39,6 +39,70 @@ enum class NoticeTone(val wire: String) {
     }
 }
 
+enum class ThreadCardKind(val wire: String) {
+    Change("change"),
+    Command("command"),
+    Delegate("delegate");
+
+    companion object {
+        fun of(wire: String?): ThreadCardKind? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+enum class DiffLineKind(val wire: String) {
+    Hunk("hunk"),
+    Ctx("ctx"),
+    Add("add"),
+    Del("del"),
+    Note("note");
+
+    companion object {
+        fun of(wire: String?): DiffLineKind? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+enum class FileChangeKind(val wire: String) {
+    Added("added"),
+    Modified("modified"),
+    Deleted("deleted");
+
+    companion object {
+        fun of(wire: String?): FileChangeKind? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+data class ThreadDiffLine(
+    val kind: DiffLineKind,
+    val text: String,
+    val oldLine: Int? = null,
+    val newLine: Int? = null,
+)
+
+data class ThreadFileChange(
+    val path: String,
+    val shortPath: String,
+    val kind: FileChangeKind,
+    val additions: Int,
+    val deletions: Int,
+    val generated: Boolean,
+    val truncated: Boolean = false,
+    val lines: List<ThreadDiffLine> = emptyList(),
+)
+
+data class ThreadCommandMeta(
+    val command: String,
+    val summary: String? = null,
+)
+
+data class ThreadDelegationMeta(
+    val agent: String,
+    val role: String? = null,
+    val summary: String,
+    val workerId: String? = null,
+    val workerName: String? = null,
+    val branch: String? = null,
+)
+
 /** Where an action's arguments are in its entry's input: a key of the JSON object, `.` for a JSON string, or the whole input. */
 data class ThreadArgumentsRef(val label: String, val field: String? = null) {
     /** The text this points at in [input], as the office's `threadArgumentsText` reads it. */
@@ -70,11 +134,24 @@ data class ThreadModelAction(
     /** The heading over the output: Result, Error or Cancelled. */
     val result: String,
     val open: Boolean = false,
+    val card: ThreadCardKind? = null,
+    val changes: List<ThreadFileChange>? = null,
+    val command: ThreadCommandMeta? = null,
+    val delegation: ThreadDelegationMeta? = null,
 )
 
 data class ThreadFailure(val id: String, val title: String, val preview: String)
 
 data class PlanStep(val done: Boolean, val active: Boolean, val text: String)
+
+data class ActivePlan(
+    val steps: List<PlanStep>,
+    val done: Int,
+    val total: Int,
+    val current: String? = null,
+    val allDone: Boolean,
+    val stale: Boolean,
+)
 
 sealed interface ThreadBlock {
     val id: String
@@ -89,6 +166,7 @@ sealed interface ThreadBlock {
         val state: ActivityState,
         override val live: Boolean,
         override val open: Boolean = false,
+        val card: ThreadCardKind? = null,
         val actions: List<ThreadModelAction>,
         /** The run's plan, only when it changed since the last one shown. */
         val plan: List<PlanStep>? = null,
@@ -181,6 +259,7 @@ data class ThreadPresentation(val version: Int, val rows: List<ThreadRow>) {
                     state = ActivityState.of(o.str("state")) ?: return null,
                     live = o.bool("live") ?: false,
                     open = o.bool("open") ?: false,
+                    card = ThreadCardKind.of(o.str("card")),
                     actions = (o["actions"] as? JsonArray)?.mapNotNull(::action).orEmpty(),
                     plan = (o["plan"] as? JsonArray)?.mapNotNull(::step),
                 )
@@ -201,6 +280,60 @@ data class ThreadPresentation(val version: Int, val rows: List<ThreadRow>) {
                 arguments = (o["arguments"] as? JsonObject)?.let { a -> a.str("label")?.let { ThreadArgumentsRef(it, a.str("field")) } },
                 result = o.str("result") ?: "Result",
                 open = o.bool("open") ?: false,
+                card = ThreadCardKind.of(o.str("card")),
+                changes = (o["changes"] as? JsonArray)?.mapNotNull(::fileChange),
+                command = (o["command"] as? JsonObject)?.let(::commandMeta),
+                delegation = (o["delegation"] as? JsonObject)?.let(::delegationMeta),
+            )
+        }
+
+        private fun fileChange(e: JsonElement): ThreadFileChange? {
+            val o = e as? JsonObject ?: return null
+            val path = o.str("path") ?: return null
+            val shortPath = o.str("shortPath") ?: path
+            val kind = FileChangeKind.of(o.str("kind")) ?: return null
+            return ThreadFileChange(
+                path = path,
+                shortPath = shortPath,
+                kind = kind,
+                additions = o.int("additions") ?: 0,
+                deletions = o.int("deletions") ?: 0,
+                generated = o.bool("generated") ?: false,
+                truncated = o.bool("truncated") ?: false,
+                lines = (o["lines"] as? JsonArray)?.mapNotNull(::diffLine).orEmpty(),
+            )
+        }
+
+        private fun diffLine(e: JsonElement): ThreadDiffLine? {
+            val o = e as? JsonObject ?: return null
+            val kind = DiffLineKind.of(o.str("kind")) ?: return null
+            val text = o.str("text") ?: return null
+            return ThreadDiffLine(
+                kind = kind,
+                text = text,
+                oldLine = o.int("oldLine"),
+                newLine = o.int("newLine"),
+            )
+        }
+
+        private fun commandMeta(o: JsonObject): ThreadCommandMeta? {
+            val command = o.str("command") ?: return null
+            return ThreadCommandMeta(
+                command = command,
+                summary = o.str("summary"),
+            )
+        }
+
+        private fun delegationMeta(o: JsonObject): ThreadDelegationMeta? {
+            val agent = o.str("agent") ?: return null
+            val summary = o.str("summary") ?: return null
+            return ThreadDelegationMeta(
+                agent = agent,
+                role = o.str("role"),
+                summary = summary,
+                workerId = o.str("workerId"),
+                workerName = o.str("workerName"),
+                branch = o.str("branch"),
             )
         }
 
