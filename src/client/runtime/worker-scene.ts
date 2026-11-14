@@ -368,8 +368,8 @@ export function createWorkerScene(host: WorkerSceneHost) {
       v.laptop.update(dt, store.screens.get(id), Math.hypot(desk.x - camPos.x, desk.z - camPos.z));
       v.spillColor.lerp(v.spillTarget, 1 - Math.exp(-dt / 0.6));
       v.spillPower += (v.spillPowerTarget - v.spillPower) * (1 - Math.exp(-dt / 0.6));
-      // A fresh failure makes the screen light stutter like an alarm.
-      const stutter = v.spillTone === 'crimson' && !reduceMotion.matches ? 0.78 + 0.22 * Math.abs(Math.sin(t * 23) * Math.sin(t * 7.1)) : 1;
+      // A troubled desk's screen light breathes softly like a warm ember.
+      const stutter = v.spillTone === 'crimson' && !reduceMotion.matches ? 0.9 + 0.1 * Math.sin(t * 3.4) : 1;
       const glow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
       glow.power = v.laptop.glow(glow.pos, glow.dir) * v.spillPower * stutter;
       glow.color = v.spillColor;

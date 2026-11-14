@@ -62,11 +62,11 @@ export function isFloorEvent(value: unknown): value is FloorEvent {
  * plus `ship_it`, played without Gemini when a worker on the floor opens a pull request.
  */
 export const FLOOR_EVENT_FX: Record<FloorEvent | 'ship_it', { hex: string; pulses: number; glyph: string; label: string }> = {
-  convergence: { hex: '#22c55e', pulses: 2, glyph: '🧩', label: 'Coming together' },
-  collision: { hex: '#ff9f1c', pulses: 3, glyph: '⚔️', label: 'Collision' },
-  crisis: { hex: '#ef4444', pulses: 3, glyph: '🚨', label: 'Crisis' },
+  convergence: { hex: '#22c55e', pulses: 1, glyph: '🧩', label: 'Coming together' },
+  collision: { hex: '#ff9f1c', pulses: 2, glyph: '⚔️', label: 'Collision' },
+  crisis: { hex: '#ef4444', pulses: 2, glyph: '🚨', label: 'Crisis' },
   brainstorm: { hex: '#8b5cf6', pulses: 1, glyph: '🧠', label: 'Brainstorm' },
-  ship_it: { hex: '#ffb020', pulses: 2, glyph: '🚀', label: 'Ship it' },
+  ship_it: { hex: '#ffb020', pulses: 1, glyph: '🚀', label: 'Ship it' },
 };
 
 /**
@@ -103,17 +103,17 @@ export const MOOD_CONFIDENCE_MIN = 0.52;
 /** Hex color for each desk laptop bounce-light spill tone. */
 export const MONITOR_SPILL_HEX: Record<MonitorSpillTone, string> = {
   neutral: '#ee6018',
-  emerald: '#10f0a0',
-  amber: '#ffa908',
-  crimson: '#ff1f4b',
+  emerald: '#16e09a',
+  amber: '#fb9d1b',
+  crimson: '#f43f5e',
 };
 
 /** How much brighter than a plain screen each spill tone throws its light across the desk and worker. */
 export const MONITOR_SPILL_POWER: Record<MonitorSpillTone, number> = {
   neutral: 1,
-  emerald: 2.6,
-  amber: 2.2,
-  crimson: 2.8,
+  emerald: 1.65,
+  amber: 1.55,
+  crimson: 1.75,
 };
 
 /**
@@ -123,9 +123,9 @@ export const MONITOR_SPILL_POWER: Record<MonitorSpillTone, number> = {
  */
 export const FLOOR_MOOD_LIGHTING: Record<FloorMood, { hex: string; fillScale: number; pulse: number; pulseHz: number; label: string }> = {
   calm_planning: { hex: '#383a46', fillScale: 1, pulse: 0, pulseHz: 0, label: 'Calm planning' },
-  deep_crunch: { hex: '#1d3c8f', fillScale: 0.9, pulse: 0.14, pulseHz: 0.22, label: 'Deep crunch' },
-  debugging_tension: { hex: '#8f2418', fillScale: 0.95, pulse: 0.38, pulseHz: 0.7, label: 'Debugging tension' },
-  celebration_swell: { hex: '#a06a12', fillScale: 1.5, pulse: 0.24, pulseHz: 1.1, label: 'Celebration swell' },
+  deep_crunch: { hex: '#283c6e', fillScale: 0.92, pulse: 0.08, pulseHz: 0.14, label: 'Deep crunch' },
+  debugging_tension: { hex: '#5c2d2a', fillScale: 0.95, pulse: 0.12, pulseHz: 0.22, label: 'Debugging tension' },
+  celebration_swell: { hex: '#694e26', fillScale: 1.18, pulse: 0.1, pulseHz: 0.26, label: 'Celebration swell' },
 };
 
 export interface TriggeredMicroReaction {

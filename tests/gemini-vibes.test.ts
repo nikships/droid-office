@@ -91,8 +91,8 @@ test('shared gemini-vibes validators, key fingerprinting and defaults', () => {
   assert.equal(unitFromScore(Number.NaN), undefined);
   assert.equal(FLOOR_MOOD_LIGHTING.calm_planning.pulse, 0, 'the baseline mood holds still');
   assert.equal(FLOOR_MOOD_LIGHTING.calm_planning.hex, '#383a46', 'the baseline mood is the clear-night fill Remastered bakes against');
-  for (const mood of ['deep_crunch', 'debugging_tension', 'celebration_swell'] as const) assert.ok(FLOOR_MOOD_LIGHTING[mood].pulse > 0, mood);
-  for (const tone of ['emerald', 'amber', 'crimson'] as const) assert.ok(MONITOR_SPILL_POWER[tone] >= 2, tone);
+  for (const mood of ['deep_crunch', 'debugging_tension', 'celebration_swell'] as const) assert.ok(FLOOR_MOOD_LIGHTING[mood].pulse > 0 && FLOOR_MOOD_LIGHTING[mood].pulse <= 0.2, mood);
+  for (const tone of ['emerald', 'amber', 'crimson'] as const) assert.ok(MONITOR_SPILL_POWER[tone] > 1.3 && MONITOR_SPILL_POWER[tone] < 2.2, tone);
 
   assert.equal(isMonitorSpillTone('emerald'), true);
   assert.equal(isMonitorSpillTone('crimson'), true);

@@ -13,6 +13,7 @@ import {
   LOFT,
   SEATING_BY_ID,
   SLAB,
+  VIBES_SWITCH,
   WALL_HEIGHT,
   inElevator,
   nextFreeSeat,
@@ -294,7 +295,7 @@ store.on('decor', () => gallery.sync(store.decor));
 const confetti = new Confetti((x, z, y) => groundAt(office.colliders, x, z, y, false));
 scene.add(confetti.mesh);
 
-// Living 3D's shockwaves, beams and sparks (Gemini Decision 1).
+// Living 3D's ceiling rays, soft glow pools, filaments and motes (Gemini Decision 1).
 const vibeFx = new VibeFx();
 scene.add(vibeFx.group);
 let vibeFxMoving = false;
@@ -3543,39 +3544,38 @@ function deskPoints(v: WorkerView): { head: THREE.Vector3; feet: THREE.Vector3 }
   return { head, feet };
 }
 
-/** A worker's micro-reaction, around it: sparks, and confetti, smoke or a warning strobe. */
+/** A worker's micro-reaction, around it: delicate motes, a soft desk glow, and gentle confetti, smoke or warm room tint. */
 function vibeReactionFx(_id: string, v: WorkerView, kind: WorkerMicroReaction) {
   if (!vibeFx.enabled) return;
   const { head, feet } = deskPoints(v);
   const fx = MICRO_REACTION_FX[kind];
   const down = kind === 'setback' || kind === 'frustrated' || kind === 'corner_cut';
-  vibeFx.react(fx.hex, head, feet, { sparks: kind === 'breakthrough' || kind === 'eureka' ? 56 : 32, lift: down ? -0.6 : 1 });
-  if (kind === 'breakthrough') burstOver(v.deskId, 90);
-  else if (kind === 'risky_move') sky.flashRoom(fx.hex, 1.4, 2, 3.2);
+  vibeFx.react(fx.hex, head, feet, { sparks: kind === 'breakthrough' || kind === 'eureka' ? 28 : 16, lift: down ? -0.45 : 0.8 });
+  if (kind === 'breakthrough') burstOver(v.deskId, 36);
+  else if (kind === 'risky_move') sky.flashRoom(fx.hex, 1.6, 1, 0.45);
   else if (down && !reduceMotion.matches) addEffect(new Puff(head, new THREE.Vector3(0, 1, 0)));
 }
 
 /**
  * Something the office knows happened at a desk, played without Gemini while Living 3D is on: a
- * beam of light for a hire, a ring closing in for a send-off, a crimson flash for a shot.
+ * feathered ceiling ray for a hire or PR, or a soft stationary glow and motes for finishing or leaving.
  */
 function deskMomentFx(id: string, v: WorkerView, kind: DeskMoment) {
   if (!vibeFx.enabled) return;
   const { head, feet } = deskPoints(v);
   const fx = DESK_MOMENT_FX[kind];
-  vibeFx.deskMoment(fx.hex, head, feet, { beam: kind === 'hired' || kind === 'shipped', implode: kind === 'sent_home' || kind === 'shot', sparks: kind === 'shot' ? 70 : 40 });
-  if (kind === 'shot') sky.flashRoom(fx.hex, 2.4, 1, 2.6);
-  else if (kind === 'sent_home') sky.flashRoom(fx.hex, 0.9, 1, 1.4);
+  vibeFx.deskMoment(fx.hex, head, feet, { beam: kind === 'hired' || kind === 'shipped', implode: kind === 'sent_home' || kind === 'shot', sparks: kind === 'shot' ? 24 : 22 });
+  if (kind === 'shot') sky.flashRoom(fx.hex, 1.8, 1, 0.32);
   lastDeskMoment = { kind, worker: id };
   activeAt = performance.now();
   renderWake();
 }
 
-/** A worker on this floor opened a pull request: a chair spin, a beam, confetti and the whole room flashing gold. */
+/** A worker on this floor opened a pull request: a chair spin, a golden ceiling ray, desk confetti and a warm gold swell. */
 function shippedFx(id: string, v: WorkerView) {
   if (!vibeFx.enabled) return;
   v.model.triggerReaction('shipped');
-  burstOver(v.deskId, 180);
+  burstOver(v.deskId, 72);
   deskMomentFx(id, v, 'shipped');
   playFloorEvent('ship_it');
 }
@@ -3594,13 +3594,13 @@ function collisionPairs(points: { id: string; head: THREE.Vector3 }[]): [THREE.V
 }
 
 /**
- * A room-wide moment: the whole room flashes in its color, a ring races across the floor, and every
- * graded desk lights up as it passes. A collision crackles between the desks at odds; a crisis calls
- * out the desks in trouble; things coming together raise a beam at every desk.
+ * A room-wide moment: the room's fill swells gently in its color and each graded desk blooms in
+ * turn outward from the center. A collision links the desks at odds with shimmering arcs; a crisis
+ * highlights the desks in trouble; things coming together cast a soft ceiling ray over each desk.
  */
 function playFloorEvent(kind: FloorEvent | 'ship_it') {
   const fx = FLOOR_EVENT_FX[kind];
-  sky.flashRoom(fx.hex, kind === 'crisis' || kind === 'collision' ? 3.2 : 2.6, fx.pulses, kind === 'ship_it' ? 2.2 : 1.7);
+  sky.flashRoom(fx.hex, kind === 'crisis' || kind === 'collision' ? 2.8 : 2.4, fx.pulses, kind === 'ship_it' ? 0.65 : 0.55);
   const center = new THREE.Vector3((FLOOR.minX + FLOOR.maxX) / 2, 0, (FLOOR.minZ + FLOOR.maxZ) / 2);
   const graded = store.vibes?.workers ?? {};
   const troubled = (id: string) => graded[id]?.spill === 'crimson' || graded[id]?.posture === 'struggling';
@@ -3613,8 +3613,7 @@ function playFloorEvent(kind: FloorEvent | 'ship_it') {
   }
   vibeFx.roomWave(center, fx.hex, heads);
   if (kind === 'collision') vibeFx.links(collisionPairs(heads), fx.hex);
-  if (kind === 'convergence') for (const h of heads) vibeFx.deskMoment(fx.hex, h.head, h.feet, { beam: true, sparks: 20 });
-  if (kind === 'ship_it') confetti.rain(FLOOR, floorArea(FLOOR) * 1.2, 2.5, ceilingOver);
+  if (kind === 'convergence') for (const h of heads) vibeFx.deskMoment(fx.hex, h.head, h.feet, { beam: true, sparks: 14 });
   lastRoomEvent = kind;
 }
 
@@ -3659,16 +3658,16 @@ function syncFloorVibes(snap = false) {
   }
 }
 
-/** Living 3D switched on or off (here, from Settings, or from another window): a sweep across the room you can't miss. */
+/** Living 3D switched on or off (here, from Settings, or from another window): a subtle warm ray and room breath. */
 function syncVibesPower() {
   const g = store.gemini;
   const on = g.connected && g.vibesOn && !g.rejected && !store.setup.airgapped;
   vibeFx.setEnabled(on && indoorHere());
   if (vibesWasOn !== null && on !== vibesWasOn && g.connected && indoorHere()) {
-    const from = new THREE.Vector3(player.pos.x, groundAt(office.colliders, player.pos.x, player.pos.z, player.pos.y + 0.5, false), player.pos.z);
-    if (!Number.isFinite(from.y)) from.y = player.pos.y;
+    const switchY = groundAt(office.colliders, VIBES_SWITCH.x, VIBES_SWITCH.z, player.pos.y + 0.5, false);
+    const from = new THREE.Vector3(VIBES_SWITCH.x, Number.isFinite(switchY) ? switchY : 0, VIBES_SWITCH.z);
     vibeFx.power(on, from);
-    sky.flashRoom(on ? '#ff7a1a' : '#9aa3b2', on ? 1.8 : 1, 1, on ? 1.8 : 0.7);
+    sky.flashRoom(on ? '#ff8a3d' : '#94a3b8', on ? 1.6 : 1.0, 1, on ? 0.42 : 0.18);
     // The pedestal switch toasts its own press once the server confirms it.
     if (vibesToggle.pendingTarget === null) toast(on ? 'Living 3D on: the room now reacts to your workers' : 'Living 3D off: lighting and postures are back to neutral');
     activeAt = performance.now();

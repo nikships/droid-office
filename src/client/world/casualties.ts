@@ -24,14 +24,71 @@ export interface CasualtyLaptop {
   shut(dt: number): boolean;
   dispose(): void;
 }
-/** A soft white-gold column and a pool of light, with private resources for each ascent. */
+/** Polar disc on XZ whose vertex RGB falls smoothly to zero at `radius`, leaving no hard floor rim. */
+function softPoolGeometry(radius: number, rings = 8, segs = 40): THREE.BufferGeometry {
+  const verts = 1 + rings * segs;
+  const pos = new Float32Array(verts * 3);
+  const norm = new Float32Array(verts * 3);
+  const col = new Float32Array(verts * 3);
+  norm[1] = 1;
+  col[0] = col[1] = col[2] = 1;
+  for (let r = 1; r <= rings; r++) {
+    const u = r / rings;
+    const w = Math.cos(u * Math.PI * 0.5) ** 2.4;
+    const base = 1 + (r - 1) * segs;
+    for (let s = 0; s < segs; s++) {
+      const a = (s / segs) * Math.PI * 2;
+      const idx = (base + s) * 3;
+      pos[idx] = Math.cos(a) * u * radius;
+      pos[idx + 1] = 0;
+      pos[idx + 2] = Math.sin(a) * u * radius;
+      norm[idx + 1] = 1;
+      col[idx] = col[idx + 1] = col[idx + 2] = w;
+    }
+  }
+  const indices: number[] = [];
+  for (let s = 0; s < segs; s++) {
+    const next = (s + 1) % segs;
+    indices.push(0, 1 + next, 1 + s);
+  }
+  for (let r = 2; r <= rings; r++) {
+    const prev = 1 + (r - 2) * segs;
+    const curr = 1 + (r - 1) * segs;
+    for (let s = 0; s < segs; s++) {
+      const next = (s + 1) % segs;
+      indices.push(prev + s, prev + next, curr + next, prev + s, curr + next, curr + s);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(norm, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setIndex(indices);
+  return geo;
+}
+
+/** Open tapered column whose vertex RGB fades smoothly to zero where it meets the floor. */
+function softColumnGeometry(topR: number, botR: number, height: number, segs: number): THREE.BufferGeometry {
+  const geo = new THREE.CylinderGeometry(topR, botR, height, segs, 12, true);
+  const pos = geo.getAttribute('position') as THREE.BufferAttribute;
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const v = THREE.MathUtils.clamp((pos.getY(i) + height / 2) / height, 0, 1);
+    const w = THREE.MathUtils.smoothstep(v, 0, 0.14) * (1 - 0.25 * v);
+    col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = w;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+}
+
+/** A soft white-gold column and a feathered pool of light, with private resources for each ascent. */
 function heavenlyBeam(height: number) {
   const root = new THREE.Group();
   root.name = 'heavenly-beam';
   const materials: THREE.MeshBasicMaterial[] = [];
   const geometries: THREE.BufferGeometry[] = [];
   const add = (geometry: THREE.BufferGeometry, color: string, opacity: number, name: string) => {
-    const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+    const material = new THREE.MeshBasicMaterial({ color, vertexColors: true, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
     material.userData.opacity = opacity;
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = name;
@@ -40,14 +97,9 @@ function heavenlyBeam(height: number) {
     geometries.push(geometry);
     return mesh;
   };
-  add(new THREE.CylinderGeometry(0.65, 1.35, height, 40, 1, true), '#ffe6ad', 0.14, 'beam-column').position.y = height / 2;
-  add(new THREE.CylinderGeometry(0.28, 0.95, height, 32, 1, true), '#fff9e8', 0.18, 'beam-core').position.y = height / 2;
-  const pool = add(new THREE.CircleGeometry(1.35, 40), '#fff2cc', 0.22, 'beam-pool');
-  pool.rotation.x = -Math.PI / 2;
-  pool.position.y = 0.005;
-  const rim = add(new THREE.RingGeometry(1.28, 1.35, 40), '#ffe6ad', 0.5, 'beam-rim');
-  rim.rotation.x = -Math.PI / 2;
-  rim.position.y = 0.006;
+  add(softColumnGeometry(0.65, 1.35, height, 40), '#ffe6ad', 0.11, 'beam-column').position.y = height / 2;
+  add(softColumnGeometry(0.28, 0.95, height, 32), '#fff9e8', 0.14, 'beam-core').position.y = height / 2;
+  add(softPoolGeometry(1.6), '#fff2cc', 0.22, 'beam-pool').position.y = 0.006;
   const light = new THREE.PointLight('#fff2cc', 0, 4, 2);
   light.position.y = 1.2;
   root.add(light);
