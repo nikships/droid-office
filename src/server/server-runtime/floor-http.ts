@@ -97,6 +97,21 @@ export function createFloorHttp({ floors, orchestrator, workerFloor, workerThrea
         return 'error' in r ? send(res, r.status, { error: r.error }) : send(res, 200, r);
       }
       const relPath = str(url.searchParams.get('path'), 4096);
+      if (url.searchParams.get('raw') === 'image') {
+        const image = await threadWorkspace.readImage(cwd, relPath);
+        if ('error' in image) return send(res, image.status, { error: image.error });
+        res.writeHead(200, {
+          'content-type': image.type,
+          'content-length': String(image.body.length),
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+          // An SVG the worker wrote runs no script and loads nothing, even opened on its own.
+          'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+          'cross-origin-resource-policy': 'same-origin',
+        });
+        res.end(image.body);
+        return;
+      }
       const r = await threadWorkspace.readPreview(cwd, relPath);
       return 'error' in r ? send(res, r.status, { error: r.error, ...(r.binary ? { binary: true } : {}) }) : send(res, 200, r);
     }

@@ -493,16 +493,19 @@ test('openFilePreviewModal handles text, target line scrolling, binary files, an
   assert.ok(modalRoot.querySelector('.wt-file-banner'));
   m1.close();
 
-  // 2. Binary file
+  // 2. Binary file; a picture shows as itself instead, read as bytes
   Object.defineProperty(globalThis, 'fetch', {
     configurable: true,
-    value: async () => new Response(JSON.stringify({ path: 'logo.png', binary: true, size: 512 }), { status: 200 }),
+    value: async () => new Response(JSON.stringify({ path: 'app.wasm', binary: true, size: 512 }), { status: 200 }),
   });
   const p2 = waitForBody();
-  const m2 = openFilePreviewModal({ floor: 'main', workerId: 'w1', path: 'logo.png' });
+  const m2 = openFilePreviewModal({ floor: 'main', workerId: 'w1', path: 'app.wasm' });
   await p2;
   assert.match(modalRoot.textContent, /Binary file/);
   m2.close();
+  const picture = openFilePreviewModal({ floor: 'main', workerId: 'w1', path: 'logo.png' });
+  assert.match(modalRoot.querySelector('.wt-file-image')?.getAttribute('src') ?? '', /path=logo\.png&raw=image/);
+  picture.close();
 
   // 3. HTTP error
   Object.defineProperty(globalThis, 'fetch', {

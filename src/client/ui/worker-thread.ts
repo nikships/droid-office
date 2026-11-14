@@ -55,6 +55,8 @@ export interface ThreadOptions {
   openWorker?(id: string): void;
   /** Opens a worker's Changes window. Absent where there is none. */
   openChanges?(id: string): void;
+  /** Puts a file from a worker's workspace on the floor's Whiteboard. */
+  sendToWhiteboard?(workerId: string, path: string): void;
   /** The floor the worker is on: its pictures and workspace files are fetched from there. */
   floor?: string;
   /** Shown in place of an empty conversation while it returns a node. With no session yet, nothing is read. */
@@ -910,6 +912,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         pictures,
         onLayoutChange: () => updateLatest(),
         openChanges,
+        ...(opts.sendToWhiteboard && canOpenFiles(author) ? { sendToWhiteboard: (path: string) => opts.sendToWhiteboard?.(author.id, path) } : {}),
       };
       // Blocks a group folds render into its body instead of the row.
       const groupOf = new Map<string, ThreadToolGroup>();

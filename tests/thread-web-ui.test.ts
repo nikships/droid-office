@@ -61,6 +61,7 @@ async function mountV3Thread(t: TestContext, mounted: WorkerInfo = baseWorker, f
       w.fetches = [];
       w.openedWorkers = [];
       w.openedChanges = [];
+      w.sentToBoard = [];
       w.team = [];
       w.filesPayload = {
         files: ['package.json', 'src/client/style.css', 'src/client/ui/worker-thread.ts'],
@@ -146,6 +147,7 @@ async function mountV3Thread(t: TestContext, mounted: WorkerInfo = baseWorker, f
         team: () => w.team,
         openWorker: (id: string) => w.openedWorkers.push(id),
         openChanges: (id: string) => w.openedChanges.push(id),
+        sendToWhiteboard: (id: string, path: string) => w.sentToBoard.push([id, path]),
         floor,
       });
 
@@ -678,6 +680,54 @@ test('folds a run of cards into one group, ends a finished turn with what it cha
   // While the latest turn runs it has no summary yet.
   await push(presentThread(entries, true));
   assert.equal(await page.locator('.wt-turn-changes').count(), 1);
+
+  await page.evaluate(() => (window as any).thread.dispose());
+  assert.deepEqual(errors, []);
+});
+
+test('a created Markdown, HTML or picture file offers Preview and Send to Whiteboard', { skip: chromium }, async (t) => {
+  const { page, errors } = await mountV3Thread(t);
+  const create = (id: string, seq: number, file: string, content: string): ThreadEntry => ({
+    id,
+    seq,
+    role: 'assistant',
+    kind: 'tool',
+    name: 'Create',
+    input: JSON.stringify({ file_path: `/Users/nik/repos/droid-office/${file}`, content }),
+    output: `Created ${file}`,
+  });
+  const entries: ThreadEntry[] = [
+    { id: 'u1', seq: 1, role: 'user', kind: 'text', text: 'Write the report' },
+    create('c1', 2, 'docs/report.md', '# Report\n\nAll good.\n'),
+    create('c2', 3, 'src/report.ts', 'export const report = 1;\n'),
+    create('c3', 4, 'docs/chart.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>'),
+  ];
+  await page.evaluate(
+    ({ entries, rows }) => {
+      (window as any).receive({ t: 'thread.snapshot', workerId: 'worker-1', request: 'push', push: true, sessionId: 'session-1', entries, hasMore: false, presentation: { version: 1, rows } });
+    },
+    { entries, rows: presentThread(entries, false) },
+  );
+
+  // Only the Markdown and the picture are deliverables; the source file isn't.
+  assert.equal(await page.locator('.wt-change-actions').count(), 2);
+  const report = page.locator('.wt-change-deliverable', { has: page.locator('details[data-disclosure*="docs/report.md"]') });
+  await report.locator('.wt-change-board').click();
+  assert.deepEqual(await page.evaluate(() => (window as any).sentToBoard), [['worker-1', 'docs/report.md']]);
+  await report.locator('.wt-change-preview').click();
+  const preview = page.locator('.modal.wt-file-modal');
+  await preview.locator('.wt-file-lines').waitFor();
+  assert.equal(await preview.locator('.wt-file-modal-title').textContent(), 'docs/report.md');
+  await page.keyboard.press('Escape');
+
+  // A picture previews as itself, read as bytes from the workspace.
+  await page
+    .locator('.wt-change-deliverable', { has: page.locator('details[data-disclosure*="docs/chart.svg"]') })
+    .locator('.wt-change-preview')
+    .click();
+  const src = await page.locator('.modal.wt-file-modal img.wt-file-image').getAttribute('src');
+  assert.match(src ?? '', /\/api\/thread\/file\?.*path=docs%2Fchart\.svg.*raw=image/);
+  await page.keyboard.press('Escape');
 
   await page.evaluate(() => (window as any).thread.dispose());
   assert.deepEqual(errors, []);

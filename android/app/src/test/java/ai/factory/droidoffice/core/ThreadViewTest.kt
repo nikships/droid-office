@@ -298,6 +298,12 @@ class ThreadViewTest {
     }
 
     @Test
+    fun createdDocumentsAndPicturesAreDeliverables() {
+        for (p in listOf("docs/spec.md", "notes.MARKDOWN", "site/index.html", "a.htm", "shot.PNG", "b.jpeg", "c.webp", "d.svg", "e.gif")) assertTrue(p, ThreadView.deliverable(p))
+        for (p in listOf("src/app.ts", "README", "archive.md.zip", "docs.md/notes")) assertFalse(p, ThreadView.deliverable(p))
+    }
+
+    @Test
     fun aGroupFoldsTheSegmentsFromItsFirstCardToItsLast() {
         fun card(id: String) = ThreadBlock.Tools(
             "tools:$id", "Ran a command", ActivityState.Complete, live = false, card = ThreadCardKind.Command,

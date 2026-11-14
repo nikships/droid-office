@@ -1,3 +1,4 @@
+import { threadDeliverable } from '../../shared/thread-diff';
 import { withToken } from '../token';
 import { attachCopyFeedback, codeLanguageLabel, highlightLine, preloadCodeLanguage } from './code-highlight';
 import { h, type Modal, openModal } from './dom';
@@ -42,6 +43,12 @@ export function threadFilePreviewUrl(opts: { floor: string; workerId: string; pa
     worker: opts.workerId,
     path: opts.path,
   });
+  return withToken(`/api/thread/file?${params}`);
+}
+
+/** The authenticated URL of a picture in a worker's workspace, as its bytes. */
+export function threadFileImageUrl(opts: { floor: string; workerId: string; path: string }): string {
+  const params = new URLSearchParams({ floor: opts.floor, worker: opts.workerId, path: opts.path, raw: 'image' });
   return withToken(`/api/thread/file?${params}`);
 }
 
@@ -123,6 +130,18 @@ export function openFilePreviewModal(opts: FilePreviewOptions): Modal {
       resetCopyFile();
     },
   });
+
+  // A picture shows as itself rather than as text.
+  if (threadDeliverable(opts.path) === 'image') {
+    const img = h('img.wt-file-image', { src: threadFileImageUrl(opts), alt: opts.path, decoding: 'async' });
+    img.addEventListener('load', () => (metaEl.textContent = `${img.naturalWidth} × ${img.naturalHeight}`));
+    img.addEventListener('error', () => {
+      body.replaceChildren(h('div.wt-file-state', {}, emptyState('!', 'Couldn’t open file', `${opts.path} couldn’t be shown as a picture.`)));
+      metaEl.textContent = 'Unavailable';
+    });
+    body.replaceChildren(h('div.wt-file-picture', {}, img));
+    return modal;
+  }
 
   const url = threadFilePreviewUrl({ floor: opts.floor, workerId: opts.workerId, path: opts.path });
 

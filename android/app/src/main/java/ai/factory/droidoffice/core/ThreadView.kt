@@ -170,6 +170,14 @@ object ThreadView {
 
     private val hunkStart = Regex("""^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@""")
 
+    /** A created file worth previewing: Markdown, HTML or a picture (threadDeliverable in src/shared/thread-diff.ts). */
+    fun deliverable(path: String): Boolean {
+        val ext = path.trim().substringAfterLast('/').substringAfterLast('.', "").lowercase()
+        return ext in DELIVERABLE_EXTENSIONS
+    }
+
+    private val DELIVERABLE_EXTENSIONS = setOf("md", "markdown", "html", "htm", "png", "jpg", "jpeg", "gif", "webp", "svg")
+
     /** Whether [change]'s lines carry file line numbers: an Edit the office couldn't place in its file has none. */
     fun numbered(change: ThreadFileChange): Boolean = change.lines.any { it.oldLine != null || it.newLine != null }
 

@@ -1,5 +1,5 @@
 import type { WorkerInfo } from '../../shared/protocol';
-import { intralineDiffSpans, type ThreadDiffLine, type ThreadDiffSpan, type ThreadFileChange } from '../../shared/thread-diff';
+import { intralineDiffSpans, threadDeliverable, type ThreadDiffLine, type ThreadDiffSpan, type ThreadFileChange } from '../../shared/thread-diff';
 import {
   activityState,
   threadArgumentsText,
@@ -68,6 +68,8 @@ export interface ThreadCardRenderContext {
   onLayoutChange?: () => void;
   /** Opens the worker's Changes window. */
   openChanges?: () => void;
+  /** Puts a workspace file on the floor's Whiteboard as a card. */
+  sendToWhiteboard?: (path: string) => void;
 }
 
 /** Sets `details.open` while marking `data-expected-open` so programmatic renders never masquerade as user toggles. */
@@ -467,14 +469,25 @@ export function renderFileChangeCard(action: ThreadModelAction, entry: ThreadEnt
       bodyChildren.push(h('div.wt-diff-note', {}, 'Diff preview truncated. Open the file to inspect the rest.'));
     }
 
-    const details = h('details.wt-change-file', { class: change.generated ? 'is-generated' : '', 'data-disclosure': disclosureKey }, summary, h('div.wt-diff-body', {}, ...bodyChildren));
-    return setDisclosureOpen(details, isOpen);
+    const details = setDisclosureOpen(h('details.wt-change-file', { class: change.generated ? 'is-generated' : '', 'data-disclosure': disclosureKey }, summary, h('div.wt-diff-body', {}, ...bodyChildren)), isOpen);
+    const actions = relPath && action.state === 'complete' && change.kind === 'added' && threadDeliverable(change.path) ? deliverableActions(relPath, ctx) : null;
+    return actions ? h('div.wt-change-deliverable', {}, details, actions) : details;
   });
 
   const multiStatePill = action.changes.length > 1 ? cardStatePill(action.state) : null;
   const errorBox = action.state === 'failed' && entry?.output ? h('div.wt-card-error', {}, h('div.wt-detail-label', {}, 'Error'), renderToolCodeSection(entry.output, { lang: 'txt', copyLabel: 'Copy error', isOutput: true })) : null;
 
   return h('div.wt-card.wt-change-card', { class: `is-${action.state}` }, multiStatePill ? h('div.wt-change-multi-head', {}, h('span.wt-change-multi-title', {}, action.title), multiStatePill) : null, ...fileSections, errorBox);
+}
+
+/** Preview and Send to Whiteboard for a file the worker created that the owner may want to look at or share. */
+function deliverableActions(relPath: string, ctx: ThreadCardRenderContext): HTMLElement {
+  return h(
+    'div.wt-change-actions',
+    {},
+    h('button.btn.sm.ghost.wt-change-preview', { type: 'button', onclick: () => ctx.onOpenPath?.({ path: relPath }) }, icon('file', 13), 'Preview'),
+    ctx.sendToWhiteboard ? h('button.btn.sm.ghost.wt-change-board', { type: 'button', onclick: () => ctx.sendToWhiteboard?.(relPath) }, icon('board', 13), 'Send to Whiteboard') : null,
+  );
 }
 
 /** Renders a first-class Command card (`.wt-card.wt-command-card`), auto-opening when `action.state === 'failed'`. */

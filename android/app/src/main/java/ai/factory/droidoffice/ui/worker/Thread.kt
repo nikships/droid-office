@@ -1275,6 +1275,20 @@ private fun FileChangeCard(
             CardStatusBadge(action.state, quietComplete = false)
             Icon(OfficeIcons.Chevron, null, Modifier.size(13.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
         }
+        if (openFile != null && change.kind == FileChangeKind.Added && action.state == ActivityState.Complete && ThreadView.deliverable(change.path)) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+            Row(
+                Modifier.clickable(onClickLabel = "Preview the file", role = Role.Button, onClick = openFile)
+                    .tagged(Tags.Worker.threadChangePreview(changeKey))
+                    .heightIn(min = 40.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(OfficeIcons.File, null, Modifier.size(12.dp), tint = Palette.Text)
+                Text("PREVIEW", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Text))
+            }
+        }
         if (isOpen) {
             Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
             if (change.lines.isNotEmpty()) {

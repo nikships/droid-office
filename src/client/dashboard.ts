@@ -675,7 +675,16 @@ const paneHost: PaneHost = {
   resetOrchestrator: () => newOrchestratorConversation(net),
   settings: (pane) => void showSettings(pane),
   changes: (id) => void showChanges(id),
+  toWhiteboard: (id, path, intended) => void toBoard(id, path, intended),
 };
+/** A file a worker made, as a card on this floor's Whiteboard, opened there. */
+async function toBoard(workerId: string, path: string, intended: string) {
+  const { sendWorkspaceFile } = await import('./ui/thread-deliverable');
+  whiteboard ??= await import('./ui/whiteboard');
+  if (!live() || intended !== floor) return toast('Reconnect to the office to send it to the Whiteboard', 'warn');
+  const card = await sendWorkspaceFile(floor, workerId, path);
+  if (card && live() && intended === floor && store.currentFloor()) whiteboard.openWhiteboard(net, { card, queueOffline: false });
+}
 /** A worker's Changes window: its changed files and their diff, with commit, discard and open a PR. */
 async function showChanges(id: string) {
   const w = store.workers.get(id);

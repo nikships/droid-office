@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { anchorSnippetLine, editedFilePaths, extractThreadChanges, intralineDiffSpans, looksGeneratedPath, MAX_WIRE_DIFF_LINES } from '../src/shared/thread-diff.js';
+import { anchorSnippetLine, editedFilePaths, extractThreadChanges, intralineDiffSpans, looksGeneratedPath, MAX_WIRE_DIFF_LINES, threadDeliverable } from '../src/shared/thread-diff.js';
 import type { ThreadEntry } from '../src/shared/worker-thread.js';
 
 const toolEntry = (name: string, input: unknown, extra: Partial<ThreadEntry> = {}): ThreadEntry => ({
@@ -287,4 +287,21 @@ test('intralineDiffSpans highlights token and identifier differences while prese
 
   const same = intralineDiffSpans('unchanged', 'unchanged');
   assert.deepEqual(same, { del: [{ text: 'unchanged' }], add: [{ text: 'unchanged' }] });
+});
+
+test('threadDeliverable names the created files worth previewing or sharing', () => {
+  assert.deepEqual(['docs/spec.md', 'notes.MARKDOWN', 'site/index.html', 'a.htm', 'shot.PNG', 'b.jpeg', 'c.webp', 'd.svg', 'e.gif', 'src/app.ts', 'README', 'archive.md.zip'].map(threadDeliverable), [
+    'markdown',
+    'markdown',
+    'html',
+    'html',
+    'image',
+    'image',
+    'image',
+    'image',
+    'image',
+    undefined,
+    undefined,
+    undefined,
+  ]);
 });

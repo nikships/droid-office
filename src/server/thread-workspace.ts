@@ -12,6 +12,9 @@ const MAX_EMPTY_QUERY_RESULTS = 5000;
 const MAX_QUERY_RESULTS = 200;
 const MAX_STAT_BYTES = 2 * 1024 * 1024;
 const MAX_READ_BYTES = 512 * 1024;
+/** The largest picture a Thread shows or sends to the Whiteboard from a worker's workspace. */
+export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+const IMAGE_TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' };
 
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'target', 'vendor', 'coverage', '__pycache__', 'venv']);
 const ALLOWED_ENV_TEMPLATES = new Set(['.env.example', '.env.sample', '.env.template']);
@@ -27,6 +30,11 @@ export interface ThreadFilePreview {
   text: string;
   totalLines: number;
   truncated: boolean;
+}
+
+export interface ThreadWorkspaceImage {
+  type: string;
+  body: Buffer;
 }
 
 export interface ThreadWorkspaceFailure {
@@ -392,6 +400,23 @@ export class ThreadWorkspace {
         totalLines,
         truncated,
       };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { status: 404, error: 'File not found in workspace.' };
+      return { status: 500, error: (err as Error).message };
+    }
+  }
+
+  /** A picture in the workspace as its bytes, under the same confinement as a preview. */
+  async readImage(cwd: string, rawPath: string): Promise<ThreadWorkspaceImage | ThreadWorkspaceFailure> {
+    const type = IMAGE_TYPES[/\.([a-z0-9]+)$/i.exec(rawPath.trim())?.[1]?.toLowerCase() ?? ''];
+    if (!type) return { status: 415, error: 'Only PNG, JPEG, GIF, WebP and SVG pictures can be shown.' };
+    const resolved = await resolveWorkspaceFile(cwd, rawPath);
+    if ('error' in resolved) return resolved;
+    try {
+      const info = await stat(resolved.abs);
+      if (!info.isFile()) return { status: 404, error: 'That path is not a regular file.' };
+      if (info.size > MAX_IMAGE_BYTES) return { status: 413, error: `Pictures over ${MAX_IMAGE_BYTES / 1024 / 1024} MB can't be shown.` };
+      return { type, body: await readFile(resolved.abs) };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { status: 404, error: 'File not found in workspace.' };
       return { status: 500, error: (err as Error).message };

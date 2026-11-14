@@ -164,6 +164,8 @@ test('floor-http serves /api/thread/files and /api/thread/file for local and orc
   const orchDir = await tempDir(t, 'office-http-orch-');
   await writeFile(path.join(worktreeDir, 'index.ts'), 'export const ready = true;\n');
   await writeFile(path.join(orchDir, 'notes.md'), '# Mission\n');
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc0f01f0005000201a6a1b6a10000000049454e44ae426082', 'hex');
+  await writeFile(path.join(worktreeDir, 'chart.png'), png);
 
   assert.equal(isFloorHttpPath('/api/thread/files', 'GET'), true);
   assert.equal(isFloorHttpPath('/api/thread/file', 'GET'), true);
@@ -209,6 +211,16 @@ test('floor-http serves /api/thread/files and /api/thread/file for local and orc
   assert.equal(fileRes.status, 200);
   assert.equal(fileRes.cache, 'no-store');
   assert.equal(fileRes.body.text, 'export const ready = true;\n');
+
+  // A picture comes as its bytes, only for picture types and only inside the workspace.
+  const image = await fetch(`http://127.0.0.1:${port}/api/thread/file?floor=f1&worker=agent-1&path=chart.png&raw=image`);
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get('content-type'), 'image/png');
+  assert.match(image.headers.get('content-security-policy') ?? '', /sandbox/);
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
+  assert.equal((await get('/api/thread/file?floor=f1&worker=agent-1&path=index.ts&raw=image')).status, 415);
+  assert.equal((await get('/api/thread/file?floor=f1&worker=agent-1&path=../chart.png&raw=image')).status, 403);
+  assert.equal((await get('/api/thread/file?floor=f1&worker=agent-1&path=missing.png&raw=image')).status, 404);
 
   // Orchestrator resolution.
   const orchRes = await get(`/api/thread/file?worker=${ORCHESTRATOR_ID}&path=notes.md`);

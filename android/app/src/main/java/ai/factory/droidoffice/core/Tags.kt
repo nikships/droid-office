@@ -531,6 +531,7 @@ object Tags {
         // File Change card actions and turn grouping.
         /** Opens a File Change card's file in the preview sheet, at its first changed line when the diff is numbered. */
         fun threadChangeOpen(id: String) = "worker.thread.change.open/$id"
+        fun threadChangePreview(id: String) = "worker.thread.change.preview/$id"
         fun threadCardGroup(id: String) = "worker.thread.cards/$id"
         fun threadCardGroupToggle(id: String) = "worker.thread.cards.toggle/$id"
         fun threadTurnChanges(id: String) = "worker.thread.turn.changes/$id"

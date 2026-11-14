@@ -57,6 +57,17 @@ export function toolLeaf(name = ''): string {
   return (afterMcp.split(/[.:/]/).at(-1) ?? '').toLowerCase();
 }
 
+export type ThreadDeliverable = 'markdown' | 'html' | 'image';
+
+/** What a created file is as a deliverable the owner can preview and send to the Whiteboard, if it is one. */
+export function threadDeliverable(path: string): ThreadDeliverable | undefined {
+  const ext = /\.([a-z0-9]+)$/i.exec(path.trim())?.[1]?.toLowerCase() ?? '';
+  if (ext === 'md' || ext === 'markdown') return 'markdown';
+  if (ext === 'html' || ext === 'htm') return 'html';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) return 'image';
+  return undefined;
+}
+
 export function looksGeneratedPath(path: string): boolean {
   return GENERATED_PATH_RE.test(path.trim().replace(/\\/g, '/'));
 }
