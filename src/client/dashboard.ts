@@ -8,6 +8,7 @@ import { DESK_BY_ID } from '../shared/layout';
 import { originKind, type OriginKind } from '../shared/devices';
 import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
 import { Net } from './net';
+import { bindFactory } from './factory';
 import { connectWhiteboard, store, words } from './state';
 import { setBrowserAuth, withToken } from './token';
 import { $, closeAllModals, closeTopModal, h, modalOpen, onModalChange, openModal, toast } from './ui/dom';
@@ -793,6 +794,7 @@ const net = new Net(
   },
 );
 /** Why the last access check was refused, for `unauthorized` to show. */
+bindFactory(net);
 let heard: Gate | undefined;
 async function refusal(response: Response): Promise<Gate> {
   const body = (await response.json().catch(() => ({}))) as { companionOff?: boolean };
