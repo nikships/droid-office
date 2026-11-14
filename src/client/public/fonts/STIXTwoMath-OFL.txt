@@ -1,0 +1,12 @@
+STIX Two Math (STIXTwoMath-Regular.woff2) is the unmodified STIX Two Math
+2.13 font from the STIX Fonts Project, used for the Thread view's MathML.
+Copyright 2001-2021 The STIX Fonts Project Authors
+(https://github.com/stipub/stixfonts), with Reserved Font Name "TM Math".
+STIX Fonts is a trademark of The Institute of Electrical and Electronics
+Engineers, Inc. The font is licensed under the SIL Open Font License,
+Version 1.1 (the full license text is in OFL-LICENSE.txt in this folder).
+
+Source: https://github.com/stipub/stixfonts/blob/v2.13/fonts/static_otf_woff2/STIXTwoMath-Regular.woff2
+SHA-256: e623fcdb808e9a8a27833781f77d5a5ed5c7d5f34830aaa8bcc9fcf8ec32b9c9
+It keeps its OpenType MATH table, which Chromium's MathML layout needs for
+stretchy delimiters, large operators, radicals and script sizes.

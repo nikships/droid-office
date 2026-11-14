@@ -325,7 +325,7 @@ export function extractMathSegments(src: string): { textWithPlaceholders: string
 
 /**
  * Renders `tex` to pure presentation MathML via KaTeX (`output: 'mathml'`), with zero `style=""`
- * attributes and zero font/network requests. Returns `null` when `tex` fails to parse.
+ * attributes and no KaTeX CSS or font requests: `style.css` draws it in the bundled STIX Two Math. Returns `null` when `tex` fails to parse.
  */
 export function renderMathToMathMl(tex: string, displayMode: boolean): string | null {
   if (!tex.trim()) return null;

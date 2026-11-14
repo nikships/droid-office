@@ -26,6 +26,16 @@
   font-display: swap;
   unicode-range: U+E000-F8FF, U+F0000-F0FFF;
 }
+/* STIX Two Math (SIL OFL, see the bundled notice): Chromium lays out MathML with the OpenType MATH
+   table of the math font, and with none installed it draws tiny integrals and unstretched delimiters.
+   Only pages that render math download it. */
+@font-face {
+  font-family: 'STIX Two Math';
+  src: url('/fonts/STIXTwoMath-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
 
 :root {
   color-scheme: dark;
@@ -2814,6 +2824,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 
 /* ---- Rich Markdown: MathML, Mermaid, Email Drafts & Workspace File Links ---- */
 .wt-md, .wt-user-md { min-width: 0; }
+math { font-family: 'STIX Two Math', math; }
 .wt-math { color: var(--text); }
 .wt-math-inline { display: inline-block; vertical-align: middle; margin: 0 1px; }
 .wt-math-display { display: block; overflow-x: auto; max-width: 100%; padding: var(--space-2) 0; text-align: center; }
