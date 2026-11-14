@@ -592,8 +592,8 @@ export class WorkerThreadReader {
     const handle = await open(file, 'r');
     try {
       await this.consume(handle, state, (await handle.stat()).size);
-      const files = await this.files.read(cwd, editedFilePaths(state.projection.entries));
-      return { sessionId, ...this.page(state.projection, before, undefined, files.text) };
+      const files = this.textOnly ? undefined : await this.files.read(cwd, editedFilePaths(state.projection.entries));
+      return { sessionId, ...this.page(state.projection, before, undefined, files?.text) };
     } finally {
       await handle.close();
     }
