@@ -469,6 +469,18 @@ object Tags {
         const val THREAD_JUMP_LABEL = "worker.thread.jump.label"
         /** A Markdown table in a message: its columns line up and it scrolls sideways as one. */
         const val THREAD_TABLE = "worker.thread.table"
+        /** Copies a fenced code block's source to the clipboard. */
+        const val THREAD_CODE_COPY = "worker.thread.code.copy"
+        /** A structured `email` draft card in a message, and its copy/mail actions. */
+        const val THREAD_EMAIL = "worker.thread.email"
+        const val THREAD_EMAIL_COPY_BODY = "worker.thread.email.copy_body"
+        const val THREAD_EMAIL_COPY_ALL = "worker.thread.email.copy_all"
+        const val THREAD_EMAIL_OPEN = "worker.thread.email.open"
+        /** A `<json-render>` widget rendered in a message. */
+        const val THREAD_WIDGET = "worker.thread.widget"
+        /** Sticky collapsible TodoWrite plan progress bar above the composer, and its header toggle (`checked` is open). */
+        const val THREAD_PLAN = "worker.thread.plan"
+        const val THREAD_PLAN_TOGGLE = "worker.thread.plan.toggle"
         /** A picture at full size over the Thread, opened from [threadImage]; tap it or [THREAD_IMAGE_CLOSE] to close. */
         const val THREAD_IMAGE_VIEWER = "worker.thread.image_viewer"
         const val THREAD_IMAGE_CLOSE = "worker.thread.image_viewer.close"
@@ -507,6 +519,14 @@ object Tags {
         fun threadRunPlan(id: String) = "worker.thread.run.plan/$id"
         /** In an open call whose entry isn't loaded: Load earlier brings what it was given and returned. */
         fun threadNotLoaded(id: String) = "worker.thread.not_loaded/$id"
+        /** A top-level File Change card, by the tool action id (or `actionId:index` for multi-file edits). */
+        fun threadChange(id: String) = "worker.thread.change/$id"
+        /** Shows all lines of a clamped inline diff (`> 80` lines), or clamps it again (`checked` is full). */
+        fun threadChangeFull(id: String) = "worker.thread.change.full/$id"
+        /** Copies a top-level Command card's shell command. */
+        fun threadCommandCopy(id: String) = "worker.thread.command.copy/$id"
+        /** Opens the delegated subagent's own worker Thread from a Delegation card. */
+        fun threadDelegateOpen(id: String) = "worker.thread.delegate.open/$id"
 
         /** A quick key, by what TalkBack calls it: "Shift Tab" is `key.shift_tab`. */
         fun key(spoken: String) = "key." + spoken.lowercase().replace(' ', '_')

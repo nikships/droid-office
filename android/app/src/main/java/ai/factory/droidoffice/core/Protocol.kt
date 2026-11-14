@@ -281,7 +281,7 @@ sealed interface ServerMsg {
     /** `whiteboard`, `whiteboard.rendered` or `whiteboard.renderer`, read by [WhiteboardSync]. */
     data class Whiteboard(val t: String, val obj: JsonObject) : ServerMsg
     data class Pinged(val result: WbPinged) : ServerMsg
-    /** One page of a worker's conversation, answering the `thread.read` named by [request]. */
+    /** One page of a worker's conversation, answering the `thread.read` named by [request] or pushed while watched. */
     data class ThreadSnapshot(
         val workerId: String,
         val request: String,
@@ -292,6 +292,8 @@ sealed interface ServerMsg {
         val error: String?,
         /** How to show [entries]; null from an office that predates the presentation model. */
         val presentation: ThreadPresentation? = null,
+        /** Sent unprompted while `thread.watch` is active for [workerId]. */
+        val push: Boolean = false,
     ) : ServerMsg
     data class Ignored(val t: String) : ServerMsg
 }
@@ -421,6 +423,7 @@ object Protocol {
             hasMore = o.bool("hasMore") ?: false,
             error = o.str("error")?.takeIf { it.isNotBlank() },
             presentation = ThreadPresentation.of(o["presentation"]),
+            push = o.bool("push") == true,
         )
     }
 
@@ -526,6 +529,12 @@ object ClientMsg {
         put("workerId", workerId)
         put("request", request)
         if (before != null) put("before", before)
+    }
+
+    /** Subscribes ([on] true) or unsubscribes ([on] false) to server-pushed latest `thread.snapshot` updates for [workerId]. */
+    fun threadWatch(workerId: String, on: Boolean) = obj("thread.watch") {
+        put("workerId", workerId)
+        put("on", on)
     }
 
     fun attach(workerId: String) = obj("worker.attach") { put("workerId", workerId) }

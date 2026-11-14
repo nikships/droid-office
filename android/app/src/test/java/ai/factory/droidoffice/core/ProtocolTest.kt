@@ -258,6 +258,22 @@ class ProtocolTest {
     }
 
     @Test
+    fun watchesThreadAndReadsPushedSnapshots() {
+        val watchOn = json(ClientMsg.threadWatch("w1", true))
+        assertEquals("thread.watch", watchOn.getValue("t").jsonPrimitive.content)
+        assertEquals("w1", watchOn.getValue("workerId").jsonPrimitive.content)
+        assertEquals("true", watchOn.getValue("on").jsonPrimitive.content)
+
+        val watchOff = json(ClientMsg.threadWatch("w1", false))
+        assertEquals("false", watchOff.getValue("on").jsonPrimitive.content)
+
+        val pushed = Protocol.decode("""{"t":"thread.snapshot","workerId":"w1","request":"push","push":true,"entries":[],"hasMore":false}""") as ServerMsg.ThreadSnapshot
+        assertTrue(pushed.push)
+        val polled = Protocol.decode("""{"t":"thread.snapshot","workerId":"w1","request":"ab-1","entries":[],"hasMore":false}""") as ServerMsg.ThreadSnapshot
+        assertFalse(polled.push)
+    }
+
+    @Test
     fun readsToastsAndWorktrees() {
         assertEquals(ServerMsg.Toast("Nik sent Atlas home", "info", null), Protocol.decode("""{"t":"toast","text":"Nik sent Atlas home","level":"info"}"""))
         val wt = Protocol.decode("""{"t":"worker.worktree","workerId":"w1","state":{"exists":true,"dirty":2,"ahead":1,"unpushed":1}}""") as ServerMsg.Worktree

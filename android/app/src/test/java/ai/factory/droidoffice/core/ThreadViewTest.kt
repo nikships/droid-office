@@ -175,4 +175,87 @@ class ThreadViewTest {
         choices += ThreadView.Open.toggle(closed, choices)
         assertFalse(ThreadView.Open.activity(closed, choices))
     }
+
+    @Test
+    fun latestPlanReadsTodoWriteAndMarksFinishedPlansStaleAfterNextUserPrompt() {
+        val todoCall = ThreadEntry(
+            id = "tool:todo-1",
+            seq = 2,
+            role = ThreadRole.Assistant,
+            kind = ThreadKind.Tool,
+            name = "TodoWrite",
+            input = """{"todos":"1. [completed] Read specs\n2. [in_progress] Build cards\n3. [pending] Run tests"}""",
+            output = "TODO List Updated",
+        )
+        val active = ThreadView.latestPlan(listOf(todoCall), busy = true)!!
+        assertEquals(1, active.done)
+        assertEquals(3, active.total)
+        assertEquals("Build cards", active.current)
+        assertFalse(active.allDone)
+        assertFalse(active.stale)
+
+        val doneCall = todoCall.copy(
+            id = "tool:todo-2",
+            seq = 4,
+            input = """{"todos":[{"status":"completed","content":"Read specs"},{"status":"completed","content":"Build cards"}]}""",
+        )
+        val finished = ThreadView.latestPlan(listOf(doneCall), busy = false)!!
+        assertTrue(finished.allDone)
+        assertFalse(finished.stale)
+
+        val nextPrompt = ThreadEntry("u2", 5, ThreadRole.User, ThreadKind.Text, text = "Now polish the diff view")
+        assertTrue(ThreadView.latestPlan(listOf(doneCall, nextPrompt), busy = false)!!.stale)
+        assertFalse(ThreadView.latestPlan(listOf(doneCall, nextPrompt), busy = true)!!.stale)
+    }
+
+    @Test
+    fun segmentsPartitionExplorationAndTopLevelCardsInOrder() {
+        val thought = ThreadBlock.Thought("th1", "Inspecting protocol", live = false)
+        val readRun = ThreadBlock.Tools("tools:t1", "Read 2 files", ActivityState.Complete, live = false, actions = listOf(action("t1").copy(category = "read", title = "Read Protocol.kt")))
+        val editRun = ThreadBlock.Tools(
+            id = "tools:t2",
+            label = "Edited a file",
+            state = ActivityState.Complete,
+            live = false,
+            card = ThreadCardKind.Change,
+            actions = listOf(
+                action("t2").copy(
+                    category = "edit",
+                    card = ThreadCardKind.Change,
+                    changes = listOf(ThreadFileChange("/a/Protocol.kt", "Protocol.kt", FileChangeKind.Modified, 4, 1, generated = false)),
+                ),
+            ),
+        )
+        val cmdRun = ThreadBlock.Tools(
+            id = "tools:t3",
+            label = "Ran a command",
+            state = ActivityState.Failed,
+            live = false,
+            card = ThreadCardKind.Command,
+            actions = listOf(action("t3").copy(state = ActivityState.Failed, card = ThreadCardKind.Command, command = ThreadCommandMeta("./gradlew test"))),
+        )
+        val row = ThreadRow.Activity(
+            id = "activity:th1",
+            from = 1,
+            to = 4,
+            sourceIds = listOf("th1", "t1", "t2", "t3"),
+            label = "Read 2 files · Edited a file · Ran a command",
+            state = ActivityState.Failed,
+            live = false,
+            blocks = listOf(thought, readRun, editRun, cmdRun),
+        )
+        val segments = ThreadView.segments(row)
+        assertEquals(3, segments.size)
+        val exp = segments[0] as ThreadView.Segment.Exploration
+        assertEquals("th1", exp.tagId)
+        assertEquals("Read 2 files", exp.label)
+        assertEquals(ThreadCardKind.Change, (segments[1] as ThreadView.Segment.Card).kind)
+        assertEquals(ThreadCardKind.Command, (segments[2] as ThreadView.Segment.Card).kind)
+
+        val choices = HashMap<String, Boolean>()
+        assertTrue(ThreadView.Open.change("t2", generated = false, choices))
+        assertFalse(ThreadView.Open.change("t2", generated = true, choices))
+        assertTrue(ThreadView.Open.command(cmdRun.actions.single(), choices))
+        assertFalse(ThreadView.Open.command(cmdRun.actions.single().copy(state = ActivityState.Complete), choices))
+    }
 }
