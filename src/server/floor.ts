@@ -32,6 +32,7 @@ import { Visits } from './visits.js';
 import type { DroidModelCatalogue } from './droid-models.js';
 import type { SubagentSettings } from '../shared/protocol.js';
 import type { ModelAvailability, ModelUsage } from '../shared/subscriptions.js';
+import type { FactoryState } from '../shared/factory.js';
 import type { WorktreeSetupState } from '../shared/worktree-setup.js';
 import { setupState, writeOverride } from './worktree-setup.js';
 import { WhiteboardStore, renderInfo } from './whiteboard.js';
@@ -101,6 +102,8 @@ export interface FloorContext {
   modelUsage?(model: string, now: number): ModelUsage | undefined;
   /** Subscriptions: throttled DroidProxy `/models` recheck when a worker retries or a lead reads `team_models`. */
   recheckModels?(): Promise<void>;
+  factory?(): FactoryState;
+  recheckFactoryLimits?(): Promise<void>;
   /** ⚙️ Settings → Worker labels: whether background worker labels are enabled. */
   workerLabelsOn?(): boolean;
   /** Another floor of the building: a worker across repositories works in its project too (see WorkerInfo.repos). */
@@ -445,6 +448,8 @@ export class Floor {
         availability: (model) => ctx.modelAvailability?.(model),
         usage: (model, now) => ctx.modelUsage?.(model, now),
         ...(ctx.recheckModels ? { recheckModels: ctx.recheckModels.bind(ctx) } : {}),
+        ...(ctx.factory ? { factory: ctx.factory.bind(ctx) } : {}),
+        ...(ctx.recheckFactoryLimits ? { recheckFactoryLimits: ctx.recheckFactoryLimits.bind(ctx) } : {}),
         prompts: ctx.prompts,
         toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
         ...(ctx.wakeFilter ? { wakeFilter: ctx.wakeFilter } : {}),

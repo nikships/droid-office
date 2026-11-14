@@ -16,6 +16,7 @@ import { buildWorkerInspection, inspectTerminalRetry } from '../worker-status.js
 import { ORCHESTRATOR_ID, type MissionControlState } from '../../shared/mission-control.js';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell.js';
 import { isSubscriptionModel } from '../../shared/subscriptions.js';
+import { factoryModelTier } from '../../shared/factory-limits.js';
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol.js';
 import type { Client } from './client.js';
 
@@ -28,6 +29,7 @@ interface OwnerContext {
   workerFloor(id: string): Floor | undefined;
   workersOf(id: string): WorkerManager | undefined;
   cloud: NonNullable<ReturnType<typeof mountFactory>['cloud']>;
+  factory: ReturnType<typeof mountFactory>;
   subscriptions: ReturnType<typeof mountSubscriptions>;
   subagents: Subagents;
   labelPreferences: WorkerLabelPreferences;
@@ -38,7 +40,7 @@ interface OwnerContext {
 }
 
 /** Building agents use a private owner socket so receipts, replies and async toast context stay isolated. */
-export function createOwnerOffice({ floors, orchestrator, missionState, workerFloor, workersOf, cloud, subscriptions, subagents, labelPreferences, remoteOffice, workerThreads, acting, handleMessage }: OwnerContext): OwnerOffice {
+export function createOwnerOffice({ floors, orchestrator, missionState, workerFloor, workersOf, cloud, factory, subscriptions, subagents, labelPreferences, remoteOffice, workerThreads, acting, handleMessage }: OwnerContext): OwnerOffice {
   /**
    * The owner's window for building agents. Each action goes through handleMessage on a connection
    * of its own, named for the worker, so it has the owner's checks, effects and toasts exactly.
@@ -79,8 +81,10 @@ export function createOwnerOffice({ floors, orchestrator, missionState, workerFl
             // Fall back to cached availability.
           }
         }
+        if (model && factoryModelTier({ id: model }) && inspectTerminalRetry(runtime?.screenRows, w.status, Boolean(runtime?.currentTool))) await factory.recheckLimits();
         const now = Date.now();
         return buildWorkerInspection({
+          factory: factory.state(),
           worker: w,
           runtime,
           availability: model ? subscriptions.availability(model) : undefined,

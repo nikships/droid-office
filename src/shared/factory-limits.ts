@@ -69,6 +69,7 @@ const CORE_MODELS = new Set([
   'oss-latest-premium',
   'oss-latest-balanced',
   'oss-latest-fast',
+  'glm-5p2-fast',
 ]);
 
 type Model = { id: string; custom?: boolean; displayName?: string };

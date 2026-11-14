@@ -1,6 +1,7 @@
 import { emptyFactoryState, type FactoryConnection, type FactoryFeatureId, type FactoryState } from '../../shared/factory.js';
 import { FactoryError, type FactoryApi } from './api.js';
 import { FactoryDownload, HttpError, badRequest, httpErrorOf, keyRejected, matchPath, notConnected, type FactoryFeature, type FactoryRoute, type FeatureHost } from './feature.js';
+import { AIRGAPPED_REASON } from '../../shared/setup.js';
 
 /** How often the registry looks for a feature that's due. */
 const TICK_MS = 1000;
@@ -32,6 +33,7 @@ export interface RegistryOptions {
   toast(text: string, level?: 'info' | 'warn' | 'error'): void;
   now?: () => number;
   broadcastMs?: number;
+  paused?: () => boolean;
 }
 
 /**
@@ -54,6 +56,7 @@ interface Run {
   failures: number;
   /** Poll now, past the interval and the backoff. */
   forced: boolean;
+  pending?: Promise<void>;
 }
 
 /** What a route answered: a status and a JSON body, or a file to download. */
@@ -194,6 +197,16 @@ export class FactoryRegistry {
     void this.tick();
   }
 
+  /** On-demand reads wait for an in-flight poll rather than starting a duplicate. */
+  async recheck(key: FactoryFeatureId): Promise<void> {
+    const run = this.runs.get(key);
+    if (!run) return;
+    if (run.pending) return run.pending;
+    const api = this.opts.link.client();
+    if (!api) return;
+    await this.startPoll(run, api);
+  }
+
   /** A browser (`client`) has a board or window of `key` open (`on`), or closed it. */
   watch(client: string, key: FactoryFeatureId, on: boolean) {
     let set = this.watchers.get(key);
@@ -230,9 +243,19 @@ export class FactoryRegistry {
     for (const run of this.runs.values()) {
       if (run.running) continue;
       const due = run.forced || (run.lastAt === 0 ? now >= run.firstAt : now >= Math.max(run.lastAt + this.intervalOf(run.feature.key), run.backoffUntil));
-      if (due) started.push(this.poll(run, api));
+      if (due) started.push(this.startPoll(run, api));
     }
     await Promise.all(started);
+  }
+
+  private startPoll(run: Run, api: FactoryApi): Promise<void> {
+    if (run.pending) return run.pending;
+    const pending = this.poll(run, api).finally(() => {
+      if (run.pending === pending) run.pending = undefined;
+      if (run.forced) void this.tick();
+    });
+    run.pending = pending;
+    return pending;
   }
 
   private async poll(run: Run, api: FactoryApi) {
@@ -264,7 +287,6 @@ export class FactoryRegistry {
       if (e instanceof FactoryError && e.status === 401) this.opts.link.rejected(e);
       run.backoffUntil = now + this.backoff(run, e);
     }
-    if (run.forced) void this.tick();
   }
 
   /** How long a feature waits after its `failures`-th failure in a row. */
@@ -303,6 +325,7 @@ export class FactoryRegistry {
     }
     if (!route || !params) return pathMatched ? { status: 405, body: { error: 'Method not allowed' } } : { status: 404, body: { error: 'Not found' } };
     if (method !== 'GET' && !opts.trusted) return { status: 403, body: { error: 'Use Factory from the office itself' } };
+    if (this.opts.paused?.()) return { status: 403, body: { error: AIRGAPPED_REASON } };
     const bodyMax = route.bodyMax ?? BODY_MAX;
     try {
       const conn = this.opts.link.connection();

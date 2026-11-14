@@ -95,6 +95,9 @@ test('each Standard window gates at 100%, with the earliest exhausted reset and 
   factory.limits.limits.standard!.fiveHour.usedPercent = 100;
   factory.limits.limits.standard!.weekly.usedPercent = 103;
   assert.equal(factoryModelAvailability(factory, standard, NOW)?.window, '5-hour');
+  const firstReset = Date.parse(CAPTURE.limits.standard.fiveHour.windowEnd);
+  assert.equal(factoryModelAvailability(factory, standard, firstReset)?.state, 'exhausted');
+  assert.equal(factoryModelAvailability(factory, standard, firstReset + 1)?.window, 'Weekly');
   assert.equal(factoryModelAvailability(factory, standard, Date.parse(CAPTURE.limits.standard.weekly.windowEnd) + 1)?.state, 'ok');
 });
 
