@@ -3,6 +3,8 @@ import type { PipelinesState, PipelineRun, RunState } from '../shared/pipelines.
 import { USAGE_STALE_MS, availabilityWords, cannotRun, durationWords, isSubscriptionModel, isSubscriptionProvider, providerName, type ModelAvailability, type ModelUsage, type SubscriptionProviderKey } from '../shared/subscriptions.js';
 import { todoCount, type TodoItem } from '../shared/todos.js';
 import type { TeamModel, WorkerResult, WorkerReview } from './team.js';
+import type { FactoryState } from '../shared/factory.js';
+import { factoryLimitsActive, factoryModelAvailability, factoryModelTier, factoryOverageWords, factoryWindows, type FactoryLimitsState } from '../shared/factory-limits.js';
 
 const AT_REST = /\? for help/;
 const BOX_TOP = /^\s*╭─+╮\s*$/;
@@ -16,6 +18,7 @@ const MODEL_ERROR_PATTERNS: readonly RegExp[] = [
   /All credentials for model [^\r\n]+? are cooling down[^\r\n]*/i,
   /\bmodel_cooldown\b[^\r\n]*/i,
   /\busage_limit_reached\b[^\r\n]*/i,
+  /(?:\b402\b[^\r\n]*(?:exhaust|usage|quota|subscription)|(?:usage|quota|subscription)[^\r\n]*\b402\b)/i,
 ];
 
 export interface WorkerToolSpan {
@@ -50,9 +53,9 @@ export interface WorkerQuotaWindow {
 }
 
 export interface WorkerModelCooldown {
-  state: 'ok' | 'cooldown' | 'retrying' | 'rate_limited' | 'signed-out' | 'disabled' | 'proxy-down';
+  state: 'ok' | 'cooldown' | 'retrying' | 'rate_limited' | 'signed-out' | 'disabled' | 'proxy-down' | 'unavailable';
   model: string;
-  provider?: SubscriptionProviderKey;
+  provider?: string;
   providerName?: string;
   window?: string;
   resetsAt?: string | null;
@@ -60,6 +63,7 @@ export interface WorkerModelCooldown {
   resetsIn?: string;
   summary: string;
   windows?: WorkerQuotaWindow[];
+  overageHint?: string;
 }
 
 export interface WorkerPullStatus {
@@ -150,6 +154,91 @@ export interface ProviderQuotaSummary {
   staleAge?: string;
   runnableModels: number;
   totalModels: number;
+  overagePreference?: FactoryLimitsState['overagePreference'];
+  extraUsageBalanceCents?: number;
+  extraUsageAllowed?: boolean;
+  overageHint?: string;
+}
+
+export interface FactoryModelUsage {
+  tier: 'standard' | 'core';
+  windows: WorkerQuotaWindow[];
+  overagePreference: FactoryLimitsState['overagePreference'];
+  extraUsageBalanceCents: number;
+  extraUsageAllowed: boolean;
+  overageHint: string;
+}
+
+export function factoryModelUsage(factory: FactoryState | undefined, model: { id: string; custom?: boolean; displayName?: string }, now: number): FactoryModelUsage | undefined {
+  const tier = factoryModelTier(model);
+  if (!factory?.connection.connected || factory.connection.rejected || !tier || !factoryLimitsActive(factory.limits)) return undefined;
+  return {
+    tier,
+    windows: factoryWindows(factory.limits, tier).map((w) => ({
+      name: w.name,
+      leftPercent: Math.max(0, Math.min(100, Math.round(100 - w.usedPercent))),
+      resetsAt: w.resetsAt === null ? null : iso(w.resetsAt),
+      ...(w.resetsAt !== null && w.resetsAt > now ? { resetsIn: durationWords(w.resetsAt - now) } : {}),
+    })),
+    overagePreference: factory.limits.overagePreference,
+    extraUsageBalanceCents: factory.limits.extraUsageBalanceCents,
+    extraUsageAllowed: factory.limits.extraUsageAllowed,
+    overageHint: factoryOverageWords(factory.limits),
+  };
+}
+
+export function factoryUsageWords(usage: FactoryModelUsage): string {
+  return `Factory ${usage.tier === 'core' ? 'Droid Core' : 'Standard'}: ${usage.windows.map((w) => `${w.name} ${w.leftPercent}% left${w.resetsIn ? ` (resets in ${w.resetsIn} at ${w.resetsAt})` : w.resetsAt ? ` (reset due since ${w.resetsAt})` : ' (window not started)'}`).join(', ')} · ${usage.overageHint}`;
+}
+
+/** Factory tiers remain visible even when the owner's model allowlist has no models in one tier. */
+export function summarizeFactoryQuotas(factory: FactoryState | undefined, models: readonly TeamModel[], now: number): ProviderQuotaSummary[] {
+  if (!factory?.connection.connected || factory.connection.rejected || !factoryLimitsActive(factory.limits)) return [];
+  return (['standard', 'core'] as const).map((tier) => {
+    const descriptor = { id: tier === 'core' ? 'glm-5.3-flash' : 'auto' };
+    const usage = factoryModelUsage(factory, descriptor, now)!;
+    const availability = factoryModelAvailability(factory, descriptor, now);
+    const list = models.filter((m) => factoryModelTier(m) === tier);
+    const until = availability?.until;
+    return {
+      provider: `factory-${tier}`,
+      name: tier === 'core' ? 'Factory Droid Core' : 'Factory Standard',
+      state: availability?.state === 'exhausted' ? 'cooldown' : availability?.state === 'unavailable' ? 'unavailable' : factory.limits.error ? 'unknown' : 'ok',
+      windows: usage.windows,
+      ...(availability?.state === 'exhausted'
+        ? { cooldownUntil: until === null || until === undefined ? null : iso(until), cooldownWindow: availability.window, ...(until && until > now ? { cooldownIn: durationWords(until - now) } : {}) }
+        : {}),
+      ...(availability?.reason ? { reason: availability.reason } : {}),
+      ...(factory.limits.error ? { unreadable: factory.limits.error } : {}),
+      runnableModels: list.filter((m) => !m.cannotRun && m.enabled !== false).length,
+      totalModels: list.length,
+      overagePreference: usage.overagePreference,
+      extraUsageBalanceCents: usage.extraUsageBalanceCents,
+      extraUsageAllowed: usage.extraUsageAllowed,
+      overageHint: usage.overageHint,
+    };
+  });
+}
+
+export function inspectFactoryModelStatus(factory: FactoryState | undefined, model: string | undefined, now: number, retry?: WorkerRetryStatus): WorkerModelCooldown | undefined {
+  if (!factory || !model) return undefined;
+  const availability = factoryModelAvailability(factory, { id: model }, now);
+  const usage = factoryModelUsage(factory, { id: model }, now);
+  if (!availability && !usage) return undefined;
+  const blocked = availability && availability.state !== 'ok';
+  if (!blocked && !retry) return undefined;
+  const until = blocked ? availability.until : null;
+  const remainingMs = until !== null && until > now ? until - now : undefined;
+  return {
+    state: availability?.state === 'exhausted' ? 'cooldown' : availability?.state === 'unavailable' ? 'unavailable' : retry?.retrying ? 'retrying' : 'rate_limited',
+    model,
+    provider: `factory-${usage?.tier ?? availability?.tier}`,
+    providerName: (usage?.tier ?? availability?.tier) === 'core' ? 'Factory Droid Core' : 'Factory Standard',
+    ...(blocked ? { window: availability.window, resetsAt: until === null ? null : iso(until) } : {}),
+    ...(remainingMs !== undefined ? { remainingMs, resetsIn: durationWords(remainingMs) } : {}),
+    summary: blocked ? availability.reason : `${retry?.detail} · ${usage ? factoryUsageWords(usage) : availability?.overageHint}`,
+    ...(usage ? { windows: usage.windows, overageHint: usage.overageHint } : {}),
+  };
 }
 
 const iso = (at: number) => (Number.isFinite(at) ? new Date(at).toISOString() : new Date(0).toISOString());
@@ -432,6 +521,7 @@ export interface BuildWorkerInspectionInput {
   runtime?: WorkerRuntimeSnapshot;
   availability?: ModelAvailability;
   usage?: ModelUsage;
+  factory?: FactoryState;
   pulls?: readonly GhPull[];
   pipelines?: PipelinesState;
   labelsOn?: boolean;
@@ -456,7 +546,7 @@ export function buildWorkerInspection(input: BuildWorkerInspectionInput): Worker
   const state = input.state ?? (worker.status === 'needs_input' && worker.ask?.kind === 'question' ? 'blocked_on_question' : worker.status);
 
   const retry = inspectTerminalRetry(runtime?.screenRows, worker.status, Boolean(runtime?.currentTool));
-  const modelStatus = inspectModelStatus(model, input.availability, input.usage, now, retry);
+  const modelStatus = inspectFactoryModelStatus(input.factory, model, now, retry) ?? inspectModelStatus(model, input.availability, input.usage, now, retry);
 
   const plan: WorkerPlanStatus | undefined = worker.todos
     ? {
@@ -745,6 +835,7 @@ export function formatProviderQuotas(quotas: readonly ProviderQuotaSummary[]): s
     } else if (q.unreadable) {
       parts.push(`usage couldn't be read (${q.unreadable})`);
     }
+    if (q.overageHint) parts.push(q.overageHint);
     const stale = q.staleAge ? `; read ${q.staleAge} ago` : '';
     return `- ${q.name} (${badge}${acct}${counts}): ${parts.join(' · ') || 'quota not reported'}${stale}`;
   });
