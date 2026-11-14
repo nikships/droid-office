@@ -33,7 +33,7 @@ import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME } from '../shared/mission-control';
 import { botLine, missionWaiting, missionWorker, orchestratorLine, orchestratorWorker } from './mission';
 import { ORCHESTRATOR_SPOT, PHASE_WORD, missionBadge, missionLinks, missionStand, missionTeamBadge, missionTeamLine, missionView, orchestratorAwake, orchestratorPhase, orchestratorWaiting } from './mission-office';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, ServerMsg, WorkerInfo } from '../shared/protocol';
-import { FLOOR_MOOD_LIGHTING, isFloorMood, isMonitorSpillTone, MONITOR_SPILL_HEX, resolveVibesSwitchState, type MonitorSpillTone } from '../shared/gemini-vibes';
+import { FLOOR_MOOD_LIGHTING, isFloorMood, isMonitorSpillTone, MONITOR_SPILL_HEX, resolveVibesSwitchState, VibesSwitchToggle, type MonitorSpillTone } from '../shared/gemini-vibes';
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
 import { isPaletteKey } from '../shared/palette';
@@ -2477,7 +2477,7 @@ function paletteEntries(): PaletteEntry[] {
       sw === 'on'
         ? `On${store.vibes ? ` · ${FLOOR_MOOD_LIGHTING[store.vibes.mood]?.label ?? 'active'}` : ''}`
         : sw === 'off'
-          ? 'Off · paused ($0.00)'
+          ? 'Off · Living 3D pulses paused'
           : sw === 'rejected'
             ? 'Key rejected · fix in Settings'
             : sw === 'airgapped'
@@ -2813,7 +2813,7 @@ function hitGong() {
 }
 
 // ---- The Living 3D reactions & mood lighting pedestal switch --------------------------------------
-let lastVibesPress = 0;
+const vibesToggle = new VibesSwitchToggle();
 
 function vibesSwitchStateNow() {
   return resolveVibesSwitchState(store.gemini, { airgapped: store.setup.airgapped });
@@ -2833,10 +2833,8 @@ function useVibesSwitch(key: DeskKey) {
   }
   if (key !== 'E') return;
   const now = performance.now();
-  if (now - lastVibesPress < 180) return;
-  lastVibesPress = now;
-  const state = vibesSwitchStateNow();
-  if (state === 'disconnected' || state === 'rejected' || state === 'airgapped') {
+  const outcome = vibesToggle.press(store.gemini, { airgapped: store.setup.airgapped, netUp: net.up });
+  if (outcome.kind === 'open-settings') {
     office.vibesSwitch.press('blocked');
     sound.vibesSwitch('blocked');
     activeAt = now;
@@ -2844,7 +2842,7 @@ function useVibesSwitch(key: DeskKey) {
     showSettings('connections', 'Gemini Decisions API');
     return;
   }
-  if (!net.up) {
+  if (outcome.kind === 'offline') {
     office.vibesSwitch.press('blocked');
     sound.vibesSwitch('blocked');
     activeAt = now;
@@ -2852,13 +2850,37 @@ function useVibesSwitch(key: DeskKey) {
     toast('Reconnecting to the office — try again in a moment', 'warn');
     return;
   }
-  const next = state !== 'on';
-  office.vibesSwitch.press(next ? 'on' : 'off');
-  sound.vibesSwitch(next ? 'on' : 'off');
+  if (outcome.kind === 'busy') {
+    office.vibesSwitch.depress();
+    sound.vibesSwitch('blocked');
+    activeAt = now;
+    renderWake();
+    return;
+  }
+  office.vibesSwitch.depress();
+  sound.vibesSwitch('press');
+  hintKey = '';
   activeAt = now;
   renderWake();
-  net.send({ t: 'gemini.vibes', on: next });
-  toast(next ? '🟢 Living 3D reactions & mood lighting on' : '🔴 Living 3D reactions & mood lighting off');
+  void net.request({ t: 'gemini.vibes', on: outcome.target }, 5000).then((receipt) => {
+    const settled = vibesToggle.settle(outcome.token, receipt, store.gemini, { airgapped: store.setup.airgapped });
+    hintKey = '';
+    if (settled.kind === 'stale') return;
+    office.vibesSwitch.setState(settled.state);
+    activeAt = performance.now();
+    renderWake();
+    if (settled.kind === 'confirmed') {
+      office.vibesSwitch.ripple(settled.state);
+      sound.vibesSwitch(settled.state);
+      toast(settled.state === 'on' ? '🟢 Living 3D reactions & mood lighting on' : '🔴 Living 3D reactions & mood lighting off');
+      return;
+    }
+    office.vibesSwitch.ripple('blocked');
+    sound.vibesSwitch('blocked');
+    if (settled.error && (!net.up || /not confirm|timed out|Disconnected|active floor changed/i.test(settled.error))) {
+      toast(settled.error, 'warn');
+    }
+  });
 }
 
 /** Where confetti comes from over a desk: above the worker's head. */
@@ -3043,12 +3065,17 @@ function hintFor(it: Interactable): Hint {
       if (state === 'rejected') {
         return { k: `rejected|${store.gemini.rejected}`, parts: [title('⚠️ Living 3D · key rejected'), aside('paused until key is fixed'), key('E', 'Fix in Settings')] };
       }
+      const pending = vibesToggle.pendingTarget;
+      if (pending !== null) {
+        const label = state === 'on' ? '🟢 Living 3D · ON' : '🔴 Living 3D · OFF';
+        return { k: `pending|${state}|${pending}`, parts: [title(label), aside(pending ? 'switching on…' : 'switching off…'), key('O', 'Settings')] };
+      }
       if (state === 'on') {
         const mood = store.vibes ? FLOOR_MOOD_LIGHTING[store.vibes.mood]?.label : undefined;
         const about = mood ?? 'reactions & mood lighting';
         return { k: `on|${about}`, parts: [title('🟢 Living 3D · ON'), aside(about), key('E', 'Turn off'), key('O', 'Settings')] };
       }
-      return { k: 'off', parts: [title('🔴 Living 3D · OFF'), aside('paused ($0.00)'), key('E', 'Turn on'), key('O', 'Settings')] };
+      return { k: 'off', parts: [title('🔴 Living 3D · OFF'), aside('Living 3D pulses paused'), key('E', 'Turn on'), key('O', 'Settings')] };
     }
     case 'jukebox': {
       const j = store.jukebox;

@@ -148,6 +148,66 @@ export function resolveVibesSwitchState(gemini: Pick<GeminiConnectionState, 'con
   return gemini.vibesOn ? 'on' : 'off';
 }
 
+export interface VibesToggleReceipt {
+  ok: boolean;
+  error?: string;
+}
+
+export type VibesSwitchPressOutcome = { kind: 'open-settings'; state: 'disconnected' | 'rejected' | 'airgapped' } | { kind: 'offline' } | { kind: 'busy'; target: boolean } | { kind: 'request'; target: boolean; token: number };
+
+export type VibesSwitchSettleOutcome = { kind: 'confirmed'; state: 'on' | 'off' } | { kind: 'unconfirmed'; state: VibesSwitchState; error?: string } | { kind: 'stale' };
+
+/**
+ * Coordinates in-world Living 3D pedestal presses against async `gemini.vibes` server receipts:
+ * - Absorbs repeated rapid presses while an action receipt is already in flight.
+ * - Confirms `on` / `off` feedback and toasts only after the server acknowledges the change and the
+ *   authoritative connection state matches the requested toggle.
+ */
+export class VibesSwitchToggle {
+  private seq = 0;
+  private inflight: { token: number; target: boolean } | null = null;
+
+  get pendingTarget(): boolean | null {
+    return this.inflight ? this.inflight.target : null;
+  }
+
+  press(gemini: Pick<GeminiConnectionState, 'connected' | 'vibesOn' | 'rejected'>, opts: { airgapped?: boolean; netUp: boolean }): VibesSwitchPressOutcome {
+    const state = resolveVibesSwitchState(gemini, { airgapped: opts.airgapped });
+    if (state === 'disconnected' || state === 'rejected' || state === 'airgapped') {
+      return { kind: 'open-settings', state };
+    }
+    if (!opts.netUp) {
+      return { kind: 'offline' };
+    }
+    if (this.inflight) {
+      return { kind: 'busy', target: this.inflight.target };
+    }
+    const target = state !== 'on';
+    const token = ++this.seq;
+    this.inflight = { token, target };
+    return { kind: 'request', target, token };
+  }
+
+  settle(token: number, receipt: VibesToggleReceipt, gemini: Pick<GeminiConnectionState, 'connected' | 'vibesOn' | 'rejected'>, opts: { airgapped?: boolean } = {}): VibesSwitchSettleOutcome {
+    if (!this.inflight || this.inflight.token !== token) return { kind: 'stale' };
+    const want = this.inflight.target;
+    this.inflight = null;
+    const state = resolveVibesSwitchState(gemini, opts);
+    if (!receipt.ok) {
+      return { kind: 'unconfirmed', state, error: receipt.error };
+    }
+    const expected: VibesSwitchState = want ? 'on' : 'off';
+    if (state === expected) {
+      return { kind: 'confirmed', state: expected };
+    }
+    return { kind: 'unconfirmed', state };
+  }
+
+  reset(): void {
+    this.inflight = null;
+  }
+}
+
 export function emptyGeminiState(): GeminiConnectionState {
   return {
     connected: false,

@@ -11,7 +11,7 @@ import { firstVisibleIntersection, preparePicking } from '../src/client/world/pi
 import { buildVibesSwitch, VIBES_SWITCH_PALETTE } from '../src/client/world/vibes-switch.js';
 import { GeminiDecisionsStore } from '../src/server/gemini-decisions.js';
 import { OfficeVibes } from '../src/server/office-vibes.js';
-import { emptyGeminiState, type GeminiConnectionState, resolveVibesSwitchState } from '../src/shared/gemini-vibes.js';
+import { emptyGeminiState, type GeminiConnectionState, resolveVibesSwitchState, VibesSwitchToggle } from '../src/shared/gemini-vibes.js';
 import { CEILING_GLYPH, SPAWN, VIBES_SWITCH } from '../src/shared/layout.js';
 import { route, walkable } from '../src/shared/nav.js';
 
@@ -273,4 +273,74 @@ test('toggling setVibesOn synchronizes persisted Gemini store, broadcast state, 
   assert.equal(broadcasts.at(-1)?.vibesOn, true);
   assert.equal(resolveVibesSwitchState(broadcasts.at(-1)!), 'on');
   assert.equal(new GeminiDecisionsStore(dir).vibesOn(), true);
+});
+
+test('VibesSwitchToggle absorbs rapid repeated presses while pending and never claims success before server confirmation', () => {
+  const fresh = emptyGeminiState();
+  const connectedOn: GeminiConnectionState = { ...fresh, connected: true, vibesOn: true };
+  const connectedOff: GeminiConnectionState = { ...fresh, connected: true, vibesOn: false };
+  const ctrl = new VibesSwitchToggle();
+
+  // Unavailable states route to Settings without starting an in-flight toggle.
+  assert.deepEqual(ctrl.press(fresh, { netUp: true }), { kind: 'open-settings', state: 'disconnected' });
+  assert.deepEqual(ctrl.press({ ...connectedOn, rejected: 'revoked' }, { netUp: true }), { kind: 'open-settings', state: 'rejected' });
+  assert.deepEqual(ctrl.press(connectedOn, { airgapped: true, netUp: true }), { kind: 'open-settings', state: 'airgapped' });
+  assert.equal(ctrl.pendingTarget, null);
+
+  // Offline socket refuses immediately without starting an in-flight toggle.
+  assert.deepEqual(ctrl.press(connectedOn, { netUp: false }), { kind: 'offline' });
+  assert.equal(ctrl.pendingTarget, null);
+
+  // Mechanical depress() moves the plunger without emitting a premature confirmation ripple.
+  const sw = buildVibesSwitch();
+  sw.setState('on');
+  const restY = sw.inspect().plungerY;
+  sw.depress();
+  assert.ok(sw.inspect().plungerY < restY - 0.02, 'plunger depresses on initiation');
+  assert.equal(sw.inspect().rippleVisible, false, 'no green/red confirmation ripple before server receipt');
+  assert.equal(sw.inspect().state, 'on', 'switch visual state stays on until confirmed');
+
+  // First press while ON initiates a single request to turn OFF; rapid repeated presses return busy.
+  const first = ctrl.press(connectedOn, { netUp: true });
+  assert.deepEqual(first, { kind: 'request', target: false, token: 1 });
+  assert.equal(ctrl.pendingTarget, false);
+  for (let i = 0; i < 5; i++) {
+    assert.deepEqual(ctrl.press(connectedOn, { netUp: true }), { kind: 'busy', target: false });
+  }
+  assert.equal(ctrl.pendingTarget, false);
+
+  // Server failure or socket drop clears pending and reports unconfirmed (keeping 'on'), never claiming 'off'.
+  assert.deepEqual(ctrl.settle(1, { ok: false, error: 'Could not save Gemini settings to disk.' }, connectedOn), {
+    kind: 'unconfirmed',
+    state: 'on',
+    error: 'Could not save Gemini settings to disk.',
+  });
+  assert.equal(ctrl.pendingTarget, null);
+  assert.deepEqual(ctrl.settle(1, { ok: true }, connectedOff), { kind: 'stale' });
+
+  // Concurrent disconnect before receipt resolves ok:true still refuses to claim 'off'.
+  const second = ctrl.press(connectedOn, { netUp: true });
+  assert.deepEqual(second, { kind: 'request', target: false, token: 2 });
+  assert.deepEqual(ctrl.settle(2, { ok: true }, fresh), { kind: 'unconfirmed', state: 'disconnected' });
+  assert.equal(ctrl.pendingTarget, null);
+
+  // Confirmed server receipt transitions cleanly to 'off', then allows the next toggle back to 'on'.
+  const third = ctrl.press(connectedOn, { netUp: true });
+  assert.deepEqual(third, { kind: 'request', target: false, token: 3 });
+  assert.deepEqual(ctrl.settle(3, { ok: true }, connectedOff), { kind: 'confirmed', state: 'off' });
+  assert.equal(ctrl.pendingTarget, null);
+
+  const fourth = ctrl.press(connectedOff, { netUp: true });
+  assert.deepEqual(fourth, { kind: 'request', target: true, token: 4 });
+  assert.deepEqual(ctrl.settle(4, { ok: true }, connectedOn), { kind: 'confirmed', state: 'on' });
+  assert.equal(ctrl.pendingTarget, null);
+
+  // reset() invalidates any pending token.
+  const fifth = ctrl.press(connectedOn, { netUp: true });
+  assert.equal(fifth.kind, 'request');
+  ctrl.reset();
+  assert.equal(ctrl.pendingTarget, null);
+  if (fifth.kind === 'request') {
+    assert.deepEqual(ctrl.settle(fifth.token, { ok: true }, connectedOff), { kind: 'stale' });
+  }
 });

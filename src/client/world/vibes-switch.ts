@@ -89,7 +89,11 @@ export interface VibesSwitch {
   /** Current applied colors and plunger travel, exposed for deterministic scene assertions. */
   inspect(): { state: VibesSwitchState; capHex: string; ringHex: string; emblemHex: string; emissiveIntensity: number; plungerY: number; rippleVisible: boolean };
   setState(next: VibesSwitchState): void;
-  /** Depresses the button cap and emits a crisp radial confirmation ripple. */
+  /** Depresses the button cap mechanically without claiming a state change yet. */
+  depress(): void;
+  /** Emits a radial confirmation or blocked ripple around the bezel. */
+  ripple(feedback: 'on' | 'off' | 'blocked'): void;
+  /** Depresses the button cap and emits a radial ripple in one step. */
   press(feedback: 'on' | 'off' | 'blocked'): void;
   update(t: number, dt: number): void;
 }
@@ -246,14 +250,20 @@ export function buildVibesSwitch(): VibesSwitch {
       if (next === current) return;
       applyPalette(next);
     },
-    press(feedback) {
+    depress() {
       pressDepth = 0.022;
+      plunger.position.y = plungerRestY - VIBES_SWITCH_PALETTE[current].latchedDrop - pressDepth;
+    },
+    ripple(feedback) {
       rippleT = 0;
       rippleMat.color.set(RIPPLE_COLORS[feedback]);
       ripple.visible = true;
       ripple.scale.setScalar(1);
       rippleMat.opacity = feedback === 'blocked' ? 0.42 : 0.72;
-      plunger.position.y = plungerRestY - VIBES_SWITCH_PALETTE[current].latchedDrop - pressDepth;
+    },
+    press(feedback) {
+      this.depress();
+      this.ripple(feedback);
     },
     update(t, dt) {
       const p = VIBES_SWITCH_PALETTE[current];

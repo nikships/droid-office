@@ -484,8 +484,8 @@ export class OfficeSound {
     this.strike(out, t0, why === 'merged' ? 1 : rand(0.6, 0.8));
   }
 
-  /** Tactile pushbutton click and two-note confirmation chime at the Living 3D pedestal switch. */
-  vibesSwitch(kind: 'on' | 'off' | 'blocked') {
+  /** Tactile pushbutton click on press, plus a two-note confirmation chime once the server confirms `on` or `off`. */
+  vibesSwitch(kind: 'press' | 'on' | 'off' | 'blocked') {
     this.unlock();
     const ctx = this.ctx;
     if (!ctx) return;
@@ -494,23 +494,25 @@ export class OfficeSound {
     const out = this.panner(SWITCH_AT, 3.5, 0.7);
     out.connect(this.ambience);
     const t0 = ctx.currentTime + 0.005;
-    const click = ctx.createBufferSource();
-    click.buffer = kind === 'blocked' ? this.buf.mouse : pick(this.buf.spaces);
-    click.playbackRate.value = kind === 'on' ? 1.15 : kind === 'off' ? 0.92 : 0.72;
-    const clickGain = ctx.createGain();
-    clickGain.gain.value = kind === 'blocked' ? 0.22 : 0.34;
-    click.connect(clickGain).connect(out);
-    click.start(t0);
-    if (kind === 'blocked') return;
+    if (kind === 'press' || kind === 'blocked') {
+      const click = ctx.createBufferSource();
+      click.buffer = kind === 'blocked' ? this.buf.mouse : pick(this.buf.spaces);
+      click.playbackRate.value = kind === 'blocked' ? 0.72 : 1.04;
+      const clickGain = ctx.createGain();
+      clickGain.gain.value = kind === 'blocked' ? 0.22 : 0.32;
+      click.connect(clickGain).connect(out);
+      click.start(t0);
+      return;
+    }
     const notes =
       kind === 'on'
         ? ([
-            [523.25, 0.02, 0.075],
-            [783.99, 0.085, 0.11],
+            [523.25, 0, 0.075],
+            [783.99, 0.065, 0.11],
           ] as const)
         : ([
-            [587.33, 0.02, 0.075],
-            [392.0, 0.085, 0.11],
+            [587.33, 0, 0.075],
+            [392.0, 0.065, 0.11],
           ] as const);
     for (const [freq, delay, len] of notes) {
       const osc = ctx.createOscillator();
