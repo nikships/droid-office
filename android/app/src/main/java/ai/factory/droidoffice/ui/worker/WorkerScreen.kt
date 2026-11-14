@@ -295,6 +295,8 @@ fun WorkerScreen(
         var directInput by rememberSaveable(workerId) { mutableStateOf(false) }
         var composerFocus by remember(workerId) { mutableIntStateOf(0) }
         var sent by remember(workerId) { mutableIntStateOf(0) }
+        // A selection quoted from the Thread, until the composer has put it in the draft.
+        var quote by remember(workerId) { mutableStateOf<String?>(null) }
         val questionScopeKey = "$workerId/${questionId.orEmpty()}/$launchId"
         var questionHandled by rememberSaveable(questionScopeKey) { mutableStateOf(false) }
         var openedQuestionMenu by remember(questionScopeKey) { mutableStateOf<Menu?>(null) }
@@ -406,7 +408,9 @@ fun WorkerScreen(
             }
             // Paths in messages and File Change cards open the worker's files over the Thread.
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                ProvideFilePreview(worker) {
+                // Text selected in the conversation can be quoted into the reply while the composer shows.
+                val quotable = composing && blocked == null && worker.state != WorkerStatus.NeedsInput
+                ProvideFilePreview(worker) { QuoteSelections(quotable, onQuote = { quote = it }) {
                     Thread(
                         worker, screen, live && link.phase == Phase.Connected, link.phase == Phase.Connected,
                         Modifier.fillMaxSize(),
@@ -417,7 +421,7 @@ fun WorkerScreen(
                         rawTty = !cloud,
                         onOpenWorker = openSubagent,
                     )
-                }
+                } }
             }
         } else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
             Terminal(
@@ -458,6 +462,7 @@ fun WorkerScreen(
                 if (blocked != null && !waiting) OrchestratorBlocked(blocked)
                 Composer(
                     worker, draft, visible = blocked == null && !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus, thread = !tty,
+                    quote = quote, onQuoted = { quote = null },
                     queueState = queueState, onQueued = { queueRevision++ },
                     onSent = { prompt ->
                         sent++

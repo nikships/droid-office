@@ -20,12 +20,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -45,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,7 +77,9 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
@@ -88,6 +93,7 @@ import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.SlashCommands
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.ThreadCompose
 import ai.factory.droidoffice.core.ThreadQueue
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkspaceMention
@@ -135,14 +141,38 @@ fun Composer(
     /** Replaces the draft with [fill] and focuses it, as an example prompt does, then calls [onFilled] so the same text isn't put in again over what is typed next. */
     fill: String? = null,
     onFilled: () -> Unit = {},
+    /** Text selected in the Thread to quote at the cursor, then [onQuoted] once it is in the draft. */
+    quote: String? = null,
+    onQuoted: () -> Unit = {},
 ) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
-    var value by rememberSaveable(w.id, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(draft.orEmpty())) }
+    var value by rememberSaveable(w.id, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(draft.orEmpty(), TextRange(draft.orEmpty().length))) }
     val text = value.text
+    // Large pastes wait in the draft as tokens shown as chips; the message sent carries their text.
+    val pastes = remember(w.id) { mutableStateListOf<ThreadCompose.PastedText>() }
+    var pasteSeq by remember(w.id) { mutableIntStateOf(0) }
+    // Why the last Send was held back (over the office's prompt limit), until the draft changes.
+    var told by remember(w.id) { mutableStateOf<String?>(null) }
+    fun edit(next: TextFieldValue) {
+        if (next.text != value.text) {
+            told = null
+            pastes.retainAll { next.text.contains(it.token) }
+        }
+        value = next
+    }
+    fun typed(next: TextFieldValue) {
+        val paste = if (w.isShell) null else ThreadCompose.inserted(value.text, value.selection.start, value.selection.end, next.text, next.selection.end)
+            ?.takeIf { ThreadCompose.isLargePaste(it.text) }
+        if (paste == null) return edit(next)
+        val held = ThreadCompose.pastedText(++pasteSeq, paste.text)
+        pastes += held
+        val before = value.text
+        edit(TextFieldValue(before.substring(0, paste.start) + held.token + before.substring(paste.end), TextRange(paste.start + held.token.length)))
+    }
     // The built-in commands at once; the worker's skills and custom commands once its droid lists them.
     var slashList by remember(w.id) { mutableStateOf(SlashCommands.ALL) }
     LaunchedEffect(w.id, w.isShell, connected, visible) {
@@ -193,7 +223,16 @@ fun Composer(
     LaunchedEffect(visible, fill) {
         if (visible && fill != null) {
             onFilled()
-            value = TextFieldValue(fill, selection = TextRange(fill.length))
+            edit(TextFieldValue(fill, selection = TextRange(fill.length)))
+            focus.requestFocus()
+            keyboard?.show()
+        }
+    }
+    LaunchedEffect(visible, quote) {
+        if (visible && quote != null) {
+            onQuoted()
+            val next = ThreadCompose.insertQuote(value.text, value.selection.start, value.selection.end, quote) ?: return@LaunchedEffect
+            edit(TextFieldValue(next.value, selection = TextRange(next.cursor)))
             focus.requestFocus()
             keyboard?.show()
         }
@@ -222,8 +261,12 @@ fun Composer(
     }
 
     fun send(queue: Boolean) {
-        val prompt = text.trim()
+        val prompt = ThreadCompose.expandPastes(text, pastes).trim()
         if ((prompt.isEmpty() && images.isEmpty()) || uploading) return
+        ThreadCompose.tooLong(prompt)?.let {
+            told = it
+            return
+        }
         // The draft and pictures stay as they are for whatever took the prompt instead.
         if (intercept?.invoke(prompt) == true) return
         // Offline, Send is off: a message held for the reconnect would land later, unseen, maybe
@@ -239,6 +282,7 @@ fun Composer(
                 onQueued()
             }
             value = TextFieldValue("")
+            pastes.clear()
             images.clear()
             onSent(prompt)
         } else scope.launch { snackbar.showSnackbar("Couldn't reach the office. Nothing was sent; your message is still here.") }
@@ -258,7 +302,7 @@ fun Composer(
             MentionMenu(mentions) { item ->
                 val q = WorkspaceMention.find(value.text, value.selection.end) ?: mention ?: return@MentionMenu
                 val next = WorkspaceMention.apply(value.text, q.start, q.end, item.path)
-                value = TextFieldValue(next.value, selection = TextRange(next.cursor))
+                edit(TextFieldValue(next.value, selection = TextRange(next.cursor)))
                 focus.requestFocus()
             }
         }
@@ -266,7 +310,7 @@ fun Composer(
         AnimatedVisibility(suggestions.isNotEmpty()) {
             SlashMenu(suggestions, thread, w.state.busy) { c ->
                 val filled = "/${c.name} "
-                value = TextFieldValue(filled, selection = TextRange(filled.length))
+                edit(TextFieldValue(filled, selection = TextRange(filled.length)))
                 focus.requestFocus()
             }
         }
@@ -291,6 +335,19 @@ fun Composer(
                     }
                 }
             }
+        }
+        val live = ThreadCompose.livePastes(text, pastes)
+        AnimatedVisibility(live.isNotEmpty()) {
+            PasteChips(live) { paste, replacement ->
+                ThreadCompose.replacePaste(value.text, paste, replacement)?.let { edit(TextFieldValue(it.value, selection = TextRange(it.cursor))) }
+                focus.requestFocus()
+            }
+        }
+        told?.let {
+            Text(
+                it, style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp, color = Palette.Warning),
+                modifier = Modifier.padding(start = 2.dp, end = 2.dp, bottom = 8.dp).semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.COMPOSER_TOO_LONG),
+            )
         }
         // Offline, the screen's one notice under the header says Send is off (Tags.Worker.COMPOSER_OFFLINE).
         Row(
@@ -319,7 +376,7 @@ fun Composer(
                 )
                 BasicTextField(
                     value = value,
-                    onValueChange = { value = it },
+                    onValueChange = ::typed,
                     textStyle = if (w.isShell) LocalOfficeType.current.monoBody.copy(fontSize = 15.sp) else MaterialTheme.typography.bodyLarge,
                     cursorBrush = SolidColor(Palette.Accent),
                     // A shell takes one command line, sent with the keyboard's action key; a prompt can run to paragraphs.
@@ -426,6 +483,46 @@ private fun SlashMenu(commands: List<SlashCommands.Command>, thread: Boolean, bu
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Large pastes held in the draft, over the composer: tapping one puts its text back in the draft in
+ * place of its token, and its X removes it.
+ */
+@Composable
+private fun PasteChips(pastes: List<ThreadCompose.PastedText>, onEdit: (ThreadCompose.PastedText, String) -> Unit) {
+    val shape = RoundedCornerShape(4.dp)
+    Row(
+        Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 8.dp).tagged(Tags.Worker.PASTES),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        for (paste in pastes) {
+            val size = ThreadCompose.size(paste)
+            Row(
+                Modifier.height(36.dp).clip(shape).background(Palette.Surface).border(1.dp, Palette.BorderStrong, shape),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    Modifier.fillMaxHeight()
+                        .clickable(role = Role.Button, onClickLabel = "Expand it into the message") { onEdit(paste, paste.text) }
+                        .semantics { contentDescription = "Pasted text #${paste.id}, $size" }
+                        .tagged(Tags.Worker.paste(paste.id))
+                        .padding(start = 10.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(OfficeIcons.File, null, tint = Palette.TextSecondary, modifier = Modifier.size(14.dp))
+                    Text("Pasted text #${paste.id}", style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, color = Palette.Text), modifier = Modifier.padding(start = 8.dp))
+                    Text(size, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.sp, color = Palette.TextTertiary), modifier = Modifier.padding(start = 8.dp))
+                }
+                Box(
+                    Modifier.fillMaxHeight().width(32.dp)
+                        .clickable(role = Role.Button, onClickLabel = "Remove pasted text #${paste.id}") { onEdit(paste, "") }
+                        .tagged(Tags.Worker.removePaste(paste.id)),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Default.Close, "Remove pasted text #${paste.id}", Modifier.size(12.dp), tint = Palette.TextSecondary) }
             }
         }
     }

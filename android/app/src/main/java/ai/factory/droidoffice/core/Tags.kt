@@ -429,6 +429,10 @@ object Tags {
         const val STOP = "composer.stop"
         /** Why Send is off while the office is out of reach: the draft stays and nothing is sent later on its own. */
         const val COMPOSER_OFFLINE = "composer.offline"
+        /** Why Send held the message back: over the office's 20,000-character prompt limit, pastes expanded. */
+        const val COMPOSER_TOO_LONG = "composer.too_long"
+        /** Large pastes held in the draft as `[Pasted text #N · X lines]` tokens, as chips over the composer. */
+        const val PASTES = "composer.pastes"
 
         /** A numbered menu choice above the terminal, by the number the menu shows. */
         fun choice(number: Int) = "worker.choice/$number"
@@ -573,6 +577,9 @@ object Tags {
         fun arrangeDown(id: String) = "worker.keys_sheet.down/$id"
 
         fun removeImage(number: Int) = "composer.remove_image/$number"
+        /** A chip in [PASTES], by its paste's number: tapping it puts the text back in the draft. */
+        fun paste(number: Int) = "composer.paste/$number"
+        fun removePaste(number: Int) = "composer.remove_paste/$number"
     }
 
     object SendHome {
