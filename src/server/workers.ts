@@ -1,53 +1,37 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync, accessSync, readdirSync, renameSync, rmdirSync, rmSync, unlinkSync, constants } from 'node:fs';
+import { existsSync, writeFileSync, readdirSync, rmdirSync, rmSync, unlinkSync } from 'node:fs';
 import { execFile, execFileSync } from 'node:child_process';
-import { homedir } from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
-import type { AgentChoice, AgentEffort, AskedQuestion, GhPull, TeamBadge, TeamEmblem, TerminalHit, WorkerAsk, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
-import { inputQuestions, permissionLine } from '../shared/ask-question.js';
-import { toolRefresh, type ToolRefresh } from './hook-refresh.js';
-import { TEAM_EMBLEMS, leadBadge, memberBadge, settleTeams } from '../shared/team.js';
-import { FAILS_TO_DESPAIR, outputFailed, toolAction } from '../shared/actions.js';
-import { isAgentEffort } from '../shared/protocol.js';
+import type { AgentChoice, AgentEffort, GhPull, TeamBadge, TerminalHit, WorkerAsk, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import type { ToolRefresh } from './hook-refresh.js';
+import { leadBadge, memberBadge } from '../shared/team.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { withImages } from '../shared/drops.js';
-import { CTRL_ENTER, wantsCsiEnter } from '../shared/csi-enter.js';
-import { readDroidPending, readDroidQueue, showsAs } from '../shared/droid-queue.js';
-import {
-  clearDroidPendingAll,
-  detectBlockingTool,
-  driveDroidQueueItem,
-  resolveWorkerQueue,
-  type ActiveToolCall,
-  type BlockingToolState,
-  type QueuedMessageItem,
-  type ResolvedQueueItem,
-  type SentPendingMessage,
-  type WorkerQueueState,
-} from './worker-queue.js';
-import { countCtrlEnterInputs, isCancelInput, isClearQueueInput, stripKittyPlaceholders } from '../shared/kitty.js';
-import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeOwnership, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
+import { readDroidQueue } from '../shared/droid-queue.js';
+import { detectBlockingTool, type BlockingToolState, type WorkerQueueState } from './worker-queue.js';
+import { countCtrlEnterInputs, isCancelInput, isClearQueueInput } from '../shared/kitty.js';
+import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
 import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 import { normalizeRepo } from '../shared/floors.js';
 import { DESK_BY_ID, nextFreeSeat, type DeskDef } from '../shared/layout.js';
 import { officePrompt, type PromptSource } from './prompts.js';
-import { forgeVars, officeSays, placeholders, PROMPTS, WORKER_VISITS, withoutReminders, workerBranchPolicy, workerMessageVars } from '../shared/prompts.js';
+import { forgeVars, placeholders, PROMPTS, withoutReminders, workerMessageVars } from '../shared/prompts.js';
 import { isBusy } from '../shared/status.js';
 import { linearTaskOf } from '../shared/linear.js';
 import { fallbackTask } from './tasks.js';
-import { todoItems, todoProgress, todosFinished, validTodoProgress, type TodoItem } from '../shared/todos.js';
-import type { WorkerRuntimeSnapshot, WorkerToolSpan } from './worker-status.js';
+import { todosFinished } from '../shared/todos.js';
+import type { WorkerRuntimeSnapshot } from './worker-status.js';
 import { forkRefusal, nearestForkSeat } from '../shared/worker-fork.js';
 import { githubPulls } from './github.js';
 import type { PullHost, PullRef } from './forge.js';
 import { forgeWords, type Forge } from '../shared/floors.js';
 import { PtyHost, SCROLLBACK, type Adopted, type Pty } from './ptys.js';
 import { DroidSessionReader } from './droid-session.js';
-import { isValidDroidModel, validateWorkerEffort, validateWorkerModel } from './agents.js';
+import { validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { ScrollbackStore, plainTail, searchTerminal, terminalTail } from './history.js';
 import { DropStore, type SharedDropImages } from './drops.js';
 import { screenSnapshot, setTerminalResponder } from './screen.js';
@@ -58,6 +42,17 @@ import type { Capacity } from './machine.js';
 import { setupStep, writePlan, writeSetupScript, type SetupStep } from './worktree-setup.js';
 import type { BuildingAgents } from './building-agent.js';
 import { pickUniqueForkName, pickUniqueSeat, pickUniqueWorkerName, readHeadBranch } from './floor-watch.js';
+
+import { newWorker, midTurn, screenRows, type Worker } from './worker-runtime/state.js';
+import { WorkerDelivery } from './worker-runtime/delivery.js';
+import { WorkerHooks, STOP_GRACE_MS } from './worker-runtime/hooks.js';
+import { WorkerHookSpool, HOOK_VERSION, SPOOL_MAX_BYTES, SPOOL_RECHECK_MS, safeEq } from './worker-runtime/hook-transport.js';
+import { WorkerLaunchSettings } from './worker-runtime/launch-settings.js';
+import { childEnv, runAsNode, defaultShell, setupLine, setupFailedNote, resolveCommand, resolveAgent, WIN, shellRun, shq } from './worker-runtime/process.js';
+import { WorkerStateStore } from './worker-runtime/persistence.js';
+import { truncate } from './worker-runtime/activity.js';
+
+export { STOP_GRACE_MS, HOOK_VERSION, SPOOL_MAX_BYTES, childEnv, runAsNode, defaultShell, setupLine, setupFailedNote, resolveCommand, resolveAgent };
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
@@ -99,19 +94,9 @@ export const NAMES = [
 ];
 export const COLORS = ['#ff8a5b', '#5bc0eb', '#9bc53d', '#fde74c', '#c3423f', '#b388eb', '#f7aef8', '#72ddf7', '#ffb400', '#00a6a6'];
 
-// Env vars from a parent terminal session (e.g. starting the office from inside another agent)
-// that don't belong in a worker's terminal.
-// ELECTRON_RUN_AS_NODE: the Mac app runs the office on Electron's Node; a worker that kept it would
-// turn every Electron app it starts (VS Code's `code`, another app) into a bare Node process.
-const SCRUB_ENV = new Set(['NO_COLOR', 'FORCE_COLOR', 'VSCODE_INJECTION', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'ELECTRON_RUN_AS_NODE']);
-const SCRUB_PREFIXES = ['NEBULA_', 'DROID_OFFICE_'];
-const scrubbed = (k: string) => SCRUB_ENV.has(k) || SCRUB_PREFIXES.some((p) => k.startsWith(p));
-
 const SCREEN_INTERVAL_MS = 250;
 /** How a refusal on a plain folder's floor starts (see Floor.plain). */
 const PLAIN_FLOOR = 'This floor is a plain folder, not a git checkout';
-/** What a worker with a live terminal can be doing. */
-const RUNNING = new Set<unknown>(['starting', 'idle', 'working', 'done', 'needs_input'] satisfies WorkerStatus[]);
 const KEYFRAME_MS = 8000;
 /** How often a steady typist's "last typed" time is refreshed for everyone. */
 const TYPED_REFRESH_MS = 15_000;
@@ -122,41 +107,6 @@ export const MAX_REPOS = 8;
 /** Around the list of a change's pull requests in each of their descriptions, so it can be brought up to date. */
 const RELATED_START = '<!-- agent-office:related -->';
 const RELATED_END = '<!-- /agent-office:related -->';
-/**
- * The hook command's version, sent in its URL. Droid reads its hooks once, at start, so a worker
- * the terminal host kept across an office update still runs the command it started with: only one
- * that says 2 prints the office's reply and spools the events it can't deliver (see writeHookSettings).
- */
-export const HOOK_VERSION = 2;
-/** The events the office subscribes its workers' droids to. */
-const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop', 'PreCompact'];
-/** The most a worker's hook spool holds (see hook.cjs); the oldest events go first. */
-export const SPOOL_MAX_BYTES = 512 * 1024;
-/** Where hooks that couldn't reach the office wait for it, one file per worker, in the floor's .droid-office. */
-const SPOOL_DIR = 'hook-spool';
-/** How long after an office start a second look at the spools catches hooks that failed while it was coming up. */
-const SPOOL_RECHECK_MS = 5000;
-/**
- * How long a Stop waits for another hook before the turn is done: a Stop hook that blocks shows up
- * as a new tool call or a second Stop well within it.
- */
-export const STOP_GRACE_MS = 1200;
-/** How long the owner's typing holds back office notices typed in once a worker comes to rest. */
-const NOTICE_TYPING_MS = 5000;
-/** How long after Escape or Ctrl+C a Stop counts as the turn being cancelled (see stopped). */
-const CANCEL_MS = 3000;
-/** A worker's activity while Droid compacts its conversation (PreCompact, until the compact SessionStart). */
-const COMPACTING = 'Compacting its conversation';
-/**
- * What a PreToolUse hook prints to decide a tool call, and why: `deny` blocks it, `allow` lets it run without
- * Droid's permission prompt (https://docs.factory.ai/reference/hooks-reference#pretooluse-control).
- */
-function toolDecision(permissionDecision: 'allow' | 'deny', permissionDecisionReason: string): string {
-  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision, permissionDecisionReason } });
-}
-
-/** What Droid's built-in Task tool is refused with (see hookEntries). */
-const TASK_DENY = toolDecision('deny', "Droid Office refuses Droid's built-in Task tool. To delegate, hire a subagent with team_hire (Office MCP): it gets its own desk, terminal and worktree the owner can watch.");
 /** How often every worker's folder is checked for having been deleted. */
 const WATCH_MS = 10_000;
 /** How often each agent's screen is checked against its status (see reconcile). */
@@ -172,8 +122,6 @@ const BOOT_BLOCKED_MS = 12_000;
 const BOOT_BLOCKED = 'Waiting on Droid setup or hooks — open the terminal';
 /** The most of a failed worktree setup's output its worker is told. */
 const SETUP_OUTPUT_MAX = 3000;
-/** Tools that ask the person a question: droid's is AskUser. */
-const ASK_TOOLS = new Set<unknown>(['AskUser', 'AskUserQuestion', 'request_user_input']);
 /** How often a terminal with new output is saved to disk, so even a crash loses at most this much. */
 const SAVE_SCROLLBACK_MS = 15_000;
 /** Between a worker's saved scrollback and what it prints after the office restarted. */
@@ -213,90 +161,6 @@ export interface OpenedPr {
   dirty: boolean;
 }
 
-interface Worker {
-  info: WorkerInfo;
-  pty?: Pty;
-  term?: HeadlessTerminal;
-  ser?: InstanceType<typeof serialize.SerializeAddon>;
-  /** The screen so far, for a browser opening the terminal (see screen.ts). */
-  snapshot?: () => string;
-  screenDirty: boolean;
-  lastLines: string[];
-  leftNeedsInputAt: number;
-  keyframeAt: number;
-  needsKeyframe: boolean;
-  termSeq: number;
-  screenParse?: { term: HeadlessTerminal; seq: number; state: DroidScreen | undefined };
-  hookToken: string;
-  /** Droid never reported SessionStart: it's stuck on a login or hooks screen. */
-  bootBlocked?: boolean;
-  /** The first message for this run of its droid, typed in once droid can take it (see launch), and when the run started. */
-  launchPrompt?: { text: string; at: number };
-  /**
-   * Sessions of the subagents its droid started with the Task tool. Their hooks come with this
-   * worker's token but their own session id, and their SessionStart and Stop are theirs, not its.
-   */
-  subSessions: Set<string>;
-  /** The latest tool each session started (PreToolUse), and its input, to know which call a permission prompt is about. */
-  lastTool: Map<string, { tool: string; input: unknown }>;
-  /** Full bounded TodoWrite plan steps alongside WorkerInfo.todos. */
-  todoSteps?: TodoItem[];
-  /** Currently executing PreToolUse span, and the latest completed tool span. */
-  currentTool?: WorkerToolSpan;
-  completedTool?: WorkerToolSpan;
-  /** Currently running tool calls per session (set on PreToolUse, cleared on PostToolUse/Stop). */
-  activeTool: Map<string, ActiveToolCall>;
-  /** Who raised its needs_input from a hook: the session asking, and the tool it asks about. */
-  asking?: { session: string; tool?: string };
-  /** When its last hook came in, and its terminal last printed something (see reconcile). */
-  hookAt: number;
-  outputAt: number;
-  /** When its own session's Stop came, with no hook since: a finish waiting out STOP_GRACE_MS. */
-  stopAt?: number;
-  /** The version of the hook command its droid runs (see HOOK_VERSION), as its last hook said. */
-  hookVersion: number;
-  /** Its session's conversation file, as its hooks name it (transcript_path). */
-  transcript?: string;
-  /** Office notices for its next tool call or Stop (see notice). */
-  outbox: string[];
-  /** When the owner (or a visit) last pressed Escape or Ctrl+C in its terminal: a Stop right after is a cancel, never blocked. */
-  cancelAt?: number;
-  /** Notices left in its outbox when it came to rest wait for the owner to stop typing (see flushOutbox). */
-  outboxTimer?: NodeJS.Timeout;
-  /** Messages queued with Ctrl+Enter during this turn: each runs after the turn's Stop, as a turn with no UserPromptSubmit. */
-  queued: number;
-  /** Full texts of messages queued with Ctrl+Enter through the office during this turn. */
-  sentQueue: SentPendingMessage[];
-  sentQueueSeq: number;
-  /** Bracketed-paste prompts whose 120ms submit keystroke has not fired yet. */
-  inFlight: Set<{ timer: NodeJS.Timeout; text: string; submit: string; queued: boolean }>;
-  /** What its screen has shown since when (see droid-screen.ts). */
-  screenSeen?: { state: DroidScreen; since: number };
-  /** Test runs and builds that have failed in a row (see FAILS_TO_DESPAIR). */
-  failStreak: number;
-  /** Bumped by /clear: a new conversation, so a new task. */
-  taskEpoch: number;
-  /** Its terminal in the host as of the last save, and how it was doing, to pick back up after a restart. */
-  saved?: { ptyId: string; status: WorkerStatus; acked: boolean; waitingSince?: number; ask?: WorkerAsk; launchPrompt?: { text: string; at: number }; outbox?: string[] };
-  /** Its process went away mid-turn with the office or the terminal host: its next start carries on (CARRY_ON_PROMPT). */
-  interrupted?: boolean;
-  /** Output since its scrollback was last saved to disk. */
-  unsaved?: boolean;
-  /** Where this run's own output starts, below the scrollback carried over from before. */
-  fresh?: { readonly line: number };
-  /** Its lost worktree is being put back (see rebuild): the folder coming back mustn't wake it before that's done. */
-  rebuilding?: boolean;
-  /** Branches present at hire time, per repository; never included in gun dismissal. */
-  worktreeOwnership?: Record<string, WorktreeOwnership>;
-  /** The plan its first terminal runs before the agent, to make its new worktree ready (see worktree-setup.ts). */
-  setupPlan?: string;
-  /** Its terminal is running that plan; when it finished, so the agent gets its own time to start after it. */
-  settingUp?: boolean;
-  setupDoneAt?: number;
-  /** Until SessionStart gives the twin its own id, restarts must fork, never resume the source. */
-  pendingFork?: { sessionId: string; prompt?: string };
-}
-
 export interface WorkerEvents {
   update(info: WorkerInfo): void;
   remove(workerId: string, shot?: boolean): void;
@@ -314,12 +178,7 @@ export class WorkerManager {
   private workers = new Map<string, Worker>();
   /** Which connections have each worker's terminal open (workerId -> connection IDs). */
   private subscribers = new Map<string, Set<string>>();
-  private statePath: string;
-  /** Workers saved at a seat that no longer exists: never run, kept in the file untouched. */
-  private retired: unknown[] = [];
-  private droidSettingsPath: string;
-  /** The Droid hook commands, reused for per-worker model overlays (see droidSettings). */
-  private droidHooks: Record<string, unknown[]> = {};
+  private state: WorkerStateStore;
   private trees: Worktrees;
   /** The checkout's branch when the office opened this floor (see the constructor). */
   private configuredBase?: string;
@@ -394,6 +253,10 @@ export class WorkerManager {
   private scrollback: ScrollbackStore;
   private drops: DropStore;
   private saveTimer: NodeJS.Timeout;
+  private delivery: WorkerDelivery;
+  private hooks: WorkerHooks;
+  private spool: WorkerHookSpool;
+  private settings: WorkerLaunchSettings;
 
   constructor(
     private dir: string,
@@ -413,16 +276,30 @@ export class WorkerManager {
     /** The building's agents (docs/mission-control.md), who lead subagents here from no desk: `floor` is this one. */
     private building?: { agents: BuildingAgents; floor: string },
     /** Workers here have no desk: the Orchestrator's own session (see orchestrator.ts). */
-    private deskless = false,
+    deskless = false,
   ) {
     this.trees = new Worktrees(dir, plain);
     if (!plain) this.trees.ensureBranchFile();
     // The branch the checkout was on when this floor opened: a pull request's configured base. The
     // live branch is tried after it (see open-pull.ts). Freshening the checkout does not move this.
     this.configuredBase = this.trees.currentBranch();
-    this.statePath = path.join(dataDir, 'workers.json');
-    this.droidSettingsPath = path.join(dataDir, 'droid-hooks.json');
-    this.writeHookSettings();
+    this.state = new WorkerStateStore(dataDir, {
+      deskless,
+      cols: DEFAULT_COLS,
+      rows: DEFAULT_ROWS,
+      color: COLORS[0],
+      buildingKnown: (id) => !!this.building?.agents.known(id),
+      heldDesk: (id) => !!this.holds?.desk(id),
+    });
+    this.settings = new WorkerLaunchSettings(dataDir, {
+      denyTask: () => this.denyTask?.() ?? true,
+      allowTools: () => this.allowTools,
+      systemPrompt: () => this.systemPrompt,
+      visitsOn: () => this.visitsOn?.() ?? false,
+      plain,
+      trees: this.trees,
+      prompts,
+    });
     // The task queue's command, from before the queue was taken out.
     rmSync(path.join(dataDir, 'bin', 'office-queue'), { force: true });
     rmSync(path.join(dataDir, 'bin', 'office-queue.cmd'), { force: true });
@@ -437,9 +314,38 @@ export class WorkerManager {
     this.host = new PtyHost(dataDir, () => this.events.toast("The workers' terminal host stopped — resuming them", 'warn'));
     this.scrollback = new ScrollbackStore(dataDir);
     this.drops = new DropStore(dataDir);
-    this.restore();
+    this.delivery = new WorkerDelivery({
+      get: (id) => this.workers.get(id),
+      closing: () => this.closing,
+      persist: () => this.persist(),
+      update: (w) => this.emitUpdate(w),
+      notePrompt: (w, text) => this.notePrompt(w, text),
+      resume: (id, text) => this.resume(id, text),
+      drops: this.drops,
+    });
+    this.hooks = new WorkerHooks({
+      get: (id) => this.workers.get(id),
+      closing: () => this.closing,
+      persist: () => this.persist(),
+      update: (w) => this.emitUpdate(w),
+      setStatus: (w, status) => this.setStatus(w, status),
+      setup: (w, report) => this.setupHook(w, report),
+      refreshModel: (w) => this.refreshDroidModel(w),
+      syncBranch: (w) => this.syncBranch(w),
+      tool: (id, refresh) => this.events.tool?.(id, refresh),
+      notePrompt: (w, text) => this.notePrompt(w, text),
+      beforeStop: (info) => this.beforeStop?.(info),
+      nextTurn: (info) => this.nextTurn?.(info),
+      delivery: this.delivery,
+    });
+    this.spool = new WorkerHookSpool(dataDir, {
+      get: (id) => this.workers.get(id),
+      workers: () => this.workers.values(),
+      accept: (w, event, payload, from) => this.hooks.accept(w, event, payload, from),
+    });
+    this.state.restore(this.workers);
     this.scrollback.prune(new Set(this.workers.keys()));
-    this.pruneSpools();
+    this.spool.prune();
     // The boss shell's drops live in the same folder and are not a worker's.
     this.drops.prune(new Set([...this.workers.keys(), OFFICE_SHELL_ID]));
     for (const w of this.workers.values()) this.refreshDroidModel(w);
@@ -474,13 +380,13 @@ export class WorkerManager {
           else {
             this.adopt(w, adopted, saved);
             // Its droid kept running while the office was down: what it said meanwhile, before any live hook.
-            this.replaySpool(w);
+            this.spool.replay(w);
             // Notices from the last office: typed in if it's at rest by now, else handed over by its hooks.
-            this.flushOutbox(w);
+            this.delivery.flushOutbox(w);
           }
         }
         // A process that didn't make it: its spooled hooks are about a turn that's over.
-        else rmSync(this.spoolFile(w.info.id), { force: true });
+        else rmSync(this.spool.file(w.info.id), { force: true });
       }),
     );
     // A hook that failed while this office was coming up (before its worker was picked back up) spooled meanwhile.
@@ -1206,7 +1112,7 @@ export class WorkerManager {
     w.term?.dispose();
     this.scrollback.remove(id);
     this.drops.remove(id);
-    rmSync(this.spoolFile(id), { force: true });
+    rmSync(this.spool.file(id), { force: true });
     this.events.remove(id);
     this.persist();
     return true;
@@ -1381,7 +1287,7 @@ export class WorkerManager {
     if (w.info.kind === 'agent') {
       try {
         rmSync(path.join(this.dataDir, `system-${id}.md`), { force: true });
-        rmSync(this.spoolFile(id), { force: true });
+        rmSync(this.spool.file(id), { force: true });
         if (w.info.model !== undefined || w.info.effort !== undefined) rmSync(path.join(this.dataDir, `droid-${id}.json`), { force: true });
       } catch {
         // a leftover overlay is harmless: the next launch rewrites it
@@ -1698,18 +1604,12 @@ export class WorkerManager {
    * never gets the key. Not Ctrl+C: droid only arms "press again to exit" with one, and two quit it.
    */
   cancelTurn(id: string): boolean {
-    const w = this.workers.get(id);
-    if (!w?.pty || !w.term || w.info.kind !== 'agent' || w.info.status !== 'working') return false;
-    if (readDroidScreen(screenRows(w.term)) !== 'busy') return false;
-    w.pty.write('\x1b');
-    w.cancelAt = Date.now();
-    return true;
+    return this.delivery.cancelTurn(id);
   }
 
-  /** What a Droid agent's screen shows now: busy on a turn, asking, or at rest (see droid-screen.ts). */
+  /** What a Droid agent's screen shows now: busy on a turn, asking, or at rest. */
   turnScreen(id: string): DroidScreen | undefined {
-    const w = this.workers.get(id);
-    return w?.term && w.info.kind === 'agent' ? readDroidScreen(screenRows(w.term)) : undefined;
+    return this.delivery.turnScreen(id);
   }
 
   /** Keystrokes from an attached browser. */
@@ -1754,55 +1654,7 @@ export class WorkerManager {
       if (images?.length) return 'Building agents take text, not pictures, from a floor';
       return this.building.agents.tell(id, text, this.building.floor);
     }
-    const w = this.workers.get(id);
-    if (!w) return 'No such worker';
-    if (!w.pty) return 'Worker is not running';
-    const typed = text.replace(/\r\n?/g, '\n').trim();
-    const clean = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
-    if (!clean) return 'Empty prompt';
-    const ctrlEnter = queue && wantsCsiEnter(w.info.kind);
-    const queuedTurn = ctrlEnter && w.info.status === 'working';
-    if (queuedTurn) w.queued++;
-    this.typeIn(w, clean, ctrlEnter ? CTRL_ENTER : '\r', queuedTurn);
-    const shown = withoutReminders(typed) || 'See the attached images';
-    w.info.activity = truncate(shown, 80);
-    this.notePrompt(w, shown);
-    w.info.lastInputAt = Date.now();
-    this.emitUpdate(w);
-    return undefined;
-  }
-
-  /** Types a message into the agent's input box and submits it with `submit`. */
-  private typeIn(w: Worker, text: string, submit = '\r', queued = false) {
-    // Bracketed paste keeps multi-line prompts in one message, then Enter submits.
-    w.pty?.write(`\x1b[200~${text}\x1b[201~`);
-    const entry = {
-      text,
-      submit,
-      queued,
-      timer: setTimeout(() => {
-        w.inFlight.delete(entry);
-        if (entry.queued && w.info.status === 'working') {
-          w.sentQueue.push({ id: ++w.sentQueueSeq, text: entry.text, group: 'queued', at: Date.now() });
-          if (w.sentQueue.length > 32) w.sentQueue.splice(0, w.sentQueue.length - 32);
-        }
-        w.pty?.write(entry.submit);
-      }, 120),
-    };
-    w.inFlight.add(entry);
-  }
-
-  private cancelInFlightQueued(w: Worker): boolean {
-    let any = false;
-    for (const entry of [...w.inFlight]) {
-      if (!entry.queued) continue;
-      clearTimeout(entry.timer);
-      w.inFlight.delete(entry);
-      if (w.queued > 0) w.queued--;
-      any = true;
-    }
-    if (any) w.pty?.write('\x15');
-    return any;
+    return this.delivery.prompt(id, text, images, queue);
   }
 
   /** Active blocking tool call on `id` (watch command or tool running >= BLOCKING_TOOL_MS), if any. */
@@ -1811,350 +1663,25 @@ export class WorkerManager {
     return w ? detectBlockingTool(w.info.status, w.activeTool, now) : undefined;
   }
 
-  private resolvedQueue(w: Worker, now = Date.now()) {
-    const res = resolveWorkerQueue({
-      outbox: w.outbox,
-      sent: w.sentQueue,
-      inFlight: [...w.inFlight].filter((f) => f.queued).map((f) => ({ text: f.text, queued: true })),
-      rows: w.term ? screenRows(w.term) : undefined,
-      now,
-    });
-    w.sentQueue = res.keptSent;
-    return res;
-  }
-
-  /** Pending messages waiting on `id` across the office hook outbox and Droid's TUI queue. */
+  /** Pending notices and Droid messages, in their delivery order. */
   queueState(id: string, now = Date.now()): WorkerQueueState | undefined {
-    const w = this.workers.get(id);
-    if (w?.info.kind !== 'agent' || w.info.cloud || w.info.remote) return undefined;
-    const { count, items, moreSteering, moreQueued } = this.resolvedQueue(w, now);
-    return { count, items, moreSteering, moreQueued };
+    return this.delivery.queueState(id, now);
   }
 
-  /**
-   * Interrupts a running turn or blocking command via Escape (never answering a permission/question
-   * prompt) and delivers `text` immediately once Droid stops or settles.
-   */
+  /** Stops a running turn before delivering a prompt, never answering an interactive dialog. */
   async urgentPrompt(id: string, text: string, images?: readonly string[]): Promise<{ error?: string; interrupted?: boolean }> {
     if (this.building && this.buildingIdentity(id)) return { error: this.prompt(id, text, images, false) };
-    const w = this.workers.get(id);
-    if (!w) return { error: 'No such worker' };
-    if (w.info.status === 'starting') return { error: `${w.info.name} is still starting up: try again in a few seconds` };
-    if (w.info.status === 'needs_input') {
-      return { error: `${w.info.name} is waiting on an answer in its own terminal (${w.info.activity ?? 'a prompt'}): someone has to answer it there` };
-    }
-    if (!w.pty) {
-      const typed = text.replace(/\r\n?/g, '\n').trim();
-      const clean = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
-      if (!clean) return { error: 'Empty prompt' };
-      return { error: this.resume(id, clean) };
-    }
-    let interrupted = false;
-    if (w.info.kind === 'agent' && w.info.status === 'working') {
-      this.cancelInFlightQueued(w);
-      interrupted = this.cancelTurn(id);
-      if (!interrupted && w.activeTool.size > 0 && this.workers.get(id)?.info.status !== 'needs_input') {
-        const screen = w.term ? readDroidScreen(screenRows(w.term)) : undefined;
-        if (screen !== 'idle' && screen !== 'asking' && this.turnScreen(id) !== 'asking') {
-          w.pty.write('\x1b');
-          w.cancelAt = Date.now();
-          interrupted = true;
-        }
-      }
-      if (interrupted) {
-        const deadline = Date.now() + 1200;
-        while (Date.now() < deadline) {
-          if (!w.pty || w.info.status !== 'working') break;
-          const screen = this.turnScreen(id);
-          if (screen === 'idle' || screen === 'asking') break;
-          await new Promise<void>((resolve) => setTimeout(resolve, 40));
-        }
-      }
-      if (this.turnScreen(id) === 'asking' || this.workers.get(id)?.info.status === 'needs_input') {
-        return { error: `${w.info.name} opened an interactive prompt while stopping; check its terminal before sending` };
-      }
-    }
-    const error = this.prompt(id, text, images, false);
-    return { ...(error ? { error } : {}), ...(interrupted ? { interrupted: true } : {}) };
+    return this.delivery.urgentPrompt(id, text, images);
   }
 
-  /** Clears all pending messages on `id`, or the single 1-based item `index`. */
-  async clearQueue(id: string, index?: number): Promise<{ error?: string; cleared: QueuedMessageItem[]; remaining: WorkerQueueState }> {
-    const empty: WorkerQueueState = { count: 0, items: [], moreSteering: 0, moreQueued: 0 };
-    const w = this.workers.get(id);
-    if (!w) return { error: 'No such worker', cleared: [], remaining: empty };
-    if (w.info.kind === 'shell') return { error: `${w.info.name} is a shell: shells have no Droid message queue`, cleared: [], remaining: empty };
-    if (w.info.cloud || w.info.remote) return { error: `${w.info.name} runs remotely and has no local message queue`, cleared: [], remaining: empty };
-    const current = this.resolvedQueue(w);
-    if (index !== undefined) {
-      if (!current.resolved.length) return { error: `${w.info.name} has no queued messages to clear`, cleared: [], remaining: this.queueState(id) ?? empty };
-      const target = current.resolved[index - 1];
-      if (!target) return { error: `No queued message #${index} on ${w.info.name} (queue has ${current.resolved.length})`, cleared: [], remaining: this.queueState(id) ?? empty };
-      const delErr = await this.deleteSingleQueueItem(w, target, current.droid?.items.length ?? 0);
-      if (delErr) return { error: delErr, cleared: [], remaining: this.queueState(id) ?? empty };
-      const { index: i, text, preview, moreLines, source, delivery } = target;
-      return { cleared: [{ index: i, text, preview, moreLines, source, delivery }], remaining: this.queueState(id) ?? empty };
-    }
-    const cleared = [...current.items];
-    this.cancelInFlightQueued(w);
-    if (w.outbox.length) {
-      w.outbox = [];
-      clearTimeout(w.outboxTimer);
-      w.outboxTimer = undefined;
-      this.persist();
-    }
-    if (w.pty && w.term) {
-      await clearDroidPendingAll({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) });
-    }
-    w.queued = 0;
-    w.sentQueue = [];
-    return { cleared, remaining: this.queueState(id) ?? empty };
+  /** Clears all pending messages, or the single 1-based item. */
+  clearQueue(id: string, index?: number) {
+    return this.delivery.clearQueue(id, index);
   }
 
-  private async deleteSingleQueueItem(w: Worker, item: ResolvedQueueItem, droidTotal: number): Promise<string | undefined> {
-    if (item.outboxIndex !== undefined) {
-      w.outbox.splice(item.outboxIndex, 1);
-      if (!w.outbox.length) {
-        clearTimeout(w.outboxTimer);
-        w.outboxTimer = undefined;
-      }
-      this.persist();
-      return undefined;
-    }
-    if (item.inFlightIndex !== undefined) {
-      const queuedEntries = [...w.inFlight].filter((f) => f.queued);
-      const entry = queuedEntries[item.inFlightIndex];
-      if (entry) {
-        clearTimeout(entry.timer);
-        w.inFlight.delete(entry);
-        if (w.queued > 0) w.queued--;
-        w.pty?.write('\x15');
-      }
-      return undefined;
-    }
-    if (item.droidIndex !== undefined && w.pty && w.term) {
-      const ok = await driveDroidQueueItem({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) }, item.droidIndex, droidTotal, 'delete', {
-        group: item.delivery === 'after_turn' ? 'queued' : 'steering',
-        text: item.text,
-      });
-      if (!ok) return `Droid queue review did not open on ${w.info.name}; check its terminal before retrying`;
-    }
-    if (item.delivery === 'after_turn' && w.queued > 0) w.queued--;
-    if (item.sentId !== undefined) {
-      const pos = w.sentQueue.findIndex((s) => s.id === item.sentId);
-      if (pos >= 0) w.sentQueue.splice(pos, 1);
-      if (item.droidIndex === undefined && !w.sentQueue.length && !droidTotal && w.pty && w.term) {
-        await clearDroidPendingAll({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) });
-      }
-    }
-    return undefined;
-  }
-
-  /**
-   * Promotes queued message(s) on `id` forward to steer now (or with `urgent: true`, interrupts the
-   * running turn/blocking command via Escape and delivers immediately).
-   */
-  async promoteQueue(
-    id: string,
-    opts: { index?: number; all?: boolean; urgent?: boolean } = {},
-  ): Promise<{
-    error?: string;
-    promoted: QueuedMessageItem[];
-    delivery?: 'steering' | 'next_step' | 'interrupted' | 'sent' | 'already_delivered';
-    stillPending?: boolean;
-    remaining: WorkerQueueState;
-  }> {
-    const empty: WorkerQueueState = { count: 0, items: [], moreSteering: 0, moreQueued: 0 };
-    const w = this.workers.get(id);
-    if (!w) return { error: 'No such worker', promoted: [], stillPending: false, remaining: empty };
-    if (w.info.kind === 'shell') return { error: `${w.info.name} is a shell: shells have no Droid message queue`, promoted: [], stillPending: false, remaining: empty };
-    if (w.info.cloud || w.info.remote) return { error: `${w.info.name} runs remotely and has no local message queue`, promoted: [], stillPending: false, remaining: empty };
-
-    const slotLabel = (d: QueuedMessageItem['delivery']) => (d === 'after_turn' ? 'after turn' : d === 'steering' ? 'mid-turn steer' : 'next step');
-    const failWithPending = (baseError: string, targetTexts?: readonly string[]) => {
-      const remaining = this.queueState(id) ?? empty;
-      const matched = targetTexts?.length ? remaining.items.filter((it) => targetTexts.some((t) => it.text === t || showsAs({ text: it.text, cut: it.preview, more: it.moreLines }, t))) : remaining.items;
-      const stillPending = targetTexts?.length ? matched.length > 0 || (remaining.moreQueued + remaining.moreSteering > 0 && w.queued > 0) : remaining.count > 0;
-      let suffix: string;
-      if (stillPending) {
-        if (matched.length === 1) {
-          suffix = `Message is still pending in queue (#${matched[0].index} [${slotLabel(matched[0].delivery)}]; ${remaining.count} pending).`;
-        } else if (matched.length > 1) {
-          suffix = `${matched.length} targeted messages are still pending in queue (${remaining.count} pending).`;
-        } else {
-          suffix = `Queue still has ${remaining.count} pending message${remaining.count === 1 ? '' : 's'}.`;
-        }
-      } else if (remaining.count > 0) {
-        suffix = `Targeted message is no longer pending in queue (${remaining.count} other message${remaining.count === 1 ? '' : 's'} pending).`;
-      } else {
-        suffix = 'No messages are pending in the queue.';
-      }
-      return { error: `${baseError.replace(/\.$/, '')}. ${suffix}`, promoted: [], stillPending, remaining };
-    };
-
-    if (w.info.status === 'starting') {
-      return failWithPending(`${w.info.name} is still starting up: try again in a few seconds`);
-    }
-    if (w.info.status === 'needs_input') {
-      return failWithPending(`${w.info.name} is waiting on an answer in its own terminal (${w.info.activity ?? 'a prompt'}): someone has to answer it there`);
-    }
-    const current = this.resolvedQueue(w);
-    if (!current.resolved.length) return failWithPending(`${w.info.name} has no queued messages to promote`, []);
-
-    let targets: ResolvedQueueItem[];
-    if (opts.index !== undefined) {
-      const picked = current.resolved[opts.index - 1];
-      if (!picked) return failWithPending(`No queued message #${opts.index} on ${w.info.name} (queue has ${current.resolved.length})`, []);
-      targets = [picked];
-    } else if (opts.all) {
-      targets = opts.urgent ? [...current.resolved] : current.resolved.filter((it) => it.delivery === 'after_turn' || (it.source === 'outbox' && w.info.status !== 'working'));
-      if (!targets.length) targets = [...current.resolved];
-    } else {
-      const firstAfterTurn = current.resolved.find((it) => it.delivery === 'after_turn');
-      targets = [firstAfterTurn ?? current.resolved[0]];
-    }
-
-    const plainItems = targets.map(({ index: i, text, preview, moreLines, source, delivery }) => ({ index: i, text, preview, moreLines, source, delivery }));
-    const targetTexts = targets.map((t) => t.text);
-
-    if (opts.urgent) {
-      const previewTarget = targets.find((t) => t.preview);
-      if (previewTarget) {
-        return failWithPending(`Queued message #${previewTarget.index} was typed directly in the terminal and only its truncated preview is visible; promote without urgent first or re-send full text with urgent: true`, targetTexts);
-      }
-      const joined = targetTexts.join('\n\n');
-      if (!joined.trim()) return failWithPending('Empty prompt', targetTexts);
-      // Delete in reverse order before Escape so Droid does not auto-fire queued items on turn stop;
-      // if urgent delivery fails afterwards, restore removed texts to the worker's outbox.
-      let droidCount = current.droid?.items.length ?? 0;
-      const removedTexts: string[] = [];
-      for (const item of [...targets].reverse()) {
-        const delErr = await this.deleteSingleQueueItem(w, item, droidCount);
-        if (delErr) {
-          if (removedTexts.length) {
-            w.outbox.push(...removedTexts.reverse());
-            this.persist();
-          }
-          return failWithPending(delErr, targetTexts);
-        }
-        removedTexts.push(item.text);
-        if (item.droidIndex !== undefined) droidCount = Math.max(0, droidCount - 1);
-      }
-      const sent = await this.urgentPrompt(id, joined);
-      if (sent.error) {
-        w.outbox.push(...targetTexts);
-        this.persist();
-        return failWithPending(sent.error, targetTexts);
-      }
-      return { promoted: plainItems, delivery: sent.interrupted ? 'interrupted' : 'sent', stillPending: false, remaining: this.queueState(id) ?? empty };
-    }
-
-    const initialInFlight = [...w.inFlight].filter((f) => f.queued);
-    let delivery: 'steering' | 'next_step' | 'sent' | 'already_delivered' = 'steering';
-    for (const item of targets) {
-      if (item.source === 'outbox') {
-        if (w.info.status === 'done' || w.info.status === 'idle') {
-          const outIdx = item.outboxIndex !== undefined && item.outboxIndex >= 0 && item.outboxIndex < w.outbox.length && w.outbox[item.outboxIndex] === item.text ? item.outboxIndex : w.outbox.indexOf(item.text);
-          if (outIdx >= 0) w.outbox.splice(outIdx, 1);
-          if (!w.outbox.length) {
-            clearTimeout(w.outboxTimer);
-            w.outboxTimer = undefined;
-          }
-          this.persist();
-          const err = this.prompt(id, item.text, undefined, false);
-          if (err) {
-            const restoreIdx = outIdx >= 0 && outIdx <= w.outbox.length ? outIdx : w.outbox.length;
-            w.outbox.splice(restoreIdx, 0, item.text);
-            this.persist();
-            return failWithPending(err, targetTexts);
-          }
-          delivery = 'sent';
-        } else {
-          delivery = 'next_step';
-        }
-        continue;
-      }
-      if (item.inFlightIndex !== undefined) {
-        const entry = initialInFlight[item.inFlightIndex];
-        if (entry && w.inFlight.has(entry)) {
-          clearTimeout(entry.timer);
-          w.inFlight.delete(entry);
-          if (w.queued > 0) w.queued--;
-          w.pty?.write('\r');
-        }
-        delivery = 'steering';
-        continue;
-      }
-      if (item.delivery === 'after_turn') {
-        if (item.droidIndex !== undefined && w.pty && w.term) {
-          const queuedBefore = w.queued;
-          const statusBefore = w.info.status;
-          const ok = await driveDroidQueueItem({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) }, item.droidIndex, current.droid?.items.length ?? 1, 'promote', { group: 'queued', text: item.text });
-          if (!ok) {
-            const drainedByHook = w.queued < queuedBefore;
-            const afterRows = w.term ? screenRows(w.term) : undefined;
-            const afterPending = afterRows ? readDroidPending(afterRows) : undefined;
-            const afterScreen = afterRows ? readDroidScreen(afterRows) : undefined;
-            const turnEndedCleanly = statusBefore === 'working' && (w.info.status === 'done' || w.info.status === 'idle' || afterScreen === 'idle');
-            const goneFromScreen = afterPending !== undefined && !afterPending.reviewActive && !afterPending.items.some((r) => showsAs(r, item.text)) && afterPending.moreQueued === 0;
-            if ((drainedByHook || turnEndedCleanly) && goneFromScreen && !w.outbox.includes(item.text)) {
-              if (turnEndedCleanly && !drainedByHook && w.queued > 0) w.queued--;
-              if (item.sentId !== undefined) {
-                const pos = w.sentQueue.findIndex((s) => s.id === item.sentId);
-                if (pos >= 0) w.sentQueue.splice(pos, 1);
-              }
-              delivery = 'already_delivered';
-              continue;
-            }
-            if (item.sentId !== undefined) {
-              const sentEntry = w.sentQueue.find((s) => s.id === item.sentId);
-              if (sentEntry && w.info.status === 'working' && w.queued >= queuedBefore) {
-                sentEntry.seen = undefined;
-                sentEntry.at = Date.now();
-              }
-            } else if (!item.preview && afterPending === undefined && w.info.status === 'working') {
-              w.sentQueue.push({ id: ++w.sentQueueSeq, text: item.text, group: 'queued', at: Date.now() });
-            }
-            return failWithPending(`Droid queue review did not open on ${w.info.name}; check its terminal before retrying`, targetTexts);
-          }
-          if (w.queued > 0) w.queued--;
-          if (item.sentId !== undefined) {
-            const sentEntry = w.sentQueue.find((s) => s.id === item.sentId);
-            if (sentEntry) sentEntry.group = 'steering';
-          }
-        } else {
-          if (this.notice(id, item.text)) {
-            delivery = 'next_step';
-          } else {
-            const err = this.prompt(id, item.text, undefined, false);
-            if (err) return failWithPending(err, targetTexts);
-            delivery = w.info.status === 'working' ? 'steering' : 'sent';
-          }
-          if (w.queued > 0) w.queued--;
-          if (item.sentId !== undefined) {
-            const pos = w.sentQueue.findIndex((s) => s.id === item.sentId);
-            if (pos >= 0) w.sentQueue.splice(pos, 1);
-            if (!w.sentQueue.length && !(current.droid?.items.length ?? 0) && w.pty && w.term) {
-              await clearDroidPendingAll({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) });
-            }
-          }
-        }
-      }
-    }
-    return { promoted: plainItems, delivery, stillPending: false, remaining: this.queueState(id) ?? empty };
-  }
-
-  /** Types in the message this run of its droid was started for, if it hasn't been yet. */
-  private sendLaunchPrompt(w: Worker) {
-    const pending = w.launchPrompt;
-    w.launchPrompt = undefined;
-    if (!pending) return;
-    if (w.pty) {
-      w.info.lastInputAt = Date.now();
-      this.typeIn(w, pending.text);
-    }
-    // Saved at once, so an office restarting now doesn't type it in a second time.
-    this.persist();
+  /** Moves pending messages forward, with rollback if urgent delivery fails. */
+  promoteQueue(id: string, opts: { index?: number; all?: boolean; urgent?: boolean } = {}) {
+    return this.delivery.promoteQueue(id, opts);
   }
 
   /**
@@ -2313,101 +1840,12 @@ export class WorkerManager {
   hookReply(workerId: string, token: string, event: string, payload: unknown, version = 0): string | undefined {
     const w = this.workers.get(workerId);
     if (!w?.pty || !safeEq(token, w.hookToken)) return undefined;
-    return this.accept(w, event, payload, { version });
+    return this.hooks.accept(w, event, payload, { version });
   }
 
-  /** A hook from the worker's droid, live (`version`) or replayed from its spool (`at`, when it fired). */
-  private accept(w: Worker, event: string, payload: unknown, from: { version: number } | { at: number }): string | undefined {
-    if (!payload || typeof payload !== 'object') return undefined;
-    const report = payload as Record<string, unknown>;
-    if (report.hook_event_name !== event) return undefined;
-    if (event === 'WorktreeSetup') return this.setupHook(w, report) ? '' : undefined;
-    if (w.info.kind !== 'agent' || typeof report.session_id !== 'string' || !report.session_id) return undefined;
-    if (!HOOK_EVENTS.includes(event)) return undefined;
-    const session = report.session_id;
-    const caller = typeof report.calling_session_id === 'string' && report.calling_session_id ? report.calling_session_id : undefined;
-    if (event === 'SessionStart' && caller) {
-      // A subagent its droid just started (the Task tool): a session of its own, inside this one's turn.
-      w.info.sessionId ??= caller;
-      if (caller !== w.info.sessionId && !w.subSessions.has(caller)) return undefined;
-      w.subSessions.add(session);
-    }
-    const sub = w.subSessions.has(session);
-    if (!sub && event !== 'SessionStart' && w.info.sessionId && session !== w.info.sessionId) return undefined;
-    const live = 'version' in from;
-    if (live) w.hookVersion = from.version;
-    w.hookAt = live ? Date.now() : from.at;
-    // Any hook after a Stop means the turn went on: a Stop starts the grace again (see stopped).
-    w.stopAt = undefined;
-    const reply = sub ? this.subagentHook(w, event, report, live) : this.sessionHook(w, event, report, live && w.hookVersion >= HOOK_VERSION);
-    this.emitUpdate(w);
-    this.persist();
-    return reply ?? '';
-  }
-
-  private spoolFile(id: string): string {
-    return path.join(this.dataDir, SPOOL_DIR, `${id}.jsonl`);
-  }
-
-  /**
-   * Replays the hooks its droid spooled while the office couldn't take them (see hook.cjs), in the
-   * order they fired, then forgets them. The file's place in the floor's .droid-office stands in for
-   * the hook token; the session checks still apply. Only hooks the office refused or couldn't be
-   * reached for are spooled; one older than the last hook the office took is stale, superseded by
-   * that newer one, and is skipped.
-   */
-  private replaySpool(w: Worker) {
-    const file = this.spoolFile(w.info.id);
-    const taken = `${file}.replay`;
-    try {
-      // Moved aside first, so a hook spooling meanwhile starts a new file instead of being truncated away.
-      renameSync(file, taken);
-    } catch {
-      return;
-    }
-    let text = '';
-    try {
-      text = readFileSync(taken, 'utf8');
-    } catch {
-      // gone again: nothing to replay
-    } finally {
-      rmSync(taken, { force: true });
-    }
-    const since = w.hookAt;
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue;
-      let row: { event?: unknown; at?: unknown; token?: unknown; payload?: unknown };
-      try {
-        row = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (typeof row.event !== 'string' || typeof row.at !== 'number' || row.at < since) continue;
-      // From an earlier run of its droid, which had another token.
-      if (typeof row.token !== 'string' || !safeEq(row.token, w.hookToken)) continue;
-      if (this.workers.get(w.info.id) !== w || !w.pty) return;
-      this.accept(w, row.event, row.payload, { at: row.at });
-    }
-  }
-
-  /** Every running worker's spooled hooks, replayed (see replaySpool). */
+  /** Every running worker's spooled hooks, replayed. */
   replaySpools() {
-    for (const w of this.workers.values()) if (w.pty) this.replaySpool(w);
-  }
-
-  /** Spools of workers who aren't on the floor any more. */
-  private pruneSpools() {
-    const dir = path.join(this.dataDir, SPOOL_DIR);
-    let names: string[] = [];
-    try {
-      names = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      const id = name.slice(0, name.indexOf('.'));
-      if (!this.workers.has(id) || name !== `${id}.jsonl`) rmSync(path.join(dir, name), { force: true });
-    }
+    this.spool.replayAll();
   }
 
   /**
@@ -2418,15 +1856,7 @@ export class WorkerManager {
    * when the worker comes to rest is typed in then.
    */
   notice(id: string, text: string, images?: readonly string[]): boolean {
-    const w = this.workers.get(id);
-    const typed = text.replace(/\r\n?/g, '\n').trim();
-    if (!w?.pty || (!typed && !images?.length) || w.info.kind !== 'agent' || w.info.status !== 'working' || w.bootBlocked || w.hookVersion < HOOK_VERSION) return false;
-    const clean = images?.length ? withImages(typed, this.drops.adopt(id, images)) : typed;
-    if (!clean) return false;
-    w.outbox.push(clean);
-    // Promised to whoever sent it: it outlives an office restart that keeps the terminal.
-    this.persist();
-    return true;
+    return this.delivery.notice(id, text, images);
   }
 
   /**
@@ -2437,42 +1867,11 @@ export class WorkerManager {
     return this.notice(id, text) ? undefined : this.prompt(id, text);
   }
 
-  /**
-   * An office message for a worker that mustn't be typed into now (it's starting, or asking in its
-   * terminal, where Enter would answer): its hooks hand it over once its turn goes on, or it's typed
-   * in once it comes to rest (see flushOutbox).
-   */
+  /** Holds a notice until the worker can safely receive it. */
   hold(id: string, text: string): string | undefined {
-    const w = this.workers.get(id);
-    if (!w) return 'No such worker';
-    if (!w.pty) return 'Worker is not running';
-    const clean = text.replace(/\r\n?/g, '\n').trim();
-    if (!clean) return 'Empty prompt';
-    w.outbox.push(clean);
-    this.persist();
-    return undefined;
+    return this.delivery.hold(id, text);
   }
 
-  /**
-   * Types in the notices its hooks didn't get to hand over before it came to rest, once nobody has
-   * typed into its terminal for NOTICE_TYPING_MS. One that's busy again by then gets them through its hooks.
-   */
-  private flushOutbox(w: Worker) {
-    clearTimeout(w.outboxTimer);
-    w.outboxTimer = undefined;
-    if (!w.outbox.length || this.closing || this.workers.get(w.info.id) !== w || !w.pty) return;
-    if (w.info.status !== 'done' && w.info.status !== 'idle') return;
-    const wait = (w.info.lastInputAt ?? 0) + NOTICE_TYPING_MS - Date.now();
-    if (wait > 0) {
-      w.outboxTimer = setTimeout(() => this.flushOutbox(w), wait);
-      w.outboxTimer.unref();
-      return;
-    }
-    const text = w.outbox.join('\n\n');
-    w.outbox = [];
-    this.prompt(w.info.id, text);
-    this.persist();
-  }
   /** The setup script in a new worktree's terminal (see worktree-setup.ts) started, or finished. */
   private setupHook(w: Worker, report: Record<string, unknown>): boolean {
     const { info } = w;
@@ -2504,207 +1903,6 @@ export class WorkerManager {
   }
 
   /**
-   * A hook from the worker's own session. With `replies` (a live hook from a command that prints
-   * what the office answers), PostToolUse and Stop can carry its notices; the reply is returned.
-   */
-  private sessionHook(w: Worker, event: string, report: Record<string, unknown>, replies: boolean): string | undefined {
-    const session = report.session_id as string;
-    const transcript = report.transcript_path;
-    if (typeof transcript === 'string' && path.isAbsolute(transcript) && path.basename(transcript) === `${session}.jsonl`) w.transcript = transcript;
-    let reply: string | undefined;
-    if (event === 'SessionStart' && report.source === 'compact') {
-      // Compaction finished inside a turn: the same conversation carries on.
-      w.info.sessionId = session;
-      if (w.info.activity === COMPACTING) w.info.activity = undefined;
-    } else if (event === 'SessionStart') {
-      if ((w.info.sessionId && w.info.sessionId !== session) || report.source === 'clear') this.clearTask(w, report.source === 'clear');
-      w.info.sessionId = session;
-      w.pendingFork = undefined;
-      w.subSessions.clear();
-      w.lastTool.clear();
-      w.currentTool = undefined;
-      w.completedTool = undefined;
-      w.activeTool.clear();
-      w.bootBlocked = false;
-      w.settingUp = false;
-      w.queued = 0;
-      w.sentQueue = [];
-      w.info.activity = undefined;
-      this.setStatus(w, 'idle');
-      this.sendLaunchPrompt(w);
-    } else if (event === 'UserPromptSubmit') {
-      w.bootBlocked = false;
-      w.currentTool = undefined;
-      w.info.action = undefined;
-      if (typeof report.prompt === 'string') {
-        // The office's reminders after the owner's words (an Orchestrator prompt's floor) aren't what was asked.
-        const said = withoutReminders(report.prompt) || report.prompt;
-        w.info.activity = truncate(said, 80);
-        this.notePrompt(w, said);
-      }
-      this.setStatus(w, 'working');
-    } else if (event === 'PreToolUse') this.toolStarted(w, session, report);
-    else if (event === 'PostToolUse') {
-      if (w.currentTool && (!report.tool_name || w.currentTool.name === report.tool_name)) {
-        w.completedTool = { ...w.currentTool, at: w.hookAt || Date.now() };
-        w.currentTool = undefined;
-      }
-      w.activeTool.delete(session);
-      // The structured list (PreToolUse has it as typed text).
-      if (report.tool_name === 'TodoWrite') this.noteTodos(w, report.tool_input);
-      this.noteOutcome(w, report, false);
-      this.refreshAfter(w, report);
-      // A hook command from before SubagentStop: a subagent that asked has finished once its Task returns.
-      if (w.hookVersion < HOOK_VERSION && w.asking && w.asking.session !== session && report.tool_name === 'Task') this.setStatus(w, 'working');
-      else this.toolFinished(w, session, report);
-      if (replies && w.outbox.length) {
-        reply = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: officeSays(w.outbox.join('\n\n')) } });
-        w.outbox = [];
-      }
-    } else if (event === 'Notification') {
-      // The hooks reference says a cancelled turn sends idle_prompt instead of Stop; Droid 1.1.0 sends Stop.
-      if (report.notification_type === 'idle_prompt' && (w.info.status === 'working' || (w.info.status === 'needs_input' && !w.bootBlocked))) this.setStatus(w, 'done');
-      else this.notified(w, session, report);
-    } else if (event === 'Stop') {
-      w.activeTool.delete(session);
-      reply = this.stopped(w, report, replies);
-    } else if (event === 'SubagentStop') {
-      w.activeTool.delete(session);
-      // A Task subagent finished: a question it was asking in this terminal is over.
-      if (w.info.status === 'needs_input' && w.asking && w.asking.session !== session) this.setStatus(w, 'working');
-      const name = typeof report.task_name === 'string' && report.task_name ? report.task_name : 'A subagent';
-      if (w.info.status === 'working') w.info.activity = truncate(`${name} finished${typeof report.task_error === 'string' && report.task_error ? ' with an error' : ''}`, 80);
-    } else if (event === 'PreCompact') w.info.activity = COMPACTING;
-    // /model can change it between turns, and droid writes the file a moment after SessionStart.
-    if (event === 'SessionStart' || event === 'UserPromptSubmit' || event === 'Stop') this.refreshDroidModel(w);
-    return reply;
-  }
-
-  /**
-   * Its own session's Stop. A Stop hook that blocks (the office's own, below, or another one the
-   * owner set up) keeps the turn going, so a Stop is only done once STOP_GRACE_MS passes with no
-   * other hook (see settleStop). With `replies`, the office blocks it to hand over what it has for
-   * the worker, but never a Stop that a block already continued (stop_hook_active), so it can't loop,
-   * nor one right after a cancel or with a queued message to run next.
-   */
-  private stopped(w: Worker, report: Record<string, unknown>, replies: boolean): string | undefined {
-    // Droid's queue was emptied some other way (Ctrl+R in its terminal): nothing runs next.
-    if (w.queued > 0 && w.term && readDroidQueue(screenRows(w.term))?.length === 0) {
-      w.queued = 0;
-      w.sentQueue = w.sentQueue.filter((s) => s.group !== 'queued');
-    }
-    // A message queued with Ctrl+Enter runs next, without a UserPromptSubmit of its own.
-    if (w.queued > 0) {
-      w.queued--;
-      w.sentQueue.shift();
-      this.nextTurn?.(w.info);
-      return undefined;
-    }
-    const cancelled = w.cancelAt !== undefined && Date.now() - w.cancelAt < CANCEL_MS;
-    if (replies && !cancelled && report.stop_hook_active !== true && (w.info.status === 'working' || w.info.status === 'needs_input')) {
-      const notes = [...w.outbox];
-      const more = this.beforeStop?.(w.info);
-      if (more) notes.push(more);
-      if (notes.length) {
-        w.outbox = [];
-        return JSON.stringify({ decision: 'block', reason: officeSays(notes.join('\n\n')) });
-      }
-    }
-    // Already at rest: a queued turn that used no tools ended. It doesn't finish (and ding) again.
-    if (w.info.status !== 'working' && (w.info.status !== 'needs_input' || w.bootBlocked)) return undefined;
-    const at = Date.now();
-    w.stopAt = at;
-    setTimeout(() => this.settleStop(w, at), STOP_GRACE_MS).unref();
-    return undefined;
-  }
-
-  /**
-   * A Stop's grace passed with no other hook: the turn is done, unless its screen shows it still
-   * going. Asked again every second (see reconcile) while it isn't.
-   */
-  private settleStop(w: Worker, at: number, now = Date.now()) {
-    if (w.stopAt !== at || this.closing || this.workers.get(w.info.id) !== w || !w.term) return;
-    if (w.info.status !== 'working' && w.info.status !== 'needs_input') return;
-    const screen = readDroidScreen(screenRows(w.term));
-    // A dialog is up, or another Stop hook continued the turn before any tool: its spinner is still
-    // printing. One quoted in a reply doesn't print, and doesn't hold the finish up.
-    if (screen === 'asking' || (screen === 'busy' && now - w.outputAt < STOP_GRACE_MS)) return;
-    this.setStatus(w, 'done');
-  }
-
-  /** A tool call finished: what it may have changed is looked at now rather than on the next timer (see hook-refresh.ts). */
-  private refreshAfter(w: Worker, report: Record<string, unknown>) {
-    const refresh = toolRefresh(report.tool_name, report.tool_input);
-    if (!refresh) return;
-    if (refresh.branch) void this.syncBranch(w);
-    this.events.tool?.(w.info.id, refresh);
-  }
-
-  /**
-   * A hook from one of its subagents. It works inside the worker's turn, and its permission prompts
-   * and questions show in the worker's terminal; its own start, prompt and end are not the worker's.
-   */
-  private subagentHook(w: Worker, event: string, report: Record<string, unknown>, live: boolean): undefined {
-    const session = report.session_id as string;
-    if (event === 'PreToolUse') this.toolStarted(w, session, report, true);
-    else if (event === 'PostToolUse') {
-      w.activeTool.delete(session);
-      this.noteOutcome(w, report, false);
-      if (live) this.refreshAfter(w, report);
-      this.toolFinished(w, session, report);
-    } else if (event === 'Stop') w.activeTool.delete(session);
-    else if (event === 'Notification') this.notified(w, session, report, true);
-    else if ((event === 'SessionStart' || event === 'UserPromptSubmit') && (w.info.status === 'done' || w.info.status === 'idle')) this.setStatus(w, 'working');
-    return undefined;
-  }
-
-  private toolStarted(w: Worker, session: string, report: Record<string, unknown>, sub = false) {
-    const tool = report.tool_name;
-    if (typeof tool === 'string') w.lastTool.set(session, { tool, input: report.tool_input });
-    if (ASK_TOOLS.has(tool)) {
-      w.activeTool.delete(session);
-      this.setStatus(w, 'needs_input');
-      w.asking = { session, tool: tool as string };
-      const input = report.tool_input && typeof report.tool_input === 'object' ? (report.tool_input as Record<string, unknown>) : {};
-      const questions = inputQuestions(input);
-      if (questions.length) {
-        w.info.ask = { kind: 'question', questions, ...(sub ? { sub: true as const } : {}) };
-        w.info.activity = truncate(questions.length > 1 ? `${questions[0].question} (+${questions.length - 1} more)` : questions[0].question, 80);
-        if (w.pty?.id) this.persist();
-      }
-      return;
-    }
-    const summary = describeTool(report);
-    w.info.activity = summary;
-    if (!sub) w.currentTool = { name: String(tool ?? 'tool'), summary, at: w.hookAt || Date.now() };
-    if (typeof tool === 'string') w.activeTool.set(session, { tool, input: report.tool_input, startedAt: w.hookAt || Date.now() });
-    w.info.action = toolAction(tool, report.tool_input);
-    // Moving on means its question was answered, unless another session is the one asking.
-    if (w.info.status !== 'needs_input' || !w.asking || w.asking.session === session) this.setStatus(w, 'working');
-  }
-
-  /** A tool the session asked about (permission to run it, or a question) has run: it was answered. */
-  private toolFinished(w: Worker, session: string, report: Record<string, unknown>) {
-    const { asking } = w;
-    if (w.info.status !== 'needs_input' || !asking || asking.session !== session) return;
-    if (asking.tool === undefined || asking.tool === report.tool_name) this.setStatus(w, 'working');
-  }
-
-  private notified(w: Worker, session: string, report: Record<string, unknown>, sub = false) {
-    if (report.notification_type !== 'permission_prompt' && report.notification_type !== 'elicitation_dialog') return;
-    const call = w.lastTool.get(session);
-    const permission = report.notification_type === 'permission_prompt' && call && !ASK_TOOLS.has(call.tool) ? permissionAsk(call.tool, call.input, sub) : undefined;
-    const question = w.info.status === 'needs_input' && w.info.ask?.kind === 'question' ? w.info.activity : undefined;
-    w.info.activity = permission ? truncate(permissionLine(permission), 80) : (question ?? (typeof report.message === 'string' ? truncate(report.message, 80) : 'Waiting for input'));
-    this.setStatus(w, 'needs_input');
-    w.asking = { session, tool: call?.tool };
-    if (permission) {
-      w.info.ask = permission;
-      if (w.pty?.id) this.persist();
-    }
-  }
-
-  /**
    * Heals what the hooks missed, as a slow safety net: once the screen has said one thing for
    * SCREEN_SETTLE_MS with no hook in that time, status follows it (see droid-screen.ts). Hooks that
    * fired while the office was down are replayed from the spool, so this should rarely act; each
@@ -2723,13 +1921,13 @@ export class WorkerManager {
     for (const w of this.workers.values()) {
       const { info } = w;
       // No SessionStart came for it (the hook can't reach the office), but droid's input box is up.
-      if (w.launchPrompt && w.pty && w.term && now - w.launchPrompt.at >= LAUNCH_PROMPT_FALLBACK_MS && this.droidScreen(w) === 'idle') this.sendLaunchPrompt(w);
+      if (w.launchPrompt && w.pty && w.term && now - w.launchPrompt.at >= LAUNCH_PROMPT_FALLBACK_MS && this.droidScreen(w) === 'idle') this.delivery.sendLaunchPrompt(w);
       if (info.kind !== 'agent' || !w.pty || !w.term || w.bootBlocked || !info.sessionId || info.status === 'starting') {
         w.screenSeen = undefined;
         continue;
       }
       // A Stop whose grace timer hasn't fired yet (a test's clock, a busy event loop).
-      if (w.stopAt !== undefined && now - w.stopAt >= STOP_GRACE_MS) this.settleStop(w, w.stopAt, now);
+      if (w.stopAt !== undefined && now - w.stopAt >= STOP_GRACE_MS) this.hooks.settleStop(w, w.stopAt, now);
       const state = this.droidScreen(w);
       if (!state) {
         w.screenSeen = undefined;
@@ -2757,50 +1955,10 @@ export class WorkerManager {
       this.emitUpdate(w);
     });
   }
-  /**
-   * A tool call finished. Tests or a build that failed again (by exit code, or by the summary it
-   * printed when the exit code was piped away) and the worker puts its head in its hands, until its
-   * next tool call; a passing run ends the streak.
-   */
-  private noteOutcome(w: Worker, payload: any, failed: boolean) {
-    if (payload?.is_interrupt || toolAction(payload?.tool_name, payload?.tool_input) !== 'test') return;
-    const res = payload?.tool_response;
-    const output = [payload?.error, res?.stdout, res?.stderr].filter((s) => typeof s === 'string').join('\n');
-    if (!failed && !outputFailed(output)) {
-      w.failStreak = 0;
-      return;
-    }
-    if (++w.failStreak < FAILS_TO_DESPAIR || w.info.action === 'failing') return;
-    w.info.action = 'failing';
-    this.emitUpdate(w);
-  }
-
   /** A local preview needs no inference or API key and never replaces an assigned/generated label. */
   private notePrompt(w: Worker, prompt: string) {
     if (w.info.kind !== 'agent' || w.info.task || prompt === CARRY_ON_PROMPT || !prompt.trim() || prompt.trim().startsWith('/')) return;
     w.info.task = fallbackTask(prompt);
-  }
-
-  /** Its latest TodoWrite list; one with no items clears it. */
-  private noteTodos(w: Worker, input: unknown) {
-    const todos = todoProgress(input);
-    if (todos) {
-      w.info.todos = todos;
-      w.todoSteps = todoItems(input);
-    } else {
-      delete w.info.todos;
-      delete w.todoSteps;
-    }
-  }
-
-  private clearTask(w: Worker, cleared: boolean) {
-    w.taskEpoch++;
-    w.info.taskSince = cleared ? Date.now() : undefined;
-    w.info.task = undefined;
-    delete w.info.todos;
-    delete w.todoSteps;
-    this.emitUpdate(w);
-    this.persist();
   }
 
   /**
@@ -2868,8 +2026,8 @@ export class WorkerManager {
     const args = isShell ? (WIN && !process.env.SHELL ? [] : ['-l']) : [...this.agentArgs];
     if (!isShell) {
       // Interactive droid takes no --model flag: the model is pinned in its settings overlay.
-      const system = this.systemPromptFile(info);
-      args.unshift('--settings', this.droidSettings(info), ...(system ? ['--append-system-prompt-file', system] : []));
+      const system = this.settings.systemPromptFile(info);
+      args.unshift('--settings', this.settings.droidSettings(info), ...(system ? ['--append-system-prompt-file', system] : []));
       if (resumeSessionId) args.push('--resume', resumeSessionId);
       else if (w.pendingFork) args.push('--cwd', this.cwd(info), '--fork', w.pendingFork.sessionId);
     }
@@ -3143,7 +2301,7 @@ export class WorkerManager {
     // At rest: it may have made a branch of its own this turn, and opened its PR from there.
     if (status === 'done' || status === 'idle') {
       void this.syncBranch(w);
-      if (w.outbox.length) this.flushOutbox(w);
+      if (w.outbox.length) this.delivery.flushOutbox(w);
     }
   }
 
@@ -3236,100 +2394,6 @@ export class WorkerManager {
     }
   }
 
-  private writeHookSettings() {
-    // Minimal VPS images sometimes lack curl; the office's own node binary is always there. It also
-    // keeps what couldn't be delivered (spool), which curl can't do within a size cap.
-    const nodeHook = path.join(this.dataDir, 'hook.cjs');
-    writeFileSync(nodeHook, hookScript(), { mode: 0o600 });
-    const node = `${runAsNode().sh}${shq(process.execPath)} ${shq(nodeHook)}`;
-    this.hookCommand = (event: string) => {
-      const curl =
-        `curl -sSf --connect-timeout 0.5 -m 2 -X POST -H "Authorization: Bearer $DROID_OFFICE_HOOK_TOKEN" -H "Content-Type: application/json" ` +
-        `--data-binary @- "$DROID_OFFICE_HOOK_URL/hooks/droid?worker=$DROID_OFFICE_WORKER_ID&event=${event}&v=${HOOK_VERSION}" 2>/dev/null`;
-      return (
-        `if [ -z "$DROID_OFFICE_WORKER_ID" ] || [ -z "$DROID_OFFICE_HOOK_URL" ]; then exit 0; fi; ` +
-        `body=$(cat); ` +
-        // curl's 28 is a timeout after connecting (a loopback connect is refused at once, never slow):
-        // the office has the hook, so it isn't spooled to be taken twice.
-        `if command -v curl >/dev/null 2>&1; then printf '%s' "$body" | ${curl}; c=$?; if [ $c -eq 0 ] || [ $c -eq 28 ]; then exit 0; fi; printf '%s' "$body" | ${node} ${event} spool >/dev/null 2>&1; ` +
-        `else printf '%s' "$body" | ${node} ${event} reply 2>/dev/null; fi; true`
-      );
-    };
-    this.writeDroidSettings();
-  }
-
-  private hookCommand: (event: string) => string = () => 'true';
-
-  /** The hooks a worker's droid starts with: every event to the office, and Task refused unless Settings allow it. */
-  private hookEntries(): Record<string, unknown[]> {
-    const hooks: Record<string, unknown[]> = {};
-    for (const event of HOOK_EVENTS) hooks[event] = [{ hooks: [{ type: 'command', command: this.hookCommand(event) }] }];
-    if (this.denyTask?.() ?? true) hooks.PreToolUse.unshift({ matcher: 'Task', hooks: [{ type: 'command', command: `printf '%s' ${shq(TASK_DENY)}` }] });
-    if (this.allowTools) hooks.PreToolUse.unshift({ matcher: this.allowTools.matcher, hooks: [{ type: 'command', command: `printf '%s' ${shq(toolDecision('allow', this.allowTools.reason))}` }] });
-    return hooks;
-  }
-
-  /** Droid reads its hooks once, at start: written again before each launch, so a change in Settings reaches the next one. */
-  private writeDroidSettings() {
-    this.droidHooks = this.hookEntries();
-    writeFileSync(this.droidSettingsPath, JSON.stringify({ hooks: this.droidHooks }, null, 2), { mode: 0o600 });
-  }
-  /**
-   * The settings file a Droid worker launches with. Interactive droid has no --model flag: a
-   * worker with a model or effort pinned gets its own overlay with the office hooks and a
-   * sessionDefaultSettings override, merged for that process only, so the global default is
-   * untouched. Rewritten on every launch, so a resume pins the same model again.
-   */
-  private droidSettings(info: WorkerInfo): string {
-    this.writeDroidSettings();
-    if (info.model === undefined && info.effort === undefined) return this.droidSettingsPath;
-    const file = path.join(this.dataDir, `droid-${info.id}.json`);
-    const sessionDefaultSettings: Record<string, string> = {};
-    if (info.model !== undefined) sessionDefaultSettings.model = info.model;
-    if (info.effort !== undefined) sessionDefaultSettings.reasoningEffort = info.effort;
-    writeFileSync(file, JSON.stringify({ hooks: this.droidHooks, sessionDefaultSettings }, null, 2), { mode: 0o600 });
-    return file;
-  }
-
-  /**
-   * Writes the worker.system prompt for `info` into the data dir and returns the file, or nothing when
-   * the prompt is empty or can't be written (the worker then starts without it). Rewritten on every
-   * launch, so a resume picks up the prompt as it is now.
-   */
-  private systemPromptFile(info: WorkerInfo): string | undefined {
-    const file = path.join(this.dataDir, `system-${info.id}.md`);
-    if (this.systemPrompt) return this.writeSystem(file, this.systemPrompt(info));
-    // A plain folder has no branches to keep in sync.
-    const branchPolicy = this.plain ? '' : workerBranchPolicy(this.trees.baseBranch() ?? this.trees.currentBranch(), this.trees.branchFile);
-    const template = this.prompts?.text('worker.system') ?? PROMPTS['worker.system'].text;
-    // Only a worker with no lead may visit the others; a subagent isn't told the visit tools exist.
-    const visits = info.kind === 'agent' && !info.lead && this.visitsOn?.() ? WORKER_VISITS : '';
-    let text = officePrompt(this.prompts, 'worker.system', { name: info.name, visits, branchPolicy });
-    // A saved system prompt from before visits existed still tells the worker about them.
-    if (text && visits && !template.includes('{{visits}}')) text += `\n\n${visits}`;
-    // A saved system prompt may predate the floor selector. Keep it, but don't let its generic
-    // default-branch instructions override an explicit owner choice.
-    if (text && branchPolicy && this.trees.selectedBranch() && !template.includes('{{branchPolicy}}')) text += `\n\n${branchPolicy}`;
-    if (text && info.forkedFrom) {
-      const files = info.worktree ? 'Your files are a private snapshot in your own worktree.' : 'You share this floor’s folder with the original worker. Files are not copied or isolated; coordinate before editing the same files.';
-      text += `\n\nYou are ${info.name}, an independent fork of ${info.forkedFrom.name}'s conversation. ${files} The original may keep working. You are not the original worker or its subagent: use your own worker id and do not act on its terminal, worktree or team.`;
-    }
-    return this.writeSystem(file, text);
-  }
-
-  private writeSystem(file: string, text: string | undefined): string | undefined {
-    try {
-      if (!text) {
-        rmSync(file, { force: true });
-        return undefined;
-      }
-      writeFileSync(file, `${text}\n`, { mode: 0o600 });
-      return file;
-    } catch {
-      return undefined;
-    }
-  }
-
   private saveScrollback(w: Worker) {
     if (!w.term || !w.ser) return;
     w.unsaved = false;
@@ -3337,442 +2401,10 @@ export class WorkerManager {
   }
 
   private persist(onShutdown = false) {
-    // A stopped manager's pending callbacks must not overwrite its successor's state.
-    if (this.closing && !onShutdown) return;
-    const saved = [...this.workers.values()]
-      .filter((w) => !w.info.remote)
-      .map(({ info, hookToken, pty, bootBlocked, stopAt, interrupted, worktreeOwnership, launchPrompt, pendingFork, outbox }) => ({
-        id: info.id,
-        kind: info.kind,
-        model: info.model,
-        effort: info.effort,
-        deskId: info.deskId,
-        name: info.name,
-        color: info.color,
-        createdBy: info.createdBy,
-        createdAt: info.createdAt,
-        prompt: info.prompt,
-        worktree: info.worktree,
-        worktreeOwnership,
-        repos: info.repos,
-        title: info.title,
-        sessionId: info.sessionId,
-        forkedFrom: info.forkedFrom,
-        pendingFork,
-        activity: info.activity,
-        task: info.task,
-        taskSince: info.taskSince,
-        todos: info.todos,
-        pr: info.pr,
-        lead: info.lead,
-        team: info.team,
-        // A terminal still running in the host, to pick back up after a restart. Its hooks keep the token.
-        hookToken,
-        // Its first message, while its droid hasn't taken it yet: the next office types it in at SessionStart.
-        // Notices it was promised and hasn't been handed yet, which the next office hands over instead.
-        // The question or permission prompt it waits on, so a terminal picked back up can still be answered from the hooks' account of it.
-        pty: pty?.id
-          ? { id: pty.id, status: info.status, acked: info.acked, waitingSince: info.waitingSince, ...(info.status === 'needs_input' && info.ask ? { ask: info.ask } : {}), launchPrompt, ...(outbox.length ? { outbox } : {}) }
-          : undefined,
-        // In the middle of something: if its terminal doesn't make it through a restart, it carries on after.
-        midTurn: !this.stopping && (!!interrupted || midTurn({ info, bootBlocked, stopAt })),
-      }));
-    try {
-      writeFileSync(this.statePath, JSON.stringify([...saved, ...this.retired], null, 2), { mode: 0o600 });
-    } catch {
-      // disk issues shouldn't take the office down
-    }
-  }
-
-  private restore() {
-    if (!existsSync(this.statePath)) return;
-    try {
-      const saved = JSON.parse(readFileSync(this.statePath, 'utf8')) as (Partial<WorkerInfo> & {
-        hookToken?: unknown;
-        pty?: any;
-        midTurn?: unknown;
-        worktreeOwnership?: Record<string, WorktreeOwnership>;
-        pendingFork?: Worker['pendingFork'];
-        /** An office from before subscriptions kept who last typed here; only the time carries over. */
-        lastInput?: unknown;
-      })[];
-      for (const s of saved) {
-        // A building agent's id is its own: no floor seats a record that claims one.
-        const seated = (this.deskless ? s.deskId === '' : !!s.deskId && DESK_BY_ID.has(s.deskId)) && !(s.id && this.building?.agents.known(s.id));
-        if (s.id && typeof s.deskId === 'string' && !seated) this.retired.push(s);
-        if (!s.id || typeof s.deskId !== 'string' || !seated || (!this.deskless && this.localDeskOccupied(s.deskId))) continue;
-        const shell = s.kind === 'shell';
-        const info: WorkerInfo = {
-          id: s.id,
-          kind: shell ? 'shell' : 'agent',
-          model: shell ? undefined : restoredModel(s.model),
-          effort: shell ? undefined : isAgentEffort(s.effort) ? s.effort : undefined,
-          deskId: s.deskId,
-          name: s.name ?? 'Worker',
-          color: s.color ?? COLORS[0],
-          status: 'offline',
-          acked: true,
-          createdBy: s.createdBy ?? '?',
-          createdAt: s.createdAt ?? Date.now(),
-          prompt: s.prompt,
-          worktree: s.worktree,
-          repos: s.worktree ? validRepos(s.repos) : undefined,
-          title: s.title,
-          sessionId: s.sessionId,
-          forkedFrom: s.forkedFrom && typeof s.forkedFrom.workerId === 'string' && typeof s.forkedFrom.name === 'string' && typeof s.forkedFrom.sessionId === 'string' ? s.forkedFrom : undefined,
-          activity: s.activity,
-          task: validTask(s.task),
-          taskSince: typeof s.taskSince === 'number' && Number.isFinite(s.taskSince) && s.taskSince > 0 ? s.taskSince : undefined,
-          ...(!shell && validTodoProgress(s.todos) ? { todos: validTodoProgress(s.todos) } : {}),
-          pr: s.pr && typeof s.pr.number === 'number' && typeof s.pr.url === 'string' ? { number: s.pr.number, url: s.pr.url } : undefined,
-          cols: DEFAULT_COLS,
-          rows: DEFAULT_ROWS,
-          open: false,
-          lastInputAt: legacyLastInputAt(s.lastInput),
-          ...(typeof s.lead === 'string' && s.kind !== 'shell' ? { lead: s.lead } : {}),
-          ...(s.kind !== 'shell' && validTeam(s.team) ? { team: validTeam(s.team) } : {}),
-        };
-        const w = newWorker(info, typeof s.hookToken === 'string' && s.hookToken ? s.hookToken : undefined);
-        w.worktreeOwnership = s.worktreeOwnership;
-        if (!info.sessionId && typeof s.pendingFork?.sessionId === 'string') w.pendingFork = { sessionId: s.pendingFork.sessionId, prompt: typeof s.pendingFork.prompt === 'string' ? s.pendingFork.prompt : undefined };
-        w.screenDirty = false;
-        if (typeof s.pty?.id === 'string') {
-          const status: WorkerStatus = RUNNING.has(s.pty.status) ? s.pty.status : 'idle';
-          const launch = s.pty.launchPrompt;
-          w.saved = {
-            ptyId: s.pty.id,
-            status,
-            acked: s.pty.acked !== false,
-            waitingSince: typeof s.pty.waitingSince === 'number' ? s.pty.waitingSince : undefined,
-            ask: status === 'needs_input' ? validAsk(s.pty.ask) : undefined,
-            launchPrompt: typeof launch?.text === 'string' && launch.text && typeof launch.at === 'number' ? { text: launch.text, at: launch.at } : undefined,
-            outbox: Array.isArray(s.pty.outbox) ? s.pty.outbox.filter((n: unknown): n is string => typeof n === 'string' && !!n) : undefined,
-          };
-        }
-        // Mid-turn as the office went down: cut off, unless its terminal is picked back up still
-        // running (adopt). An office from before midTurn only said so for a terminal in the host.
-        w.interrupted = typeof s.midTurn === 'boolean' ? s.midTurn : s.pty?.status === 'working' || s.pty?.status === 'needs_input';
-        this.workers.set(info.id, w);
-      }
-      // A lead that didn't come back, or is a subagent itself, leads nobody.
-      for (const w of this.workers.values()) {
-        if (!w.info.lead || this.buildingAgent(w.info.lead)) continue;
-        const lead = this.get(w.info.lead);
-        if (!lead || lead.lead) delete w.info.lead;
-      }
-      // Markings follow who leads whom now; an office from before them gives each team its own.
-      const teams = settleTeams([...this.workers.values()].map((w) => w.info));
-      for (const w of this.workers.values()) {
-        const badge = teams.get(w.info.id);
-        if (badge) w.info.team = badge;
-        else delete w.info.team;
-      }
-    } catch {
-      // corrupt state file: start fresh
-    }
+    this.state.save(this.workers.values(), { closing: this.closing, stopping: this.stopping, onShutdown });
   }
 }
 // ---------------------------------------------------------------------------
-
-/** Cut off if it stopped now. A turn that already sent its Stop has finished, even before its screen confirms it. */
-function midTurn({ info, bootBlocked, stopAt }: Pick<Worker, 'info' | 'bootBlocked' | 'stopAt'>): boolean {
-  return info.kind === 'agent' && stopAt === undefined && (info.status === 'working' || (info.status === 'needs_input' && !bootBlocked));
-}
-
-/** The rows a terminal shows now, its scrollback left out. */
-function screenRows(term: HeadlessTerminal): string[] {
-  const buf = term.buffer.active;
-  const rows: string[] = [];
-  for (let y = buf.baseY; y < buf.baseY + term.rows; y++) rows.push(stripKittyPlaceholders(buf.getLine(y)?.translateToString(true) ?? '').trimEnd());
-  return rows;
-}
-
-function newWorker(info: WorkerInfo, hookToken = randomBytes(16).toString('hex')): Worker {
-  return {
-    info,
-    screenDirty: true,
-    lastLines: [],
-    leftNeedsInputAt: 0,
-    keyframeAt: 0,
-    needsKeyframe: false,
-    termSeq: 0,
-    hookToken,
-    failStreak: 0,
-    taskEpoch: 0,
-    subSessions: new Set(),
-    lastTool: new Map(),
-    activeTool: new Map(),
-    hookAt: 0,
-    outputAt: 0,
-    hookVersion: 0,
-    outbox: [],
-    queued: 0,
-    sentQueue: [],
-    sentQueueSeq: 0,
-    inFlight: new Set(),
-  };
-}
-
-/** When a legacy `lastInput: {by, at}` record says input last landed, if it says so sanely. */
-function legacyLastInputAt(lastInput: unknown): number | undefined {
-  const at = (lastInput as { at?: unknown } | null)?.at;
-  return typeof at === 'number' && Number.isFinite(at) ? at : undefined;
-}
-
-function restoredModel(model: unknown): string | undefined {
-  return isValidDroidModel(model) ? model : undefined;
-}
-
-/** The office's environment, minus anything that would make a child think it's a nested session. */
-export function childEnv(): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !scrubbed(k)) env[k] = v;
-  return env;
-}
-
-function validTeam(t: unknown): TeamBadge | undefined {
-  const v = t as Partial<TeamBadge> | undefined;
-  if (!v || typeof v.id !== 'string' || !v.id || (v.role !== 'lead' && v.role !== 'member') || typeof v.leadName !== 'string') return undefined;
-  if (typeof v.accent !== 'string' || !/^#[0-9a-f]{6}$/i.test(v.accent) || !TEAM_EMBLEMS.includes(v.emblem as TeamEmblem)) return undefined;
-  return { id: v.id, role: v.role, accent: v.accent, emblem: v.emblem as TeamEmblem, leadName: v.leadName.slice(0, 80) };
-}
-
-function validAsk(a: unknown): WorkerAsk | undefined {
-  const v = a as Record<string, unknown> | null | undefined;
-  if (!v || typeof v !== 'object') return undefined;
-  const sub = v.sub === true ? { sub: true as const } : {};
-  if (v.kind === 'question' && Array.isArray(v.questions)) {
-    const questions = v.questions.flatMap((q: Partial<AskedQuestion> | null) =>
-      q && typeof q.question === 'string' && Array.isArray(q.options) && q.options.every((o) => typeof o === 'string') && typeof q.multiSelect === 'boolean'
-        ? [{ question: q.question, ...(typeof q.topic === 'string' ? { topic: q.topic } : {}), options: [...q.options], multiSelect: q.multiSelect }]
-        : [],
-    );
-    return questions.length ? { kind: 'question', questions, ...sub } : undefined;
-  }
-  if (v.kind !== 'permission' || typeof v.tool !== 'string') return undefined;
-  const text = (key: 'command' | 'file' | 'risk' | 'summary') => (typeof v[key] === 'string' ? { [key]: v[key] as string } : {});
-  return { kind: 'permission', tool: v.tool, ...text('command'), ...text('file'), ...text('risk'), ...text('summary'), ...sub };
-}
-
-function validTask(t: unknown): WorkerTask | undefined {
-  const v = t as Partial<WorkerTask> | undefined;
-  return typeof v?.name === 'string' && typeof v.summary === 'string'
-    ? {
-        name: v.name,
-        summary: v.summary,
-        ...(v.generated === true
-          ? {
-              generated: true,
-              ...(typeof v.textHash === 'string' && /^[a-f0-9]{64}$/.test(v.textHash) ? { textHash: v.textHash } : {}),
-              ...(typeof v.updatedAt === 'number' && Number.isFinite(v.updatedAt) && v.updatedAt > 0 ? { updatedAt: v.updatedAt } : {}),
-            }
-          : {}),
-      }
-    : undefined;
-}
-
-/**
- * What a script prefixes to `process.execPath` to run a .js file with it. Under the Mac app that's
- * the Electron binary, which only behaves as Node with ELECTRON_RUN_AS_NODE set, and workers don't
- * inherit that (SCRUB_ENV), so the commands written for them set it themselves.
- */
-export function runAsNode(versions: NodeJS.ProcessVersions = process.versions): { sh: string; cmd: string } {
-  return versions.electron ? { sh: 'ELECTRON_RUN_AS_NODE=1 ', cmd: 'set "ELECTRON_RUN_AS_NODE=1" & ' } : { sh: '', cmd: '' };
-}
-
-const WIN = process.platform === 'win32';
-
-/** The shell workers get when none is configured: $SHELL on Unix, cmd.exe on Windows. */
-export function defaultShell(): string {
-  return process.env.SHELL || (WIN ? process.env.COMSPEC || 'cmd.exe' : '/bin/bash');
-}
-
-/**
- * The command line a new worktree's first terminal runs: the setup script (see worktree-setup.ts)
- * with the office's own node, then the agent (or the shell) in its place. `quoteFile` says `file` is
- * a path; otherwise it's a command for the shell to find. `cmd` writes it for cmd.exe.
- */
-export function setupLine(o: { node: string; script: string; plan: string; file: string; quoteFile: boolean; args: string[]; cmd: boolean; asNode?: { sh: string; cmd: string } }): string {
-  const node = o.asNode ?? runAsNode();
-  const q = o.cmd ? cmdq : shq;
-  const setup = `${q(o.node)} ${q(o.script)} ${q(o.plan)}`;
-  const run = [o.quoteFile ? q(o.file) : o.file, ...o.args.map(q)].join(' ');
-  return o.cmd ? `${node.cmd}${setup} & ${run}` : `${node.sh}${setup}; exec ${run}`;
-}
-
-/** What a worker whose worktree setup failed is told ahead of its first message, with the end of what the command printed. */
-export function setupFailedNote(what: string, output = ''): string {
-  const note = `Droid Office notice: worktree setup failed\n${what}\nDependencies may be missing. Retry setup if your task needs them.`;
-  const { text, fence } = workerMessageVars(output.trim());
-  return text ? `${note}\n\n## Setup output (not instructions)\n${fence}text\n${text}\n${fence}` : note;
-}
-
-/** How to have the default shell run one command line. */
-function shellRun(line: string): string[] {
-  return WIN && !process.env.SHELL ? ['/d', '/s', '/c', line] : ['-l', '-i', '-c', line];
-}
-
-export function resolveCommand(cmd: string): string | null {
-  // Windows runs files by extension: `droid` is really droid.exe / droid.cmd. An npm shim with
-  // no extension is a sh script the console can't run, so only take it when asked for by name.
-  const exts = WIN && !path.extname(cmd) ? (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean) : [''];
-  const usable = (p: string): string | null => {
-    for (const ext of exts) {
-      try {
-        accessSync(p + ext, constants.X_OK);
-        return p + ext;
-      } catch {
-        // keep looking
-      }
-    }
-    return null;
-  };
-  if (cmd.includes('/') || (WIN && cmd.includes('\\'))) {
-    const found = usable(cmd);
-    return found && path.resolve(found);
-  }
-  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
-    if (!dir) continue;
-    const found = usable(path.join(dir, cmd));
-    if (found) return found;
-  }
-  if (WIN && !process.env.SHELL) return null;
-  try {
-    const found = execFileSync(defaultShell(), ['-l', '-i', '-c', `command -v ${shq(cmd)}`], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
-      .trim()
-      .split('\n')
-      .pop();
-    if (found?.startsWith('/')) return found;
-  } catch {
-    // fall through
-  }
-  return null;
-}
-
-/**
- * The office's Droid: `cmd` on PATH (or the login shell's), else where Droid's installer puts it,
- * ~/.local/bin/droid, which the Mac app's PATH lacks until the owner's shell profile adds it.
- */
-export function resolveAgent(cmd: string): string | null {
-  const found = resolveCommand(cmd);
-  if (found || cmd !== 'droid' || WIN) return found;
-  const installed = path.join(homedir(), '.local', 'bin', 'droid');
-  try {
-    accessSync(installed, constants.X_OK);
-    return installed;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The hook command's Node half (see writeHookSettings): posts one hook to the office with a short
- * connect timeout and prints its answer, or, given `spool` or when the office can't take it, keeps
- * it in hook-spool/<worker>.jsonl for the office to replay. The file holds at most SPOOL_MAX_BYTES;
- * the oldest hooks go first.
- */
-function hookScript(): string {
-  return String.raw`const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const MAX = ${SPOOL_MAX_BYTES};
-const [event, mode] = process.argv.slice(2);
-const worker = process.env.DROID_OFFICE_WORKER_ID || '';
-const token = process.env.DROID_OFFICE_HOOK_TOKEN || '';
-let body = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (c) => (body += c));
-process.stdin.on('end', () => (mode === 'spool' ? spool() : send()));
-function send() {
-  const url = new URL(process.env.DROID_OFFICE_HOOK_URL + '/hooks/droid');
-  url.searchParams.set('worker', worker);
-  url.searchParams.set('event', event);
-  // A command from before HOOK_VERSION runs this file too, after an update rewrote it, and throws
-  // its output away: only one that says 'reply' prints what the office answers.
-  url.searchParams.set('v', mode === 'reply' ? '${HOOK_VERSION}' : '0');
-  let done = false;
-  let sent = false;
-  // Once the office has the whole hook, a slow answer isn't a failure: spooling it would replay it.
-  const fail = () => {
-    if (done) return;
-    done = true;
-    if (!sent) spool();
-  };
-  const req = http.request(url, { method: 'POST', timeout: 2000, headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' } }, (res) => {
-    let out = '';
-    res.setEncoding('utf8');
-    res.on('data', (c) => (out += c));
-    res.on('error', fail);
-    res.on('end', () => {
-      if (done) return;
-      done = true;
-      // Refused (a worker the office hasn't picked back up yet): kept for the replay.
-      if (res.statusCode !== 200) return spool();
-      process.stdout.write(out);
-    });
-  });
-  const connect = setTimeout(() => req.destroy(), 500);
-  req.on('socket', (s) => s.once('connect', () => clearTimeout(connect)));
-  req.on('error', fail);
-  req.on('close', () => clearTimeout(connect));
-  req.on('timeout', () => req.destroy());
-  req.end(body, () => (sent = true));
-}
-function spool() {
-  let payload;
-  try {
-    payload = JSON.parse(body);
-  } catch {
-    return;
-  }
-  if (!/^[\w-]+$/.test(worker)) return;
-  const dir = path.join(__dirname, 'hook-spool');
-  const file = path.join(dir, worker + '.jsonl');
-  const line = JSON.stringify({ event, at: Date.now(), token, payload }) + '\n';
-  const size = Buffer.byteLength(line);
-  if (size > MAX) return;
-  try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    let had = 0;
-    try {
-      had = fs.statSync(file).size;
-    } catch {}
-    if (had + size <= MAX) return fs.appendFileSync(file, line, { mode: 0o600 });
-    const rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
-    const kept = [];
-    let total = size;
-    for (let i = rows.length - 1; i >= 0; i--) {
-      const n = Buffer.byteLength(rows[i]) + 1;
-      if (total + n > MAX) break;
-      total += n;
-      kept.unshift(rows[i] + '\n');
-    }
-    const tmp = file + '.' + process.pid + '.tmp';
-    fs.writeFileSync(tmp, kept.join('') + line, { mode: 0o600 });
-    fs.renameSync(tmp, file);
-  } catch {}
-}
-`;
-}
-
-/** The pending ask for a permission prompt about `tool` called with `input` (see WorkerInfo.ask). */
-function permissionAsk(tool: string, input: unknown, sub: boolean): Extract<WorkerAsk, { kind: 'permission' }> {
-  const i = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
-  const str = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
-  const command = str(i.command, 2000);
-  const file = str(i.file_path ?? i.path, 1000);
-  const risk = str(i.riskLevel ?? i.risk_level, 20);
-  // Office MCP calls carry a title rather than a summary: the ask line names what is being approved.
-  const summary = str(i.summary ?? i.description ?? i.title, 300);
-  return { kind: 'permission', tool, ...(command ? { command } : {}), ...(file ? { file } : {}), ...(risk ? { risk } : {}), ...(summary ? { summary } : {}), ...(sub ? { sub: true as const } : {}) };
-}
-
-function describeTool(payload: any): string {
-  const name = payload?.tool_name ?? 'tool';
-  const input = payload?.tool_input ?? {};
-  const detail = input.command ?? input.file_path ?? input.pattern ?? input.url ?? input.description ?? '';
-  return truncate(detail ? `${name}: ${detail}` : String(name), 80);
-}
 
 function offlineBanner(info: WorkerInfo): string {
   const hint = info.kind === 'shell' ? ' Press R to restart it.' : info.sessionId ? ' Press R to resume the session.' : '';
@@ -3828,26 +2460,6 @@ function clearWorkspace(abs: string) {
   } catch {
     // already gone, or something else is in it: it stays
   }
-}
-
-/** The other repositories of a worker across repositories, as workers.json kept them. */
-function validRepos(raw: unknown): WorkerRepo[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
-  const repos = raw.flatMap((row): WorkerRepo[] => {
-    if (!row || typeof row !== 'object') return [];
-    const r = row as { floor?: unknown; name?: unknown; repo?: unknown; dir?: unknown; path?: unknown; branch?: unknown; base?: unknown; from?: unknown; pr?: { number?: unknown; url?: unknown } };
-    const floor = str(r.floor);
-    const name = str(r.name);
-    const dir = str(r.dir);
-    const rel = str(r.path);
-    const branch = str(r.branch);
-    const base = str(r.base);
-    if (!floor || !name || !dir || !rel || !branch || !base) return [];
-    const pr = r.pr && typeof r.pr.number === 'number' && typeof r.pr.url === 'string' ? { number: r.pr.number, url: r.pr.url } : undefined;
-    return [{ floor, name, repo: str(r.repo), dir, path: rel, branch, base, from: str(r.from), pr }];
-  });
-  return repos.length ? repos : undefined;
 }
 
 /** owner/name of a checkout's origin, when it has one the office can name. */
@@ -3910,29 +2522,8 @@ function draftPr(info: WorkerInfo, commits: string[], by: string, other?: { home
   return { title, body: parts.join('\n\n') };
 }
 
-function truncate(s: string, n: number) {
-  const one = s.replace(/\s+/g, ' ').trim();
-  return one.length > n ? `${one.slice(0, n - 1)}…` : one;
-}
-
 function clamp(v: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, v));
-}
-
-function shq(s: string) {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}
-
-/** One argument for cmd.exe. */
-function cmdq(s: string) {
-  return `"${s.replace(/"/g, '""')}"`;
-}
-
-function safeEq(a: string, b: string) {
-  if (a.length !== b.length) return false;
-  let r = 0;
-  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return r === 0;
 }
 
 /** How long a worker has spent working (ms), the stretch it's in now included. */

@@ -42,7 +42,8 @@ test('the final full-screen pass clears canvas depth without writing it, so only
   }
   const main = readFileSync(new URL('../src/client/main.ts', import.meta.url), 'utf8');
   assert.match(main, /if \(!remaster.active\) renderer.clearDepth\(\);/);
-  assert.match(main, /wandLight.visible = false;/);
+  const sidearm = readFileSync(new URL('../src/client/runtime/sidearm.ts', import.meta.url), 'utf8');
+  assert.match(sidearm, /wandLight.visible = false;/);
   assert.match(main, /wandLight.intensity = tipNow && wandGlow > 0.02 \? wandGlow : 0;\s*wandLight.visible = wandLight.intensity > 0;/, 'only the already-zero light is omitted; the original glow cutoff stays unchanged');
   remaster.configure({ ...settings, enabled: false });
 });
