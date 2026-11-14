@@ -61,9 +61,7 @@ export class Reviewed {
 export const STATUS_WORD: Record<DiffFile['status'], string> = { A: 'added', D: 'deleted', M: 'modified', R: 'renamed' };
 
 /** Lock files and build output: collapsed until asked for, like GitHub does. */
-export function looksGenerated(path: string): boolean {
-  return /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|Gemfile\.lock|poetry\.lock|composer\.lock|go\.sum)$|\.min\.(js|css)$|\.snap$|(^|\/)dist\//.test(path);
-}
+export { looksGeneratedPath as looksGenerated } from '../../shared/thread-diff';
 
 /** A line comment and its replies. */
 export function renderThread(root: GhReviewComment, replies: Map<number, GhReviewComment[]>, itemUrl: string): HTMLElement {

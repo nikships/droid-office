@@ -6,9 +6,12 @@ import { rowsWithin, ThreadHistory } from './thread-history';
 export const TEAM_THREAD_WORKERS = 6;
 export const TEAM_THREAD_ENTRIES = 40;
 export const TEAM_THREAD_CHARACTERS = 96_000;
+export const TEAM_RECONCILE_INTERVAL = 15_000;
 const FIELD_CHARACTERS = 16_000;
 const READ_INTERVAL = 1000;
 const READ_TIMEOUT = 8000;
+
+export type TeamWatchSend = (msg: Extract<ClientMsg, { t: 'thread.watch' }>) => boolean;
 
 export interface TeamThreadMember {
   worker: WorkerInfo;
@@ -17,6 +20,7 @@ export interface TeamThreadMember {
   error: string;
   pending?: { request: string; at: number };
   nextReadAt: number;
+  lastAttemptAt: number;
 }
 
 export function teamThreadVisible(active: boolean, connected: boolean, visible: boolean, expanded: boolean): boolean {
@@ -61,6 +65,7 @@ function boundedEntries(entries: readonly ThreadEntry[]): ThreadEntry[] {
 /** Pure request routing/cache policy. The mounted view owns the clock and the one listener. */
 export class TeamThread {
   readonly members = new Map<string, TeamThreadMember>();
+  readonly watched = new Set<string>();
   total = 0;
   revision = 0;
   private scope = '';
@@ -70,7 +75,7 @@ export class TeamThread {
   private nextWorker = 0;
   private nextReadAt = 0;
 
-  sync(scope: string, lead: string, workers: readonly WorkerInfo[]) {
+  sync(scope: string, lead: string, workers: readonly WorkerInfo[], sendWatch?: TeamWatchSend) {
     if (this.disposed) return;
     if (scope !== this.scope || lead !== this.lead) {
       this.clear();
@@ -85,7 +90,14 @@ export class TeamThread {
       keep.add(worker.id);
       let member = this.members.get(worker.id);
       if (!member || member.worker.sessionId !== worker.sessionId) {
-        member = { worker, history: new ThreadHistory(), received: false, error: '', nextReadAt: member?.nextReadAt ?? 0 };
+        member = {
+          worker,
+          history: new ThreadHistory(),
+          received: false,
+          error: '',
+          nextReadAt: member?.nextReadAt ?? 0,
+          lastAttemptAt: member?.lastAttemptAt ?? 0,
+        };
         this.members.set(worker.id, member);
         this.revision++;
       } else if (
@@ -102,11 +114,38 @@ export class TeamThread {
         this.revision++;
       }
     }
+    if (sendWatch) this.syncWatches(sendWatch);
   }
 
-  enable(on: boolean) {
+  enable(on: boolean, sendWatch?: TeamWatchSend) {
     this.enabled = on && !this.disposed;
     if (!this.enabled) for (const member of this.members.values()) member.pending = undefined;
+    if (sendWatch) this.syncWatches(sendWatch);
+  }
+
+  syncWatches(send: TeamWatchSend) {
+    const desired = new Set<string>();
+    if (this.enabled && !this.disposed) {
+      for (const member of this.members.values()) {
+        if (!member.worker.lost && member.worker.sessionId) desired.add(member.worker.id);
+      }
+    }
+    for (const id of [...this.watched]) {
+      if (!desired.has(id)) {
+        send({ t: 'thread.watch', workerId: id, on: false });
+        this.watched.delete(id);
+      }
+    }
+    for (const id of desired) {
+      if (!this.watched.has(id) && send({ t: 'thread.watch', workerId: id, on: true })) {
+        this.watched.add(id);
+      }
+    }
+  }
+
+  /** Drops local watch bookkeeping after disconnect or server-side floor reset. */
+  resetWatches() {
+    this.watched.clear();
   }
 
   read(now: number, send: (msg: Extract<ClientMsg, { t: 'thread.read' }>) => boolean, request: () => string) {
@@ -124,22 +163,38 @@ export class TeamThread {
     for (let offset = 0; offset < members.length; offset++) {
       const index = (this.nextWorker + offset) % members.length;
       const member = members[index];
-      if (member.pending || now < member.nextReadAt || member.worker.lost || !member.worker.sessionId) continue;
+      if (member.pending || member.worker.lost || !member.worker.sessionId) continue;
+      const interval = member.received && !member.error ? TEAM_RECONCILE_INTERVAL : READ_INTERVAL;
+      const readyAt = Math.max(member.nextReadAt, member.lastAttemptAt ? member.lastAttemptAt + interval : 0);
+      if (now < readyAt) continue;
       const id = request();
       this.nextReadAt = now + READ_INTERVAL;
       this.nextWorker = (index + 1) % members.length;
       member.nextReadAt = now + READ_INTERVAL;
-      if (send({ t: 'thread.read', workerId: member.worker.id, request: id })) member.pending = { request: id, at: now };
+      if (send({ t: 'thread.read', workerId: member.worker.id, request: id })) {
+        member.lastAttemptAt = now;
+        member.pending = { request: id, at: now };
+      } else {
+        member.lastAttemptAt = 0;
+      }
       return;
     }
   }
 
-  receive(msg: ServerMsg): boolean {
-    if (!this.enabled || msg.t !== 'thread.snapshot') return false;
+  receive(msg: ServerMsg, now?: number): boolean {
+    if (!this.enabled || msg.t !== 'thread.snapshot' || msg.before !== undefined) return false;
     const member = this.members.get(msg.workerId);
-    if (!member?.pending || member.pending.request !== msg.request || msg.before !== undefined) return false;
+    if (!member) return false;
+    const isPush = msg.push === true;
+    const isReply = !!member.pending && member.pending.request === msg.request;
+    if (!isPush && !isReply) return false;
+    if (isPush && (member.worker.lost || !member.worker.sessionId)) return false;
+    if (!msg.error && member.worker.sessionId && msg.sessionId !== member.worker.sessionId) {
+      if (isReply) member.pending = undefined;
+      return false;
+    }
     member.pending = undefined;
-    if (!msg.error && member.worker.sessionId && msg.sessionId !== member.worker.sessionId) return false;
+    if (now !== undefined && !msg.error) member.lastAttemptAt = now;
     if (member.error !== (msg.error ?? '')) this.revision++;
     member.error = msg.error ?? '';
     if (!member.error) {
@@ -155,16 +210,19 @@ export class TeamThread {
     return true;
   }
 
-  clear() {
+  clear(sendWatch?: TeamWatchSend) {
     if (this.members.size || this.total) this.revision++;
     this.members.clear();
     this.total = 0;
     this.nextWorker = 0;
+    if (sendWatch) this.syncWatches(sendWatch);
   }
 
-  dispose() {
+  dispose(sendWatch?: TeamWatchSend) {
     this.enable(false);
     this.clear();
     this.disposed = true;
+    if (sendWatch) this.syncWatches(sendWatch);
+    else this.watched.clear();
   }
 }

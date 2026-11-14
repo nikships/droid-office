@@ -30,7 +30,20 @@ export function rowPrefix(row: ThreadRow, to: number, loaded: ReadonlyMap<string
       continue;
     }
     const actions = block.actions.filter((item) => held(item.id));
-    if (actions.length) blocks.push(actions.length === block.actions.length ? block : { ...block, label: 'Earlier tools', state: activityState(actions), live: false, actions });
+    if (actions.length) {
+      blocks.push(
+        actions.length === block.actions.length
+          ? block
+          : {
+              ...block,
+              ...(block.card ? { card: block.card } : {}),
+              label: 'Earlier tools',
+              state: activityState(actions),
+              live: false,
+              actions,
+            },
+      );
+    }
   }
   if (!sourceIds.length || !blocks.length) return undefined;
   const actions = blocks.flatMap((block) => (block.kind === 'tools' ? block.actions : []));
