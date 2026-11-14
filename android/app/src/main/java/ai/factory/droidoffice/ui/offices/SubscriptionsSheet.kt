@@ -166,7 +166,7 @@ internal fun QuotaRing(provider: SubscriptionProvider, account: SubscriptionAcco
             },
             contentAlignment = Alignment.Center,
         ) {
-            if (provider.key == "factory") Icon(painterResource(R.drawable.ic_glyph), null, Modifier.size(18.dp), tint = Palette.Accent)
+            if (provider.key == Subscriptions.FACTORY_KEY) Icon(painterResource(R.drawable.ic_glyph), null, Modifier.size(18.dp), tint = Palette.Accent)
             else BrandLogo(ModelBrand.provider(provider.key), Modifier.size(18.dp))
         }
         Text(account.label, style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)

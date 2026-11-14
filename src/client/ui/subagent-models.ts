@@ -1,5 +1,6 @@
 import { SUBAGENT_MODEL_NOTE_MAX, type SubagentModel } from '../../shared/protocol';
 import { offeredModels } from '../../shared/model-visibility';
+import { watchFactory } from '../factory';
 import { store } from '../state';
 import { withoutGlyph } from '../world/glyph';
 import { h } from './dom';
@@ -11,6 +12,7 @@ export interface SubagentModelPicker {
   element: HTMLElement;
   /** Shows what the office has saved, unless the owner is part way through changing it. */
   paint(saved: SubagentModel[] | undefined): void;
+  dispose(): void;
 }
 
 /** What a model costs and can do, in one line under its name. */
@@ -109,6 +111,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
     const shown = rows.filter(([id, m]) => (!store.setup.airgapped || m?.custom) && (!want || [id, m?.displayName, m?.provider].some((s) => s?.toLowerCase().includes(want))));
     list.replaceChildren(...(shown.length ? shown.map(([id, m]) => row(id, m)) : [h('li.list-row.sub-model', {}, h('span.list-meta', {}, loaded === 'loading' ? 'Loading Droid models…' : 'No model matches.'))]));
     drawn = availabilityStamp();
+    drawnStates = stateStamp();
     paintButtons();
   };
 
@@ -132,25 +135,45 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
   });
   revert.addEventListener('click', reset);
   // A quota running out or coming back redraws the list, but only then: a redraw would take focus from a note being typed.
-  const availabilityStamp = () => JSON.stringify(models.map((m) => availabilityOf(m.id, store.subscriptions, 0, store.factory, m)));
+  const availabilityStamp = () => {
+    const now = Date.now();
+    return JSON.stringify(models.map((m) => availabilityOf(m.id, store.subscriptions, now, store.factory, m)));
+  };
+  const stateStamp = () => {
+    const now = Date.now();
+    return JSON.stringify(
+      models.map((m) => {
+        const a = availabilityOf(m.id, store.subscriptions, now, store.factory, m);
+        return [Boolean(a.reason), Boolean(a.note)];
+      }),
+    );
+  };
   let drawn = '';
-  let seen = false;
-  const stopWatching = store.on('subscriptions', () => {
-    if (list.isConnected) seen = true;
-    else if (seen) stopWatching();
-    if (list.isConnected && availabilityStamp() !== drawn) paintList();
-  });
-  const stopFactory = store.on('factory', () => {
-    if (list.isConnected) seen = true;
-    else if (seen) stopFactory();
-    if (list.isConnected && availabilityStamp() !== drawn) paintList();
-  });
+  let drawnStates = '';
+  const stops: (() => void)[] = [];
+  const needsAvailabilityPaint = () => {
+    const typingInList = list.contains(document.activeElement);
+    return typingInList ? stateStamp() !== drawnStates : availabilityStamp() !== drawn;
+  };
+  const watch = (key: 'subscriptions' | 'factory' | 'hiddenModels', needsPaint: () => boolean) => {
+    stops.push(
+      store.on(key, () => {
+        if (list.isConnected && needsPaint()) paintList();
+      }),
+    );
+  };
+  watch('subscriptions', needsAvailabilityPaint);
+  watch('factory', needsAvailabilityPaint);
   // Hiding or showing a model under Models → Models shown in pickers redraws this list at once.
-  const stopHidden = store.on('hiddenModels', () => {
-    if (list.isConnected) seen = true;
-    else if (seen) stopHidden();
-    if (list.isConnected) paintList();
-  });
+  watch('hiddenModels', () => true);
+  const unwatchLimits = watchFactory('limits');
+  let minute = Math.floor(Date.now() / 60_000);
+  const timer = setInterval(() => {
+    const nextMinute = Math.floor(Date.now() / 60_000);
+    if (nextMinute === minute) return;
+    minute = nextMinute;
+    if (list.isConnected && needsAvailabilityPaint()) paintList();
+  }, 5_000);
 
   void droidCatalogue()
     .then((c) => {
@@ -168,6 +191,11 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
       saved = next?.map((m) => ({ ...m }));
       if (!touched) reset();
       else paintButtons();
+    },
+    dispose() {
+      for (const stop of stops) stop();
+      unwatchLimits();
+      clearInterval(timer);
     },
   };
 }

@@ -118,7 +118,8 @@ function accountRing(key: string, label: string, a: SubscriptionAccount, logo: H
     state ? h('span.subs-tip-state', {}, state) : null,
     ...a.windows.map((w) => {
       const reset = resetLine(w, now, date);
-      return h('span.subs-tip-window', {}, h('span', {}, windowLine(w)), h('small', {}, reset ?? (detail ? factoryReset(w, now) : 'Reset time not reported')));
+      const resetText = reset ?? (detail ? factoryReset(w, now) : null);
+      return h('span.subs-tip-window', {}, h('span', {}, windowLine(w)), resetText ? h('small', {}, resetText) : null);
     }),
     missing ? h('small', {}, missing) : null,
     detail ? h('small', {}, detail) : null,

@@ -108,6 +108,9 @@ test('billing normalization retains raw windows/nulls; Enterprise and malformed 
   const invalid = capture();
   invalid.limits.standard.fiveHour.usedPercent = NaN;
   assert.throws(() => limitsOf(invalid, 42), /unreadable/);
+  for (const extraUsageBalanceCents of ['10', -1, NaN, Infinity]) {
+    assert.throws(() => limitsOf({ ...capture(), extraUsageBalanceCents }, 42), /unreadable/);
+  }
 });
 
 test('the limits poller is 60s normally, 20s watched or with hosted workers; failure preserves cached data', async (t) => {
@@ -345,4 +348,22 @@ test('Orchestrator inspection rechecks hosted settled 402/rate-limit failures as
   worker.model = 'custom:droidproxy:gpt-6.1-sol';
   await owner.inspect!(ORCHESTRATOR_ID);
   assert.equal(rechecks, 5, 'custom models never recheck Factory billing');
+});
+
+test('on-demand recheck respects 429 backoffUntil', async (t) => {
+  let calls = 0;
+  let now = 10_000;
+  t.mock.method(Date, 'now', () => now);
+  const api = new FactoryApi(KEY, (async () => {
+    calls++;
+    return json(429, { detail: 'rate limited' }, { 'retry-after': '120' });
+  }) as typeof fetch);
+  const reg = new FactoryRegistry({ link: { connection: () => ({ connected: true, capabilities: [] }), client: () => api, rejected: () => {} }, broadcast: () => {}, toast: () => {} });
+  t.after(() => reg.stop());
+  reg.register((h) => new LimitsFeature(h));
+  await reg.recheck('limits');
+  assert.equal(calls, 1);
+  now += 30_000;
+  await reg.recheck('limits');
+  assert.equal(calls, 1, 'recheck skips while within Retry-After backoff');
 });

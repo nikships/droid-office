@@ -1,7 +1,7 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { emptySubscriptionsState, type SubscriptionAccount, type SubscriptionProvider, type SubscriptionsState } from '../src/shared/subscriptions.js';
-import { proxyLine, resetLine, ringGroups, ringLabel, RingTips, subscriptionsView, windowLine } from '../src/client/ui/subscriptions-rings.js';
+import { proxyLine, quotaRing, resetLine, ringGroups, ringLabel, RingTips, subscriptionsView, windowLine } from '../src/client/ui/subscriptions-rings.js';
 
 const NOW = Date.parse('2026-11-03T20:30:00Z');
 const date = (ms: number) => new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }).format(ms);
@@ -200,6 +200,8 @@ test('the window draws one arc per window, a muted ring without usage, and one m
   assert.equal(tip.getAttribute('popover'), 'manual');
   assert.equal(tip.textContent, 'owner@example.com5-hour: 81% leftResets in 4 h 26 min (Nov 4, 2026, 12:56 AM)Weekly: 39% leftResets in 3 d 23 h (Nov 7, 2026, 7:53 PM)');
   assert.equal((view.rings[2].tip as unknown as FakeElement).textContent, 'owner@example.comNo usage reported');
+  const unknownResetRing = quotaRing(ownerState().providers[1], account('u', 'unknown@example.com', { windows: [{ name: 'Weekly', usedPercent: 10, resetsAt: null }] }), NOW, date);
+  assert.equal((unknownResetRing.tip as unknown as FakeElement).textContent, 'unknown@example.comWeekly: 90% left');
   assert.deepEqual(
     body.all('subs-off').map((n) => n.textContent),
     ['OffClaudeKimiJunieGitHub CopilotMeta'],

@@ -242,7 +242,8 @@ export class FactoryTvTexture {
     g.font = `500 22px ${MONO}`;
     g.fillStyle = DIM;
     g.textAlign = 'right';
-    g.fillText(`READ ${spanText(now - s.fetchedAt).toUpperCase()} AGO · E OPENS SESSIONS`, W - 48, H - 24);
+    const readAgo = s.fetchedAt > 0 ? `READ ${spanText(now - s.fetchedAt).toUpperCase()} AGO · ` : '';
+    g.fillText(`${readAgo}E OPENS SESSIONS`, W - 48, H - 24);
     g.textAlign = 'left';
   }
 
@@ -368,9 +369,14 @@ export class FactoryTvTexture {
       g.fillText(tier === 'standard' ? 'STANDARD' : 'DROID CORE', 48, y);
       factoryWindows(s, tier).forEach((q, j) => {
         const remaining = Math.max(0, Math.min(100, 100 - q.usedPercent));
-        const reset = q.resetsAt === null ? (q.usedPercent === 0 ? 'not started' : 'reset unknown') : q.resetsAt <= now ? 'reset due' : `in ${durationWords(q.resetsAt - now)}`;
+        let reset: string;
+        if (q.resetsAt === null) reset = q.usedPercent === 0 ? 'not started' : 'reset unknown';
+        else if (q.resetsAt <= now) reset = 'reset due';
+        else reset = `in ${durationWords(q.resetsAt - now)}`;
         g.font = `500 20px ${MONO}`;
-        g.fillStyle = remaining <= 0 ? RED : remaining <= 20 ? AMBER : INK;
+        if (remaining <= 0) g.fillStyle = RED;
+        else if (remaining <= 20) g.fillStyle = AMBER;
+        else g.fillStyle = INK;
         g.fillText(fit(g, `${q.name} ${Number(remaining.toFixed(1))}% left · ${reset}`, 520), 260 + j * 535, y);
       });
     }

@@ -19,16 +19,20 @@ export function factoryLimitsPanel(): { element: HTMLElement; dispose(): void } 
   const paint = () => {
     const factory = store.factory;
     const s = factory.limits;
-    const next = JSON.stringify([factory.connection, s, store.setup.airgapped, Math.floor(Date.now() / 60_000)]);
+    const connection = factory.connection;
+    const airgapped = !!store.setup.airgapped;
+    const now = Date.now();
+    const next = JSON.stringify([connection, s, airgapped, Math.floor(now / 30_000)]);
     if (next !== drawn) {
       drawn = next;
-      body.replaceChildren(...factoryLimitsView(factory, Date.now(), !!store.setup.airgapped));
+      body.replaceChildren(...factoryLimitsView(factory, now, airgapped));
     }
-    const writable = factory.connection.connected && !factory.connection.rejected && factoryLimitsActive(s) && !store.setup.airgapped && s.canManageOverage;
+    const online = connection.connected && !connection.rejected;
+    const writable = online && factoryLimitsActive(s) && !airgapped && s.canManageOverage;
     control.classList.toggle('hidden', !writable);
     preference.disabled = busy || !writable;
     preference.value = s.overagePreference ?? '';
-    refresh.disabled = busy || !factory.connection.connected || !!factory.connection.rejected || !!store.setup.airgapped;
+    refresh.disabled = busy || !online || airgapped;
     error.textContent = failure;
     error.classList.toggle('hidden', !failure);
   };
@@ -45,15 +49,17 @@ export function factoryLimitsPanel(): { element: HTMLElement; dispose(): void } 
     busy = true;
     failure = '';
     paint();
-    void factoryFetch('limits', '/overage', { method: 'POST', body: { overagePreference: value } })
-      .then(() => refreshFactory('limits'))
-      .catch((err: unknown) => {
+    void (async () => {
+      try {
+        await factoryFetch('limits', '/overage', { method: 'POST', body: { overagePreference: value } });
+        await refreshFactory('limits');
+      } catch (err: unknown) {
         failure = err instanceof Error ? err.message : 'Couldn’t change the overage preference.';
-      })
-      .finally(() => {
+      } finally {
         busy = false;
         paint();
-      });
+      }
+    })();
   });
   const off = store.on('factory', paint);
   const offSetup = store.on('setup', paint);

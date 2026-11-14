@@ -197,11 +197,12 @@ export class FactoryRegistry {
     void this.tick();
   }
 
-  /** On-demand reads wait for an in-flight poll rather than starting a duplicate. */
+  /** On-demand reads wait for an in-flight poll rather than starting a duplicate, and respect backoff. */
   async recheck(key: FactoryFeatureId): Promise<void> {
     const run = this.runs.get(key);
     if (!run) return;
     if (run.pending) return run.pending;
+    if (this.now() < run.backoffUntil) return;
     const api = this.opts.link.client();
     if (!api) return;
     await this.startPoll(run, api);

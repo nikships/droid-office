@@ -79,7 +79,19 @@ export class FactoryApi {
 
   /** A non-versioned API path, with exactly the same auth, timeout, redaction and GET retries. */
   async requestApi<T>(method: Method, path: string, opts: RequestOptions = {}): Promise<T> {
-    if (!path.startsWith('/api/') || path.includes('\\') || path.includes('..')) throw new Error('Use a Factory /api/ path');
+    if (!path.startsWith('/api/') || path.includes('\\') || path.includes('?') || path.includes('#')) throw new Error('Use a Factory /api/ path');
+    for (const seg of path.split('/')) {
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(seg);
+      } catch {
+        throw new Error('Use a Factory /api/ path');
+      }
+      if (decoded === '..' || decoded === '.' || decoded.includes('\\')) throw new Error('Use a Factory /api/ path');
+    }
+    const baseUrl = new URL(this.base);
+    const resolved = new URL(path, baseUrl);
+    if (resolved.origin !== baseUrl.origin || !resolved.pathname.startsWith('/api/')) throw new Error('Use a Factory /api/ path');
     const retry = method === 'GET' && opts.retry !== false;
     try {
       return await this.once<T>(method, path, opts);

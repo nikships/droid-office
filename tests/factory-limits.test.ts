@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { emptyFactoryState } from '../src/shared/factory.js';
-import { emptyLimits, factoryLimitsActive, factoryModelAvailability, factoryModelGate, factoryModelTier, factoryOverageWords, factoryWindows, type FactoryLimitsState } from '../src/shared/factory-limits.js';
+import { emptyLimits, FACTORY_CORE_MODELS, factoryLimitsActive, factoryModelAvailability, factoryModelGate, factoryModelTier, factoryOverageWords, factoryWindows, type FactoryLimitsState } from '../src/shared/factory-limits.js';
 
 // Owner's DOFF-930 GET /api/billing/limits capture, without account identifiers or credentials.
 export const CAPTURE = {
@@ -133,4 +134,13 @@ test('no active subscription blocks only hosted models, and missing Core data is
   delete factory.limits.limits.core;
   assert.equal(factoryModelAvailability(factory, core, NOW), undefined);
   assert.equal(factoryModelGate(factory, standard, [], NOW), undefined);
+});
+
+test('Android coreModels stays identical to FACTORY_CORE_MODELS and missing ids fail open safely', () => {
+  assert.equal(factoryModelTier({ id: undefined as unknown as string }), undefined);
+  const kotlin = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/core/FactoryLimits.kt', import.meta.url), 'utf8');
+  const block = kotlin.match(/private val coreModels = setOf\(([\s\S]*?)\)/)?.[1];
+  assert.ok(block, 'coreModels set found in FactoryLimits.kt');
+  const androidCore = new Set([...block.matchAll(/"([^"]+)"/g)].map((m) => m[1]));
+  assert.deepEqual([...androidCore].sort(), [...FACTORY_CORE_MODELS].sort());
 });

@@ -2874,7 +2874,7 @@ const hudActions: HudAction[] = [
     icon: '◉',
     label: 'Factory Limits & Overage',
     section: 'Open',
-    shown: () => store.factory.connection.connected,
+    shown: () => store.factory.connection.connected && !store.factory.connection.rejected,
     title: () => 'Standard and Droid Core quotas, Extra Usage and overage preference',
     run: () => openFactoryLimits(),
   },

@@ -15,15 +15,13 @@ function windowsOf(v: unknown): FactoryLimitWindows | undefined {
   const raw = object(v);
   const window = (key: string) => {
     const w = object(raw[key]);
-    if (
-      typeof w.usedPercent !== 'number' ||
-      !Number.isFinite(w.usedPercent) ||
-      w.usedPercent < 0 ||
-      !(w.windowEnd === null || (typeof w.windowEnd === 'string' && Number.isFinite(Date.parse(w.windowEnd)))) ||
-      !(w.secondsRemaining === null || (typeof w.secondsRemaining === 'number' && Number.isFinite(w.secondsRemaining) && w.secondsRemaining >= 0))
-    )
-      throw new Error('Factory returned unreadable billing windows.');
-    return { usedPercent: w.usedPercent, windowEnd: w.windowEnd, secondsRemaining: w.secondsRemaining };
+    const usedPercent = w.usedPercent;
+    if (typeof usedPercent !== 'number' || !Number.isFinite(usedPercent) || usedPercent < 0) throw new Error('Factory returned unreadable billing windows.');
+    const windowEnd = w.windowEnd;
+    if (windowEnd !== null && (typeof windowEnd !== 'string' || !Number.isFinite(Date.parse(windowEnd)))) throw new Error('Factory returned unreadable billing windows.');
+    const secondsRemaining = w.secondsRemaining;
+    if (secondsRemaining !== null && (typeof secondsRemaining !== 'number' || !Number.isFinite(secondsRemaining) || secondsRemaining < 0)) throw new Error('Factory returned unreadable billing windows.');
+    return { usedPercent, windowEnd, secondsRemaining };
   };
   return { fiveHour: window('fiveHour'), weekly: window('weekly'), monthly: window('monthly') };
 }
@@ -32,18 +30,20 @@ function windowsOf(v: unknown): FactoryLimitWindows | undefined {
 export function limitsOf(v: unknown, now: number): FactoryLimitsState {
   const raw = object(v);
   if (typeof raw.usesTokenRateLimitsBilling !== 'boolean' || typeof raw.hasActiveSubscription !== 'boolean') throw new Error('Factory returned unreadable billing limits.');
-  const limits = raw.limits === undefined || raw.limits === null ? {} : object(raw.limits);
+  const limits = object(raw.limits ?? {});
   const standard = windowsOf(limits.standard);
   const core = windowsOf(limits.core);
   const preference = raw.overagePreference;
   if (preference !== undefined && preference !== null && preference !== 'droidCore' && preference !== 'extraUsage') throw new Error('Factory returned an unknown overage preference.');
+  const balance = raw.extraUsageBalanceCents;
+  if (balance !== undefined && balance !== null && (typeof balance !== 'number' || !Number.isFinite(balance) || balance < 0)) throw new Error('Factory returned unreadable billing limits.');
   return {
     usesTokenRateLimitsBilling: raw.usesTokenRateLimitsBilling,
     hasActiveSubscription: raw.hasActiveSubscription,
     limits: { ...(standard ? { standard } : {}), ...(core ? { core } : {}) },
     overagePreference: preference ?? null,
     canManageOverage: raw.canManageOverage === true,
-    extraUsageBalanceCents: typeof raw.extraUsageBalanceCents === 'number' && Number.isFinite(raw.extraUsageBalanceCents) ? Math.max(0, raw.extraUsageBalanceCents) : 0,
+    extraUsageBalanceCents: balance ?? 0,
     extraUsageAllowed: raw.extraUsageAllowed === true,
     fetchedAt: now,
     error: null,

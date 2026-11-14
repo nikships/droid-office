@@ -193,3 +193,12 @@ test('the fingerprint is the fk- prefix and the last four', () => {
   assert.equal(fingerprint(KEY), 'fk-…cdef');
   assert.equal(fingerprint('  sk-other-1234  '), '…1234');
 });
+
+test('requestApi rejects traversal, smuggling and cross-origin paths', async () => {
+  const { fn, calls } = fakeFetch(() => json(200, {}));
+  const api = new FactoryApi(KEY, fn);
+  for (const bad of ['/api/../secret', '/api/%2e%2e/secret', '/api/v0%5ccomputers', '/api/billing/limits?x=1', '/api/billing/limits#frag', '//evil.test/api/v0/computers', '/api/%ZZ']) {
+    await assert.rejects(api.requestApi('GET', bad), /Use a Factory \/api\/ path/);
+  }
+  assert.equal(calls.length, 0);
+});

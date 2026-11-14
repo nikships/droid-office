@@ -187,36 +187,46 @@ export function factoryModelUsage(factory: FactoryState | undefined, model: { id
   };
 }
 
+function formatFactoryWindowReset(w: WorkerQuotaWindow): string {
+  if (w.resetsIn && w.resetsAt) return ` (resets in ${w.resetsIn} at ${w.resetsAt})`;
+  if (w.resetsAt) return ` (reset due since ${w.resetsAt})`;
+  return ' (window not started)';
+}
+
 export function factoryUsageWords(usage: FactoryModelUsage): string {
-  return `Factory ${usage.tier === 'core' ? 'Droid Core' : 'Standard'}: ${usage.windows.map((w) => `${w.name} ${w.leftPercent}% left${w.resetsIn ? ` (resets in ${w.resetsIn} at ${w.resetsAt})` : w.resetsAt ? ` (reset due since ${w.resetsAt})` : ' (window not started)'}`).join(', ')} · ${usage.overageHint}`;
+  return `Factory ${usage.tier === 'core' ? 'Droid Core' : 'Standard'}: ${usage.windows.map((w) => `${w.name} ${w.leftPercent}% left${formatFactoryWindowReset(w)}`).join(', ')} · ${usage.overageHint}`;
 }
 
 /** Factory tiers remain visible even when the owner's model allowlist has no models in one tier. */
 export function summarizeFactoryQuotas(factory: FactoryState | undefined, models: readonly TeamModel[], now: number): ProviderQuotaSummary[] {
   if (!factory?.connection.connected || factory.connection.rejected || !factoryLimitsActive(factory.limits)) return [];
-  return (['standard', 'core'] as const).map((tier) => {
+  return (['standard', 'core'] as const).flatMap((tier) => {
     const descriptor = { id: tier === 'core' ? 'glm-5.3-flash' : 'auto' };
-    const usage = factoryModelUsage(factory, descriptor, now)!;
+    const usage = factoryModelUsage(factory, descriptor, now);
+    if (!usage) return [];
     const availability = factoryModelAvailability(factory, descriptor, now);
     const list = models.filter((m) => factoryModelTier(m) === tier);
     const until = availability?.until;
-    return {
-      provider: `factory-${tier}`,
-      name: tier === 'core' ? 'Factory Droid Core' : 'Factory Standard',
-      state: availability?.state === 'exhausted' ? 'cooldown' : availability?.state === 'unavailable' ? 'unavailable' : factory.limits.error ? 'unknown' : 'ok',
-      windows: usage.windows,
-      ...(availability?.state === 'exhausted'
-        ? { cooldownUntil: until === null || until === undefined ? null : iso(until), cooldownWindow: availability.window, ...(until && until > now ? { cooldownIn: durationWords(until - now) } : {}) }
-        : {}),
-      ...(availability?.reason ? { reason: availability.reason } : {}),
-      ...(factory.limits.error ? { unreadable: factory.limits.error } : {}),
-      runnableModels: list.filter((m) => !m.cannotRun && m.enabled !== false).length,
-      totalModels: list.length,
-      overagePreference: usage.overagePreference,
-      extraUsageBalanceCents: usage.extraUsageBalanceCents,
-      extraUsageAllowed: usage.extraUsageAllowed,
-      overageHint: usage.overageHint,
-    };
+    let state: ProviderQuotaSummary['state'] = factory.limits.error ? 'unknown' : 'ok';
+    if (availability?.state === 'exhausted') state = 'cooldown';
+    else if (availability?.state === 'unavailable') state = 'unavailable';
+    return [
+      {
+        provider: `factory-${tier}`,
+        name: tier === 'core' ? 'Factory Droid Core' : 'Factory Standard',
+        state,
+        windows: usage.windows,
+        ...(availability?.state === 'exhausted' ? { cooldownUntil: until == null ? null : iso(until), cooldownWindow: availability.window, ...(until != null && until > now ? { cooldownIn: durationWords(until - now) } : {}) } : {}),
+        ...(availability?.reason ? { reason: availability.reason } : {}),
+        ...(factory.limits.error ? { unreadable: factory.limits.error } : {}),
+        runnableModels: list.filter((m) => !m.cannotRun && m.enabled !== false).length,
+        totalModels: list.length,
+        overagePreference: usage.overagePreference,
+        extraUsageBalanceCents: usage.extraUsageBalanceCents,
+        extraUsageAllowed: usage.extraUsageAllowed,
+        overageHint: usage.overageHint,
+      },
+    ];
   });
 }
 
@@ -225,18 +235,23 @@ export function inspectFactoryModelStatus(factory: FactoryState | undefined, mod
   const availability = factoryModelAvailability(factory, { id: model }, now);
   const usage = factoryModelUsage(factory, { id: model }, now);
   if (!availability && !usage) return undefined;
-  const blocked = availability && availability.state !== 'ok';
+  const blocked = availability && availability.state !== 'ok' ? availability : undefined;
   if (!blocked && !retry) return undefined;
-  const until = blocked ? availability.until : null;
+  const tier = usage?.tier ?? availability?.tier;
+  const until = blocked ? blocked.until : null;
   const remainingMs = until !== null && until > now ? until - now : undefined;
+  let state: WorkerModelCooldown['state'];
+  if (availability?.state === 'exhausted') state = 'cooldown';
+  else if (availability?.state === 'unavailable') state = 'unavailable';
+  else state = retry?.retrying ? 'retrying' : 'rate_limited';
   return {
-    state: availability?.state === 'exhausted' ? 'cooldown' : availability?.state === 'unavailable' ? 'unavailable' : retry?.retrying ? 'retrying' : 'rate_limited',
+    state,
     model,
-    provider: `factory-${usage?.tier ?? availability?.tier}`,
-    providerName: (usage?.tier ?? availability?.tier) === 'core' ? 'Factory Droid Core' : 'Factory Standard',
-    ...(blocked ? { window: availability.window, resetsAt: until === null ? null : iso(until) } : {}),
+    provider: `factory-${tier}`,
+    providerName: tier === 'core' ? 'Factory Droid Core' : 'Factory Standard',
+    ...(blocked ? { window: blocked.window, resetsAt: until === null ? null : iso(until) } : {}),
     ...(remainingMs !== undefined ? { remainingMs, resetsIn: durationWords(remainingMs) } : {}),
-    summary: blocked ? availability.reason : `${retry?.detail} · ${usage ? factoryUsageWords(usage) : availability?.overageHint}`,
+    summary: blocked ? blocked.reason : `${retry?.detail} · ${usage ? factoryUsageWords(usage) : availability?.overageHint}`,
     ...(usage ? { windows: usage.windows, overageHint: usage.overageHint } : {}),
   };
 }

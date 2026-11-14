@@ -37,10 +37,27 @@ interface OwnerContext {
   workerThreads: WorkerThreadReader;
   acting: AsyncLocalStorage<(text: string) => void>;
   handleMessage(c: Client, msg: ClientMsg): void;
+  isCustomModel?: (id: string) => boolean;
 }
 
 /** Building agents use a private owner socket so receipts, replies and async toast context stay isolated. */
-export function createOwnerOffice({ floors, orchestrator, missionState, workerFloor, workersOf, cloud, factory, subscriptions, subagents, labelPreferences, remoteOffice, workerThreads, acting, handleMessage }: OwnerContext): OwnerOffice {
+export function createOwnerOffice({
+  floors,
+  orchestrator,
+  missionState,
+  workerFloor,
+  workersOf,
+  cloud,
+  factory,
+  subscriptions,
+  subagents,
+  labelPreferences,
+  remoteOffice,
+  workerThreads,
+  acting,
+  handleMessage,
+  isCustomModel,
+}: OwnerContext): OwnerOffice {
   /**
    * The owner's window for building agents. Each action goes through handleMessage on a connection
    * of its own, named for the worker, so it has the owner's checks, effects and toasts exactly.
@@ -74,14 +91,21 @@ export function createOwnerOffice({ floors, orchestrator, missionState, workerFl
         if (!w) return undefined;
         const runtime = orchestrator.workers.runtime(ORCHESTRATOR_ID);
         const model = w.activeModel ?? w.model;
-        if (w.status === 'working' && model && isSubscriptionModel(model) && subscriptions.availability(model)?.state !== 'exhausted' && inspectTerminalRetry(runtime?.screenRows, w.status, Boolean(runtime?.currentTool))?.retrying) {
+        const terminalRetry = inspectTerminalRetry(runtime?.screenRows, w.status, Boolean(runtime?.currentTool));
+        if (w.status === 'working' && model && isSubscriptionModel(model) && subscriptions.availability(model)?.state !== 'exhausted' && terminalRetry?.retrying) {
           try {
             await subscriptions.recheck();
           } catch {
             // Fall back to cached availability.
           }
         }
-        if (model && factoryModelTier({ id: model }) && inspectTerminalRetry(runtime?.screenRows, w.status, Boolean(runtime?.currentTool))) await factory.recheckLimits();
+        if (model && !isCustomModel?.(model) && factoryModelTier({ id: model }) && terminalRetry) {
+          try {
+            await factory.recheckLimits();
+          } catch {
+            // Fall back to cached Factory limits.
+          }
+        }
         const now = Date.now();
         return buildWorkerInspection({
           factory: factory.state(),

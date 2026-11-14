@@ -83,7 +83,7 @@ object Availability {
         is ModelAvailability.Disabled -> "${provider(a.provider)} is switched off in Subscriptions"
         is ModelAvailability.ProxyDown -> if (a.installed) "DroidProxy isn't running: the office starts it" else "DroidProxy isn't installed"
         ModelAvailability.NotInCloud -> "Your own models can't run on a Factory computer"
-        is ModelAvailability.FactoryUnavailable -> a.reason + if (a.until != null && a.until > now) " · Resets in ${duration(a.until - now)}" else ""
+        is ModelAvailability.FactoryUnavailable -> "${a.reason}${if (a.until != null && a.until > now) " · Resets in ${duration(a.until - now)}" else ""}"
     }
 
     private fun provider(key: String) = PROVIDERS[key] ?: key

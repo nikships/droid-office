@@ -133,6 +133,7 @@ test('connected unreadable, Enterprise, inactive and airgapped states stay infor
   assert.match(root(factoryLimitsView(failed, NOW)).textContent, /Couldn’t read Factory limits: HTTP 403/);
   assert.equal(root(factoryLimitsView(failed, NOW)).all((e) => e.attrs.role === 'meter').length, 0);
   assert.match(factoryLimitsNote(factory({ ...emptyLimits(), usesTokenRateLimitsBilling: false, fetchedAt: NOW })) ?? '', /do not apply/);
+  assert.match(factoryLimitsNote(factory({ ...emptyLimits(), usesTokenRateLimitsBilling: true, fetchedAt: NOW })) ?? '', /did not report Standard/);
   assert.match(factoryLimitsNote(factory({ ...emptyLimits(), hasActiveSubscription: false })) ?? '', /No active Factory subscription/);
   assert.match(factoryLimitsNote(emptyFactoryState()) ?? '', /Connect a Factory API key/);
   assert.match(factoryLimitsNote(factory(), true) ?? '', /airgapped/i);
@@ -232,6 +233,7 @@ test('world canvases show Factory limits using render time and keep the session 
     'the original credit history chart remains',
   );
   assert.ok(text.includes('5-hour 39% left · in 21 min'), 'the supplied render clock, not Date.now, determines resets');
+  assert.ok(!text.some((line) => /^READ .* AGO/.test(line)), 'never prints bogus epoch age when sessions have not fetched yet');
   assert.ok(text.includes('STANDARD'));
   assert.ok(text.includes('DROID CORE'));
   assert.equal(text.filter((line) => /^(?:5-hour|Weekly|Monthly) .*% left/.test(line)).length, 6);

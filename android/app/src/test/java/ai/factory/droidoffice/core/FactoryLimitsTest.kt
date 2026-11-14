@@ -174,4 +174,37 @@ class FactoryLimitsTest {
         assertNull(later.until)
         assertTrue(later.reason.contains("(5-hour)"))
     }
+
+    @Test fun invalidAndOverflowingSecondsRemainingNeverProduceBogusResets() {
+        for (bad in listOf(-1.0, Double.NaN, Double.POSITIVE_INFINITY, Double.MAX_VALUE)) {
+            assertNull(FactoryLimitWindow(100.0, secondsRemaining = bad).resetsAt(now))
+        }
+        assertNull(FactoryLimitWindow(100.0, secondsRemaining = 10.0).resetsAt(Long.MAX_VALUE))
+    }
+
+    @Test fun mergeAvailabilityNeverAllowsFactoryOkToMaskProxyBlocks() {
+        val models = listOf(
+            "gpt-6.1-sol" to false,
+            "kimi-k3" to false,
+            "custom:local" to true,
+        )
+        val proxyExhausted = ModelAvailability.Exhausted(now + 60_000, "5-hour")
+        val merged = FactoryLimits.mergeAvailability(
+            proxy = mapOf("gpt-6.1-sol" to proxyExhausted),
+            s = state,
+            models = models,
+            now = now,
+        )
+        assertEquals(proxyExhausted, merged["gpt-6.1-sol"])
+        assertEquals(ModelAvailability.Ok, merged["kimi-k3"])
+        assertNull(merged["custom:local"])
+
+        val overridden = FactoryLimits.mergeAvailability(
+            proxy = mapOf("gpt-6.1-sol" to ModelAvailability.Ok),
+            s = exhausted(),
+            models = models,
+            now = now,
+        )
+        assertTrue(overridden["gpt-6.1-sol"] is ModelAvailability.FactoryUnavailable)
+    }
 }

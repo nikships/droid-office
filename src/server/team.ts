@@ -879,11 +879,7 @@ export class Team {
   private async models(caller: WorkerInfo, includeDisabled = false): Promise<TeamReply> {
     const why = this.cannotHire(caller);
     if (why) return no(403, why);
-    try {
-      await Promise.allSettled([this.opts.recheckModels?.(), this.opts.recheckFactoryLimits?.()]);
-    } catch {
-      // Fall back to cached subscription availability and usage.
-    }
+    await Promise.allSettled([this.opts.recheckModels?.(), this.opts.recheckFactoryLimits?.()]);
     const now = this.now();
     const s = this.opts.settings();
     const catalogue = await this.catalogue();
@@ -892,31 +888,31 @@ export class Team {
     const eligible = (id: string) => !catalogue?.customOnly || known.get(id)?.custom === true;
     const allowed = modelList(s);
     const fallback = preferred && eligible(preferred) && !outsideModelList(allowed, preferred) ? preferred : undefined;
+    const factory = this.opts.factory?.();
     const describe = (id: string, m: DroidModelOption | undefined, note?: string): TeamModel => {
       const avail = this.opts.availability?.(id);
-      const factory = this.opts.factory?.();
       const factoryAvailability = factory ? factoryModelAvailability(factory, m ?? { id }, now) : undefined;
-      const stuck = m?.disabled ? 'Switched off in Droid.' : this.whyNot(id, m);
+      const blockedAvail = cannotRun(avail) ? avail : undefined;
+      let stuck: string | undefined;
+      if (m?.disabled) stuck = 'Switched off in Droid.';
+      else if (blockedAvail) stuck = availabilityWords(blockedAvail, now);
+      else if (factoryAvailability && factoryAvailability.state !== 'ok') stuck = factoryAvailability.reason;
       const usage = this.opts.usage?.(id, now);
       const factoryUsage = factoryModelUsage(factory, m ?? { id }, now);
       const subscriptionProvider = usage?.provider ?? (avail && 'provider' in avail ? avail.provider : undefined);
       const emptyWin = usage?.windows.find((w) => w.leftPercent <= 0);
+      const cooldownFor = (until: number | null, window: string): NonNullable<TeamModel['cooldown']> => ({
+        until: until === null ? null : new Date(until).toISOString(),
+        window,
+        ...(until !== null && until > now ? { remainingMs: until - now, resetsIn: durationWords(until - now) } : {}),
+      });
       let cooldown: TeamModel['cooldown'];
       if (factoryAvailability?.state === 'exhausted') {
-        const until = factoryAvailability.until;
-        cooldown = { until: until === null ? null : new Date(until).toISOString(), window: factoryAvailability.window, ...(until !== null && until > now ? { remainingMs: until - now, resetsIn: durationWords(until - now) } : {}) };
+        cooldown = cooldownFor(factoryAvailability.until, factoryAvailability.window);
       } else if (avail?.state === 'exhausted') {
-        cooldown = {
-          until: avail.until !== null ? new Date(avail.until).toISOString() : null,
-          window: avail.window || emptyWin?.name || 'quota',
-          ...(avail.until !== null && avail.until > now ? { remainingMs: avail.until - now, resetsIn: durationWords(avail.until - now) } : {}),
-        };
+        cooldown = cooldownFor(avail.until, avail.window || emptyWin?.name || 'quota');
       } else if (emptyWin) {
-        cooldown = {
-          until: emptyWin.resetsAt !== null ? new Date(emptyWin.resetsAt).toISOString() : null,
-          window: emptyWin.name,
-          ...(emptyWin.resetsAt !== null && emptyWin.resetsAt > now ? { remainingMs: emptyWin.resetsAt - now, resetsIn: durationWords(emptyWin.resetsAt - now) } : {}),
-        };
+        cooldown = cooldownFor(emptyWin.resetsAt, emptyWin.name);
       }
       return {
         id,
@@ -952,7 +948,7 @@ export class Team {
       const model = describe(fallback, known.get(fallback));
       models.unshift({ ...model, ...(includeDisabled ? { enabled: !model.cannotRun } : {}) });
     }
-    const quotas = [...summarizeFactoryQuotas(this.opts.factory?.(), models, now), ...summarizeProviderQuotas(models, now)];
+    const quotas = [...summarizeFactoryQuotas(factory, models, now), ...summarizeProviderQuotas(models, now)];
     return ok({
       restricted: !!allowed,
       models,
@@ -1010,15 +1006,13 @@ export class Team {
    */
   private async refuseModel(model: string | undefined, named: boolean, list: readonly SubagentModel[] | undefined): Promise<string | undefined> {
     if (!this.opts.availability && !this.opts.factory) return undefined;
-    if (this.opts.recheckFactoryLimits) {
-      try {
-        await this.opts.recheckFactoryLimits();
-      } catch {
-        // An unreadable Factory state must not prevent hiring.
-      }
+    try {
+      await this.opts.recheckFactoryLimits?.();
+    } catch {
+      // An unreadable Factory state must not prevent hiring.
     }
     const picked = model ?? this.defaultModel();
-    const catalogue = this.opts.factory || !picked || this.whyNot(picked) ? await this.catalogue() : undefined;
+    const catalogue = !picked || this.whyNot(picked) ? await this.catalogue() : undefined;
     const id = picked ?? catalogue?.defaultModel;
     if (!id) return undefined;
     const known = new Map((catalogue?.models ?? []).map((m) => [m.id, m]));
@@ -1026,7 +1020,11 @@ export class Team {
     if (!reason) return undefined;
     const name = (x: string) => known.get(x)?.displayName?.replace(/^DroidProxy:\s*/i, '') ?? x;
     const pool = list ? list.map((m) => m.id) : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => m.id);
-    const fine = pool.filter((x) => x !== id && !this.whyNot(x, known.get(x)) && !known.get(x)?.disabled);
+    const fine = pool.filter((x) => {
+      if (x === id) return false;
+      const descriptor = known.get(x);
+      return !descriptor?.disabled && !this.whyNot(x, descriptor);
+    });
     const a = this.blocked(id);
     const head = a ? hireRefusal(name(id), a, this.now()) : `${name(id)} cannot run: ${reason}.`;
     const which = named ? '' : ' It is the default subagent model, so set model in team_hire.';
@@ -1287,13 +1285,18 @@ export class Team {
   /** Recheck both providers for live retries and terminal quota failures, using each poller's throttle. */
   async recheckIfRetrying(workers: readonly WorkerInfo[]): Promise<void> {
     const checks = new Set<() => Promise<void>>();
+    let known: Map<string, DroidModelOption> | undefined;
     for (const w of workers) {
       const model = w.activeModel ?? w.model;
       if (!model) continue;
       const rt = this.workers.runtime?.(w.id);
       if (!inspectTerminalRetry(rt?.screenRows, w.status, Boolean(rt?.currentTool))) continue;
       if (isSubscriptionModel(model) && this.opts.recheckModels) checks.add(this.opts.recheckModels);
-      if (factoryModelTier({ id: model }) && this.opts.recheckFactoryLimits) checks.add(this.opts.recheckFactoryLimits);
+      if (this.opts.recheckFactoryLimits && factoryModelTier({ id: model })) {
+        known ??= new Map((await this.catalogue())?.models.map((m) => [m.id, m]));
+        const descriptor = known.get(model);
+        if (!descriptor?.custom) checks.add(this.opts.recheckFactoryLimits);
+      }
     }
     await Promise.allSettled([...checks].map((check) => check()));
   }

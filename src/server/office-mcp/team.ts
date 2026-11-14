@@ -118,7 +118,7 @@ function modelText(model: TeamModel): string {
       .filter(Boolean)
       .join(', '),
     ...(model.usage ? [`Subscription usage: ${modelUsageWords(model.usage)}`] : []),
-    ...(model.factoryUsage ? [`Subscription usage: ${factoryUsageWords(model.factoryUsage)}`] : []),
+    ...(model.factoryUsage ? [`Factory usage: ${factoryUsageWords(model.factoryUsage)}`] : []),
     ...(model.note ? [`Owner's note: ${model.note}`] : []),
     ...(model.cannotRun ? [`Cannot run: ${model.cannotRun}`] : []),
     ...(model.cooldown?.until ? [`Cooldown resets at: ${model.cooldown.until} (${model.cooldown.window})`] : []),
@@ -530,7 +530,9 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           ...(res.body.unavailable ? { unavailable: true } : {}),
         });
       }
-      const filtered = mode === 'subscriptions' ? allModels.filter((m) => Boolean(m.factoryUsage || m.subscriptionProvider || m.usage || isSubscriptionModel(m.id))) : mode === 'available' ? allModels.filter((m) => !m.cannotRun) : allModels;
+      let filtered = allModels;
+      if (mode === 'subscriptions') filtered = allModels.filter((m) => Boolean(m.factoryUsage || m.subscriptionProvider || m.usage || isSubscriptionModel(m.id)));
+      else if (mode === 'available') filtered = allModels.filter((m) => !m.cannotRun);
       const body = mode === 'all' ? res.body : { ...res.body, models: filtered, only: mode };
       return officeResult(
         [

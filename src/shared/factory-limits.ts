@@ -37,7 +37,7 @@ export function factoryLimitsActive(s: FactoryLimitsState): boolean {
 }
 
 /** Factory.app 1.11.0 model catalog billingPool=Core, including its OSS aliases. Router is Standard. */
-const CORE_MODELS = new Set([
+export const FACTORY_CORE_MODELS: ReadonlySet<string> = new Set([
   'glm-4.6',
   'glm-4.7',
   'glm-5',
@@ -75,8 +75,8 @@ const CORE_MODELS = new Set([
 type Model = { id: string; custom?: boolean; displayName?: string };
 
 export function factoryModelTier(model: Model): FactoryModelTier | undefined {
-  if (model.custom || model.id.startsWith('custom:') || !model.id) return undefined;
-  return CORE_MODELS.has(model.id) ? 'core' : 'standard';
+  if (model.custom || !model.id || model.id.startsWith('custom:')) return undefined;
+  return FACTORY_CORE_MODELS.has(model.id) ? 'core' : 'standard';
 }
 
 export interface FactoryModelAvailability {
@@ -99,8 +99,11 @@ export function factoryWindows(s: FactoryLimitsState, tier: FactoryModelTier): {
     ] as const
   ).map(([key, name]) => {
     const w = windows[key];
-    const end = w.windowEnd ? Date.parse(w.windowEnd) : NaN;
-    const resetsAt = Number.isFinite(end) ? end : s.fetchedAt !== null && w.secondsRemaining !== null ? s.fetchedAt + w.secondsRemaining * 1000 : null;
+    if (w.windowEnd) {
+      const end = Date.parse(w.windowEnd);
+      if (Number.isFinite(end)) return { name, usedPercent: w.usedPercent, resetsAt: end };
+    }
+    const resetsAt = s.fetchedAt !== null && w.secondsRemaining !== null ? s.fetchedAt + w.secondsRemaining * 1000 : null;
     return { name, usedPercent: w.usedPercent, resetsAt };
   });
 }
@@ -135,6 +138,12 @@ export function factoryModelAvailability(factory: FactoryState, model: Model, no
 export function factoryModelGate(factory: FactoryState, model: Model, alternatives: readonly Model[], now: number): string | undefined {
   const availability = factoryModelAvailability(factory, model, now);
   if (!availability || availability.state === 'ok') return undefined;
-  const runnable = alternatives.filter((m) => m.id !== model.id && (!factoryModelAvailability(factory, m, now) || factoryModelAvailability(factory, m, now)?.state === 'ok')).slice(0, 5);
+  const runnable = alternatives
+    .filter((m) => {
+      if (m.id === model.id) return false;
+      const alt = factoryModelAvailability(factory, m, now);
+      return !alt || alt.state === 'ok';
+    })
+    .slice(0, 5);
   return `${availability.reason}${runnable.length ? ` Runnable alternatives: ${runnable.map((m) => m.id).join(', ')}.` : ' Choose a custom model or check Factory limits in Settings → Connections.'}`;
 }

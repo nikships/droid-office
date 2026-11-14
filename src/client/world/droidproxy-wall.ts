@@ -68,7 +68,10 @@ export function quotaView(s: SubscriptionsState, now: number, factory?: FactoryS
       const windows = factoryWindows(limits, tier);
       const min = Math.min(...windows.map((w) => 100 - w.usedPercent));
       const due = windows.some((w) => w.resetsAt !== null && w.resetsAt <= t);
-      const status: QuotaStatus = limits.error || due ? 'cached' : min <= 0 ? 'limited' : min <= 20 ? 'low' : 'reporting';
+      let status: QuotaStatus = 'reporting';
+      if (limits.error || due) status = 'cached';
+      else if (min <= 0) status = 'limited';
+      else if (min <= 20) status = 'low';
       accounts++;
       if (status === 'limited') limited++;
       if (status === 'reporting' || status === 'low') reporting++;
@@ -158,11 +161,16 @@ export function quotaView(s: SubscriptionsState, now: number, factory?: FactoryS
     pages,
     page,
     tiles: all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    note: limits
-      ? `Factory: ${limits.overagePreference === 'droidCore' ? 'Droid Core fallback' : limits.overagePreference === 'extraUsage' ? 'Extra Usage overage' : 'No overage selected'} · Extra Usage $${(limits.extraUsageBalanceCents / 100).toFixed(2)}${limits.error ? ' · cached' : ''}`
-      : s.proxy.error
-        ? 'DroidProxy could not refresh · last known usage'
-        : notes[s.proxy.phase],
+    note: (() => {
+      if (limits) {
+        let overage = 'No overage selected';
+        if (limits.overagePreference === 'droidCore') overage = 'Droid Core fallback';
+        else if (limits.overagePreference === 'extraUsage') overage = 'Extra Usage overage';
+        return `Factory: ${overage} · Extra Usage $${(limits.extraUsageBalanceCents / 100).toFixed(2)}${limits.error ? ' · cached' : ''}`;
+      }
+      if (s.proxy.error) return 'DroidProxy could not refresh · last known usage';
+      return notes[s.proxy.phase];
+    })(),
   };
 }
 
@@ -228,8 +236,8 @@ export class QuotaWallTexture {
     g.fillStyle = ORANGE;
     g.fillRect(30, 33, 16, 16);
     this.text(v.factory ? 'FACTORY + PLANS' : 'DROIDPROXY', 64, 56, v.factory ? 24 : 30, INK, W - 320, 600);
-    const phase = v.factory || v.phase === 'running' ? 'CONNECTED' : v.phase.toUpperCase();
-    this.pill(phase, W - 30, 22, v.factory || v.phase === 'running' ? GREEN : AMBER);
+    const connected = v.factory || v.phase === 'running';
+    this.pill(connected ? 'CONNECTED' : v.phase.toUpperCase(), W - 30, 22, connected ? GREEN : AMBER);
     this.text('SUBSCRIPTION QUOTAS', 30, 96, 18, MUTED);
     const summary = v.factory ? `${v.accounts} QUOTAS · ${v.limited} LIMITED` : `${v.accounts} ACCOUNTS  /  ${v.reporting} REPORTING${v.limited ? `  /  ${v.limited} LIMITED` : ''}`;
     g.font = `500 18px ${MONO}`;

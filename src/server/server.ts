@@ -163,10 +163,10 @@ export async function startServer(cfg: Config) {
   const modelGate = (model: string | undefined) => {
     const settings = readDroidModels();
     const catalogue = droidModels.peek() ?? settings;
-    const id = model || settings.defaultModel || catalogue.defaultModel;
-    const existing = airgappedModelError(setup.state().airgapped, model, settings) ?? subscriptions.gate(id);
-    if (existing || !id) return existing;
-    const descriptor = settings.models.find((m) => m.id === id && m.custom) ?? catalogue.models.find((m) => m.id === id) ?? { id };
+    const modelId = model || settings.defaultModel || catalogue.defaultModel;
+    const existing = airgappedModelError(setup.state().airgapped, model, settings) ?? subscriptions.gate(modelId);
+    if (existing || !modelId) return existing;
+    const descriptor = settings.models.find((m) => m.id === modelId && m.custom) ?? catalogue.models.find((m) => m.id === modelId) ?? catalogue.disabledModels?.find((m) => m.id === modelId) ?? { id: modelId };
     return factoryModelGate(
       factory.state(),
       descriptor,
@@ -471,13 +471,15 @@ export async function startServer(cfg: Config) {
     toast: (text, level) => toastAll(text, level),
     hostedWorkers: () => {
       const models = droidModels.peek() ?? readDroidModels();
-      return [...floors.values()]
-        .flatMap((f) => f.everyone())
-        .concat(orchestrator.workers.list())
-        .some((w) => {
-          const id = w.activeModel ?? w.model ?? models.defaultModel;
-          return w.kind === 'agent' && (w.status === 'working' || w.status === 'starting') && !!id && !!factoryModelTier(models.models.find((m) => m.id === id) ?? { id });
-        });
+      const settings = readDroidModels();
+      const workers = [...floors.values()].flatMap((f) => f.everyone()).concat(orchestrator.workers.list());
+      return workers.some((w) => {
+        if (w.kind !== 'agent' || (w.status !== 'working' && w.status !== 'starting')) return false;
+        const id = w.activeModel ?? w.model ?? models.defaultModel;
+        if (!id) return false;
+        const descriptor = settings.models.find((m) => m.id === id && m.custom) ?? models.models.find((m) => m.id === id) ?? { id };
+        return !!factoryModelTier(descriptor);
+      });
     },
     // Cloud workers: their Droid session runs on a Factory computer (factory/cloud.ts, cloud-workers.ts).
     cloud: {
@@ -2254,7 +2256,23 @@ export async function startServer(cfg: Config) {
     unanswered();
   };
 
-  const ownerOffice = createOwnerOffice({ floors, orchestrator, missionState, workerFloor, workersOf, cloud, factory, subscriptions, subagents, labelPreferences, remoteOffice, workerThreads, acting, handleMessage });
+  const ownerOffice = createOwnerOffice({
+    floors,
+    orchestrator,
+    missionState,
+    workerFloor,
+    workersOf,
+    cloud,
+    factory,
+    subscriptions,
+    subagents,
+    labelPreferences,
+    remoteOffice,
+    workerThreads,
+    acting,
+    handleMessage,
+    isCustomModel: (id) => Boolean((droidModels.peek() ?? readDroidModels()).models.find((m) => m.id === id)?.custom || readDroidModels().models.find((m) => m.id === id)?.custom),
+  });
 
   const stopClientTimers = transport.startTimers(attachTerminal, devices);
 

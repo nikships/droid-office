@@ -270,7 +270,7 @@ fun WorkerScreen(
         }
         var sendingHome by remember { mutableStateOf(false) }
         var orchestratorMenu by remember { mutableStateOf(false) }
-        var factoryLimits by remember { mutableStateOf(false) }
+        var factoryLimits by remember(workerId) { mutableStateOf(false) }
         val blocked = if (mission) MissionControl.orchestratorBlocked(orchestrator) else null
         Header(worker, embedded, link.phase == Phase.Connected, onBack, onSendHome = { if (mission) orchestratorMenu = true else sendingHome = true }, mission = mission, blocked = blocked != null)
         val live = !worker.state.asleep

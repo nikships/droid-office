@@ -9,7 +9,10 @@ import java.util.Locale
 data class FactoryLimitWindow(val usedPercent: Double = 0.0, val windowEnd: String? = null, val secondsRemaining: Double? = null) {
     fun resetsAt(fetchedAt: Long? = null): Long? =
         windowEnd?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
-            ?: if (fetchedAt != null && secondsRemaining != null) fetchedAt + (secondsRemaining * 1000).toLong() else null
+            ?: if (fetchedAt != null && secondsRemaining != null && secondsRemaining.isFinite() && secondsRemaining >= 0) {
+                val ms = secondsRemaining * 1000.0
+                if (ms <= Long.MAX_VALUE.toDouble()) runCatching { Math.addExact(fetchedAt, Math.round(ms)) }.getOrNull() else null
+            } else null
 }
 
 @Serializable
@@ -66,14 +69,14 @@ object FactoryLimits {
 
     /** Unknown, disconnected, unreadable and Enterprise limits fail open, like the office's hire gate. */
     fun availability(s: FactoryState?, id: String, custom: Boolean, now: Long): ModelAvailability? {
-        if (custom || id.startsWith("custom:") || id.isEmpty() || !connected(s)) return null
-        val l = s!!.limits
+        val l = s?.limits ?: return null
+        if (custom || id.isEmpty() || id.startsWith("custom:") || !connected(s)) return null
         if (l.error != null || l.fetchedAt == null) return null
         if (l.hasActiveSubscription == false) return ModelAvailability.FactoryUnavailable("Factory subscription is inactive")
         if (!active(l)) return null
         val core = isCore(id)
         val windows = (if (core) l.limits.core else l.limits.standard) ?: return null
-        val exhausted = account(if (core) "core" else "standard", windows, l.fetchedAt).windows
+        val exhausted = windows.named().map { (name, w) -> SubscriptionWindow(name, w.usedPercent, w.resetsAt(l.fetchedAt)) }
             .filter { it.usedPercent >= 100 && (it.resetsAt == null || it.resetsAt > now) }
             .sortedBy { it.resetsAt ?: Long.MAX_VALUE }
         if (exhausted.isEmpty()) return ModelAvailability.Ok
@@ -85,5 +88,20 @@ object FactoryLimits {
             else -> ""
         }
         return ModelAvailability.FactoryUnavailable("$tier out of quota (${exhausted.joinToString(", ") { it.name }})$hint", exhausted.first().resetsAt)
+    }
+
+    /** Overlay Factory limits onto DroidProxy availability without letting Factory Ok mask subscription blocks. */
+    fun mergeAvailability(
+        proxy: Map<String, ModelAvailability>,
+        s: FactoryState?,
+        models: List<Pair<String, Boolean>>,
+        now: Long,
+    ): Map<String, ModelAvailability> {
+        if (models.isEmpty()) return proxy
+        val overlaid = models.mapNotNull { (id, custom) ->
+            val hosted = availability(s, id, custom, now) ?: return@mapNotNull null
+            if (hosted == ModelAvailability.Ok && proxy.containsKey(id)) null else id to hosted
+        }
+        return if (overlaid.isEmpty()) proxy else proxy + overlaid
     }
 }

@@ -127,17 +127,15 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
   });
 
   /** The models as they can run right now: read when drawn, so a quota that runs out shows up in an open list. */
+  const withLiveAvailability = (models: PickerModel[]) => withAvailability(models, store.subscriptions, Date.now(), store.factory);
   const listed = (): PickerModel[] =>
-    withAvailability(
+    withLiveAvailability(
       visibleModels(
         source.filter((m) => !opts.customOnly?.() || m.custom),
         store.hiddenModels,
       ),
-      store.subscriptions,
-      Date.now(),
-      store.factory,
     );
-  const known = (id: string) => withAvailability(source, store.subscriptions, Date.now(), store.factory).find((m) => m.id === id);
+  const known = (id: string) => withLiveAvailability(source).find((m) => m.id === id);
   /** Why the `none` row's model can't run now, if it can't. */
   const noneReason = () =>
     opts.customOnly?.() && !source.some((m) => m.custom && m.id === none?.model)
@@ -484,16 +482,10 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     });
     window.addEventListener('resize', place);
     window.addEventListener('scroll', onScroll, true);
-    const offSubscriptions = store.on('subscriptions', onSubscriptions);
-    const offFactory = store.on('factory', onSubscriptions);
-    const offHidden = store.on('hiddenModels', onSubscriptions);
-    const offSetup = store.on('setup', onSubscriptions);
+    const offs = (['subscriptions', 'factory', 'hiddenModels', 'setup'] as const).map((k) => store.on(k, onSubscriptions));
     const unwatchLimits = watchFactory('limits');
     stopWatching = () => {
-      offSubscriptions();
-      offFactory();
-      offHidden();
-      offSetup();
+      offs.forEach((off) => off());
       unwatchLimits();
     };
     let minute = Math.floor(Date.now() / 60_000);

@@ -1473,6 +1473,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       subscriptions.dispose();
       droid.dispose();
       modelVisibility.dispose();
+      subModels.dispose();
       workerLabels.dispose();
     },
   });
