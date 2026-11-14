@@ -2828,7 +2828,7 @@ function syncVibesSwitch() {
 
 function useVibesSwitch(key: DeskKey) {
   if (key === 'O') {
-    showSettings('connections', 'Gemini Decisions API');
+    showSettings(undefined, 'Gemini Decisions API');
     return;
   }
   if (key !== 'E') return;
@@ -2839,7 +2839,7 @@ function useVibesSwitch(key: DeskKey) {
     sound.vibesSwitch('blocked');
     activeAt = now;
     renderWake();
-    showSettings('connections', 'Gemini Decisions API');
+    showSettings(undefined, 'Gemini Decisions API');
     return;
   }
   if (outcome.kind === 'offline') {
