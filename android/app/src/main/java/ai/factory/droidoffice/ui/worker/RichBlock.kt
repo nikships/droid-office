@@ -124,6 +124,9 @@ private class RichBlockPage(context: Context, zoom: Boolean, private val onMessa
             blockNetworkLoads = true
         }
         view.setBackgroundColor(Color.TRANSPARENT)
+        // A WebView that wraps its content makes 100vh the drawing's own height, so full screen it
+        // would sit at the top instead of in the middle.
+        if (zoom) view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         view.isVerticalScrollBarEnabled = zoom
         view.isHorizontalScrollBarEnabled = zoom
         view.overScrollMode = View.OVER_SCROLL_NEVER
