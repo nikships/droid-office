@@ -20,6 +20,7 @@ import { openAddFloor, routeAddFloorMessage } from './ui/add-floor';
 import { routeFolderMessage } from './ui/folder-browser';
 import { openFloorOrder } from './ui/floor-reorder';
 import { openSubscriptionsStatus } from './ui/subscriptions-status';
+import { factoryHeaderRings } from './ui/subscriptions-rings';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './ui/term-font';
 import { parseWorkerLink } from './worker-link';
 import { DashboardWorkerLink } from './dashboard-worker-link';
@@ -236,6 +237,16 @@ const allWorkersBtn = h(
 );
 const board = h('button.btn.sm.ghost.dash-top-btn.dash-board', { type: 'button', title: 'The floor’s Whiteboard (⌘ B)', onclick: () => void openBoard() }, icon('board', 14), boardCount);
 const subscriptions = h('button.btn.icon.sm.ghost.dash-top-btn', { type: 'button', 'aria-label': 'Subscriptions', title: 'Subscriptions and account usage', onclick: () => openSubscriptionsStatus() }, icon('key', 14));
+const paintQuotaHeader = () => {
+  const factory = store.factory;
+  const rings = !store.setup.airgapped && factory.connection.connected && !factory.connection.rejected ? factoryHeaderRings(factory.limits, Date.now()) : null;
+  subscriptions.classList.toggle('icon', !rings);
+  subscriptions.replaceChildren(...(rings ? [rings] : [icon('key', 14)]));
+};
+store.on('factory', paintQuotaHeader);
+store.on('setup', paintQuotaHeader);
+setInterval(paintQuotaHeader, 60_000);
+paintQuotaHeader();
 const settingsBtn = h('button.btn.icon.sm.ghost.dash-top-btn', { type: 'button', 'aria-label': 'Settings', title: 'Settings (⌘ ,)', onclick: () => void showSettings() }, icon('settings', 14));
 
 const bannerIcon = h('span.dash-banner-icon');

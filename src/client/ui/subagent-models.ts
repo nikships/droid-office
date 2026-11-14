@@ -54,7 +54,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
 
   const row = (id: string, m: DroidModelOption | undefined) => {
     const on = picked.has(id);
-    const { reason, note: remark } = availabilityOf(id, store.subscriptions, Date.now());
+    const { reason, note: remark } = availabilityOf(id, store.subscriptions, Date.now(), store.factory, m);
     const box = h('input', { type: 'checkbox', checked: on, disabled: !!reason && !on, 'aria-label': `Let leads pick ${m?.displayName ?? id}` }) as HTMLInputElement;
     const note = h('input.input.sub-model-note', {
       type: 'text',
@@ -132,12 +132,17 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
   });
   revert.addEventListener('click', reset);
   // A quota running out or coming back redraws the list, but only then: a redraw would take focus from a note being typed.
-  const availabilityStamp = () => JSON.stringify(models.map((m) => availabilityOf(m.id, store.subscriptions, 0)));
+  const availabilityStamp = () => JSON.stringify(models.map((m) => availabilityOf(m.id, store.subscriptions, 0, store.factory, m)));
   let drawn = '';
   let seen = false;
   const stopWatching = store.on('subscriptions', () => {
     if (list.isConnected) seen = true;
     else if (seen) stopWatching();
+    if (list.isConnected && availabilityStamp() !== drawn) paintList();
+  });
+  const stopFactory = store.on('factory', () => {
+    if (list.isConnected) seen = true;
+    else if (seen) stopFactory();
     if (list.isConnected && availabilityStamp() !== drawn) paintList();
   });
   // Hiding or showing a model under Models → Models shown in pickers redraws this list at once.

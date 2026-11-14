@@ -3,6 +3,8 @@ import { h } from './dom';
 import { providerLogo } from './model-logo';
 import { subscriptionsOrder } from './subscriptions-order';
 import { percentLeft, usageTone } from './welcome-steps';
+import { factoryLimitsActive, factoryWindows, type FactoryLimitsState } from '../../shared/factory-limits';
+import { FACTORY_TIERS, factoryLimitsSummary, factoryReset } from './factory-limits-view';
 
 /** At most this many windows are drawn as nested arcs in one ring; the tooltip lists every one. */
 const RING_LAYERS = 3;
@@ -91,6 +93,10 @@ let tipIds = 0;
 /** An account's ring (one arc per usage window, the provider's logo inside) and its tooltip. */
 export function quotaRing(p: SubscriptionProvider, a: SubscriptionAccount, now: number, date?: DateWords): QuotaRing & { tile: HTMLElement } {
   const key = `${p.key}/${a.id}`;
+  return accountRing(key, ringLabel(p, a), a, providerLogo(p.key), now, date);
+}
+
+function accountRing(key: string, label: string, a: SubscriptionAccount, logo: HTMLElement | null, now: number, date?: DateWords, detail?: string): QuotaRing & { tile: HTMLElement } {
   const id = `subs-tip-${++tipIds}`;
   const arcs = a.windows.slice(0, RING_LAYERS).map((w, i) => {
     const arc = h('span.subs-arc', { class: `layer-${i} ${usageTone(w)}`, 'aria-hidden': 'true' });
@@ -99,9 +105,9 @@ export function quotaRing(p: SubscriptionProvider, a: SubscriptionAccount, now: 
   });
   const ring = h(
     'button.subs-ring',
-    { type: 'button', class: accountState(a) || !a.windows.length ? 'muted' : '', 'aria-label': ringLabel(p, a), 'aria-describedby': id, 'data-account': key },
+    { type: 'button', class: accountState(a) || !a.windows.length ? 'muted' : '', 'aria-label': label, 'aria-describedby': id, 'data-account': key },
     ...(arcs.length ? arcs : [h('span.subs-arc.empty', { 'aria-hidden': 'true' })]),
-    providerLogo(p.key),
+    logo,
   );
   const state = accountState(a);
   const missing = usageMissing(a);
@@ -112,12 +118,57 @@ export function quotaRing(p: SubscriptionProvider, a: SubscriptionAccount, now: 
     state ? h('span.subs-tip-state', {}, state) : null,
     ...a.windows.map((w) => {
       const reset = resetLine(w, now, date);
-      return h('span.subs-tip-window', {}, h('span', {}, windowLine(w)), reset ? h('small', {}, reset) : null);
+      return h('span.subs-tip-window', {}, h('span', {}, windowLine(w)), h('small', {}, reset ?? (detail ? factoryReset(w, now) : 'Reset time not reported')));
     }),
     missing ? h('small', {}, missing) : null,
+    detail ? h('small', {}, detail) : null,
   );
   const tile = h('li.subs-tile', {}, ring, h('span.subs-tile-label', { title: a.label }, a.label), tip);
   return { key, ring, tip, tile };
+}
+
+export function factoryQuotaRings(s: FactoryLimitsState, now: number, date?: DateWords): (QuotaRing & { tile: HTMLElement })[] {
+  if (!factoryLimitsActive(s)) return [];
+  return FACTORY_TIERS.filter(({ key }) => !!s.limits[key]).map(({ key, label }) => {
+    const windows = factoryWindows(s, key);
+    const detail = factoryLimitsSummary(s);
+    return accountRing(
+      `factory/${key}`,
+      `Factory ${label}: ${windows.map(windowLine).join(', ')}. ${detail}`,
+      { id: key, label, expired: false, disabled: false, windows },
+      h('img.ai-logo', { src: '/factory-glyph.svg', alt: '', 'aria-hidden': 'true' }),
+      now,
+      date,
+      detail,
+    );
+  });
+}
+
+/** Small non-interactive rings inside the dashboard's Subscriptions button. */
+export function factoryHeaderRings(s: FactoryLimitsState, now: number): HTMLElement | null {
+  if (!factoryLimitsActive(s)) return null;
+  return h(
+    'span.factory-header-rings',
+    {},
+    ...FACTORY_TIERS.filter(({ key }) => !!s.limits[key]).map(({ key, label }) => {
+      const windows = factoryWindows(s, key);
+      const title = `Factory ${label}: ${windows.map((w) => `${windowLine(w)}, ${factoryReset(w, now)}`).join('; ')}. ${factoryLimitsSummary(s)}`;
+      return h(
+        'span.factory-header-quota',
+        { title, role: 'img', 'aria-label': title },
+        h(
+          'span.factory-mini-ring',
+          {},
+          ...windows.map((w, i) => {
+            const arc = h('span.subs-arc', { class: `layer-${i} ${usageTone(w)}`, 'aria-hidden': 'true' });
+            arc.style.setProperty('--left', String(percentLeft(w)));
+            return arc;
+          }),
+        ),
+        h('span', { 'aria-hidden': 'true' }, key === 'core' ? 'Core' : label),
+      );
+    }),
+  );
 }
 
 /** A muted line of providers ("Off" or "Not connected") with their logos; null when there are none. */
@@ -127,7 +178,7 @@ function providerLine(label: string, providers: SubscriptionProvider[]): HTMLEle
 }
 
 /** The Subscriptions window's body: a ring per account grouped by provider, then the plans that are off. */
-export function subscriptionsView(s: SubscriptionsState, now: number, date?: DateWords): { nodes: HTMLElement[]; rings: QuotaRing[] } {
+export function subscriptionsView(s: SubscriptionsState, now: number, date?: DateWords, factory?: FactoryLimitsState): { nodes: HTMLElement[]; rings: QuotaRing[] } {
   const { active, off, unconnected } = ringGroups(s.providers);
   const rings: QuotaRing[] = [];
   const groups = active.map((p) => {
@@ -138,6 +189,11 @@ export function subscriptionsView(s: SubscriptionsState, now: number, date?: Dat
     });
     return h('li.subs-group', {}, h('span.subs-group-name', {}, providerName(p.key)), h('ul.subs-tiles', { 'aria-label': `${providerName(p.key)} accounts` }, ...tiles));
   });
+  const factoryRings = factory ? factoryQuotaRings(factory, now, date) : [];
+  if (factory && factoryRings.length) {
+    rings.unshift(...factoryRings);
+    groups.unshift(h('li.subs-group', {}, h('span.subs-group-name', {}, 'Factory'), h('ul.subs-tiles', { 'aria-label': 'Factory quotas' }, ...factoryRings.map((r) => r.tile)), h('small', {}, factoryLimitsSummary(factory))));
+  }
   const nodes: (HTMLElement | null)[] = [
     s.proxy.error ? h('p.note.bad', {}, s.proxy.error) : null,
     groups.length ? h('ul.subs-groups', {}, ...groups) : null,

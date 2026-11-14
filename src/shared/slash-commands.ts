@@ -106,6 +106,11 @@ export function slashKind(draft: string): SlashKind {
   return slashOf(draft)?.command?.kind ?? 'thread';
 }
 
+/** Connected offices show their own limits window, even when Factory cannot report quota windows. */
+export function nativeLimits(draft: string, factoryConnected: boolean): boolean {
+  return factoryConnected && slashOf(draft)?.command?.name === 'limits';
+}
+
 /**
  * Why a slash draft can't be sent now, or undefined when it can: a command that would end the CLI
  * never, and none while a turn runs, when Droid would take it as steering.

@@ -1,4 +1,5 @@
 import { store } from '../state';
+import { watchFactory } from '../factory';
 import { visibleModels } from '../../shared/model-visibility';
 import { type Child, claimEscape, h } from './dom';
 import { modelLogo, providerLogo } from './model-logo';
@@ -134,10 +135,20 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
       ),
       store.subscriptions,
       Date.now(),
+      store.factory,
     );
-  const known = (id: string) => withAvailability(source, store.subscriptions, Date.now()).find((m) => m.id === id);
+  const known = (id: string) => withAvailability(source, store.subscriptions, Date.now(), store.factory).find((m) => m.id === id);
   /** Why the `none` row's model can't run now, if it can't. */
-  const noneReason = () => (opts.customOnly?.() && !source.some((m) => m.custom && m.id === none?.model) ? 'Choose a configured custom model in airgapped mode.' : availabilityOf(none?.model, store.subscriptions, Date.now()).reason);
+  const noneReason = () =>
+    opts.customOnly?.() && !source.some((m) => m.custom && m.id === none?.model)
+      ? 'Choose a configured custom model in airgapped mode.'
+      : availabilityOf(
+          none?.model,
+          store.subscriptions,
+          Date.now(),
+          store.factory,
+          source.find((m) => m.id === none?.model),
+        ).reason;
 
   /** The default model's logo, label and note, as the trigger and its row both draw them. */
   const noneParts = (option: NoneOption): Child[] => [modelLogo({ id: option.model, name: option.note }), h('span.mp-name', {}, option.label), option.note ? h('span.mp-note', {}, option.note) : null];
@@ -474,15 +485,24 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
     window.addEventListener('resize', place);
     window.addEventListener('scroll', onScroll, true);
     const offSubscriptions = store.on('subscriptions', onSubscriptions);
+    const offFactory = store.on('factory', onSubscriptions);
     const offHidden = store.on('hiddenModels', onSubscriptions);
     const offSetup = store.on('setup', onSubscriptions);
+    const unwatchLimits = watchFactory('limits');
     stopWatching = () => {
       offSubscriptions();
+      offFactory();
       offHidden();
       offSetup();
+      unwatchLimits();
     };
+    let minute = Math.floor(Date.now() / 60_000);
     watchTrigger = setInterval(() => {
       if (!trigger.isConnected) close();
+      else if (Math.floor(Date.now() / 60_000) !== minute) {
+        minute = Math.floor(Date.now() / 60_000);
+        onSubscriptions();
+      }
     }, 400);
     place();
     paintList();

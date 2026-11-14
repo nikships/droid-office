@@ -1,6 +1,8 @@
 // What the model picker shows and in which order: pure, so tests load it without a DOM.
 
 import { availabilityWords, cannotRun, modelAvailability, type SubscriptionsState } from '../../shared/subscriptions';
+import type { FactoryState } from '../../shared/factory';
+import { factoryModelAvailability } from '../../shared/factory-limits';
 
 /** One model in a picker, whatever list it came from. */
 export interface PickerModel {
@@ -36,7 +38,12 @@ export function canPick(m: PickerModel | undefined): boolean {
 }
 
 /** What the office knows about whether `id` can run: a reason it can't, or a quiet note. Neither when it can, or nobody can tell. */
-export function availabilityOf(id: string | undefined, s: SubscriptionsState, now: number): { reason?: string; note?: string } {
+export function availabilityOf(id: string | undefined, s: SubscriptionsState, now: number, factory?: FactoryState, model?: { id: string; custom?: boolean; displayName?: string }): { reason?: string; note?: string } {
+  const hosted = id && factory ? factoryModelAvailability(factory, model ?? { id, custom: id.startsWith('custom:') }, now) : undefined;
+  if (hosted && hosted.state !== 'ok') {
+    const hint = hosted.overageHint && !hosted.reason.includes(hosted.overageHint) ? hosted.overageHint : '';
+    return { reason: [hosted.reason, hint].filter(Boolean).join(' · ') };
+  }
   const a = modelAvailability(s, id);
   const words = availabilityWords(a, now);
   if (!words) return {};
@@ -44,9 +51,9 @@ export function availabilityOf(id: string | undefined, s: SubscriptionsState, no
 }
 
 /** `models` with the ones that can't run marked `unavailable` with their reason, and the quiet notes added. */
-export function withAvailability(models: PickerModel[], s: SubscriptionsState, now: number): PickerModel[] {
+export function withAvailability(models: PickerModel[], s: SubscriptionsState, now: number, factory?: FactoryState): PickerModel[] {
   return models.map((m) => {
-    const { reason, note } = availabilityOf(m.id, s, now);
+    const { reason, note } = availabilityOf(m.id, s, now, factory, { id: m.id, custom: m.custom, displayName: m.name });
     if (reason) return { ...m, unavailable: true, reason };
     return note ? { ...m, note } : m;
   });

@@ -3251,3 +3251,25 @@ summary:hover > .wt-chevron { color: var(--text-secondary); }
 .subs-off-chip .ai-logo { width: 14px; height: 14px; opacity: .5; }
 .subs-off-chip .ai-logo:not(.mono) { filter: grayscale(1); }
 .subs-empty { margin: 0; color: var(--text-secondary); }
+
+/* Factory billing windows stay independent of DroidProxy availability. */
+.factory-limit-tiers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); }
+.factory-limit-tier { min-width: 0; padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); }
+.factory-limit-windows { display: flex; flex-direction: column; gap: var(--space-4); list-style: none; margin: 0; padding: 0; font-variant-numeric: tabular-nums; }
+.factory-limit-windows small { color: var(--text-secondary); font-size: var(--text-small); }
+.factory-limit-windows .subs-usage-bar { display: block; height: 6px; }
+.factory-limit-summary { margin: 0; overflow-wrap: anywhere; color: var(--text-secondary); }
+.factory-limits > .field { margin: 0; }
+.wt-limits { flex: none; justify-content: flex-end; padding: 0 var(--space-4) var(--space-2); }
+.factory-header-rings, .factory-header-quota { display: inline-flex; align-items: center; gap: var(--space-2); }
+.factory-header-quota { font-size: var(--text-label); }
+.factory-mini-ring { position: relative; display: inline-block; flex: none; width: 28px; height: 28px; }
+.factory-mini-ring .subs-arc { mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px)); }
+.factory-mini-ring .layer-1 { inset: 4px; }
+.factory-mini-ring .layer-2 { inset: 8px; }
+@media (max-width: 1100px) {
+  .factory-header-quota > :last-child { display: none; }
+}
+@media (max-width: 600px) {
+  .factory-limit-tiers { grid-template-columns: minmax(0, 1fr); }
+}
