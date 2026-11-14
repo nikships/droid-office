@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { pageRows, presentThread, threadAction, threadArguments, threadArgumentsText, type ThreadRow } from '../src/shared/thread-presentation.js';
+import { latestThreadPlan, pageRows, presentThread, threadAction, threadArguments, threadArgumentsText, type ThreadRow } from '../src/shared/thread-presentation.js';
 import type { ThreadEntry } from '../src/shared/worker-thread.js';
 
 // Shapes observed in Byte's real local session, also shown in the owner's Android capture.
@@ -555,4 +555,104 @@ test('a page carries the rows standing for its entries, whole, and an earlier pa
     ['u', 'activity:r1'],
   );
   assert.deepEqual(pageRows(rows, []), []);
+});
+
+test('V3 card actions split exploration runs cleanly and carry change, command and delegation metadata', () => {
+  const thought: ThreadEntry = { id: 'th-5', seq: 5, role: 'assistant', kind: 'thinking', text: '**Planning delegation**' };
+  const entries: ThreadEntry[] = [
+    tool('r1', 'Read', { file_path: '/repo/src/a.ts' }, { seq: 1 }),
+    tool('g2', 'Grep', { pattern: 'foo' }, { seq: 2 }),
+    tool('m3', 'memory___recall', { query: 'conventions' }, { seq: 3 }),
+    tool('ed4', 'Edit', { file_path: '/repo/src/a.ts', old_str: 'const x = 1;', new_str: 'const x = 2;' }, { seq: 4 }),
+    thought,
+    tool('ex6', 'functions.Execute', { command: '  npm test -- --watch=false  ', summary: 'Run unit tests' }, { seq: 6 }),
+    tool(
+      'h7',
+      'droid-office___team_hire',
+      { task: { title: 'Implement Web Thread UI', brief: 'Build cards' } },
+      {
+        seq: 7,
+        output: 'Hired Nibble (325ae2490bc6) [watching], working, desk-2.\nWorktree: /repo/.droid-office/worktrees/nibble-325a on thread-v3-web from thread-view-phase-a.\nIt is working on the brief.',
+      },
+    ),
+    tool('f8', 'FetchUrl', { url: 'https://docs.factory.ai/llms.txt' }, { seq: 8 }),
+    tool('ms9', 'mcp__memory__save_memory', { text: 'note' }, { seq: 9 }),
+  ];
+
+  const rows = presentThread(entries, false);
+  assert.equal(rows.length, 1);
+  const row = rows[0];
+  assert.equal(row.kind, 'activity');
+  if (row.kind !== 'activity') return;
+
+  assert.deepEqual(
+    row.blocks.map((b) => (b.kind === 'thought' ? 'thought' : `tools:${b.card ?? 'explore'}:${b.actions.length}`)),
+    ['tools:explore:3', 'tools:change:1', 'thought', 'tools:command:1', 'tools:delegate:1', 'tools:explore:2'],
+  );
+
+  const changeBlock = row.blocks[1];
+  assert.ok(changeBlock.kind === 'tools' && changeBlock.card === 'change');
+  assert.equal(changeBlock.id, 'tools:ed4');
+  assert.equal(changeBlock.actions[0].changes?.[0]?.shortPath, '/repo/src/a.ts');
+  assert.equal(changeBlock.actions[0].changes?.[0]?.additions, 1);
+  assert.equal(changeBlock.actions[0].changes?.[0]?.deletions, 1);
+
+  const cmdBlock = row.blocks[3];
+  assert.ok(cmdBlock.kind === 'tools' && cmdBlock.card === 'command');
+  assert.deepEqual(cmdBlock.actions[0].command, {
+    command: 'npm test -- --watch=false',
+    summary: 'Run unit tests',
+  });
+
+  const delegateBlock = row.blocks[4];
+  assert.ok(delegateBlock.kind === 'tools' && delegateBlock.card === 'delegate');
+  assert.deepEqual(delegateBlock.actions[0].delegation, {
+    agent: 'Nibble',
+    summary: 'Implement Web Thread UI',
+    workerName: 'Nibble',
+    workerId: '325ae2490bc6',
+    branch: 'thread-v3-web',
+  });
+
+  const taskDelegate = presentThread([tool('tk1', 'Task', { subagent_type: 'explorer', description: 'Check callers' })], false)[0];
+  assert.ok(taskDelegate.kind === 'activity' && taskDelegate.blocks[0].kind === 'tools');
+  assert.deepEqual(taskDelegate.blocks[0].actions[0].delegation, {
+    agent: 'explorer',
+    role: 'explorer',
+    summary: 'Check callers',
+  });
+});
+
+test('latestThreadPlan tracks active steps and marks completed plans stale after a newer user message', () => {
+  assert.equal(latestThreadPlan([], false), undefined);
+  assert.equal(latestThreadPlan([text('u1', 'user')], false), undefined);
+
+  const inProgressEntries: ThreadEntry[] = [
+    { id: 'u1', seq: 1, role: 'user', kind: 'text', text: 'Build feature' },
+    tool('tw1', 'TodoWrite', { todos: '1. [completed] Read spec\n2. [in_progress] Write diff parser\n3. [pending] Run tests' }, { seq: 2 }),
+  ];
+  const active = latestThreadPlan(inProgressEntries, true);
+  assert.deepEqual(active, {
+    steps: [
+      { done: true, active: false, text: 'Read spec' },
+      { done: false, active: true, text: 'Write diff parser' },
+      { done: false, active: false, text: 'Run tests' },
+    ],
+    done: 1,
+    total: 3,
+    current: 'Write diff parser',
+    allDone: false,
+    stale: false,
+  });
+
+  const completedEntries: ThreadEntry[] = [...inProgressEntries, { id: 'td2', seq: 3, role: 'system', kind: 'todo', text: '1. [completed] Read spec\n2. [completed] Write diff parser\n3. [completed] Run tests' }];
+  const finished = latestThreadPlan(completedEntries, false);
+  assert.ok(finished);
+  assert.equal(finished.allDone, true);
+  assert.equal(finished.stale, false);
+  assert.equal(finished.current, undefined);
+
+  const withFollowUp: ThreadEntry[] = [...completedEntries, { id: 'u2', seq: 4, role: 'user', kind: 'text', text: 'Thanks, what about mobile?' }];
+  assert.equal(latestThreadPlan(withFollowUp, true)?.stale, false, 'not stale while busy');
+  assert.equal(latestThreadPlan(withFollowUp, false)?.stale, true, 'stale once idle after a newer user turn');
 });

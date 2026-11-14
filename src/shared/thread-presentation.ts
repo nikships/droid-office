@@ -1,4 +1,9 @@
+import { extractThreadChanges, threadShortPath, toolLeaf, type ThreadFileChange } from './thread-diff.js';
+import { todoItems } from './todos.js';
 import type { ThreadEntry } from './worker-thread.js';
+
+export { threadShortPath };
+export type { ThreadDiffLine, ThreadDiffSpan, ThreadFileChange } from './thread-diff.js';
 
 export type ActivityState = 'working' | 'complete' | 'incomplete' | 'failed' | 'cancelled';
 export type ActionKind =
@@ -23,6 +28,23 @@ export type ActionKind =
   | 'loopResume'
   | 'loopCancel'
   | 'other';
+
+export type ThreadCardKind = 'change' | 'command' | 'delegate';
+
+export interface ThreadCommandMeta {
+  command: string;
+  summary?: string;
+}
+
+export interface ThreadDelegationMeta {
+  agent: string;
+  role?: string;
+  summary: string;
+  workerId?: string;
+  workerName?: string;
+  branch?: string;
+}
+
 /** A tool call as the engine reads it. The wire carries a ThreadModelAction instead. */
 export interface ThreadAction {
   type: 'action';
@@ -39,6 +61,15 @@ export interface PlanStep {
   done: boolean;
   active: boolean;
   text: string;
+}
+
+export interface ActivePlan {
+  steps: PlanStep[];
+  done: number;
+  total: number;
+  current?: string;
+  allDone: boolean;
+  stale: boolean;
 }
 
 /**
@@ -70,6 +101,10 @@ export interface ThreadModelAction {
   /** The heading over the output. */
   result: 'Result' | 'Error' | 'Cancelled';
   open: boolean;
+  card?: ThreadCardKind;
+  changes?: ThreadFileChange[];
+  command?: ThreadCommandMeta;
+  delegation?: ThreadDelegationMeta;
 }
 export interface ThreadFailure {
   id: string;
@@ -79,7 +114,7 @@ export interface ThreadFailure {
 }
 export type ThreadBlock =
   | { kind: 'thought'; id: string; preview: string; live: boolean; open: boolean }
-  | { kind: 'tools'; id: string; label: string; state: ActivityState; live: boolean; open: boolean; actions: ThreadModelAction[]; plan?: PlanStep[] };
+  | { kind: 'tools'; id: string; label: string; state: ActivityState; live: boolean; open: boolean; card?: ThreadCardKind; actions: ThreadModelAction[]; plan?: PlanStep[] };
 /** `from` and `to` are the seqs of the first and last entry a row stands for, hidden ones included. */
 export type ThreadRow =
   | { kind: 'message'; id: string; from: number; to: number; role: 'user' | 'assistant'; startsTurn: boolean }
@@ -103,7 +138,11 @@ export type ThreadRow =
     };
 
 const bookkeeping = new Set(['todowrite', 'todoread', 'toolsearch', 'skill', 'todo_write', 'todo_read', 'update_plan', 'waitforscript', 'taskoutput']);
-const leaf = (name = '') => name.split(/[.:/]/).at(-1)?.toLowerCase() ?? '';
+const leaf = (name = '') => toolLeaf(name);
+const isMemoryTool = (rawName = '') => {
+  const lower = rawName.toLowerCase();
+  return lower.includes('memory___') || lower.startsWith('mcp__memory__');
+};
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
 const str = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 const sentence = (text: string) => {
@@ -111,18 +150,6 @@ const sentence = (text: string) => {
   return line.charAt(0).toUpperCase() + line.slice(1);
 };
 const baseName = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').at(-1) || path;
-
-export function threadShortPath(path: string): string {
-  const root = path.trim().replace(/\\/g, '/').replace(/\/+$/, '');
-  if (/\/\.droid-office\/worktrees\/[^/]+$/.test(root)) return baseName(root);
-  const short = path
-    .trim()
-    .replace(/\\/g, '/')
-    .replace(/^.*?\/\.droid-office\/worktrees\/[^/]+\//, '')
-    .replace(/^\/(?:Users|home)\/[^/]+\//, '~/');
-  const parts = short.split('/').filter(Boolean);
-  return parts.length > 3 ? `…/${parts.slice(-3).join('/')}` : short;
-}
 
 function argumentsOf(entry: ThreadEntry): Record<string, unknown> {
   try {
@@ -133,18 +160,40 @@ function argumentsOf(entry: ThreadEntry): Record<string, unknown> {
   }
 }
 
+function extractDelegationMeta(entry: ThreadEntry): ThreadDelegationMeta {
+  const args = argumentsOf(entry);
+  const taskObj = args.task && typeof args.task === 'object' && !Array.isArray(args.task) ? (args.task as Record<string, unknown>) : {};
+  const role = str(args.subagent_type) || undefined;
+  const output = entry.output ?? '';
+  const hired = /Hired ([^\n(]+?)\s+\(([a-z0-9-]+)\)/.exec(output);
+  const workerName = hired?.[1]?.trim() || undefined;
+  const workerId = hired?.[2]?.trim() || undefined;
+  const branch = str(taskObj.branch) || str(args.branch) || /Worktree: \S+ on (\S+?)[.\s]/.exec(output)?.[1]?.trim() || undefined;
+  const summary = str(args.title) || str(args.description) || str(taskObj.title) || clip(str(args.prompt).split('\n')[0]?.trim() ?? '', 120) || 'Subagent task';
+  const agent = workerName || role || 'Subagent';
+  return {
+    agent,
+    ...(role ? { role } : {}),
+    summary,
+    ...(workerId ? { workerId } : {}),
+    ...(workerName ? { workerName } : {}),
+    ...(branch ? { branch } : {}),
+  };
+}
+
 /** Source is available on demand, formatted as source rather than escaped JSON. */
 export function threadArguments(entry: ThreadEntry): ThreadArgumentsRef | undefined {
   const raw = entry.input?.trim();
   if (!raw || raw === '{}') return;
   const args = argumentsOf(entry);
+  const name = leaf(entry.name);
   if (str(args.command)) return { label: 'Command', field: 'command' };
   if (str(args.script)) return { label: 'Script', field: 'script' };
   if (str(args.code)) return { label: 'Script', field: 'code' };
-  if (leaf(entry.name) === 'applypatch' && str(args.input)) return { label: 'Patch', field: 'input' };
-  if (leaf(entry.name) === 'applypatch' && str(args.patch)) return { label: 'Patch', field: 'patch' };
+  if ((name === 'applypatch' || name === 'apply_patch') && str(args.input)) return { label: 'Patch', field: 'input' };
+  if ((name === 'applypatch' || name === 'apply_patch') && str(args.patch)) return { label: 'Patch', field: 'patch' };
   try {
-    if (typeof JSON.parse(raw) === 'string') return { label: leaf(entry.name) === 'script' ? 'Script' : leaf(entry.name) === 'applypatch' ? 'Patch' : 'Arguments', field: '.' };
+    if (typeof JSON.parse(raw) === 'string') return { label: name === 'script' ? 'Script' : name === 'applypatch' || name === 'apply_patch' ? 'Patch' : 'Arguments', field: '.' };
   } catch {
     /* Older tools can record plain-text arguments. */
   }
@@ -220,9 +269,14 @@ export function threadAction(entry: ThreadEntry, live = false, cancelled = false
     case 'create':
     case 'write':
       return action('create', `Created ${file}`, detail);
-    case 'applypatch': {
+    case 'applypatch':
+    case 'apply_patch': {
       const patch = str(args.input ?? args.patch) || entry.input || '';
-      const files = [...patch.replace(/\\n/g, '\n').matchAll(/\*\*\* (?:Update|Add|Delete) File: (\S.*)/g)].map((m) => m[1].trim().replace(/[",]+$/, ''));
+      let files = [...patch.replace(/\\n/g, '\n').matchAll(/\*\*\* (?:Update|Add|Delete) File: (\S.*)/g)].map((m) => m[1].trim().replace(/[",]+$/, ''));
+      if (!files.length) {
+        const extracted = extractThreadChanges(entry);
+        if (extracted?.length) files = extracted.map((c) => c.path);
+      }
       const names = [...new Set(files.map(baseName))];
       return action('edit', names.length ? `Edited ${names.join(', ')}` : 'Edited files', files.length === 1 ? threadShortPath(files[0]) : undefined, files);
     }
@@ -238,6 +292,13 @@ export function threadAction(entry: ThreadEntry, live = false, cancelled = false
       return action('webSearch', str(args.query) ? `Searched the web for “${clip(str(args.query), 48)}”` : 'Searched the web');
     case 'task':
       return action('delegate', str(args.description) ? sentence(str(args.description)) : 'Ran a subagent', str(args.subagent_type));
+    case 'team_hire':
+    case 'office_worker_spawn': {
+      const meta = extractDelegationMeta(entry);
+      const hasExplicitTitle = Boolean(str(args.title) || str(args.description) || (args.task && typeof args.task === 'object' && str((args.task as Record<string, unknown>).title)) || str(args.prompt));
+      const title = hasExplicitTitle ? sentence(meta.summary) : meta.workerName ? `Hired ${meta.workerName}` : 'Ran a subagent';
+      return action('delegate', title, meta.workerName ?? meta.branch);
+    }
     case 'skill':
       return action('skill', str(args.skill) ? `${failed ? "Couldn't load" : 'Used'} the ${str(args.skill)} skill` : failed ? "Couldn't load a skill" : 'Used a skill');
     case 'askuser':
@@ -264,7 +325,7 @@ export function threadAction(entry: ThreadEntry, live = false, cancelled = false
     }
     default:
       if (bookkeeping.has(name)) return action('plan', failed ? "Couldn't update the plan" : 'Updated the plan');
-      if (name.startsWith('memory___')) return action('memory', /save|update/.test(name) ? 'Saved to memory' : 'Checked memory');
+      if (isMemoryTool(entry.name)) return action('memory', /save|update/.test(name) ? 'Saved to memory' : 'Checked memory');
       return action(
         'other',
         `Used ${(entry.name || 'a tool')
@@ -405,6 +466,49 @@ export function threadPlan(text: string): PlanStep[] {
     return match ? [{ done: match[1] === 'completed', active: match[1].replace('_', ' ') === 'in progress', text: match[2].trim() }] : [];
   });
 }
+
+export function latestThreadPlan(entries: readonly ThreadEntry[], busy: boolean): ActivePlan | undefined {
+  let steps: PlanStep[] | undefined;
+  let planSeq = -1;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.kind === 'todo') {
+      const parsed = threadPlan(entry.text ?? '');
+      steps = parsed;
+      planSeq = entry.seq;
+      break;
+    }
+    if (entry.kind === 'tool' && !entry.error) {
+      const name = leaf(entry.name);
+      if (name === 'todowrite' || name === 'todo_write' || name === 'update_plan') {
+        const args = argumentsOf(entry);
+        if (args.todos === undefined) continue;
+        steps = todoItems(args).map((item) => ({
+          done: item.status === 'completed',
+          active: item.status === 'in_progress',
+          text: item.content,
+        }));
+        planSeq = entry.seq;
+        break;
+      }
+    }
+  }
+  if (!steps?.length) return undefined;
+  const total = steps.length;
+  const done = steps.filter((step) => step.done).length;
+  const current = steps.find((step) => step.active)?.text;
+  const allDone = done === total;
+  const stale = allDone && !busy && entries.some((entry) => entry.seq > planSeq && entry.kind === 'text' && entry.role === 'user');
+  return {
+    steps,
+    done,
+    total,
+    ...(current ? { current } : {}),
+    allDone,
+    stale,
+  };
+}
+
 export function threadStop(reason: string): string {
   const copy: Record<string, string> = {
     error: 'The turn stopped on an error',
@@ -432,9 +536,27 @@ function notice(entry: ThreadEntry): Extract<ThreadRow, { kind: 'notice' }> | un
 
 const STATUS: Record<ActivityState, string> = { complete: '', working: 'Running', failed: '', incomplete: 'No result', cancelled: 'Cancelled' };
 
+function cardKindFor(category: ActionKind): ThreadCardKind | undefined {
+  if (category === 'edit' || category === 'create') return 'change';
+  if (category === 'command') return 'command';
+  if (category === 'delegate') return 'delegate';
+  return undefined;
+}
+
 function modelAction(action: ThreadAction): ThreadModelAction {
   // A Read that returned a picture shows just the picture: its path is already in the title.
   const args = leaf(action.entry.name) === 'read' && action.entry.images?.length ? undefined : threadArguments(action.entry);
+  const card = cardKindFor(action.category);
+  const changes = card === 'change' ? extractThreadChanges(action.entry) : undefined;
+  let command: ThreadCommandMeta | undefined;
+  if (card === 'command') {
+    const parsed = argumentsOf(action.entry);
+    const cmd = str(parsed.command);
+    const summary = str(parsed.summary);
+    command = { command: cmd, ...(summary ? { summary } : {}) };
+  }
+  const delegation = card === 'delegate' ? extractDelegationMeta(action.entry) : undefined;
+
   return {
     id: action.entry.id,
     title: action.title,
@@ -446,6 +568,10 @@ function modelAction(action: ThreadAction): ThreadModelAction {
     ...(args ? { arguments: args } : {}),
     result: action.state === 'cancelled' ? 'Cancelled' : action.entry.error ? 'Error' : 'Result',
     open: false,
+    ...(card ? { card } : {}),
+    ...(changes?.length ? { changes } : {}),
+    ...(command ? { command } : {}),
+    ...(delegation ? { delegation } : {}),
   };
 }
 
@@ -496,21 +622,45 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       items.push(action);
     }
     if (!items.length) return;
-    const wired = items.map(modelAction);
+    actions.push(...items);
+
+    const groups: { card?: ThreadCardKind; items: ThreadAction[]; wired: ThreadModelAction[] }[] = [];
+    let exploration: { items: ThreadAction[]; wired: ThreadModelAction[] } | undefined;
+    for (const item of items) {
+      const wiredItem = modelAction(item);
+      if (wiredItem.card) {
+        exploration = undefined;
+        groups.push({ card: wiredItem.card, items: [item], wired: [wiredItem] });
+      } else {
+        if (!exploration) {
+          exploration = { items: [], wired: [] };
+          groups.push(exploration);
+        }
+        exploration.items.push(item);
+        exploration.wired.push(wiredItem);
+      }
+    }
+
     const planKey = JSON.stringify(plan);
     const changedPlan = plan.length && planKey !== lastPlan ? plan : undefined;
     if (changedPlan) lastPlan = planKey;
-    actions.push(...items);
-    blocks.push({
-      kind: 'tools',
-      id: `tools:${source[0].id}`,
-      label: activityLabel(items),
-      state: activityState(wired, live),
-      live,
-      open: false,
-      actions: wired,
-      ...(changedPlan ? { plan: changedPlan } : {}),
-    });
+
+    for (const [groupIndex, group] of groups.entries()) {
+      const isLast = groupIndex === groups.length - 1;
+      const blockLive = live && (isLast || group.wired.some((a) => a.state === 'working'));
+      const includePlan = groupIndex === 0 ? changedPlan : undefined;
+      blocks.push({
+        kind: 'tools',
+        id: `tools:${group.items[0].entry.id}`,
+        label: activityLabel(group.items),
+        state: activityState(group.wired, blockLive),
+        live: blockLive,
+        open: false,
+        ...(group.card ? { card: group.card } : {}),
+        actions: group.wired,
+        ...(includePlan ? { plan: includePlan } : {}),
+      });
+    }
   };
   const flush = (live: boolean) => {
     flushRun(live);

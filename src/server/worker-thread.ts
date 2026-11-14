@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { open, readdir, realpath, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { IMAGE_PLACEHOLDER, pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation.js';
@@ -136,9 +137,46 @@ export class WorkerThreadReader {
 
   constructor(
     private root = DROID_SESSIONS_DIR,
-    private limits = { sessions: 8, entries: 1000, bytes: 2 * 1024 * 1024 },
+    private limits = { sessions: 16, entries: 1000, bytes: 2 * 1024 * 1024 },
     private textOnly = false,
   ) {}
+
+  /** Synchronous best-effort paths for immediate `fs.watch` binding before async canonical discovery completes. */
+  sessionPathsSync(source: ThreadSession): { file?: string; dir: string; root: string } | undefined {
+    const { sessionId, cwd, transcript } = source;
+    if (!SESSION_ID.test(sessionId) || !path.isAbsolute(cwd)) return undefined;
+    const name = `${sessionId}.jsonl`;
+    const key = JSON.stringify([cwd, sessionId, source.since ?? 0]);
+    const cached = this.sessions.get(key)?.file;
+    if (cached && existsSync(cached)) return { file: cached, dir: path.dirname(cached), root: this.root };
+    if (transcript && path.basename(transcript) === name) {
+      const rel = path.relative(this.root, transcript);
+      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+        return { ...(existsSync(transcript) ? { file: transcript } : {}), dir: path.dirname(transcript), root: this.root };
+      }
+    }
+    const dir = path.join(this.root, cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
+    const guess = path.join(dir, name);
+    return { ...(existsSync(guess) ? { file: guess } : {}), dir, root: this.root };
+  }
+
+  /** Canonical `.jsonl` file (when created) and expected session directory for `fs.watch` subscriptions. */
+  async sessionPaths(source: ThreadSession): Promise<{ file?: string; dir: string; root: string } | undefined> {
+    const { sessionId, cwd, transcript } = source;
+    if (!SESSION_ID.test(sessionId) || !path.isAbsolute(source.cwd)) return undefined;
+    const file = await this.find(source);
+    if (file) return { file, dir: path.dirname(file), root: this.root };
+    const name = `${sessionId}.jsonl`;
+    if (transcript && path.basename(transcript) === name) {
+      const rel = path.relative(this.root, transcript);
+      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+        return { dir: path.dirname(transcript), root: this.root };
+      }
+    }
+    const canonical = await realpath(cwd).catch(() => cwd);
+    const dir = path.join(this.root, canonical.replace(/[^a-zA-Z0-9-]/g, '-'));
+    return { dir, root: this.root };
+  }
 
   /** Independent text window: a long stretch of tools cannot evict the conversation. */
   async readText(source: ThreadSession): Promise<string | undefined> {
