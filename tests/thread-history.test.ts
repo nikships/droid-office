@@ -286,3 +286,95 @@ test('a failure past the cut stays with the row that reports it', () => {
   );
   assert.equal(rest.state, 'failed');
 });
+
+test('rowPrefix preserves V3 card kinds and structured action metadata across window slides and clipped blocks', () => {
+  const editEntry: ThreadEntry = {
+    id: 't-edit',
+    seq: 1,
+    role: 'assistant',
+    kind: 'tool',
+    name: 'Edit',
+    input: JSON.stringify({ file_path: 'src/app.ts', old_str: 'const x = 1;\n', new_str: 'const x = 2;\n' }),
+    output: 'Updated src/app.ts',
+  };
+  const cmdEntry: ThreadEntry = {
+    id: 't-cmd',
+    seq: 2,
+    role: 'assistant',
+    kind: 'tool',
+    name: 'Execute',
+    input: JSON.stringify({ command: 'npm test', summary: 'Run tests' }),
+    output: 'PASS',
+  };
+  const laterReads = Array.from({ length: 5 }, (_, idx) => tool(idx + 3));
+  const all = [entry(0, { role: 'user' }), editEntry, cmdEntry, ...laterReads];
+
+  const h = new ThreadHistory();
+  h.apply(windowPage(all));
+  // Slide window past t-edit and t-cmd so they live in the retained prefix row.
+  h.apply(windowPage(all.slice(4)));
+
+  const prefix = h.rows[1];
+  assert.ok(prefix && prefix.kind === 'activity');
+  assert.equal(prefix.blocks.length, 3);
+  assert.ok(prefix.blocks[0].kind === 'tools');
+  assert.equal(prefix.blocks[0].card, 'change');
+  assert.equal(prefix.blocks[0].actions[0].changes?.[0]?.path, 'src/app.ts');
+  assert.ok(prefix.blocks[1].kind === 'tools');
+  assert.equal(prefix.blocks[1].card, 'command');
+  assert.equal(prefix.blocks[1].actions[0].command?.command, 'npm test');
+  assert.ok(prefix.blocks[2].kind === 'tools');
+  assert.equal(prefix.blocks[2].card, undefined);
+  assert.equal(prefix.blocks[2].label, 'Earlier tools');
+
+  // Verify a multi-action card block clipped mid-block also retains its card kind.
+  const syntheticCardRow: ThreadRow = {
+    kind: 'activity',
+    id: 'activity:c-1',
+    from: 10,
+    to: 11,
+    sourceIds: ['c-1', 'c-2'],
+    label: 'Ran 2 commands',
+    state: 'complete',
+    live: true,
+    open: false,
+    failed: [],
+    blocks: [
+      {
+        kind: 'tools',
+        id: 'tools:c-1',
+        label: 'Ran 2 commands',
+        state: 'complete',
+        live: true,
+        open: false,
+        card: 'command',
+        actions: [
+          { id: 'c-1', title: 'Ran npm lint', category: 'command', state: 'complete', status: '', result: 'Result', open: false, card: 'command', command: { command: 'npm run lint' } },
+          { id: 'c-2', title: 'Ran npm test', category: 'command', state: 'complete', status: '', result: 'Result', open: false, card: 'command', command: { command: 'npm test' } },
+        ],
+      },
+    ],
+  };
+  const h2 = new ThreadHistory();
+  h2.apply({
+    sessionId: 'two',
+    entries: [
+      { id: 'c-1', seq: 10, role: 'assistant', kind: 'tool', name: 'Execute', input: '{"command":"npm run lint"}', output: 'ok' },
+      { id: 'c-2', seq: 11, role: 'assistant', kind: 'tool', name: 'Execute', input: '{"command":"npm test"}', output: 'ok' },
+    ],
+    hasMore: true,
+    presentation: { version: 1, rows: [syntheticCardRow] },
+  });
+  h2.apply({
+    sessionId: 'two',
+    entries: [{ id: 'c-2', seq: 11, role: 'assistant', kind: 'tool', name: 'Execute', input: '{"command":"npm test"}', output: 'ok' }],
+    hasMore: true,
+    presentation: { version: 1, rows: [{ ...syntheticCardRow, id: 'activity:c-2', from: 11, to: 11, sourceIds: ['c-2'] }] },
+  });
+  const clippedPrefix = h2.rows[0];
+  assert.ok(clippedPrefix.kind === 'activity');
+  assert.ok(clippedPrefix.blocks[0].kind === 'tools');
+  assert.equal(clippedPrefix.blocks[0].card, 'command');
+  assert.equal(clippedPrefix.blocks[0].actions.length, 1);
+  assert.equal(clippedPrefix.blocks[0].actions[0].id, 'c-1');
+});

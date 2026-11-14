@@ -105,6 +105,7 @@ import ai.factory.droidoffice.core.WorkerLinkView
 import ai.factory.droidoffice.core.WorkerStatus
 import ai.factory.droidoffice.core.MissionAgent
 import ai.factory.droidoffice.core.MissionControl
+import ai.factory.droidoffice.core.MissionTeamMember
 import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.net.nameOf
@@ -296,6 +297,8 @@ fun WorkerScreen(
         var directInput by rememberSaveable(workerId) { mutableStateOf(false) }
         var composerFocus by remember(workerId) { mutableIntStateOf(0) }
         var sent by remember(workerId) { mutableIntStateOf(0) }
+        // A selection quoted from the Thread, until the composer has put it in the draft.
+        var quote by remember(workerId) { mutableStateOf<String?>(null) }
         val questionScopeKey = "$workerId/${questionId.orEmpty()}/$launchId"
         var questionHandled by rememberSaveable(questionScopeKey) { mutableStateOf(false) }
         var openedQuestionMenu by remember(questionScopeKey) { mutableStateOf<Menu?>(null) }
@@ -385,15 +388,44 @@ fun WorkerScreen(
                 if (restore == null || connection.send(ClientMsg.termResize(workerId, restore.cols, restore.rows))) sizing.release()
             }
         }
-        if (!tty) Thread(
-            worker, screen, live && link.phase == Phase.Connected, link.phase == Phase.Connected,
-            Modifier.weight(1f).fillMaxWidth(),
-            queued = queueState, queueRevision = queueRevision, queueReady = queueReady,
-            onQueueChanged = { queueRevision++ },
-            onTty = { ttyChoice = true },
-            followRequest = sent,
-            rawTty = !cloud,
-        ) else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
+        if (!tty) {
+            val openSubagent: ((String) -> Unit)? = onOpenWorker?.let { open ->
+                { targetId ->
+                    val teamMember = MissionControl.team(orchestrator).firstOrNull { it.id == targetId }
+                        ?: data.deskWorker(targetId)?.let { target ->
+                            val targetFloor = data.workerFloorId(target.id)
+                            if (targetFloor != null && targetFloor != data.floorId) {
+                                MissionTeamMember(
+                                    id = target.id,
+                                    name = target.name,
+                                    floor = targetFloor,
+                                    floorName = data.floorOfWorker(target.id)?.name.orEmpty(),
+                                    status = target.status,
+                                )
+                            } else null
+                        }
+                    if (teamMember != null && followTeamMember != null) followTeamMember(teamMember)
+                    else open(targetId)
+                }
+            }
+            // Paths in messages and File Change cards open the worker's files over the Thread.
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                // Text selected in the conversation can be quoted into the reply while the composer shows.
+                val quotable = composing && blocked == null && worker.state != WorkerStatus.NeedsInput
+                ProvideFilePreview(worker) { QuoteSelections(quotable, onQuote = { quote = it }) {
+                    Thread(
+                        worker, screen, live && link.phase == Phase.Connected, link.phase == Phase.Connected,
+                        Modifier.fillMaxSize(),
+                        queued = queueState, queueRevision = queueRevision, queueReady = queueReady,
+                        onQueueChanged = { queueRevision++ },
+                        onTty = { ttyChoice = true },
+                        followRequest = sent,
+                        rawTty = !cloud,
+                        onOpenWorker = openSubagent,
+                    )
+                } }
+            }
+        } else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
             Terminal(
                 workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,
                 Modifier.fillMaxSize().border(1.dp, Palette.Border, RoundedCornerShape(12.dp)),
@@ -432,6 +464,7 @@ fun WorkerScreen(
                 if (blocked != null && !waiting) OrchestratorBlocked(blocked)
                 Composer(
                     worker, draft, visible = blocked == null && !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus, thread = !tty,
+                    quote = quote, onQuoted = { quote = null },
                     queueState = queueState, onQueued = { queueRevision++ },
                     onSent = { prompt ->
                         sent++

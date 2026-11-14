@@ -12,6 +12,7 @@ import { UPLOAD_MAX_BYTES } from '../../shared/decor.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../../shared/search.js';
 import type { SearchResults } from '../../shared/protocol.js';
 import { DROP_IMAGE_ID } from '../thread-images.js';
+import { ThreadWorkspace } from '../thread-workspace.js';
 import type { createWhiteboardRuntime } from './whiteboard.js';
 import { imageIds, repoOf, str } from './validation.js';
 import { readBody, readBytes, send } from './http-utils.js';
@@ -27,7 +28,8 @@ export function isFloorHttpPath(p: string, method: string | undefined): boolean 
     p.startsWith('/api/factory/') ||
     p.startsWith('/api/docs') ||
     p.startsWith('/api/whiteboard/') ||
-    (method === 'GET' && (p === '/api/thread/image' || p === '/api/linear/issue' || p === '/api/linear/image' || p === '/api/jira/ticket' || p === '/api/search' || p.startsWith('/api/gh/')))
+    (method === 'GET' &&
+      (p === '/api/thread/image' || p === '/api/thread/files' || p === '/api/thread/file' || p === '/api/linear/issue' || p === '/api/linear/image' || p === '/api/jira/ticket' || p === '/api/search' || p.startsWith('/api/gh/')))
   );
 }
 
@@ -43,6 +45,13 @@ interface FloorHttpContext {
 
 /** Authenticated floor resources: terminals, boards, docs, integrations and uploads. */
 export function createFloorHttp({ floors, orchestrator, workerFloor, workerThreads, factory, setup, whiteboardRequest }: FloorHttpContext) {
+  const threadWorkspace = new ThreadWorkspace();
+  const resolveThreadCwd = (workerId: string, floor: Floor | undefined): string | undefined => {
+    if (!workerId) return undefined;
+    if (workerId === ORCHESTRATOR_ID) return orchestrator.cwd;
+    return floor?.workers.agentFolder(workerId) ?? workerFloor(workerId)?.workers.agentFolder(workerId);
+  };
+
   /** The 🔎 search: lines of the terminals of every worker on that floor, with the words in them. */
   const search = (q: string, floor: Floor | undefined): SearchResults => {
     q = q.slice(0, SEARCH_MAX);
@@ -77,6 +86,34 @@ export function createFloorHttp({ floors, orchestrator, workerFloor, workerThrea
       });
       res.end(image.body);
       return;
+    }
+    if ((p === '/api/thread/files' || p === '/api/thread/file') && req.method === 'GET') {
+      const workerId = str(url.searchParams.get('worker'), 32);
+      const cwd = resolveThreadCwd(workerId, floor);
+      if (!cwd) return send(res, 404, { error: 'Workspace files are available only for local Droid workers.' });
+      if (p === '/api/thread/files') {
+        const q = str(url.searchParams.get('q'), 256);
+        const r = await threadWorkspace.listFiles(cwd, q);
+        return 'error' in r ? send(res, r.status, { error: r.error }) : send(res, 200, r);
+      }
+      const relPath = str(url.searchParams.get('path'), 4096);
+      if (url.searchParams.get('raw') === 'image') {
+        const image = await threadWorkspace.readImage(cwd, relPath);
+        if ('error' in image) return send(res, image.status, { error: image.error });
+        res.writeHead(200, {
+          'content-type': image.type,
+          'content-length': String(image.body.length),
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+          // An SVG the worker wrote runs no script and loads nothing, even opened on its own.
+          'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+          'cross-origin-resource-policy': 'same-origin',
+        });
+        res.end(image.body);
+        return;
+      }
+      const r = await threadWorkspace.readPreview(cwd, relPath);
+      return 'error' in r ? send(res, r.status, { error: r.error, ...(r.binary ? { binary: true } : {}) }) : send(res, 200, r);
     }
     if (p === '/api/term/drop') {
       // A file dropped or pasted into a worker's terminal, kept on this machine for the terminal to type its path.

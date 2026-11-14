@@ -7,6 +7,28 @@ import org.junit.Test
 
 class MarkdownTest {
     @Test
+    fun linksWorkspacePathsOnlyWhenAsked() {
+        val src = "Fixed `src/app.ts:12` and android/app/build.gradle.kts:4, see [docs](https://x.dev/src/a.ts) and `package.json`."
+        assertEquals(null, Markdown.parse(src).flatMap { (it as Block.Paragraph).spans }.firstOrNull { it.file != null })
+        val spans = (Markdown.parse(src, paths = true).single() as Block.Paragraph).spans
+        val files = spans.filter { it.file != null }
+        assertEquals(listOf("src/app.ts:12", "android/app/build.gradle.kts:4", "package.json"), files.map { it.text })
+        assertEquals(WorkspacePaths.Ref("src/app.ts", 12), files[0].file)
+        assertEquals(true, files[0].code)
+        assertEquals(WorkspacePaths.Ref("package.json"), files[2].file)
+        assertEquals(null, spans.first { it.link != null }.file)
+        assertEquals(src.replace("`", "").replace("[docs](https://x.dev/src/a.ts)", "docs"), spans.joinToString("") { it.text })
+    }
+
+    @Test
+    fun linksPathsInListsQuotesHeadingsAndTables() {
+        val blocks = Markdown.parse("# src/a.ts\n- src/b.ts:3\n> src/c.ts\n\n| f |\n|---|\n| src/d.ts |", paths = true)
+        assertEquals("src/a.ts", (blocks[0] as Block.Heading).spans.single().file?.path)
+        assertEquals(WorkspacePaths.Ref("src/b.ts", 3), (blocks[1] as Block.Item).spans.single().file)
+        assertEquals("src/c.ts", (blocks[2] as Block.Quote).spans.single().file?.path)
+        assertEquals("src/d.ts", (blocks[3] as Block.Table).rows[0][0].single().file?.path)
+    }
+    @Test
     fun blocks() {
         val md = """
             # Title
@@ -140,5 +162,139 @@ class MarkdownTest {
         assertEquals(Span("node --test tests/*.test.ts", code = true), pieces[1][0])
         assertEquals(listOf(listOf(Span("a/b/c", code = true), Span("d"))), Markdown.unbroken(listOf(Span("a/b/c", code = true), Span("d"))))
         assertEquals(emptyList<List<Span>>(), Markdown.unbroken(emptyList()))
+    }
+
+    @Test
+    fun parsesEmailDraftBlocksAndFallsBackToCodeWithoutHeaders() {
+        val md = """
+            Draft ready:
+            ```email
+            To: Alice <alice@example.com>, bob@example.com
+            Cc: team@example.com
+            Bcc: audit@example.com
+            Subject: Thread V3 Android Parity
+
+            Hi team,
+
+            Android parity is green!
+            ```
+            ```email
+            Not an email header
+            just plain text
+            ```
+        """.trimIndent()
+        val blocks = Markdown.parse(md)
+        assertEquals(3, blocks.size)
+        val email = blocks[1] as Block.Email
+        assertEquals("Alice <alice@example.com>, bob@example.com", email.to)
+        assertEquals("team@example.com", email.cc)
+        assertEquals("audit@example.com", email.bcc)
+        assertEquals("Thread V3 Android Parity", email.subject)
+        assertEquals("Hi team,\n\nAndroid parity is green!", email.body)
+        val mailto = email.mailtoUri()
+        org.junit.Assert.assertTrue(mailto.startsWith("mailto:alice@example.com,bob@example.com?"))
+        org.junit.Assert.assertTrue("spaces encode as %20, not +", "+" !in mailto && "Thread%20V3%20Android%20Parity" in mailto)
+        assertEquals(Block.Code("Not an email header\njust plain text", "email"), blocks[2])
+    }
+
+    @Test
+    fun extractsJsonRenderWidgetsOutsideCodeAndHandlesStreamingAndCycles() {
+        val widgetJson = """{"root":"root","elements":{
+            "root":{"type":"Card","props":{"title":"Build Summary","padding":"md"},"children":["row","bar","spark","tbl","lst","call","tl","div","nl","sp"]},
+            "row":{"type":"Box","props":{"flexDirection":"row","gap":2,"borderStyle":"dashed"},"children":["h","txt","kv","st","bdg","met","prog"]},
+            "h":{"type":"Heading","props":{"text":"Metrics","level":2},"children":[]},
+            "txt":{"type":"Text","props":{"text":"All green","bold":true,"color":"success"},"children":[]},
+            "kv":{"type":"KeyValue","props":{"label":"Tests","value":142},"children":[]},
+            "st":{"type":"StatusLine","props":{"text":"Healthy","status":"success"},"children":[]},
+            "bdg":{"type":"Badge","props":{"label":"OK","variant":"success"},"children":[]},
+            "met":{"type":"Metric","props":{"label":"Latency","value":"14ms","trend":"down"},"children":[]},
+            "prog":{"type":"ProgressBar","props":{"progress":0.75,"label":"Coverage"},"children":[]},
+            "bar":{"type":"BarChart","props":{"data":[{"label":"JVM","value":80,"color":"accent"},{"label":"Lint","value":20}],"showPercentage":true},"children":[]},
+            "spark":{"type":"Sparkline","props":{"data":[10,20,15,30],"color":"#3ccf91"},"children":[]},
+            "tbl":{"type":"Table","props":{"columns":[{"header":"Suite","key":"s"}],"rows":[{"s":"Core"}]},"children":[]},
+            "lst":{"type":"List","props":{"items":["One","Two"],"ordered":true},"children":[]},
+            "call":{"type":"Callout","props":{"type":"tip","title":"Note","content":"Fast"},"children":[]},
+            "tl":{"type":"Timeline","props":{"items":[{"title":"Compiled","status":"done"}]},"children":[]},
+            "div":{"type":"Divider","props":{"title":"Details"},"children":[]},
+            "nl":{"type":"Newline","props":{},"children":[]},
+            "sp":{"type":"Spacer","props":{},"children":[]}
+        }}""".replace("\n", "")
+        val src = """
+            Use `<json-render>` inline or fenced:
+            ```html
+            <json-render>{"ignored":true}</json-render>
+            ```
+            <json-render>$widgetJson</json-render>
+            Streaming next:
+            <json-render>{"root":"r"
+        """.trimIndent()
+        val blocks = Markdown.parse(src)
+        assertEquals(5, blocks.size)
+        org.junit.Assert.assertTrue(blocks[0] is Block.Paragraph)
+        assertEquals(Block.Code("<json-render>{\"ignored\":true}</json-render>", "html"), blocks[1])
+        val complete = blocks[2] as Block.Widget
+        org.junit.Assert.assertTrue(complete.complete)
+        val parsed = JsonWidget.parse(complete.rawJson) as JsonWidget.Node.Card
+        assertEquals("Build Summary", parsed.title)
+        assertEquals(10, parsed.children.size)
+
+        val streaming = blocks[4] as Block.Widget
+        org.junit.Assert.assertFalse(streaming.complete)
+        org.junit.Assert.assertNull(JsonWidget.parse(streaming.rawJson))
+
+        // Cyclic graph and malformed props never crash or loop infinitely.
+        val cyclic = """{"root":"a","elements":{"a":{"type":"Box","props":{},"children":["b"]},"b":{"type":"Box","props":{},"children":["a"]}}}"""
+        val cyclicNode = JsonWidget.parse(cyclic) as JsonWidget.Node.Box
+        assertEquals(1, cyclicNode.children.size)
+
+        // Deep nesting beyond MAX_DEPTH is truncated safely.
+        val deepElements = (0..40).joinToString(",") { i ->
+            val child = if (i < 40) "\"n${i + 1}\"" else "\"leaf\""
+            "\"n$i\":{\"type\":\"Box\",\"props\":{},\"children\":[$child]}"
+        } + ",\"leaf\":{\"type\":\"Text\",\"props\":{\"text\":\"deep\"},\"children\":[]}"
+        val deepTree = JsonWidget.parse("""{"root":"n0","elements":{$deepElements}}""")
+        org.junit.Assert.assertNotNull(deepTree)
+        org.junit.Assert.assertNull(JsonWidget.parse("""{"root":"missing","elements":{}}"""))
+    }
+
+    @Test
+    fun tokenizesCodeHighlightingKeywordsStringsCommentsAndNumbersVerbatim() {
+        val kt = """
+            // Greeting helper
+            @Composable
+            fun greet(count: Int = 42): String {
+                return "hello \"world\""
+            }
+        """.trimIndent()
+        val tokens = Markdown.tokenizeCode(kt, "kotlin")
+        assertEquals(kt, tokens.joinToString("") { it.text })
+        val kinds = tokens.map { it.kind }.toSet()
+        org.junit.Assert.assertTrue(Markdown.TokenKind.Comment in kinds)
+        org.junit.Assert.assertTrue(Markdown.TokenKind.Keyword in kinds)
+        org.junit.Assert.assertTrue(Markdown.TokenKind.Type in kinds)
+        org.junit.Assert.assertTrue(Markdown.TokenKind.Number in kinds)
+        org.junit.Assert.assertTrue(Markdown.TokenKind.String in kinds)
+    }
+
+    @Test
+    fun mathOnlyWhenAskedAsSpansAndDisplayBlocks() {
+        val src = "Given \$x_1^2 + y^2\$ for **\$a\$** at \$100,\n\n\$\$\n\\sum_{i=1}^{n} i\n\$\$\n\n| \$k\$ | v |\n|---|---|\n| \$n^2\$ | 1 |\n\n`\$x\$` stays code, \\\$5 is a price."
+        val plain = Markdown.parse(src)
+        assertEquals(null, plain.filterIsInstance<Block.Paragraph>().flatMap { it.spans }.firstOrNull { it.math != null })
+        assertEquals(0, plain.filterIsInstance<Block.Math>().size)
+
+        val blocks = Markdown.parse(src, paths = true, math = true)
+        val first = (blocks[0] as Block.Paragraph).spans
+        assertEquals(listOf("x_1^2 + y^2", "a"), first.mapNotNull { it.math })
+        assertEquals(Span("\$x_1^2 + y^2\$", math = "x_1^2 + y^2"), first[1])
+        assertEquals(true, first.single { it.math == "a" }.bold)
+        assertEquals("Given \$x_1^2 + y^2\$ for \$a\$ at \$100,", first.joinToString("") { it.text })
+        assertEquals(Block.Math("\\sum_{i=1}^{n} i", "\$\$\n\\sum_{i=1}^{n} i\n\$\$"), blocks[1])
+        val table = blocks[2] as Block.Table
+        assertEquals("k", table.header[0].single().math)
+        assertEquals(listOf(listOf(Span("\$n^2\$", math = "n^2"))), Markdown.unbroken(table.rows[0][0]))
+        val last = (blocks[3] as Block.Paragraph).spans
+        assertEquals(Span("\$x\$", code = true), last[0])
+        assertEquals(" stays code, \$5 is a price.", last[1].text)
     }
 }

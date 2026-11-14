@@ -131,7 +131,11 @@ export interface CloudOptions {
   instanceWait?: { everyMs: number; maxMs: number };
   /** One of the office's prompts as rewritten in Settings (server/prompts.ts); the default without it. */
   prompt?(id: PromptId, vars: PromptVars): string;
+  /** Wakes watched Thread subscribers on live stream deltas and REST message/status updates. */
+  onThreadChange?(workerId: string): void;
 }
+
+const THREAD_STREAM_EVENTS = new Set(['assistant_text_delta', 'thinking_text_delta', 'tool_call', 'tool_result', 'create_message', 'assistant_message_retracted', 'droid_working_state_changed', 'agent_turn_completed']);
 
 type Session = { status?: unknown; messageCount?: unknown; updatedAt?: unknown; title?: unknown; sessionSettings?: { model?: unknown; reasoningEffort?: unknown } };
 type Picture = { type: 'base64'; data: string; mediaType: string };
@@ -212,6 +216,8 @@ export class CloudFeature extends SliceFeature<'cloud'> {
           this.streamMetadata(id, superseded.settings ? {} : record(snapshot.settings), superseded.title ? undefined : session.title);
           if (!superseded.state) this.streamState(id, snapshot.workingState);
           this.streamPaint(id);
+          const found = this.session(id);
+          if (found) this.opts.onThreadChange?.(found.info.id);
         },
         notification: (id, n) => this.streamEvent(id, n),
       });
@@ -286,8 +292,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
           i.action = tool.action;
         });
     }
-    if (n.type === 'agent_turn_completed') {
-      if (this.waitingForAcceptance(id, floor.cloud.turn(info.id))) return;
+    if (n.type === 'agent_turn_completed' && !this.waitingForAcceptance(id, floor.cloud.turn(info.id))) {
       const messages = this.threads.messages(id);
       const reply = [...messages].reverse().find((m) => m.role === 'assistant' && m.blocks.some((b) => b.type === 'text'));
       const text = reply?.blocks.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join(' ');
@@ -302,6 +307,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       // A turn that ended badly is still over: done, with why in its activity, so the next message can go.
       floor.cloud.setStatus(info.id, 'done');
     }
+    if (typeof n.type === 'string' && THREAD_STREAM_EVENTS.has(n.type)) this.opts.onThreadChange?.(info.id);
   }
 
   /** A prompt the office sent stays open until the stream shows it arrived: an earlier turn's completion doesn't end it. */
@@ -760,7 +766,10 @@ export class CloudFeature extends SliceFeature<'cloud'> {
       }
     }
     if (this.live(info.sessionId!, floor.cloud.turn(id)) || this.streamRevisions.get(info.sessionId!) !== revision) {
-      if (messages) this.threads.absorb(info.sessionId!, messages);
+      if (messages) {
+        this.threads.absorb(info.sessionId!, messages);
+        this.opts.onThreadChange?.(id);
+      }
       floor.cloud.polled(id, { count, updatedAt }, floor.cloud.turn(id) ?? {}, now);
       return;
     }
@@ -807,6 +816,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     }
     floor.cloud.polled(id, { count, updatedAt }, mapped.turn, now);
     if (next) floor.cloud.setStatus(id, next);
+    if (messages || next) this.opts.onThreadChange?.(id);
   }
 
   /** It can't work: its session or computer is gone. It stays at its desk, saying why, until it's sent home. */
@@ -817,6 +827,7 @@ export class CloudFeature extends SliceFeature<'cloud'> {
     });
     floor.cloud.polled(id, undefined, {}, now);
     floor.cloud.setStatus(id, 'exited');
+    this.opts.onThreadChange?.(id);
   }
 }
 

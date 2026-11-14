@@ -44,6 +44,40 @@ class ThreadViewTest {
 
     private fun tool(input: String?, output: String? = "ok") = ThreadEntry("tool:1", 1, ThreadRole.Assistant, ThreadKind.Tool, name = "Execute", input = input, output = output)
 
+    private fun change(vararg lines: ThreadDiffLine) =
+        ThreadFileChange(path = "src/a.ts", shortPath = "src/a.ts", kind = FileChangeKind.Modified, additions = 1, deletions = 1, generated = false, lines = lines.toList())
+
+    @Test
+    fun anAnchoredEditOpensAtItsRealLineAndAnUnanchoredOneOpensWithoutALine() {
+        val anchored = change(
+            ThreadDiffLine(DiffLineKind.Hunk, "@@ -900,2 +900,2 @@"),
+            ThreadDiffLine(DiffLineKind.Ctx, "fun target() {", oldLine = 900, newLine = 900),
+            ThreadDiffLine(DiffLineKind.Del, "  1", oldLine = 901),
+            ThreadDiffLine(DiffLineKind.Add, "  2", newLine = 901),
+        )
+        assertTrue(ThreadView.numbered(anchored))
+        assertEquals(900, ThreadView.targetLine(anchored))
+        val deletionOnly = change(ThreadDiffLine(DiffLineKind.Hunk, "@@ -12,1 +11,0 @@"), ThreadDiffLine(DiffLineKind.Del, "gone", oldLine = 12))
+        assertEquals(12, ThreadView.targetLine(deletionOnly))
+        assertEquals(42, ThreadView.targetLine(change(ThreadDiffLine(DiffLineKind.Hunk, "@@ -0,0 +42,5 @@"))))
+
+        val unanchored = change(ThreadDiffLine(DiffLineKind.Hunk, "@@"), ThreadDiffLine(DiffLineKind.Del, "  1"), ThreadDiffLine(DiffLineKind.Add, "  2"))
+        assertFalse(ThreadView.numbered(unanchored))
+        assertNull(ThreadView.targetLine(unanchored))
+    }
+
+    @Test
+    fun changedPathsOpenOnlyInsideTheWorkersWorkspace() {
+        assertEquals("src/a.ts", ThreadView.workspacePath("src/a.ts", null))
+        assertEquals("src/client/style.css", ThreadView.workspacePath("/Users/nik/repos/droid-office/.droid-office/worktrees/pixel-1662/src/client/style.css", null))
+        assertEquals("src/server/server.ts", ThreadView.workspacePath("/Users/nik/repos/droid-office/src/server/server.ts", "/Users/nik/repos/droid-office/"))
+        assertNull(ThreadView.workspacePath("/etc/hosts", "/Users/nik/repos/droid-office"))
+        assertNull(ThreadView.workspacePath("/Users/nik/repos/droid-office/src/a.ts", null))
+        assertNull(ThreadView.workspacePath("../outside.ts", null))
+        assertNull(ThreadView.workspacePath(".git/config", null))
+        assertNull(ThreadView.workspacePath("  ", null))
+    }
+
     @Test
     fun anActivityIsFoundByAnyEntryItStandsFor() {
         val rows = listOf(
@@ -174,5 +208,129 @@ class ThreadViewTest {
         val closed = activity(listOf("a"), open = true)
         choices += ThreadView.Open.toggle(closed, choices)
         assertFalse(ThreadView.Open.activity(closed, choices))
+    }
+
+    @Test
+    fun latestPlanReadsTodoWriteAndMarksFinishedPlansStaleAfterNextUserPrompt() {
+        val todoCall = ThreadEntry(
+            id = "tool:todo-1",
+            seq = 2,
+            role = ThreadRole.Assistant,
+            kind = ThreadKind.Tool,
+            name = "TodoWrite",
+            input = """{"todos":"1. [completed] Read specs\n2. [in_progress] Build cards\n3. [pending] Run tests"}""",
+            output = "TODO List Updated",
+        )
+        val active = ThreadView.latestPlan(listOf(todoCall), busy = true)!!
+        assertEquals(1, active.done)
+        assertEquals(3, active.total)
+        assertEquals("Build cards", active.current)
+        assertFalse(active.allDone)
+        assertFalse(active.stale)
+
+        val doneCall = todoCall.copy(
+            id = "tool:todo-2",
+            seq = 4,
+            input = """{"todos":[{"status":"completed","content":"Read specs"},{"status":"completed","content":"Build cards"}]}""",
+        )
+        val finished = ThreadView.latestPlan(listOf(doneCall), busy = false)!!
+        assertTrue(finished.allDone)
+        assertFalse(finished.stale)
+
+        val nextPrompt = ThreadEntry("u2", 5, ThreadRole.User, ThreadKind.Text, text = "Now polish the diff view")
+        assertTrue(ThreadView.latestPlan(listOf(doneCall, nextPrompt), busy = false)!!.stale)
+        assertFalse(ThreadView.latestPlan(listOf(doneCall, nextPrompt), busy = true)!!.stale)
+    }
+
+    @Test
+    fun segmentsPartitionExplorationAndTopLevelCardsInOrder() {
+        val thought = ThreadBlock.Thought("th1", "Inspecting protocol", live = false)
+        val readRun = ThreadBlock.Tools("tools:t1", "Read 2 files", ActivityState.Complete, live = false, actions = listOf(action("t1").copy(category = "read", title = "Read Protocol.kt")))
+        val editRun = ThreadBlock.Tools(
+            id = "tools:t2",
+            label = "Edited a file",
+            state = ActivityState.Complete,
+            live = false,
+            card = ThreadCardKind.Change,
+            actions = listOf(
+                action("t2").copy(
+                    category = "edit",
+                    card = ThreadCardKind.Change,
+                    changes = listOf(ThreadFileChange("/a/Protocol.kt", "Protocol.kt", FileChangeKind.Modified, 4, 1, generated = false)),
+                ),
+            ),
+        )
+        val cmdRun = ThreadBlock.Tools(
+            id = "tools:t3",
+            label = "Ran a command",
+            state = ActivityState.Failed,
+            live = false,
+            card = ThreadCardKind.Command,
+            actions = listOf(action("t3").copy(state = ActivityState.Failed, card = ThreadCardKind.Command, command = ThreadCommandMeta("./gradlew test"))),
+        )
+        val row = ThreadRow.Activity(
+            id = "activity:th1",
+            from = 1,
+            to = 4,
+            sourceIds = listOf("th1", "t1", "t2", "t3"),
+            label = "Read 2 files · Edited a file · Ran a command",
+            state = ActivityState.Failed,
+            live = false,
+            blocks = listOf(thought, readRun, editRun, cmdRun),
+        )
+        val segments = ThreadView.segments(row)
+        assertEquals(3, segments.size)
+        val exp = segments[0] as ThreadView.Segment.Exploration
+        assertEquals("th1", exp.tagId)
+        assertEquals("Read 2 files", exp.label)
+        assertEquals(ThreadCardKind.Change, (segments[1] as ThreadView.Segment.Card).kind)
+        assertEquals(ThreadCardKind.Command, (segments[2] as ThreadView.Segment.Card).kind)
+
+        val choices = HashMap<String, Boolean>()
+        val change = editRun.actions.single().changes!!.single()
+        assertTrue(ThreadView.Open.change("t2", change, choices))
+        assertFalse(ThreadView.Open.change("t2", change.copy(generated = true), choices))
+        // The office's choice wins over the generated guess; the owner's wins over both.
+        assertFalse(ThreadView.Open.change("t2", change.copy(open = false), choices))
+        assertTrue(ThreadView.Open.change("t2", change.copy(open = false), mapOf("t2" to true)))
+        assertTrue(ThreadView.Open.command(cmdRun.actions.single(), choices))
+        assertFalse(ThreadView.Open.command(cmdRun.actions.single().copy(state = ActivityState.Complete), choices))
+    }
+
+    @Test
+    fun createdDocumentsAndPicturesAreDeliverables() {
+        for (p in listOf("docs/spec.md", "notes.MARKDOWN", "site/index.html", "a.htm", "shot.PNG", "b.jpeg", "c.webp", "d.svg", "e.gif")) assertTrue(p, ThreadView.deliverable(p))
+        for (p in listOf("src/app.ts", "README", "archive.md.zip", "docs.md/notes")) assertFalse(p, ThreadView.deliverable(p))
+    }
+
+    @Test
+    fun aGroupFoldsTheSegmentsFromItsFirstCardToItsLast() {
+        fun card(id: String) = ThreadBlock.Tools(
+            "tools:$id", "Ran a command", ActivityState.Complete, live = false, card = ThreadCardKind.Command,
+            actions = listOf(action(id).copy(card = ThreadCardKind.Command, command = ThreadCommandMeta("ls"))),
+        )
+        val read = ThreadBlock.Tools("tools:r1", "Read a file", ActivityState.Complete, live = false, actions = listOf(action("r1")))
+        val read2 = ThreadBlock.Tools("tools:r2", "Read a file", ActivityState.Complete, live = false, actions = listOf(action("r2")))
+        val blocks = listOf(read, card("c1"), read2, card("c2"), card("c3"))
+        val group = ThreadToolGroup("group:tools:c1", listOf("tools:c1", "tools:r2", "tools:c2", "tools:c3"), "Ran 3 commands", ActivityState.Complete, live = false, open = false)
+        val row = ThreadRow.Activity(
+            id = "activity:r1", from = 1, to = 5, sourceIds = listOf("r1", "c1", "r2", "c2", "c3"), label = "Read 2 files · Ran 3 commands",
+            state = ActivityState.Complete, live = false, blocks = blocks, groups = listOf(group),
+        )
+        val items = ThreadView.items(row, ThreadView.segments(row))
+        assertEquals(2, items.size)
+        assertTrue((items[0] as ThreadView.Item.One).segment is ThreadView.Segment.Exploration)
+        val folded = items[1] as ThreadView.Item.Group
+        assertEquals(group, folded.group)
+        assertEquals(listOf("tools:c1", "tools:r2", "tools:c2", "tools:c3"), folded.segments.map {
+            when (it) {
+                is ThreadView.Segment.Card -> it.block.id
+                is ThreadView.Segment.Exploration -> it.blocks.first().id
+            }
+        })
+        assertFalse(ThreadView.Open.group(group, emptyMap()))
+        assertTrue(ThreadView.Open.group(group.copy(open = true), emptyMap()))
+        assertFalse(ThreadView.Open.group(group.copy(open = true), mapOf(group.id to false)))
+        assertEquals(ThreadView.segments(row).size, ThreadView.items(row.copy(groups = emptyList()), ThreadView.segments(row)).size)
     }
 }

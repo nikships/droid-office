@@ -4,22 +4,25 @@
   "schema": {
     "case": "{ name: string (unique), busy: boolean (the worker is in a turn), entries: ThreadEntry[] (wire shape, oldest first), expected: ThreadRow[] }",
     "presentation": "{ version: 1, rows: ThreadRow[] } on thread.snapshot. A client that gets a version it doesn't know, or none, says so and offers Raw TTY instead of guessing.",
-    "message": "{ kind: 'message', id: entry id, from, to: its seq, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name) }",
+    "message": "{ kind: 'message', id: entry id, from, to: its seq, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name), turnChanges?: TurnChanges }",
     "notice": "{ kind: 'notice', id: entry id, from, to: its seq, role, text: string (the copy shown), tone: 'quiet' | 'danger' | 'attachment' }",
-    "activity": "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: cancellation and missing-result counts only, running?: newest working action's title while live, failed: { id, title, preview }[] (diagnostic metadata, never a callout), blocks: Block[] }",
+    "activity": "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: cancellation and missing-result counts only, running?: newest working action's title while live, failed: { id, title, preview }[] (diagnostic metadata, never a callout), blocks: Block[], groups?: Group[], turnChanges?: TurnChanges }",
+    "group": "{ id: 'group:' + its first block's id, blockIds: the consecutive blocks from the Activity's first card block to its last (only with three or more card blocks), label, state, live, open: true in the latest turn, false before it, files, additions, deletions: what its finished change cards changed, each file counted once }",
+    "turnChanges": "{ count: files the turn's finished change cards changed, each counted once, additions, deletions, files: { path, shortPath, additions, deletions }[] (the first 20, in first-changed order) }, on the last message or Activity row of a turn that changed files, absent on the latest turn while busy",
     "thought": "{ kind: 'thought', id: entry id, preview: first non-blank line, asterisks stripped, clipped to 120, live: busy and the last entry, open: false }",
-    "tools": "{ kind: 'tools', id: 'tools:' + first entry id of the run, label, state, live, open: false, actions: Action[], plan?: { done, active, text }[] (the run's plan, only when it changed since the last one shown) }",
-    "action": "{ id: tool entry id, title: human, never a raw command, JSON or home path, detail?: short path, pattern or subagent type, category, state: 'complete' | 'working' | 'failed' | 'incomplete' | 'cancelled', status: the state in words or '', causedBy?: the child entry whose failure this wrapper repeats, arguments?: { label, field? } (field: key of the input JSON, '.' for a JSON string, absent for the whole input), result: 'Result' | 'Error' | 'Cancelled', open: false }",
+    "tools": "{ kind: 'tools', id: 'tools:' + first visible entry id of the block, label, state, live, open: false, card?: 'change' | 'command' | 'delegate' (single-action V3 card block; absent on grouped exploration blocks), actions: Action[], plan?: { done, active, text }[] (the run's plan, only when it changed since the last one shown) }",
+    "action": "{ id: tool entry id, title: human, never a raw command, JSON or home path, detail?: short path, pattern or subagent type, category, state: 'complete' | 'working' | 'failed' | 'incomplete' | 'cancelled', status: the state in words or '', causedBy?: the child entry whose failure this wrapper repeats, arguments?: { label, field? } (field: key of the input JSON, '.' for a JSON string, absent for the whole input), result: 'Result' | 'Error' | 'Cancelled', open: false, card?: 'change' | 'command' | 'delegate', changes?: (ThreadFileChange & { open?: boolean })[] (open: the diff starts open), command?: { command, summary? }, delegation?: { agent, role?, summary, workerId?, workerName?, branch? } }",
     "paging": "{ name, busy, steps: { snapshot: thread.snapshot fields (before?, entries, hasMore, presentation), expected: { entries: ids loaded, rows: ThreadRow[] held } }[] }. A latest page replaces the rows from its first row on; an earlier page adds only rows that end before the first row already held.",
     "rules": [
-      "Messages and shown notices are top-level rows. Everything between them is one Activity row holding, in order, its thoughts and its tool runs; a thought splits tool runs but not the Activity. An Activity with nothing to show leaves no row.",
+      "Messages and shown notices are top-level rows. Everything between them is one Activity row holding, in order, its thoughts, grouped exploration tool runs, and single-action V3 card blocks (change, command, delegate); thoughts and card actions split exploration runs in chronological order without splitting the Activity. An Activity with nothing to show leaves no row.",
       "Hidden when they succeed: TodoWrite, TodoRead, ToolSearch, Skill, WaitForScript, TaskOutput, and a Script followed by any tool call before the next Script or the end of the run. A failed one stays available in its ordinary disclosure.",
       "Tool failures have no summary count, preview callout or Failed status badge. Error output remains available inside the action; turn-level error notices stay visible.",
       "A failed Script with the CLI's exact error envelope repeating an enclosed child's full failure stays available (causedBy) but is excluded from labels and failed counts. Independent, unmatched, truncated or incomplete wrapper failures remain counted.",
       "Turn ended · completed is hidden; Turn cancelled is a quiet notice. Only an exact CLI by-user result proves owner cancellation; a bare 'Tool execution was interrupted' stays failed.",
       "A call with no output is 'working' only in the live run; otherwise 'incomplete'. Never 'complete' without output.",
       "Labels: verb phrases per kind in first-seen order, then 'N more' past three kinds; edited and created files are unique; failed bookkeeping isn't counted. An Activity with only thoughts is 'Thought'.",
-      "Every disclosure starts closed. Clients keep the owner's choices by id across polls, result updates and earlier pages, and drop them for a new session."
+      "Every disclosure starts closed except in the latest turn (a turn runs from one owner message to the next): there card groups start open, and so do its first three diffs of at most 40 changed lines that aren't generated. Clients keep the owner's choices by id across polls, result updates and earlier pages, and drop them for a new session.",
+      "An Activity with three or more card blocks folds the blocks from its first card to its last under one group. A finished turn that changed files ends with what it changed, on its last message or Activity row."
     ]
   },
   "cases": [
@@ -281,8 +284,8 @@
           "blocks": [
             {
               "kind": "tools",
-              "id": "tools:tool:toolu_2",
-              "label": "Read a file · Ran 3 commands",
+              "id": "tools:tool:toolu_4",
+              "label": "Read a file",
               "state": "complete",
               "live": false,
               "open": false,
@@ -296,46 +299,6 @@
                   "status": "",
                   "arguments": {
                     "label": "Arguments"
-                  },
-                  "result": "Result",
-                  "open": false
-                },
-                {
-                  "id": "tool:toolu_5",
-                  "title": "Check PR 307 merge state",
-                  "category": "command",
-                  "state": "complete",
-                  "status": "",
-                  "arguments": {
-                    "label": "Command",
-                    "field": "command"
-                  },
-                  "result": "Result",
-                  "open": false
-                },
-                {
-                  "id": "tool:toolu_8",
-                  "title": "View the published release",
-                  "category": "command",
-                  "state": "complete",
-                  "status": "",
-                  "arguments": {
-                    "label": "Command",
-                    "field": "command"
-                  },
-                  "result": "Result",
-                  "open": false
-                },
-                {
-                  "id": "tool:toolu_9",
-                  "title": "Ran a command",
-                  "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
-                  "category": "command",
-                  "state": "complete",
-                  "status": "",
-                  "arguments": {
-                    "label": "Command",
-                    "field": "command"
                   },
                   "result": "Result",
                   "open": false
@@ -353,6 +316,110 @@
                   "text": "Identify any release blocker and report the published status"
                 }
               ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_5",
+              "label": "Ran a command",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "card": "command",
+              "actions": [
+                {
+                  "id": "tool:toolu_5",
+                  "title": "Check PR 307 merge state",
+                  "category": "command",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Result",
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "gh pr view 307 --repo nikships/droid-office --json state,mergeCommit",
+                    "summary": "Check PR 307 merge state"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_8",
+              "label": "Ran a command",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "card": "command",
+              "actions": [
+                {
+                  "id": "tool:toolu_8",
+                  "title": "View the published release",
+                  "category": "command",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Result",
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "gh release view v0.1.611 --repo nikships/droid-office",
+                    "summary": "View the published release"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_9",
+              "label": "Ran a command",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "card": "command",
+              "actions": [
+                {
+                  "id": "tool:toolu_9",
+                  "title": "Ran a command",
+                  "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                  "category": "command",
+                  "state": "complete",
+                  "status": "",
+                  "arguments": {
+                    "label": "Command",
+                    "field": "command"
+                  },
+                  "result": "Result",
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "gh run view 40426951831 --repo nikships/droid-office --log > /Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/run.log"
+                  }
+                }
+              ]
+            }
+          ],
+          "groups": [
+            {
+              "id": "group:tools:tool:toolu_5",
+              "blockIds": [
+                "tools:tool:toolu_5",
+                "tools:tool:toolu_8",
+                "tools:tool:toolu_9"
+              ],
+              "label": "Ran 3 commands",
+              "state": "complete",
+              "live": false,
+              "open": true,
+              "files": 0,
+              "additions": 0,
+              "deletions": 0
             }
           ]
         },
@@ -595,9 +662,9 @@
             {
               "kind": "tools",
               "id": "tools:tool:toolu_2",
-              "label": "Read a file · Ran a command",
-              "state": "working",
-              "live": true,
+              "label": "Read a file",
+              "state": "complete",
+              "live": false,
               "open": false,
               "actions": [
                 {
@@ -612,7 +679,18 @@
                   },
                   "result": "Result",
                   "open": false
-                },
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_3",
+              "label": "Ran a command",
+              "state": "working",
+              "live": true,
+              "open": false,
+              "card": "command",
+              "actions": [
                 {
                   "id": "tool:toolu_3",
                   "title": "Run the tests",
@@ -624,7 +702,12 @@
                     "field": "command"
                   },
                   "result": "Result",
-                  "open": false
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "npm test",
+                    "summary": "Run the tests"
+                  }
                 }
               ]
             }
@@ -689,8 +772,8 @@
             {
               "kind": "tools",
               "id": "tools:tool:toolu_2",
-              "label": "Read a file · Ran a command",
-              "state": "incomplete",
+              "label": "Read a file",
+              "state": "complete",
               "live": false,
               "open": false,
               "actions": [
@@ -706,7 +789,18 @@
                   },
                   "result": "Result",
                   "open": false
-                },
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_3",
+              "label": "Ran a command",
+              "state": "incomplete",
+              "live": false,
+              "open": false,
+              "card": "command",
+              "actions": [
                 {
                   "id": "tool:toolu_3",
                   "title": "Run the tests",
@@ -718,7 +812,12 @@
                     "field": "command"
                   },
                   "result": "Result",
-                  "open": false
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "npm test",
+                    "summary": "Run the tests"
+                  }
                 }
               ]
             }
@@ -793,6 +892,7 @@
               "state": "incomplete",
               "live": false,
               "open": false,
+              "card": "command",
               "actions": [
                 {
                   "id": "tool:toolu_2",
@@ -805,7 +905,12 @@
                     "field": "command"
                   },
                   "result": "Result",
-                  "open": false
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "sleep 600",
+                    "summary": "Wait for the build"
+                  }
                 }
               ]
             }
@@ -933,8 +1038,8 @@
           "blocks": [
             {
               "kind": "tools",
-              "id": "tools:tool:toolu_2",
-              "label": "Read a file · Ran a command",
+              "id": "tools:tool:toolu_3",
+              "label": "Read a file",
               "state": "complete",
               "live": false,
               "open": false,
@@ -951,7 +1056,18 @@
                   },
                   "result": "Result",
                   "open": false
-                },
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_4",
+              "label": "Ran a command",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "card": "command",
+              "actions": [
                 {
                   "id": "tool:toolu_4",
                   "title": "Show working tree status",
@@ -963,7 +1079,12 @@
                     "field": "command"
                   },
                   "result": "Result",
-                  "open": false
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "git status --short",
+                    "summary": "Show working tree status"
+                  }
                 }
               ]
             }
@@ -1937,7 +2058,7 @@
             {
               "kind": "tools",
               "id": "tools:tool:toolu_1",
-              "label": "Searched the code · Listed a folder · Edited 3 files · 7 more",
+              "label": "Searched the code · Listed a folder",
               "state": "complete",
               "live": false,
               "open": false,
@@ -1967,7 +2088,18 @@
                   },
                   "result": "Result",
                   "open": false
-                },
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_3",
+              "label": "Edited a file",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "card": "change",
+              "actions": [
                 {
                   "id": "tool:toolu_3",
                   "title": "Edited README.md",
@@ -1979,8 +2111,45 @@
                     "label": "Arguments"
                   },
                   "result": "Result",
-                  "open": false
-                },
+                  "open": false,
+                  "card": "change",
+                  "changes": [
+                    {
+                      "path": "/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/android/README.md",
+                      "shortPath": "android/README.md",
+                      "kind": "modified",
+                      "additions": 1,
+                      "deletions": 1,
+                      "generated": false,
+                      "lines": [
+                        {
+                          "kind": "hunk",
+                          "text": "@@"
+                        },
+                        {
+                          "kind": "del",
+                          "text": "a"
+                        },
+                        {
+                          "kind": "add",
+                          "text": "b"
+                        }
+                      ],
+                      "open": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_4",
+              "label": "Created a file",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "card": "change",
+              "actions": [
                 {
                   "id": "tool:toolu_4",
                   "title": "Created thread.md",
@@ -1992,8 +2161,42 @@
                     "label": "Arguments"
                   },
                   "result": "Result",
-                  "open": false
-                },
+                  "open": false,
+                  "card": "change",
+                  "changes": [
+                    {
+                      "path": "/Users/nik/notes/thread.md",
+                      "shortPath": "~/notes/thread.md",
+                      "kind": "added",
+                      "additions": 1,
+                      "deletions": 0,
+                      "generated": false,
+                      "lines": [
+                        {
+                          "kind": "hunk",
+                          "text": "@@ -0,0 +1,1 @@"
+                        },
+                        {
+                          "kind": "add",
+                          "text": "# x",
+                          "newLine": 1
+                        }
+                      ],
+                      "open": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_5",
+              "label": "Edited 2 files",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "card": "change",
+              "actions": [
                 {
                   "id": "tool:toolu_5",
                   "title": "Edited worker-thread.ts, thread-presentation.ts",
@@ -2005,8 +2208,41 @@
                     "field": "input"
                   },
                   "result": "Result",
-                  "open": false
-                },
+                  "open": false,
+                  "card": "change",
+                  "changes": [
+                    {
+                      "path": "/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/client/ui/worker-thread.ts",
+                      "shortPath": "…/client/ui/worker-thread.ts",
+                      "kind": "modified",
+                      "additions": 0,
+                      "deletions": 0,
+                      "generated": false,
+                      "lines": [],
+                      "open": false
+                    },
+                    {
+                      "path": "/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/shared/thread-presentation.ts",
+                      "shortPath": "src/shared/thread-presentation.ts",
+                      "kind": "added",
+                      "additions": 0,
+                      "deletions": 0,
+                      "generated": false,
+                      "lines": [],
+                      "open": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_6",
+              "label": "Read a web page · Searched the web",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
                 {
                   "id": "tool:toolu_6",
                   "title": "Read docs.factory.ai",
@@ -2030,7 +2266,18 @@
                   },
                   "result": "Result",
                   "open": false
-                },
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_8",
+              "label": "Ran a subagent",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "card": "delegate",
+              "actions": [
                 {
                   "id": "tool:toolu_8",
                   "title": "Audit the thread",
@@ -2042,8 +2289,24 @@
                     "label": "Arguments"
                   },
                   "result": "Result",
-                  "open": false
-                },
+                  "open": false,
+                  "card": "delegate",
+                  "delegation": {
+                    "agent": "worker",
+                    "role": "worker",
+                    "summary": "audit the thread"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:toolu_9",
+              "label": "Checked memory · Asked you a question · Used a tool",
+              "state": "complete",
+              "live": false,
+              "open": false,
+              "actions": [
                 {
                   "id": "tool:toolu_9",
                   "title": "Checked memory",
@@ -2082,7 +2345,57 @@
                 }
               ]
             }
-          ]
+          ],
+          "groups": [
+            {
+              "id": "group:tools:tool:toolu_3",
+              "blockIds": [
+                "tools:tool:toolu_3",
+                "tools:tool:toolu_4",
+                "tools:tool:toolu_5",
+                "tools:tool:toolu_6",
+                "tools:tool:toolu_8"
+              ],
+              "label": "Edited 3 files · Created a file · Read a web page · 2 more",
+              "state": "complete",
+              "live": false,
+              "open": true,
+              "files": 4,
+              "additions": 2,
+              "deletions": 1
+            }
+          ],
+          "turnChanges": {
+            "count": 4,
+            "additions": 2,
+            "deletions": 1,
+            "files": [
+              {
+                "path": "/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/android/README.md",
+                "shortPath": "android/README.md",
+                "additions": 1,
+                "deletions": 1
+              },
+              {
+                "path": "/Users/nik/notes/thread.md",
+                "shortPath": "~/notes/thread.md",
+                "additions": 1,
+                "deletions": 0
+              },
+              {
+                "path": "/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/client/ui/worker-thread.ts",
+                "shortPath": "…/client/ui/worker-thread.ts",
+                "additions": 0,
+                "deletions": 0
+              },
+              {
+                "path": "/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/shared/thread-presentation.ts",
+                "shortPath": "src/shared/thread-presentation.ts",
+                "additions": 0,
+                "deletions": 0
+              }
+            ]
+          }
         }
       ]
     },
@@ -2382,7 +2695,7 @@
           "blocks": [
             {
               "kind": "tools",
-              "id": "tools:tool:toolu_2",
+              "id": "tools:tool:toolu_5",
               "label": "2 attempts to stop background tasks · 2 attempts to schedule loops",
               "state": "failed",
               "live": false,
@@ -2519,6 +2832,7 @@
               "state": "cancelled",
               "live": false,
               "open": false,
+              "card": "command",
               "actions": [
                 {
                   "id": "cancel-exec",
@@ -2530,7 +2844,12 @@
                     "label": "Arguments"
                   },
                   "result": "Cancelled",
-                  "open": false
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "",
+                    "summary": "Verify the live reading layout"
+                  }
                 }
               ]
             }
@@ -2605,7 +2924,7 @@
             {
               "kind": "tools",
               "id": "tools:read-error",
-              "label": "Read a file · Ran a command",
+              "label": "Read a file",
               "state": "failed",
               "live": false,
               "open": false,
@@ -2622,7 +2941,18 @@
                   },
                   "result": "Error",
                   "open": false
-                },
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:cancel-exec",
+              "label": "Ran a command",
+              "state": "cancelled",
+              "live": false,
+              "open": false,
+              "card": "command",
+              "actions": [
                 {
                   "id": "cancel-exec",
                   "title": "Verify the live reading layout",
@@ -2633,7 +2963,12 @@
                     "label": "Arguments"
                   },
                   "result": "Cancelled",
-                  "open": false
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "",
+                    "summary": "Verify the live reading layout"
+                  }
                 }
               ]
             }
@@ -3001,8 +3336,8 @@
             {
               "kind": "tools",
               "id": "tools:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
-              "label": "Ran a command",
-              "state": "failed",
+              "label": "Ran a script",
+              "state": "complete",
               "live": false,
               "open": false,
               "actions": [
@@ -3019,7 +3354,18 @@
                   },
                   "result": "Error",
                   "open": false
-                },
+                }
+              ]
+            },
+            {
+              "kind": "tools",
+              "id": "tools:tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+              "label": "Ran a command",
+              "state": "failed",
+              "live": false,
+              "open": false,
+              "card": "command",
+              "actions": [
                 {
                   "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
                   "title": "Wait for crash check",
@@ -3031,7 +3377,12 @@
                     "field": "command"
                   },
                   "result": "Error",
-                  "open": false
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "python3 -c 'import time; time.sleep(120)'",
+                    "summary": "Wait for crash check"
+                  }
                 }
               ]
             }
@@ -3071,11 +3422,12 @@
           "blocks": [
             {
               "kind": "tools",
-              "id": "tools:tool:call_uGbP58i5lkzER4c33Zukobxv",
+              "id": "tools:tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
               "label": "Ran a command",
               "state": "cancelled",
               "live": false,
               "open": false,
+              "card": "command",
               "actions": [
                 {
                   "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
@@ -3088,7 +3440,12 @@
                     "field": "command"
                   },
                   "result": "Cancelled",
-                  "open": false
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "sleep 90",
+                    "summary": "Wait for native Stop"
+                  }
                 }
               ]
             }
@@ -3159,11 +3516,12 @@
           "blocks": [
             {
               "kind": "tools",
-              "id": "tools:tool:call_xbxG6sCnSkQ2JvkQj4FY11Cy",
+              "id": "tools:tool:7fdacbd3-892b-458a-a5e0-940b7fcdbee3-1",
               "label": "Ran a command",
               "state": "failed",
               "live": false,
               "open": false,
+              "card": "command",
               "actions": [
                 {
                   "id": "tool:7fdacbd3-892b-458a-a5e0-940b7fcdbee3-1",
@@ -3176,7 +3534,12 @@
                     "field": "command"
                   },
                   "result": "Error",
-                  "open": false
+                  "open": false,
+                  "card": "command",
+                  "command": {
+                    "command": "python3 -c 'import time; time.sleep(120)'",
+                    "summary": "Wait for c965 crash"
+                  }
                 }
               ]
             }
@@ -3264,8 +3627,8 @@
                   "blocks": [
                     {
                       "kind": "tools",
-                      "id": "tools:tool:toolu_2",
-                      "label": "Read a file · Ran 3 commands",
+                      "id": "tools:tool:toolu_4",
+                      "label": "Read a file",
                       "state": "complete",
                       "live": false,
                       "open": false,
@@ -3279,46 +3642,6 @@
                           "status": "",
                           "arguments": {
                             "label": "Arguments"
-                          },
-                          "result": "Result",
-                          "open": false
-                        },
-                        {
-                          "id": "tool:toolu_5",
-                          "title": "Check PR 307 merge state",
-                          "category": "command",
-                          "state": "complete",
-                          "status": "",
-                          "arguments": {
-                            "label": "Command",
-                            "field": "command"
-                          },
-                          "result": "Result",
-                          "open": false
-                        },
-                        {
-                          "id": "tool:toolu_8",
-                          "title": "View the published release",
-                          "category": "command",
-                          "state": "complete",
-                          "status": "",
-                          "arguments": {
-                            "label": "Command",
-                            "field": "command"
-                          },
-                          "result": "Result",
-                          "open": false
-                        },
-                        {
-                          "id": "tool:toolu_9",
-                          "title": "Ran a command",
-                          "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
-                          "category": "command",
-                          "state": "complete",
-                          "status": "",
-                          "arguments": {
-                            "label": "Command",
-                            "field": "command"
                           },
                           "result": "Result",
                           "open": false
@@ -3336,6 +3659,110 @@
                           "text": "Identify any release blocker and report the published status"
                         }
                       ]
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_5",
+                      "label": "Ran a command",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "card": "command",
+                      "actions": [
+                        {
+                          "id": "tool:toolu_5",
+                          "title": "Check PR 307 merge state",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false,
+                          "card": "command",
+                          "command": {
+                            "command": "gh pr view 307 --repo nikships/droid-office --json state,mergeCommit",
+                            "summary": "Check PR 307 merge state"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_8",
+                      "label": "Ran a command",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "card": "command",
+                      "actions": [
+                        {
+                          "id": "tool:toolu_8",
+                          "title": "View the published release",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false,
+                          "card": "command",
+                          "command": {
+                            "command": "gh release view v0.1.611 --repo nikships/droid-office",
+                            "summary": "View the published release"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_9",
+                      "label": "Ran a command",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "card": "command",
+                      "actions": [
+                        {
+                          "id": "tool:toolu_9",
+                          "title": "Ran a command",
+                          "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false,
+                          "card": "command",
+                          "command": {
+                            "command": "gh run view 40426951831 --repo nikships/droid-office --log > /Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/run.log"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "groups": [
+                    {
+                      "id": "group:tools:tool:toolu_5",
+                      "blockIds": [
+                        "tools:tool:toolu_5",
+                        "tools:tool:toolu_8",
+                        "tools:tool:toolu_9"
+                      ],
+                      "label": "Ran 3 commands",
+                      "state": "complete",
+                      "live": false,
+                      "open": true,
+                      "files": 0,
+                      "additions": 0,
+                      "deletions": 0
                     }
                   ]
                 },
@@ -3383,8 +3810,8 @@
                 "blocks": [
                   {
                     "kind": "tools",
-                    "id": "tools:tool:toolu_2",
-                    "label": "Read a file · Ran 3 commands",
+                    "id": "tools:tool:toolu_4",
+                    "label": "Read a file",
                     "state": "complete",
                     "live": false,
                     "open": false,
@@ -3398,46 +3825,6 @@
                         "status": "",
                         "arguments": {
                           "label": "Arguments"
-                        },
-                        "result": "Result",
-                        "open": false
-                      },
-                      {
-                        "id": "tool:toolu_5",
-                        "title": "Check PR 307 merge state",
-                        "category": "command",
-                        "state": "complete",
-                        "status": "",
-                        "arguments": {
-                          "label": "Command",
-                          "field": "command"
-                        },
-                        "result": "Result",
-                        "open": false
-                      },
-                      {
-                        "id": "tool:toolu_8",
-                        "title": "View the published release",
-                        "category": "command",
-                        "state": "complete",
-                        "status": "",
-                        "arguments": {
-                          "label": "Command",
-                          "field": "command"
-                        },
-                        "result": "Result",
-                        "open": false
-                      },
-                      {
-                        "id": "tool:toolu_9",
-                        "title": "Ran a command",
-                        "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
-                        "category": "command",
-                        "state": "complete",
-                        "status": "",
-                        "arguments": {
-                          "label": "Command",
-                          "field": "command"
                         },
                         "result": "Result",
                         "open": false
@@ -3455,6 +3842,110 @@
                         "text": "Identify any release blocker and report the published status"
                       }
                     ]
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_5",
+                    "label": "Ran a command",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "card": "command",
+                    "actions": [
+                      {
+                        "id": "tool:toolu_5",
+                        "title": "Check PR 307 merge state",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "gh pr view 307 --repo nikships/droid-office --json state,mergeCommit",
+                          "summary": "Check PR 307 merge state"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_8",
+                    "label": "Ran a command",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "card": "command",
+                    "actions": [
+                      {
+                        "id": "tool:toolu_8",
+                        "title": "View the published release",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "gh release view v0.1.611 --repo nikships/droid-office",
+                          "summary": "View the published release"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_9",
+                    "label": "Ran a command",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "card": "command",
+                    "actions": [
+                      {
+                        "id": "tool:toolu_9",
+                        "title": "Ran a command",
+                        "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "gh run view 40426951831 --repo nikships/droid-office --log > /Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/run.log"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "groups": [
+                  {
+                    "id": "group:tools:tool:toolu_5",
+                    "blockIds": [
+                      "tools:tool:toolu_5",
+                      "tools:tool:toolu_8",
+                      "tools:tool:toolu_9"
+                    ],
+                    "label": "Ran 3 commands",
+                    "state": "complete",
+                    "live": false,
+                    "open": true,
+                    "files": 0,
+                    "additions": 0,
+                    "deletions": 0
                   }
                 ]
               },
@@ -3538,8 +4029,8 @@
                   "blocks": [
                     {
                       "kind": "tools",
-                      "id": "tools:tool:toolu_2",
-                      "label": "Read a file · Ran 3 commands",
+                      "id": "tools:tool:toolu_4",
+                      "label": "Read a file",
                       "state": "complete",
                       "live": false,
                       "open": false,
@@ -3553,46 +4044,6 @@
                           "status": "",
                           "arguments": {
                             "label": "Arguments"
-                          },
-                          "result": "Result",
-                          "open": false
-                        },
-                        {
-                          "id": "tool:toolu_5",
-                          "title": "Check PR 307 merge state",
-                          "category": "command",
-                          "state": "complete",
-                          "status": "",
-                          "arguments": {
-                            "label": "Command",
-                            "field": "command"
-                          },
-                          "result": "Result",
-                          "open": false
-                        },
-                        {
-                          "id": "tool:toolu_8",
-                          "title": "View the published release",
-                          "category": "command",
-                          "state": "complete",
-                          "status": "",
-                          "arguments": {
-                            "label": "Command",
-                            "field": "command"
-                          },
-                          "result": "Result",
-                          "open": false
-                        },
-                        {
-                          "id": "tool:toolu_9",
-                          "title": "Ran a command",
-                          "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
-                          "category": "command",
-                          "state": "complete",
-                          "status": "",
-                          "arguments": {
-                            "label": "Command",
-                            "field": "command"
                           },
                           "result": "Result",
                           "open": false
@@ -3610,6 +4061,110 @@
                           "text": "Identify any release blocker and report the published status"
                         }
                       ]
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_5",
+                      "label": "Ran a command",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "card": "command",
+                      "actions": [
+                        {
+                          "id": "tool:toolu_5",
+                          "title": "Check PR 307 merge state",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false,
+                          "card": "command",
+                          "command": {
+                            "command": "gh pr view 307 --repo nikships/droid-office --json state,mergeCommit",
+                            "summary": "Check PR 307 merge state"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_8",
+                      "label": "Ran a command",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "card": "command",
+                      "actions": [
+                        {
+                          "id": "tool:toolu_8",
+                          "title": "View the published release",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false,
+                          "card": "command",
+                          "command": {
+                            "command": "gh release view v0.1.611 --repo nikships/droid-office",
+                            "summary": "View the published release"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_9",
+                      "label": "Ran a command",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "card": "command",
+                      "actions": [
+                        {
+                          "id": "tool:toolu_9",
+                          "title": "Ran a command",
+                          "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false,
+                          "card": "command",
+                          "command": {
+                            "command": "gh run view 40426951831 --repo nikships/droid-office --log > /Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/run.log"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "groups": [
+                    {
+                      "id": "group:tools:tool:toolu_5",
+                      "blockIds": [
+                        "tools:tool:toolu_5",
+                        "tools:tool:toolu_8",
+                        "tools:tool:toolu_9"
+                      ],
+                      "label": "Ran 3 commands",
+                      "state": "complete",
+                      "live": false,
+                      "open": true,
+                      "files": 0,
+                      "additions": 0,
+                      "deletions": 0
                     }
                   ]
                 }
@@ -3653,8 +4208,8 @@
                 "blocks": [
                   {
                     "kind": "tools",
-                    "id": "tools:tool:toolu_2",
-                    "label": "Read a file · Ran 3 commands",
+                    "id": "tools:tool:toolu_4",
+                    "label": "Read a file",
                     "state": "complete",
                     "live": false,
                     "open": false,
@@ -3668,46 +4223,6 @@
                         "status": "",
                         "arguments": {
                           "label": "Arguments"
-                        },
-                        "result": "Result",
-                        "open": false
-                      },
-                      {
-                        "id": "tool:toolu_5",
-                        "title": "Check PR 307 merge state",
-                        "category": "command",
-                        "state": "complete",
-                        "status": "",
-                        "arguments": {
-                          "label": "Command",
-                          "field": "command"
-                        },
-                        "result": "Result",
-                        "open": false
-                      },
-                      {
-                        "id": "tool:toolu_8",
-                        "title": "View the published release",
-                        "category": "command",
-                        "state": "complete",
-                        "status": "",
-                        "arguments": {
-                          "label": "Command",
-                          "field": "command"
-                        },
-                        "result": "Result",
-                        "open": false
-                      },
-                      {
-                        "id": "tool:toolu_9",
-                        "title": "Ran a command",
-                        "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
-                        "category": "command",
-                        "state": "complete",
-                        "status": "",
-                        "arguments": {
-                          "label": "Command",
-                          "field": "command"
                         },
                         "result": "Result",
                         "open": false
@@ -3725,6 +4240,110 @@
                         "text": "Identify any release blocker and report the published status"
                       }
                     ]
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_5",
+                    "label": "Ran a command",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "card": "command",
+                    "actions": [
+                      {
+                        "id": "tool:toolu_5",
+                        "title": "Check PR 307 merge state",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "gh pr view 307 --repo nikships/droid-office --json state,mergeCommit",
+                          "summary": "Check PR 307 merge state"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_8",
+                    "label": "Ran a command",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "card": "command",
+                    "actions": [
+                      {
+                        "id": "tool:toolu_8",
+                        "title": "View the published release",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "gh release view v0.1.611 --repo nikships/droid-office",
+                          "summary": "View the published release"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_9",
+                    "label": "Ran a command",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "card": "command",
+                    "actions": [
+                      {
+                        "id": "tool:toolu_9",
+                        "title": "Ran a command",
+                        "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "gh run view 40426951831 --repo nikships/droid-office --log > /Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/run.log"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "groups": [
+                  {
+                    "id": "group:tools:tool:toolu_5",
+                    "blockIds": [
+                      "tools:tool:toolu_5",
+                      "tools:tool:toolu_8",
+                      "tools:tool:toolu_9"
+                    ],
+                    "label": "Ran 3 commands",
+                    "state": "complete",
+                    "live": false,
+                    "open": true,
+                    "files": 0,
+                    "additions": 0,
+                    "deletions": 0
                   }
                 ]
               },
@@ -3816,8 +4435,8 @@
                   "blocks": [
                     {
                       "kind": "tools",
-                      "id": "tools:tool:toolu_2",
-                      "label": "Read a file · Ran 3 commands",
+                      "id": "tools:tool:toolu_4",
+                      "label": "Read a file",
                       "state": "complete",
                       "live": false,
                       "open": false,
@@ -3831,46 +4450,6 @@
                           "status": "",
                           "arguments": {
                             "label": "Arguments"
-                          },
-                          "result": "Result",
-                          "open": false
-                        },
-                        {
-                          "id": "tool:toolu_5",
-                          "title": "Check PR 307 merge state",
-                          "category": "command",
-                          "state": "complete",
-                          "status": "",
-                          "arguments": {
-                            "label": "Command",
-                            "field": "command"
-                          },
-                          "result": "Result",
-                          "open": false
-                        },
-                        {
-                          "id": "tool:toolu_8",
-                          "title": "View the published release",
-                          "category": "command",
-                          "state": "complete",
-                          "status": "",
-                          "arguments": {
-                            "label": "Command",
-                            "field": "command"
-                          },
-                          "result": "Result",
-                          "open": false
-                        },
-                        {
-                          "id": "tool:toolu_9",
-                          "title": "Ran a command",
-                          "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
-                          "category": "command",
-                          "state": "complete",
-                          "status": "",
-                          "arguments": {
-                            "label": "Command",
-                            "field": "command"
                           },
                           "result": "Result",
                           "open": false
@@ -3888,6 +4467,110 @@
                           "text": "Identify any release blocker and report the published status"
                         }
                       ]
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_5",
+                      "label": "Ran a command",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "card": "command",
+                      "actions": [
+                        {
+                          "id": "tool:toolu_5",
+                          "title": "Check PR 307 merge state",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false,
+                          "card": "command",
+                          "command": {
+                            "command": "gh pr view 307 --repo nikships/droid-office --json state,mergeCommit",
+                            "summary": "Check PR 307 merge state"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_8",
+                      "label": "Ran a command",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "card": "command",
+                      "actions": [
+                        {
+                          "id": "tool:toolu_8",
+                          "title": "View the published release",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false,
+                          "card": "command",
+                          "command": {
+                            "command": "gh release view v0.1.611 --repo nikships/droid-office",
+                            "summary": "View the published release"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:toolu_9",
+                      "label": "Ran a command",
+                      "state": "complete",
+                      "live": false,
+                      "open": false,
+                      "card": "command",
+                      "actions": [
+                        {
+                          "id": "tool:toolu_9",
+                          "title": "Ran a command",
+                          "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                          "category": "command",
+                          "state": "complete",
+                          "status": "",
+                          "arguments": {
+                            "label": "Command",
+                            "field": "command"
+                          },
+                          "result": "Result",
+                          "open": false,
+                          "card": "command",
+                          "command": {
+                            "command": "gh run view 40426951831 --repo nikships/droid-office --log > /Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/run.log"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "groups": [
+                    {
+                      "id": "group:tools:tool:toolu_5",
+                      "blockIds": [
+                        "tools:tool:toolu_5",
+                        "tools:tool:toolu_8",
+                        "tools:tool:toolu_9"
+                      ],
+                      "label": "Ran 3 commands",
+                      "state": "complete",
+                      "live": false,
+                      "open": true,
+                      "files": 0,
+                      "additions": 0,
+                      "deletions": 0
                     }
                   ]
                 }
@@ -3943,8 +4626,8 @@
                 "blocks": [
                   {
                     "kind": "tools",
-                    "id": "tools:tool:toolu_2",
-                    "label": "Read a file · Ran 3 commands",
+                    "id": "tools:tool:toolu_4",
+                    "label": "Read a file",
                     "state": "complete",
                     "live": false,
                     "open": false,
@@ -3958,46 +4641,6 @@
                         "status": "",
                         "arguments": {
                           "label": "Arguments"
-                        },
-                        "result": "Result",
-                        "open": false
-                      },
-                      {
-                        "id": "tool:toolu_5",
-                        "title": "Check PR 307 merge state",
-                        "category": "command",
-                        "state": "complete",
-                        "status": "",
-                        "arguments": {
-                          "label": "Command",
-                          "field": "command"
-                        },
-                        "result": "Result",
-                        "open": false
-                      },
-                      {
-                        "id": "tool:toolu_8",
-                        "title": "View the published release",
-                        "category": "command",
-                        "state": "complete",
-                        "status": "",
-                        "arguments": {
-                          "label": "Command",
-                          "field": "command"
-                        },
-                        "result": "Result",
-                        "open": false
-                      },
-                      {
-                        "id": "tool:toolu_9",
-                        "title": "Ran a command",
-                        "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
-                        "category": "command",
-                        "state": "complete",
-                        "status": "",
-                        "arguments": {
-                          "label": "Command",
-                          "field": "command"
                         },
                         "result": "Result",
                         "open": false
@@ -4015,6 +4658,110 @@
                         "text": "Identify any release blocker and report the published status"
                       }
                     ]
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_5",
+                    "label": "Ran a command",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "card": "command",
+                    "actions": [
+                      {
+                        "id": "tool:toolu_5",
+                        "title": "Check PR 307 merge state",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "gh pr view 307 --repo nikships/droid-office --json state,mergeCommit",
+                          "summary": "Check PR 307 merge state"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_8",
+                    "label": "Ran a command",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "card": "command",
+                    "actions": [
+                      {
+                        "id": "tool:toolu_8",
+                        "title": "View the published release",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "gh release view v0.1.611 --repo nikships/droid-office",
+                          "summary": "View the published release"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:toolu_9",
+                    "label": "Ran a command",
+                    "state": "complete",
+                    "live": false,
+                    "open": false,
+                    "card": "command",
+                    "actions": [
+                      {
+                        "id": "tool:toolu_9",
+                        "title": "Ran a command",
+                        "detail": "gh run view 40426951831 --repo nikships/droid-office --log > run.log",
+                        "category": "command",
+                        "state": "complete",
+                        "status": "",
+                        "arguments": {
+                          "label": "Command",
+                          "field": "command"
+                        },
+                        "result": "Result",
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "gh run view 40426951831 --repo nikships/droid-office --log > /Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/run.log"
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "groups": [
+                  {
+                    "id": "group:tools:tool:toolu_5",
+                    "blockIds": [
+                      "tools:tool:toolu_5",
+                      "tools:tool:toolu_8",
+                      "tools:tool:toolu_9"
+                    ],
+                    "label": "Ran 3 commands",
+                    "state": "complete",
+                    "live": false,
+                    "open": true,
+                    "files": 0,
+                    "additions": 0,
+                    "deletions": 0
                   }
                 ]
               },
@@ -4739,11 +5486,12 @@
                   "blocks": [
                     {
                       "kind": "tools",
-                      "id": "tools:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                      "id": "tools:tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
                       "label": "Ran a command",
                       "state": "cancelled",
                       "live": false,
                       "open": false,
+                      "card": "command",
                       "actions": [
                         {
                           "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
@@ -4756,7 +5504,12 @@
                             "field": "command"
                           },
                           "result": "Cancelled",
-                          "open": false
+                          "open": false,
+                          "card": "command",
+                          "command": {
+                            "command": "sleep 90",
+                            "summary": "Wait for native Stop"
+                          }
                         }
                       ]
                     }
@@ -4799,11 +5552,12 @@
                 "blocks": [
                   {
                     "kind": "tools",
-                    "id": "tools:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                    "id": "tools:tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
                     "label": "Ran a command",
                     "state": "cancelled",
                     "live": false,
                     "open": false,
+                    "card": "command",
                     "actions": [
                       {
                         "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
@@ -4816,7 +5570,12 @@
                           "field": "command"
                         },
                         "result": "Cancelled",
-                        "open": false
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "sleep 90",
+                          "summary": "Wait for native Stop"
+                        }
                       }
                     ]
                   }
@@ -4928,11 +5687,12 @@
                 "blocks": [
                   {
                     "kind": "tools",
-                    "id": "tools:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                    "id": "tools:tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
                     "label": "Ran a command",
                     "state": "cancelled",
                     "live": false,
                     "open": false,
+                    "card": "command",
                     "actions": [
                       {
                         "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
@@ -4945,7 +5705,12 @@
                           "field": "command"
                         },
                         "result": "Cancelled",
-                        "open": false
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "sleep 90",
+                          "summary": "Wait for native Stop"
+                        }
                       }
                     ]
                   }
@@ -5019,8 +5784,8 @@
                     {
                       "kind": "tools",
                       "id": "tools:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
-                      "label": "Ran a command",
-                      "state": "failed",
+                      "label": "Ran a script",
+                      "state": "complete",
                       "live": false,
                       "open": false,
                       "actions": [
@@ -5037,7 +5802,18 @@
                           },
                           "result": "Error",
                           "open": false
-                        },
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "tools",
+                      "id": "tools:tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+                      "label": "Ran a command",
+                      "state": "failed",
+                      "live": false,
+                      "open": false,
+                      "card": "command",
+                      "actions": [
                         {
                           "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
                           "title": "Wait for crash check",
@@ -5049,7 +5825,12 @@
                             "field": "command"
                           },
                           "result": "Error",
-                          "open": false
+                          "open": false,
+                          "card": "command",
+                          "command": {
+                            "command": "python3 -c 'import time; time.sleep(120)'",
+                            "summary": "Wait for crash check"
+                          }
                         }
                       ]
                     }
@@ -5094,8 +5875,8 @@
                   {
                     "kind": "tools",
                     "id": "tools:tool:call_R5hLkXpPVQuUKNbqvGnjqA5V",
-                    "label": "Ran a command",
-                    "state": "failed",
+                    "label": "Ran a script",
+                    "state": "complete",
                     "live": false,
                     "open": false,
                     "actions": [
@@ -5112,7 +5893,18 @@
                         },
                         "result": "Error",
                         "open": false
-                      },
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "tools",
+                    "id": "tools:tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
+                    "label": "Ran a command",
+                    "state": "failed",
+                    "live": false,
+                    "open": false,
+                    "card": "command",
+                    "actions": [
                       {
                         "id": "tool:17df3d74-4d35-4185-b98c-c6b1cf2d1154-1",
                         "title": "Wait for crash check",
@@ -5124,7 +5916,12 @@
                           "field": "command"
                         },
                         "result": "Error",
-                        "open": false
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "python3 -c 'import time; time.sleep(120)'",
+                          "summary": "Wait for crash check"
+                        }
                       }
                     ]
                   }
@@ -5164,11 +5961,12 @@
                 "blocks": [
                   {
                     "kind": "tools",
-                    "id": "tools:tool:call_uGbP58i5lkzER4c33Zukobxv",
+                    "id": "tools:tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
                     "label": "Ran a command",
                     "state": "cancelled",
                     "live": false,
                     "open": false,
+                    "card": "command",
                     "actions": [
                       {
                         "id": "tool:5c8a4c65-8f54-4a4d-a67f-bba5f34bc311-1",
@@ -5181,7 +5979,12 @@
                           "field": "command"
                         },
                         "result": "Cancelled",
-                        "open": false
+                        "open": false,
+                        "card": "command",
+                        "command": {
+                          "command": "sleep 90",
+                          "summary": "Wait for native Stop"
+                        }
                       }
                     ]
                   }

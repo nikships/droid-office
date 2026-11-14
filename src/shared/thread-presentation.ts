@@ -1,4 +1,9 @@
+import { extractThreadChanges, threadShortPath, toolLeaf, type ThreadFileChange, type ThreadFileText } from './thread-diff.js';
+import { todoItems } from './todos.js';
 import type { ThreadEntry } from './worker-thread.js';
+
+export { threadShortPath };
+export type { ThreadDiffLine, ThreadDiffSpan, ThreadFileChange, ThreadFileText } from './thread-diff.js';
 
 export type ActivityState = 'working' | 'complete' | 'incomplete' | 'failed' | 'cancelled';
 export type ActionKind =
@@ -23,6 +28,23 @@ export type ActionKind =
   | 'loopResume'
   | 'loopCancel'
   | 'other';
+
+export type ThreadCardKind = 'change' | 'command' | 'delegate';
+
+export interface ThreadCommandMeta {
+  command: string;
+  summary?: string;
+}
+
+export interface ThreadDelegationMeta {
+  agent: string;
+  role?: string;
+  summary: string;
+  workerId?: string;
+  workerName?: string;
+  branch?: string;
+}
+
 /** A tool call as the engine reads it. The wire carries a ThreadModelAction instead. */
 export interface ThreadAction {
   type: 'action';
@@ -39,6 +61,15 @@ export interface PlanStep {
   done: boolean;
   active: boolean;
   text: string;
+}
+
+export interface ActivePlan {
+  steps: PlanStep[];
+  done: number;
+  total: number;
+  current?: string;
+  allDone: boolean;
+  stale: boolean;
 }
 
 /**
@@ -70,6 +101,10 @@ export interface ThreadModelAction {
   /** The heading over the output. */
   result: 'Result' | 'Error' | 'Cancelled';
   open: boolean;
+  card?: ThreadCardKind;
+  changes?: ThreadFileChange[];
+  command?: ThreadCommandMeta;
+  delegation?: ThreadDelegationMeta;
 }
 export interface ThreadFailure {
   id: string;
@@ -77,12 +112,45 @@ export interface ThreadFailure {
   /** Diagnostic metadata retained for wire compatibility, not a collapsed-row callout. */
   preview: string;
 }
+/**
+ * Three or more tool cards in one Activity fold under one disclosure: the blocks from its first card
+ * to its last. It starts open in the latest turn, so its open diffs show, and closed before it.
+ */
+export interface ThreadToolGroup {
+  /** 'group:' + its first block's id. */
+  id: string;
+  /** The blocks it folds, in order: always consecutive in the Activity's `blocks`. */
+  blockIds: string[];
+  label: string;
+  state: ActivityState;
+  live: boolean;
+  open: boolean;
+  /** Files its finished change cards changed, counted once, and their lines. */
+  files: number;
+  additions: number;
+  deletions: number;
+}
+export interface ThreadTurnFile {
+  path: string;
+  shortPath: string;
+  additions: number;
+  deletions: number;
+}
+/** What a finished turn changed, on its last message or Activity row. */
+export interface ThreadTurnChanges {
+  /** Every file the turn's finished change cards changed, counted once. */
+  count: number;
+  additions: number;
+  deletions: number;
+  /** The first files it changed, in order. */
+  files: ThreadTurnFile[];
+}
 export type ThreadBlock =
   | { kind: 'thought'; id: string; preview: string; live: boolean; open: boolean }
-  | { kind: 'tools'; id: string; label: string; state: ActivityState; live: boolean; open: boolean; actions: ThreadModelAction[]; plan?: PlanStep[] };
+  | { kind: 'tools'; id: string; label: string; state: ActivityState; live: boolean; open: boolean; card?: ThreadCardKind; actions: ThreadModelAction[]; plan?: PlanStep[] };
 /** `from` and `to` are the seqs of the first and last entry a row stands for, hidden ones included. */
 export type ThreadRow =
-  | { kind: 'message'; id: string; from: number; to: number; role: 'user' | 'assistant'; startsTurn: boolean }
+  | { kind: 'message'; id: string; from: number; to: number; role: 'user' | 'assistant'; startsTurn: boolean; turnChanges?: ThreadTurnChanges }
   | { kind: 'notice'; id: string; from: number; to: number; role: ThreadEntry['role']; text: string; tone: 'quiet' | 'danger' | 'attachment' }
   | {
       kind: 'activity';
@@ -100,10 +168,16 @@ export type ThreadRow =
       running?: string;
       failed: ThreadFailure[];
       blocks: ThreadBlock[];
+      groups?: ThreadToolGroup[];
+      turnChanges?: ThreadTurnChanges;
     };
 
 const bookkeeping = new Set(['todowrite', 'todoread', 'toolsearch', 'skill', 'todo_write', 'todo_read', 'update_plan', 'waitforscript', 'taskoutput']);
-const leaf = (name = '') => name.split(/[.:/]/).at(-1)?.toLowerCase() ?? '';
+const leaf = (name = '') => toolLeaf(name);
+const isMemoryTool = (rawName = '') => {
+  const lower = rawName.toLowerCase();
+  return lower.includes('memory___') || lower.startsWith('mcp__memory__');
+};
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
 const str = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 const sentence = (text: string) => {
@@ -111,18 +185,6 @@ const sentence = (text: string) => {
   return line.charAt(0).toUpperCase() + line.slice(1);
 };
 const baseName = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').at(-1) || path;
-
-export function threadShortPath(path: string): string {
-  const root = path.trim().replace(/\\/g, '/').replace(/\/+$/, '');
-  if (/\/\.droid-office\/worktrees\/[^/]+$/.test(root)) return baseName(root);
-  const short = path
-    .trim()
-    .replace(/\\/g, '/')
-    .replace(/^.*?\/\.droid-office\/worktrees\/[^/]+\//, '')
-    .replace(/^\/(?:Users|home)\/[^/]+\//, '~/');
-  const parts = short.split('/').filter(Boolean);
-  return parts.length > 3 ? `…/${parts.slice(-3).join('/')}` : short;
-}
 
 function argumentsOf(entry: ThreadEntry): Record<string, unknown> {
   try {
@@ -133,18 +195,41 @@ function argumentsOf(entry: ThreadEntry): Record<string, unknown> {
   }
 }
 
+function extractDelegationMeta(entry: ThreadEntry): ThreadDelegationMeta {
+  const args = argumentsOf(entry);
+  const taskObj = args.task && typeof args.task === 'object' && !Array.isArray(args.task) ? (args.task as Record<string, unknown>) : {};
+  const role = str(args.subagent_type) || undefined;
+  const output = entry.output ?? '';
+  const hired = /Hired ([^\n(]+?)\s+\(([a-z0-9-]+)\)/.exec(output);
+  const workerName = hired?.[1]?.trim() || undefined;
+  const workerId = hired?.[2]?.trim() || undefined;
+  const branch = str(taskObj.branch) || str(args.branch) || /Worktree: \S+ on (\S+?)[.\s]/.exec(output)?.[1]?.trim() || undefined;
+  const summary = str(args.title) || str(args.description) || str(taskObj.title) || clip(str(args.prompt).split('\n')[0]?.trim() ?? '', 120) || 'Subagent task';
+  const agent = workerName || role || 'Subagent';
+  return {
+    agent,
+    ...(role ? { role } : {}),
+    summary,
+    ...(workerId ? { workerId } : {}),
+    ...(workerName ? { workerName } : {}),
+    ...(branch ? { branch } : {}),
+  };
+}
+
 /** Source is available on demand, formatted as source rather than escaped JSON. */
 export function threadArguments(entry: ThreadEntry): ThreadArgumentsRef | undefined {
   const raw = entry.input?.trim();
   if (!raw || raw === '{}') return;
   const args = argumentsOf(entry);
+  const name = leaf(entry.name);
+  const isPatch = name === 'applypatch' || name === 'apply_patch';
   if (str(args.command)) return { label: 'Command', field: 'command' };
   if (str(args.script)) return { label: 'Script', field: 'script' };
   if (str(args.code)) return { label: 'Script', field: 'code' };
-  if (leaf(entry.name) === 'applypatch' && str(args.input)) return { label: 'Patch', field: 'input' };
-  if (leaf(entry.name) === 'applypatch' && str(args.patch)) return { label: 'Patch', field: 'patch' };
+  if (isPatch && str(args.input)) return { label: 'Patch', field: 'input' };
+  if (isPatch && str(args.patch)) return { label: 'Patch', field: 'patch' };
   try {
-    if (typeof JSON.parse(raw) === 'string') return { label: leaf(entry.name) === 'script' ? 'Script' : leaf(entry.name) === 'applypatch' ? 'Patch' : 'Arguments', field: '.' };
+    if (typeof JSON.parse(raw) === 'string') return { label: name === 'script' ? 'Script' : isPatch ? 'Patch' : 'Arguments', field: '.' };
   } catch {
     /* Older tools can record plain-text arguments. */
   }
@@ -220,9 +305,14 @@ export function threadAction(entry: ThreadEntry, live = false, cancelled = false
     case 'create':
     case 'write':
       return action('create', `Created ${file}`, detail);
-    case 'applypatch': {
+    case 'applypatch':
+    case 'apply_patch': {
       const patch = str(args.input ?? args.patch) || entry.input || '';
-      const files = [...patch.replace(/\\n/g, '\n').matchAll(/\*\*\* (?:Update|Add|Delete) File: (\S.*)/g)].map((m) => m[1].trim().replace(/[",]+$/, ''));
+      let files = [...patch.replace(/\\n/g, '\n').matchAll(/\*\*\* (?:Update|Add|Delete) File: (\S.*)/g)].map((m) => m[1].trim().replace(/[",]+$/, ''));
+      if (!files.length) {
+        const extracted = extractThreadChanges(entry);
+        if (extracted?.length) files = extracted.map((c) => c.path);
+      }
       const names = [...new Set(files.map(baseName))];
       return action('edit', names.length ? `Edited ${names.join(', ')}` : 'Edited files', files.length === 1 ? threadShortPath(files[0]) : undefined, files);
     }
@@ -238,6 +328,13 @@ export function threadAction(entry: ThreadEntry, live = false, cancelled = false
       return action('webSearch', str(args.query) ? `Searched the web for “${clip(str(args.query), 48)}”` : 'Searched the web');
     case 'task':
       return action('delegate', str(args.description) ? sentence(str(args.description)) : 'Ran a subagent', str(args.subagent_type));
+    case 'team_hire':
+    case 'office_worker_spawn': {
+      const meta = extractDelegationMeta(entry);
+      const hasExplicitTitle = Boolean(str(args.title) || str(args.description) || (args.task && typeof args.task === 'object' && str((args.task as Record<string, unknown>).title)) || str(args.prompt));
+      const title = hasExplicitTitle ? sentence(meta.summary) : meta.workerName ? `Hired ${meta.workerName}` : 'Ran a subagent';
+      return action('delegate', title, meta.workerName ?? meta.branch);
+    }
     case 'skill':
       return action('skill', str(args.skill) ? `${failed ? "Couldn't load" : 'Used'} the ${str(args.skill)} skill` : failed ? "Couldn't load a skill" : 'Used a skill');
     case 'askuser':
@@ -264,7 +361,7 @@ export function threadAction(entry: ThreadEntry, live = false, cancelled = false
     }
     default:
       if (bookkeeping.has(name)) return action('plan', failed ? "Couldn't update the plan" : 'Updated the plan');
-      if (name.startsWith('memory___')) return action('memory', /save|update/.test(name) ? 'Saved to memory' : 'Checked memory');
+      if (isMemoryTool(entry.name)) return action('memory', /save|update/.test(name) ? 'Saved to memory' : 'Checked memory');
       return action(
         'other',
         `Used ${(entry.name || 'a tool')
@@ -405,6 +502,49 @@ export function threadPlan(text: string): PlanStep[] {
     return match ? [{ done: match[1] === 'completed', active: match[1].replace('_', ' ') === 'in progress', text: match[2].trim() }] : [];
   });
 }
+
+export function latestThreadPlan(entries: readonly ThreadEntry[], busy: boolean): ActivePlan | undefined {
+  let steps: PlanStep[] | undefined;
+  let planSeq = -1;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry.kind === 'todo') {
+      const parsed = threadPlan(entry.text ?? '');
+      steps = parsed;
+      planSeq = entry.seq;
+      break;
+    }
+    if (entry.kind === 'tool' && !entry.error) {
+      const name = leaf(entry.name);
+      if (name === 'todowrite' || name === 'todo_write' || name === 'update_plan') {
+        const args = argumentsOf(entry);
+        if (args.todos === undefined) continue;
+        steps = todoItems(args).map((item) => ({
+          done: item.status === 'completed',
+          active: item.status === 'in_progress',
+          text: item.content,
+        }));
+        planSeq = entry.seq;
+        break;
+      }
+    }
+  }
+  if (!steps?.length) return undefined;
+  const total = steps.length;
+  const done = steps.filter((step) => step.done).length;
+  const current = steps.find((step) => step.active)?.text;
+  const allDone = done === total;
+  const stale = allDone && !busy && entries.some((entry) => entry.seq > planSeq && entry.kind === 'text' && entry.role === 'user');
+  return {
+    steps,
+    done,
+    total,
+    ...(current ? { current } : {}),
+    allDone,
+    stale,
+  };
+}
+
 export function threadStop(reason: string): string {
   const copy: Record<string, string> = {
     error: 'The turn stopped on an error',
@@ -432,9 +572,27 @@ function notice(entry: ThreadEntry): Extract<ThreadRow, { kind: 'notice' }> | un
 
 const STATUS: Record<ActivityState, string> = { complete: '', working: 'Running', failed: '', incomplete: 'No result', cancelled: 'Cancelled' };
 
-function modelAction(action: ThreadAction): ThreadModelAction {
+function cardKindFor(category: ActionKind): ThreadCardKind | undefined {
+  if (category === 'edit' || category === 'create') return 'change';
+  if (category === 'command') return 'command';
+  if (category === 'delegate') return 'delegate';
+  return undefined;
+}
+
+function modelAction(action: ThreadAction, fileText?: ThreadFileText): ThreadModelAction {
   // A Read that returned a picture shows just the picture: its path is already in the title.
   const args = leaf(action.entry.name) === 'read' && action.entry.images?.length ? undefined : threadArguments(action.entry);
+  const card = cardKindFor(action.category);
+  const changes = card === 'change' ? extractThreadChanges(action.entry, fileText) : undefined;
+  let command: ThreadCommandMeta | undefined;
+  if (card === 'command') {
+    const parsed = argumentsOf(action.entry);
+    const cmd = str(parsed.command);
+    const summary = str(parsed.summary);
+    command = { command: cmd, ...(summary ? { summary } : {}) };
+  }
+  const delegation = card === 'delegate' ? extractDelegationMeta(action.entry) : undefined;
+
   return {
     id: action.entry.id,
     title: action.title,
@@ -446,7 +604,91 @@ function modelAction(action: ThreadAction): ThreadModelAction {
     ...(args ? { arguments: args } : {}),
     result: action.state === 'cancelled' ? 'Cancelled' : action.entry.error ? 'Error' : 'Result',
     open: false,
+    ...(card ? { card } : {}),
+    ...(changes?.length ? { changes } : {}),
+    ...(command ? { command } : {}),
+    ...(delegation ? { delegation } : {}),
   };
+}
+
+/** An Activity with at least this many tool cards folds them under one group. */
+export const GROUP_MIN_CARDS = 3;
+/** In the latest turn, a diff of at most this many changed lines starts open, */
+export const SMALL_DIFF_LINES = 40;
+/** and at most this many of them do. Diffs in earlier turns start closed. */
+export const OPEN_DIFFS_PER_TURN = 3;
+const TURN_FILES = 20;
+
+/** What finished change cards changed, by file in first-changed order. A failed or unfinished edit changed nothing known. */
+function changeTotals(actions: readonly ThreadModelAction[]): { files: ThreadTurnFile[]; additions: number; deletions: number } {
+  const byPath = new Map<string, ThreadTurnFile>();
+  let additions = 0;
+  let deletions = 0;
+  for (const action of actions) {
+    if (action.card !== 'change' || action.state !== 'complete') continue;
+    for (const change of action.changes ?? []) {
+      const file = byPath.get(change.path) ?? { path: change.path, shortPath: change.shortPath, additions: 0, deletions: 0 };
+      file.additions += change.additions;
+      file.deletions += change.deletions;
+      byPath.set(change.path, file);
+      additions += change.additions;
+      deletions += change.deletions;
+    }
+  }
+  return { files: [...byPath.values()], additions, deletions };
+}
+
+function toolGroups(blocks: readonly ThreadBlock[], actionsOf: ReadonlyMap<string, ThreadAction[]>): ThreadToolGroup[] {
+  const cards = blocks.flatMap((block, index) => (block.kind === 'tools' && block.card ? [index] : []));
+  if (cards.length < GROUP_MIN_CARDS) return [];
+  const folded = blocks.slice(cards[0], cards[cards.length - 1] + 1);
+  const tools = folded.filter((block): block is Extract<ThreadBlock, { kind: 'tools' }> => block.kind === 'tools');
+  const wired = tools.flatMap((block) => block.actions);
+  const live = folded.some((block) => block.live);
+  const totals = changeTotals(wired);
+  return [
+    {
+      id: `group:${folded[0].id}`,
+      blockIds: folded.map((block) => block.id),
+      label: activityLabel(tools.flatMap((block) => actionsOf.get(block.id) ?? [])),
+      state: activityState(wired, live),
+      live,
+      open: false,
+      files: totals.files.length,
+      additions: totals.additions,
+      deletions: totals.deletions,
+    },
+  ];
+}
+
+/**
+ * Turns run from one owner message to the next. Diffs and card groups open by default only in the
+ * latest turn, and only small diffs, a few of them; a finished turn's last message or Activity says
+ * what it changed.
+ */
+function finishTurns(rows: ThreadRow[], busy: boolean): void {
+  const turns: ThreadRow[][] = [[]];
+  for (const row of rows) {
+    if (row.kind === 'message' && row.role === 'user') turns.push([]);
+    else turns[turns.length - 1].push(row);
+  }
+  for (const [index, turn] of turns.entries()) {
+    const latest = index === turns.length - 1;
+    for (const row of turn) if (row.kind === 'activity') for (const group of row.groups ?? []) group.open = latest;
+    const actions = turn.flatMap((row) => (row.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'tools' && block.card === 'change' ? block.actions : [])) : []));
+    let opened = 0;
+    for (const change of actions.flatMap((action) => action.changes ?? [])) {
+      const open = latest && !change.generated && change.lines.length > 0 && change.additions + change.deletions <= SMALL_DIFF_LINES && opened < OPEN_DIFFS_PER_TURN;
+      if (open) opened++;
+      change.open = open;
+    }
+    if (latest && busy) continue;
+    const totals = changeTotals(actions);
+    let last: ThreadRow | undefined;
+    for (const row of turn) if (row.kind !== 'notice') last = row;
+    if (!totals.files.length || !last || last.kind === 'notice') continue;
+    last.turnChanges = { count: totals.files.length, additions: totals.additions, deletions: totals.deletions, files: totals.files.slice(0, TURN_FILES) };
+  }
 }
 
 /** The state a run's actions add up to. `live` only matters while the run can still be working. */
@@ -455,15 +697,21 @@ export function activityState(actions: readonly ThreadModelAction[], live = fals
   return count('failed') ? 'failed' : live ? 'working' : count('incomplete') ? 'incomplete' : count('cancelled') ? 'cancelled' : 'complete';
 }
 
+export interface PresentOptions {
+  /** The worker's files as they are now, so Edit and MultiEdit diffs can carry real line numbers. */
+  fileText?: ThreadFileText;
+}
+
 /**
  * The model the clients render; session entries, positions, paging and the wire entries stay intact.
  * Messages and notices are rows. Everything between them is one Activity row, collapsed, holding
  * its thoughts and tool runs in order, each with its own disclosure.
  */
-export function presentThread(entries: readonly ThreadEntry[], busy: boolean): ThreadRow[] {
+export function presentThread(entries: readonly ThreadEntry[], busy: boolean, options: PresentOptions = {}): ThreadRow[] {
   const rows: ThreadRow[] = [];
   let section: ThreadEntry[] = [];
   let blocks: ThreadBlock[] = [];
+  let blockActions = new Map<string, ThreadAction[]>();
   let actions: ThreadAction[] = [];
   let run: ThreadEntry[] = [];
   let lastPlan = '';
@@ -496,29 +744,55 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       items.push(action);
     }
     if (!items.length) return;
-    const wired = items.map(modelAction);
+    actions.push(...items);
+
+    const groups: { card?: ThreadCardKind; items: ThreadAction[] }[] = [];
+    let exploration: { items: ThreadAction[] } | undefined;
+    for (const item of items) {
+      const card = cardKindFor(item.category);
+      if (card) {
+        exploration = undefined;
+        groups.push({ card, items: [item] });
+      } else if (exploration) {
+        exploration.items.push(item);
+      } else {
+        exploration = { items: [item] };
+        groups.push(exploration);
+      }
+    }
+
     const planKey = JSON.stringify(plan);
     const changedPlan = plan.length && planKey !== lastPlan ? plan : undefined;
     if (changedPlan) lastPlan = planKey;
-    actions.push(...items);
-    blocks.push({
-      kind: 'tools',
-      id: `tools:${source[0].id}`,
-      label: activityLabel(items),
-      state: activityState(wired, live),
-      live,
-      open: false,
-      actions: wired,
-      ...(changedPlan ? { plan: changedPlan } : {}),
-    });
+
+    for (const [groupIndex, group] of groups.entries()) {
+      const wired = group.items.map((item) => modelAction(item, options.fileText));
+      const isLast = groupIndex === groups.length - 1;
+      const blockLive = live && (isLast || wired.some((a) => a.state === 'working'));
+      const includePlan = groupIndex === 0 ? changedPlan : undefined;
+      blockActions.set(`tools:${group.items[0].entry.id}`, group.items);
+      blocks.push({
+        kind: 'tools',
+        id: `tools:${group.items[0].entry.id}`,
+        label: activityLabel(group.items),
+        state: activityState(wired, blockLive),
+        live: blockLive,
+        open: false,
+        ...(group.card ? { card: group.card } : {}),
+        actions: wired,
+        ...(includePlan ? { plan: includePlan } : {}),
+      });
+    }
   };
   const flush = (live: boolean) => {
     flushRun(live);
     const source = section;
     const shown = blocks;
     const all = actions;
+    const groups = toolGroups(shown, blockActions);
     section = [];
     blocks = [];
+    blockActions = new Map();
     actions = [];
     if (!shown.length) return;
     const failed = all.filter((a) => a.state === 'failed' && !a.causedBy);
@@ -533,7 +807,10 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       to: Math.max(...source.map((e) => e.seq)),
       sourceIds: source.map((e) => e.id),
       label: activityLabel(all),
-      state: activityState(all.map(modelAction), live),
+      state: activityState(
+        all.map((a) => modelAction(a)),
+        live,
+      ),
       live,
       open: false,
       ...(status ? { status } : {}),
@@ -550,6 +827,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
         ),
       })),
       blocks: shown,
+      ...(groups.length ? { groups } : {}),
     });
   };
   const last = entries.at(-1);
@@ -580,6 +858,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
     }
   }
   flush(busy);
+  finishTurns(rows, busy);
   return rows;
 }
 

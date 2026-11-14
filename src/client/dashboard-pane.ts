@@ -65,6 +65,10 @@ export interface PaneHost {
   /** Asks, then starts the Orchestrator's conversation over. */
   resetOrchestrator(): void;
   settings(pane?: SettingsPane): void;
+  /** Opens a worker's Changes window. */
+  changes?(id: string): void;
+  /** Puts a file from a worker's workspace on this floor's Whiteboard. */
+  toWhiteboard?(workerId: string, path: string, intendedFloor: string): void;
 }
 
 export interface PaneState {
@@ -344,6 +348,8 @@ export function createPane(host: PaneHost, index: number): Pane {
               if (!orchestrator || orchestratorAwake(host.mission())) host.setView(w.id, 'terminal');
             },
         floor: intended,
+        ...(host.changes && !w.cloud ? { openChanges: (id: string) => host.changes?.(id) } : {}),
+        ...(host.toWhiteboard && !w.cloud ? { sendToWhiteboard: (id: string, path: string) => host.toWhiteboard?.(id, path, intended) } : {}),
         ...(orchestrator
           ? {
               intro: () => (orchestratorStarted(host.mission()) ? undefined : (intro ??= orchestratorIntro())),

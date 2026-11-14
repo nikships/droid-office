@@ -21,6 +21,7 @@
   "ignorePatterns": [
     "**/dist/**",
     "**/draco_wasm_wrapper.js",
-    "android/app/src/main/assets/terminal/vendor/**"
+    "android/app/src/main/assets/terminal/vendor/**",
+    "android/app/src/main/assets/richblock/vendor/**"
   ]
 }

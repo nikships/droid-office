@@ -131,6 +131,7 @@ class ThreadGoldenTest {
                     put("to", r.to)
                     put("role", r.role.wire)
                     put("startsTurn", r.startsTurn)
+                    r.turnChanges?.let { put("turnChanges", encode(it)) }
                 }
                 is ThreadRow.Notice -> {
                     put("kind", "notice")
@@ -161,8 +162,38 @@ class ThreadGoldenTest {
                         })
                     })
                     put("blocks", buildJsonArray { r.blocks.forEach { add(encode(it)) } })
+                    if (r.groups.isNotEmpty()) {
+                        put("groups", buildJsonArray {
+                            for (g in r.groups) add(buildJsonObject {
+                                put("id", g.id)
+                                put("blockIds", buildJsonArray { g.blockIds.forEach { add(JsonPrimitive(it)) } })
+                                put("label", g.label)
+                                put("state", g.state.wire)
+                                put("live", g.live)
+                                put("open", g.open)
+                                put("files", g.files)
+                                put("additions", g.additions)
+                                put("deletions", g.deletions)
+                            })
+                        })
+                    }
+                    r.turnChanges?.let { put("turnChanges", encode(it)) }
                 }
             }
+        }
+
+        private fun encode(t: ThreadTurnChanges): JsonObject = buildJsonObject {
+            put("count", t.count)
+            put("additions", t.additions)
+            put("deletions", t.deletions)
+            put("files", buildJsonArray {
+                for (f in t.files) add(buildJsonObject {
+                    put("path", f.path)
+                    put("shortPath", f.shortPath)
+                    put("additions", f.additions)
+                    put("deletions", f.deletions)
+                })
+            })
         }
 
         private fun encode(b: ThreadBlock): JsonObject = buildJsonObject {
@@ -181,6 +212,7 @@ class ThreadGoldenTest {
                     put("state", b.state.wire)
                     put("live", b.live)
                     put("open", b.open)
+                    b.card?.let { put("card", it.wire) }
                     put("actions", buildJsonArray { b.actions.forEach { add(encode(it)) } })
                     b.plan?.let { steps ->
                         put("plan", buildJsonArray {
@@ -211,6 +243,47 @@ class ThreadGoldenTest {
             }
             put("result", a.result)
             put("open", a.open)
+            a.card?.let { put("card", it.wire) }
+            a.changes?.let { changes ->
+                put("changes", buildJsonArray {
+                    for (c in changes) add(encode(c))
+                })
+            }
+            a.command?.let { cmd ->
+                put("command", buildJsonObject {
+                    put("command", cmd.command)
+                    cmd.summary?.let { put("summary", it) }
+                })
+            }
+            a.delegation?.let { del ->
+                put("delegation", buildJsonObject {
+                    put("agent", del.agent)
+                    del.role?.let { put("role", it) }
+                    put("summary", del.summary)
+                    del.workerId?.let { put("workerId", it) }
+                    del.workerName?.let { put("workerName", it) }
+                    del.branch?.let { put("branch", it) }
+                })
+            }
+        }
+
+        private fun encode(c: ThreadFileChange): JsonObject = buildJsonObject {
+            put("path", c.path)
+            put("shortPath", c.shortPath)
+            put("kind", c.kind.wire)
+            put("additions", c.additions)
+            put("deletions", c.deletions)
+            put("generated", c.generated)
+            if (c.truncated) put("truncated", true)
+            put("lines", buildJsonArray {
+                for (l in c.lines) add(buildJsonObject {
+                    put("kind", l.kind.wire)
+                    put("text", l.text)
+                    l.oldLine?.let { put("oldLine", it) }
+                    l.newLine?.let { put("newLine", it) }
+                })
+            })
+            c.open?.let { put("open", it) }
         }
     }
 }

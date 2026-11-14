@@ -131,6 +131,7 @@ let retryTimer: ReturnType<typeof setTimeout> | undefined;
 let terminal: typeof import('./ui/terminal') | undefined;
 let whiteboard: typeof import('./ui/whiteboard') | undefined;
 let settingsUi: typeof import('./ui/settings') | undefined;
+let changesUi: typeof import('./ui/changes') | undefined;
 const busy = new Set<string>();
 
 function defaultBrowserName() {
@@ -685,7 +686,25 @@ const paneHost: PaneHost = {
   openAcross: (id, to) => openAcross(id, to),
   resetOrchestrator: () => newOrchestratorConversation(net),
   settings: (pane) => void showSettings(pane),
+  changes: (id) => void showChanges(id),
+  toWhiteboard: (id, path, intended) => void toBoard(id, path, intended),
 };
+/** A file a worker made, as a card on this floor's Whiteboard, opened there. */
+async function toBoard(workerId: string, path: string, intended: string) {
+  const { sendWorkspaceFile } = await import('./ui/thread-deliverable');
+  whiteboard ??= await import('./ui/whiteboard');
+  if (!live() || intended !== floor) return toast('Reconnect to the office to send it to the Whiteboard', 'warn');
+  const card = await sendWorkspaceFile(floor, workerId, path);
+  if (card && live() && intended === floor && store.currentFloor()) whiteboard.openWhiteboard(net, { card, queueOffline: false });
+}
+/** A worker's Changes window: its changed files and their diff, with commit, discard and open a PR. */
+async function showChanges(id: string) {
+  const w = store.workers.get(id);
+  if (!w || w.cloud) return;
+  if (w.lost) return toast(`${w.name}'s worktree is missing, so there are no changes to show`, 'warn');
+  changesUi ??= await import('./ui/changes');
+  changesUi.openChanges(net, id);
+}
 
 /** Where a pane sits: its box, less half the 8px gap on every side that touches another pane. */
 function place(el: HTMLElement, [x, y, w, hgt]: Rect) {
@@ -835,6 +854,12 @@ net.onMessage((msg) => {
   routeWorktreeMessage(msg);
   routeAddFloorMessage(msg);
   routeFolderMessage(msg);
+  changesUi?.routeChangesMessage(msg);
+  if (msg.t === 'welcome') {
+    // After a reconnect the office has forgotten which worker's changes were on screen.
+    const watching = changesUi?.openChangesFor();
+    if (watching && store.workers.has(watching.workerId)) net.send({ t: 'changes.watch', ...watching });
+  }
   if (entering) {
     if (wsFloor !== floor) loadWorkspace(floor);
     else for (const p of panes) p?.reattach();

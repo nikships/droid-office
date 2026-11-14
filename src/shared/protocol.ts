@@ -865,6 +865,7 @@ type ClientMessage =
   | { t: 'worker.pr'; workerId: string }
   | { t: 'term.input'; workerId: string; data: string }
   | { t: 'thread.read'; workerId: string; request: string; before?: number }
+  | { t: 'thread.watch'; workerId: string; on: boolean }
   | { t: 'term.resize'; workerId: string; cols: number; rows: number }
   /** Open the boss monitor's shell (see OFFICE_SHELL_ID). It is not a worker. */
   | { t: 'shell.attach' }
@@ -1063,7 +1064,7 @@ export interface Arrival {
 
 export type ServerMsg =
   /** `presentation` is how the clients show `entries`: the rows for them, built over everything the office has read (src/shared/thread-presentation.ts). */
-  | { t: 'thread.snapshot'; workerId: string; request: string; before?: number; sessionId?: string; entries: ThreadEntry[]; hasMore: boolean; presentation?: ThreadPresentation; error?: string }
+  | { t: 'thread.snapshot'; workerId: string; request: string; before?: number; push?: boolean; sessionId?: string; entries: ThreadEntry[]; hasMore: boolean; presentation?: ThreadPresentation; error?: string }
   | { t: 'action.result'; requestId: string; ok: boolean; error?: string; workerId?: string; note?: string }
   | ({
       t: 'welcome';

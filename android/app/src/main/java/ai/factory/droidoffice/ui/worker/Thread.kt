@@ -28,13 +28,18 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
@@ -67,9 +72,15 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -78,10 +89,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.currentStateAsState
+import ai.factory.droidoffice.core.ActivePlan
 import ai.factory.droidoffice.core.ActivityState
 import ai.factory.droidoffice.core.Asks
 import ai.factory.droidoffice.core.ClientMsg
+import ai.factory.droidoffice.core.DiffLineKind
 import ai.factory.droidoffice.core.DroidQueue
+import ai.factory.droidoffice.core.FileChangeKind
+import ai.factory.droidoffice.core.Markdown
 import ai.factory.droidoffice.core.MissionControl
 import ai.factory.droidoffice.core.NoticeTone
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
@@ -90,8 +105,11 @@ import ai.factory.droidoffice.core.PlanStep
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.ThreadBlock
+import ai.factory.droidoffice.core.ThreadCardKind
+import ai.factory.droidoffice.core.ThreadDiffLine
 import ai.factory.droidoffice.core.ThreadEntry
 import ai.factory.droidoffice.core.ThreadFeed
+import ai.factory.droidoffice.core.ThreadFileChange
 import ai.factory.droidoffice.core.ThreadImage
 import ai.factory.droidoffice.core.ThreadModelAction
 import ai.factory.droidoffice.core.ThreadPhase
@@ -100,6 +118,8 @@ import ai.factory.droidoffice.core.ThreadRole
 import ai.factory.droidoffice.core.ThreadRow
 import ai.factory.droidoffice.core.ThreadState
 import ai.factory.droidoffice.core.ThreadSupport
+import ai.factory.droidoffice.core.ThreadToolGroup
+import ai.factory.droidoffice.core.ThreadTurnChanges
 import ai.factory.droidoffice.core.ThreadView
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
@@ -142,12 +162,16 @@ private fun InlineSegment(text: String, on: Boolean, tag: String, onClick: () ->
     }
 }
 
-private const val POLL_MS = 1_000L
+private const val LOADING_POLL_MS = 2_000L
+private const val RECONCILE_POLL_MS = 15_000L
 private const val HEAD = "thread.head"
 private const val NEWER = "thread.newer"
 private const val ASK = "thread.ask"
 /** The receipts' item in the list, and its open state in the open map. */
 private const val QUEUED = "thread.queued"
+/** Sticky TodoWrite plan bar open state in the saved open map. */
+private const val PLAN_BAR = "thread.plan.bar"
+private const val DIFF_FULL = "diff.full:"
 /** A tool's arguments or result longer than this shows its start, so one huge log can't stall the list. */
 private const val SHOWN_CHARS = 6_000
 /** Where a long message from the owner is kept shown in full, in the map of what is open. */
@@ -157,11 +181,9 @@ private const val USER_LINES = 8
 
 /**
  * The worker's conversation as the office presents it ([ThreadRow]): what it was asked and what it
- * said, with everything it did in between folded into one quiet Activity line ("Read 3 files · Ran 2
- * commands") that opens to its thoughts and tool runs, each run to its actions and plan, each action
- * to its arguments and result. Then the question it's waiting on as a card with its choices. It polls
- * once a second while it's on screen and connected. An office that can't send threads, sends none
- * this app can read, or can't read the session says so and offers Raw TTY, which always has everything.
+ * said, with exploration folded into compact 1-level disclosures and File Change, Command and
+ * Delegation cards rendered directly in turn order. Subscribes via `thread.watch` for live server
+ * pushes while visible and connected, falling back to low-frequency reconciliation.
  */
 @Composable
 internal fun Thread(
@@ -180,6 +202,7 @@ internal fun Thread(
     followRequest: Int = 0,
     /** It has a terminal to fall back on; a cloud worker doesn't. */
     rawTty: Boolean = true,
+    onOpenWorker: ((String) -> Unit)? = null,
 ) {
     val graph = LocalGraph.current
     val connection = graph.connection
@@ -198,6 +221,16 @@ internal fun Thread(
     LaunchedEffect(feed) {
         connection.threads.collect { if (feed.receive(it)) state = feed.state }
     }
+    DisposableEffect(feed, connected, visible) {
+        if (connected && visible) {
+            connection.send(ClientMsg.threadWatch(w.id, true))
+        }
+        onDispose {
+            if (connected && visible) {
+                connection.send(ClientMsg.threadWatch(w.id, false))
+            }
+        }
+    }
     LaunchedEffect(feed, connected, visible, polls) {
         if (!connected) {
             feed.disconnected()
@@ -210,7 +243,13 @@ internal fun Thread(
             feed.latest(now)?.let { req -> if (!connection.send(ClientMsg.threadRead(w.id, req))) feed.unsent(req) }
             feed.tick(now)
             state = feed.state
-            delay(POLL_MS)
+            delay(if (feed.state.phase == ThreadPhase.Loading) LOADING_POLL_MS else RECONCILE_POLL_MS)
+        }
+    }
+    LaunchedEffect(state.loadingEarlier) {
+        while (state.loadingEarlier) {
+            delay(1_000L)
+            if (feed.tick(System.currentTimeMillis())) state = feed.state
         }
     }
 
@@ -391,19 +430,25 @@ internal fun Thread(
         polls++
     }
 
-    fun toggle(a: ThreadRow.Activity) {
-        val choices = ThreadView.Open.toggle(a, open)
+    fun toggleExploration(seg: ThreadView.Segment.Exploration, defaultOpen: Boolean) {
+        val choices = ThreadView.Open.toggleExploration(seg, defaultOpen, open)
         open.putAll(choices)
-        if (choices[a.id] == true) inspect()
+        if (choices[seg.key] == true) inspect()
     }
 
-    /** Opens or closes a run, a call's details, a thought or a long message, by its key in [open]. */
+    /** Opens or closes a call's details, a card, a thought or a long message, by its key in [open]. */
     fun flip(key: String, isOpen: Boolean) {
         open[key] = !isOpen
         if (!isOpen) inspect()
     }
 
+    val allWorkers = remember(data) { data.allDeskWorkers }
+    val activePlan = remember(state.entries, w.state.busy, w.todos) {
+        val fromEntries = ThreadView.latestPlan(state.entries, w.state.busy)
+        if (fromEntries != null) fromEntries.takeUnless { it.stale } else ThreadView.fallbackPlan(w.todos)
+    }
     val pictures = remember(effectiveFloor, w.id) { effectiveFloor?.let { PictureSource(it, w.id) } }
+    val floorDir = remember(data.floors, effectiveFloor) { data.floors.firstOrNull { it.id == effectiveFloor }?.dir }
     Column(modifier.tagged(Tags.Worker.THREAD)) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
             // On a wide screen the conversation keeps a reading width, centred, rather than lines across the whole window.
@@ -420,10 +465,22 @@ internal fun Thread(
                             when (r) {
                                 is ThreadRow.Message -> {
                                     val all = open[MORE + r.id] == true
-                                    Message(w, r, loaded[r.id]?.text.orEmpty(), loaded[r.id]?.images.orEmpty(), all) { flip(MORE + r.id, all) }
+                                    val isStreaming = w.state.busy && i == rows.lastIndex && r.role == ThreadRole.Assistant
+                                    Message(w, r, loaded[r.id]?.text.orEmpty(), loaded[r.id]?.images.orEmpty(), all, isStreaming, floorDir) { flip(MORE + r.id, all) }
                                 }
                                 is ThreadRow.Notice -> Notice(w, r, loaded[r.id])
-                                is ThreadRow.Activity -> Activity(r, ThreadView.Open.activity(r, open), open, loaded, asking, onToggle = { toggle(r) }, onFlip = ::flip)
+                                is ThreadRow.Activity -> Activity(
+                                    a = r,
+                                    open = open,
+                                    loaded = loaded,
+                                    asking = asking,
+                                    allWorkers = allWorkers,
+                                    deskWorker = data::deskWorker,
+                                    onOpenWorker = onOpenWorker,
+                                    floorDir = floorDir,
+                                    onToggleExploration = ::toggleExploration,
+                                    onFlip = ::flip,
+                                )
                             }
                         }
                     }
@@ -477,6 +534,17 @@ internal fun Thread(
                 val from = rows.indexOfFirst { it.id == seen }
                 val fresh = if (from < 0) 0 else rows.drop(from + 1).count { it is ThreadRow.Message && it.role != ThreadRole.User }
                 Jump(fresh, Modifier.align(Alignment.BottomEnd).padding(end = side, bottom = 8.dp), ::resume)
+            }
+        }
+        if (activePlan != null && state.support == ThreadSupport.Supported) {
+            val planOpen = open[PLAN_BAR] == true
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+                StickyPlanBar(
+                    plan = activePlan,
+                    isOpen = planOpen,
+                    onToggle = { open[PLAN_BAR] = !planOpen },
+                    modifier = Modifier.widthIn(max = READING_WIDTH + 20.dp).fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 4.dp, bottom = 6.dp),
+                )
             }
         }
     }
@@ -755,7 +823,7 @@ private fun Modifier.userBlock() = this.background(Palette.SurfaceHover, Rounded
     .padding(horizontal = 12.dp, vertical = 9.dp)
 
 @Composable
-private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, images: List<ThreadImage>, all: Boolean, onMore: () -> Unit) {
+private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, images: List<ThreadImage>, all: Boolean, streaming: Boolean, floorDir: String?, onMore: () -> Unit) {
     val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(m.id))
     if (m.role == ThreadRole.User) {
         val reveal = rememberReveal()
@@ -787,7 +855,9 @@ private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, images: L
     } else {
         Column(tag) {
             if (m.startsTurn) Eyebrow(w.name.ifBlank { "Droid" }, Modifier.padding(bottom = 6.dp))
-            SelectionContainer { MarkdownText(text) }
+            val files = LocalFilePreview.current
+            SelectionContainer { MarkdownText(text, streaming = streaming, onOpenPath = files?.let { it::open }, rich = true) }
+            m.turnChanges?.let { TurnChanges(m.id, it, floorDir, Modifier.padding(top = 10.dp)) }
         }
     }
 }
@@ -825,12 +895,189 @@ private fun Notice(w: WorkerInfo, n: ThreadRow.Notice, entry: ThreadEntry?) {
 }
 
 /**
- * Everything the worker did between two messages: one quiet line saying what it did and what is
- * running while it is live. Tool errors stay inside their ordinary action disclosures.
+ * Everything the worker did between two messages: consecutive thoughts and read/search exploration
+ * fold into compact 1-level disclosures, while File Change, Command and Delegation cards surface
+ * directly in turn order.
  */
 @Composable
 private fun Activity(
     a: ThreadRow.Activity,
+    open: SnapshotStateMap<String, Boolean>,
+    loaded: Map<String, ThreadEntry>,
+    asking: Boolean,
+    allWorkers: List<WorkerInfo>,
+    deskWorker: (String) -> WorkerInfo?,
+    onOpenWorker: ((String) -> Unit)?,
+    floorDir: String?,
+    onToggleExploration: (ThreadView.Segment.Exploration, Boolean) -> Unit,
+    onFlip: (String, Boolean) -> Unit,
+) {
+    val first = a.id.removePrefix("activity:")
+    val items = remember(a) { ThreadView.items(a, ThreadView.segments(a)) }
+    @Composable
+    fun SegmentView(seg: ThreadView.Segment) {
+        when (seg) {
+            is ThreadView.Segment.Exploration -> {
+                val segOpen = ThreadView.Open.exploration(seg, a.open, open)
+                ExplorationDisclosure(
+                    seg = seg,
+                    isOpen = segOpen,
+                    open = open,
+                    loaded = loaded,
+                    asking = asking,
+                    onToggle = { onToggleExploration(seg, a.open) },
+                    onFlip = onFlip,
+                )
+            }
+            is ThreadView.Segment.Card -> {
+                CardSegment(
+                    seg = seg,
+                    open = open,
+                    loaded = loaded,
+                    allWorkers = allWorkers,
+                    deskWorker = deskWorker,
+                    onOpenWorker = onOpenWorker,
+                    floorDir = floorDir,
+                    onFlip = onFlip,
+                )
+            }
+        }
+    }
+    Column(
+        Modifier.fillMaxWidth().tagged(Tags.Worker.threadGroup(first)),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        for (item in items) {
+            when (item) {
+                is ThreadView.Item.One -> SegmentView(item.segment)
+                is ThreadView.Item.Group -> {
+                    val groupOpen = ThreadView.Open.group(item.group, open)
+                    CardGroup(item.group, working = item.group.live && a.live && !asking, isOpen = groupOpen, onToggle = { onFlip(item.group.id, groupOpen) }) {
+                        for (seg in item.segments) SegmentView(seg)
+                    }
+                }
+            }
+        }
+        a.turnChanges?.let { TurnChanges(a.id, it, floorDir, Modifier.padding(top = 2.dp)) }
+    }
+}
+
+/** Three or more cards in a run, under one line saying what they did and changed; open in the latest turn. */
+@Composable
+private fun CardGroup(group: ThreadToolGroup, working: Boolean, isOpen: Boolean, onToggle: () -> Unit, content: @Composable () -> Unit) {
+    val reveal = rememberReveal()
+    val tag = group.id.removePrefix("group:tools:")
+    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadCardGroup(tag))) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).disclosure(isOpen) {
+                if (!isOpen) reveal.ask()
+                onToggle()
+            }.tagged(Tags.Worker.threadCardGroupToggle(tag)).heightIn(min = 40.dp).padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (working) Spinner(Modifier.size(11.dp), Palette.Accent)
+            Text(
+                if (working) ThreadView.WORKING + group.label else group.label,
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp, lineHeight = 19.sp, color = Palette.TextSecondary),
+                maxLines = if (isOpen) 3 else 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (group.files > 0) {
+                Text(filesWord(group.files), style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary), maxLines = 1)
+                DiffCounts(group.additions, group.deletions)
+            }
+            if (!working) CardStatusBadge(group.state, quietComplete = true)
+            Icon(OfficeIcons.Chevron, null, Modifier.size(14.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
+        }
+        if (isOpen) {
+            Column(
+                Modifier.fillMaxWidth().padding(start = 7.dp, bottom = 4.dp).drawBehind {
+                    drawLine(Palette.Border, Offset(0f, 0f), Offset(0f, size.height), 1.dp.toPx())
+                }.padding(start = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) { content() }
+        }
+    }
+}
+
+private fun filesWord(count: Int) = if (count == 1) "1 file" else "$count files"
+
+@Composable
+private fun DiffCounts(additions: Int, deletions: Int) {
+    Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("+$additions", style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, color = Palette.Success))
+        Text("-$deletions", style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, color = Palette.Danger))
+    }
+}
+
+/** What a finished turn changed, under its last message or Activity: each file opens in the file preview where there is one. */
+@Composable
+private fun TurnChanges(rowId: String, changes: ThreadTurnChanges, floorDir: String?, modifier: Modifier = Modifier) {
+    val preview = LocalFilePreview.current
+    Column(modifier.fillMaxWidth().panel(RoundedCornerShape(4.dp), Palette.Surface, Palette.Border).tagged(Tags.Worker.threadTurnChanges(rowId))) {
+        Row(
+            Modifier.fillMaxWidth().background(Palette.SurfaceRaised).heightIn(min = 40.dp).padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Changed ${filesWord(changes.count)}", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, color = Palette.Text, fontWeight = FontWeight.Medium), modifier = Modifier.weight(1f))
+            DiffCounts(changes.additions, changes.deletions)
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+        Column(Modifier.padding(vertical = 4.dp)) {
+            changes.files.forEachIndexed { i, file ->
+                val rel = remember(file.path, floorDir) { ThreadView.workspacePath(file.path, floorDir) }
+                val openFile: (() -> Unit)? = if (preview != null && rel != null) {
+                    { preview.openFilePreview(rel) }
+                } else null
+                Row(
+                    Modifier.fillMaxWidth()
+                        .then(if (openFile != null) Modifier.clickable(onClickLabel = "Open file", role = Role.Button, onClick = openFile) else Modifier)
+                        .tagged(Tags.Worker.threadTurnFile(rowId, i))
+                        .heightIn(min = 36.dp)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        file.shortPath,
+                        style = LocalOfficeType.current.monoBody.copy(
+                            fontSize = 12.sp, lineHeight = 16.sp, color = Palette.Text,
+                            textDecoration = if (openFile != null) TextDecoration.Underline else null,
+                        ),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                    )
+                    DiffCounts(file.additions, file.deletions)
+                }
+            }
+            val more = changes.count - changes.files.size
+            if (more > 0) {
+                Text("and $more more", style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary), modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+            }
+        }
+    }
+}
+
+/** A command as the shell reads it, after an accent prompt. */
+private fun shellLine(command: String): AnnotatedString = buildAnnotatedString {
+    withStyle(SpanStyle(color = Palette.Accent)) { append("$ ") }
+    for (tok in Markdown.tokenizeCode(command, "sh")) {
+        val color = when (tok.kind) {
+            Markdown.TokenKind.Plain -> null
+            Markdown.TokenKind.Keyword -> Palette.AccentHover
+            Markdown.TokenKind.Type -> Palette.Info
+            Markdown.TokenKind.String -> Palette.Success
+            Markdown.TokenKind.Number -> Palette.Warning
+            Markdown.TokenKind.Comment -> Palette.TextSecondary
+        }
+        if (color == null) append(tok.text) else withStyle(SpanStyle(color = color)) { append(tok.text) }
+    }
+}
+
+@Composable
+private fun ExplorationDisclosure(
+    seg: ThreadView.Segment.Exploration,
     isOpen: Boolean,
     open: SnapshotStateMap<String, Boolean>,
     loaded: Map<String, ThreadEntry>,
@@ -838,15 +1085,14 @@ private fun Activity(
     onToggle: () -> Unit,
     onFlip: (String, Boolean) -> Unit,
 ) {
-    val first = a.id.removePrefix("activity:")
-    val working = a.live && !asking
+    val working = seg.live && !asking
     val reveal = rememberReveal()
-    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadGroup(first))) {
+    Column(Modifier.fillMaxWidth().then(reveal.modifier)) {
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).disclosure(isOpen) {
                 if (!isOpen) reveal.ask()
                 onToggle()
-            }.tagged(Tags.Worker.threadGroupToggle(first)).heightIn(min = 40.dp).padding(vertical = 6.dp),
+            }.tagged(Tags.Worker.threadGroupToggle(seg.tagId)).heightIn(min = 40.dp).padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (working) {
@@ -854,23 +1100,23 @@ private fun Activity(
                 Spacer(Modifier.width(8.dp))
             }
             Text(
-                ThreadView.line(a, asking),
+                if (working) ThreadView.WORKING + seg.label else seg.label,
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp, lineHeight = 19.sp, color = Palette.TextSecondary),
                 maxLines = if (isOpen) 3 else 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).tagged(Tags.Worker.threadGroupSummary(first)),
+                modifier = Modifier.weight(1f).tagged(Tags.Worker.threadGroupSummary(seg.tagId)),
             )
-            a.status?.let {
+            seg.status?.let {
                 Text(
                     it.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = Palette.TextSecondary),
-                    maxLines = 1, modifier = Modifier.padding(start = 10.dp).tagged(Tags.Worker.threadGroupStatus(first)),
+                    maxLines = 1, modifier = Modifier.padding(start = 10.dp).tagged(Tags.Worker.threadGroupStatus(seg.tagId)),
                 )
             }
             Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(14.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
         }
-        ThreadView.running(a)?.let {
+        seg.running?.let {
             Text(
                 it, style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 24.dp, bottom = 4.dp).semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.threadGroupRunning(first)),
+                modifier = Modifier.padding(start = 24.dp, bottom = 4.dp).semantics { liveRegion = LiveRegionMode.Polite }.tagged(Tags.Worker.threadGroupRunning(seg.tagId)),
             )
         }
         if (isOpen) {
@@ -879,11 +1125,19 @@ private fun Activity(
                     drawLine(Palette.Border, Offset(0f, 0f), Offset(0f, size.height), 1.dp.toPx())
                 }.padding(start = 12.dp),
             ) {
-                for (block in a.blocks) {
-                    val blockOpen = ThreadView.Open.block(block, open)
+                for (block in seg.blocks) {
                     when (block) {
-                        is ThreadBlock.Thought -> ThoughtRow(block, ThreadView.thought(block, loaded[block.id]), blockOpen) { onFlip(block.id, blockOpen) }
-                        is ThreadBlock.Tools -> RunRow(block, blockOpen, open, loaded, onToggle = { onFlip(block.id, blockOpen) }, onFlip = onFlip)
+                        is ThreadBlock.Thought -> {
+                            val thoughtOpen = ThreadView.Open.block(block, open)
+                            ThoughtRow(block, ThreadView.thought(block, loaded[block.id]), thoughtOpen) { onFlip(block.id, thoughtOpen) }
+                        }
+                        is ThreadBlock.Tools -> {
+                            for (action in block.actions) {
+                                val actionOpen = ThreadView.Open.action(action, open)
+                                ActionRow(action, loaded[action.id], actionOpen) { onFlip(action.id, actionOpen) }
+                            }
+                            block.plan?.let { Plan(Tags.Worker.threadRunPlan(block.id.removePrefix("tools:")), it) }
+                        }
                     }
                 }
             }
@@ -891,44 +1145,584 @@ private fun Activity(
     }
 }
 
-/** One run of tool calls in an open Activity: its line, opening to its actions and its plan. */
 @Composable
-private fun RunRow(
-    b: ThreadBlock.Tools,
-    isOpen: Boolean,
+private fun CardSegment(
+    seg: ThreadView.Segment.Card,
     open: SnapshotStateMap<String, Boolean>,
     loaded: Map<String, ThreadEntry>,
-    onToggle: () -> Unit,
+    allWorkers: List<WorkerInfo>,
+    deskWorker: (String) -> WorkerInfo?,
+    onOpenWorker: ((String) -> Unit)?,
+    floorDir: String?,
     onFlip: (String, Boolean) -> Unit,
 ) {
-    val first = b.id.removePrefix("tools:")
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (action in seg.block.actions) {
+            when (seg.kind) {
+                ThreadCardKind.Change -> {
+                    val changes = action.changes
+                    if (changes.isNullOrEmpty()) {
+                        val actionOpen = ThreadView.Open.action(action, open)
+                        ActionRow(action, loaded[action.id], actionOpen) { onFlip(action.id, actionOpen) }
+                    } else {
+                        Column(Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(action.id)), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            changes.forEachIndexed { idx, change ->
+                                val changeKey = if (changes.size == 1) action.id else "${action.id}:$idx"
+                                val isOpen = ThreadView.Open.change(changeKey, change, open)
+                                val fullKey = DIFF_FULL + changeKey
+                                val showFull = open[fullKey] == true
+                                FileChangeCard(
+                                    action = action,
+                                    change = change,
+                                    changeKey = changeKey,
+                                    entry = loaded[action.id],
+                                    floorDir = floorDir,
+                                    isOpen = isOpen,
+                                    showFull = showFull,
+                                    onToggle = { onFlip(changeKey, isOpen) },
+                                    onToggleFull = { onFlip(fullKey, showFull) },
+                                )
+                            }
+                        }
+                    }
+                }
+                ThreadCardKind.Command -> {
+                    val isOpen = ThreadView.Open.command(action, open)
+                    CommandCard(action, loaded[action.id], isOpen) { onFlip(action.id, isOpen) }
+                }
+                ThreadCardKind.Delegate -> {
+                    val isOpen = ThreadView.Open.action(action, open)
+                    DelegationCard(
+                        action = action,
+                        entry = loaded[action.id],
+                        isOpen = isOpen,
+                        allWorkers = allWorkers,
+                        deskWorker = deskWorker,
+                        onOpenWorker = onOpenWorker,
+                        onToggle = { onFlip(action.id, isOpen) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FileChangeCard(
+    action: ThreadModelAction,
+    change: ThreadFileChange,
+    changeKey: String,
+    entry: ThreadEntry?,
+    floorDir: String?,
+    isOpen: Boolean,
+    showFull: Boolean,
+    onToggle: () -> Unit,
+    onToggleFull: () -> Unit,
+) {
     val reveal = rememberReveal()
-    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadRun(first))) {
+    val preview = LocalFilePreview.current
+    val relPath = remember(change.path, floorDir) { ThreadView.workspacePath(change.path, floorDir) }
+    val openFile: (() -> Unit)? = if (preview != null && relPath != null) {
+        { preview.openFilePreview(relPath, ThreadView.targetLine(change)) }
+    } else null
+    val borderColor = if (action.state == ActivityState.Failed) Palette.Danger.copy(alpha = 0.35f) else Palette.Border
+    Column(
+        Modifier.fillMaxWidth()
+            .then(reveal.modifier)
+            .panel(RoundedCornerShape(4.dp), Palette.Surface, borderColor)
+            .tagged(Tags.Worker.threadChange(changeKey)),
+    ) {
         Row(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(3.dp)).disclosure(isOpen) {
-                if (!isOpen) reveal.ask()
-                onToggle()
-            }.tagged(Tags.Worker.threadRunToggle(first)).heightIn(min = 40.dp).padding(vertical = 5.dp),
+            Modifier.fillMaxWidth()
+                .background(Palette.SurfaceRaised)
+                .disclosure(isOpen) {
+                    if (!isOpen) reveal.ask()
+                    onToggle()
+                }
+                .tagged(Tags.Worker.threadToggle(changeKey))
+                .heightIn(min = 42.dp)
+                .padding(horizontal = 10.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            if (b.live && b.state == ActivityState.Working) {
-                Spinner(Modifier.size(10.dp), Palette.Accent)
-                Spacer(Modifier.width(10.dp))
+            if (action.state == ActivityState.Working) {
+                Spinner(Modifier.size(11.dp), Palette.Accent)
+            } else {
+                Icon(OfficeIcons.File, null, Modifier.size(13.dp), tint = Palette.TextSecondary)
             }
             Text(
-                b.label,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 18.sp, color = Palette.TextSecondary),
-                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                change.shortPath,
+                style = LocalOfficeType.current.monoBody.copy(
+                    fontSize = 12.5.sp, lineHeight = 17.sp, color = Palette.Text,
+                    textDecoration = if (openFile != null) TextDecoration.Underline else null,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).then(
+                    if (openFile != null) {
+                        Modifier.clickable(onClickLabel = "Open file", role = Role.Button, onClick = openFile).tagged(Tags.Worker.threadChangeOpen(changeKey))
+                    } else Modifier,
+                ),
             )
-            Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(13.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
+            when (change.kind) {
+                FileChangeKind.Added -> MiniBadge("ADDED", Palette.Success)
+                FileChangeKind.Deleted -> MiniBadge("DELETED", Palette.Danger)
+                FileChangeKind.Modified -> if (change.generated && !isOpen) MiniBadge("GENERATED", Palette.TextSecondary)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("+${change.additions}", style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, color = Palette.Success))
+                Text("-${change.deletions}", style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, color = Palette.Danger))
+            }
+            CardStatusBadge(action.state, quietComplete = false)
+            Icon(OfficeIcons.Chevron, null, Modifier.size(13.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
+        }
+        if (openFile != null && change.kind == FileChangeKind.Added && action.state == ActivityState.Complete && ThreadView.deliverable(change.path)) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+            Row(
+                Modifier.clickable(onClickLabel = "Preview the file", role = Role.Button, onClick = openFile)
+                    .tagged(Tags.Worker.threadChangePreview(changeKey))
+                    .heightIn(min = 40.dp)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(OfficeIcons.File, null, Modifier.size(12.dp), tint = Palette.Text)
+                Text("PREVIEW", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Text))
+            }
         }
         if (isOpen) {
-            Column(Modifier.fillMaxWidth().padding(start = 12.dp)) {
-                for (action in b.actions) {
-                    val actionOpen = ThreadView.Open.action(action, open)
-                    ActionRow(action, loaded[action.id], actionOpen) { onFlip(action.id, actionOpen) }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+            if (change.lines.isNotEmpty()) {
+                val canClamp = change.lines.size > ThreadView.DIFF_CLAMP_LINES
+                val shownLines = if (canClamp && !showFull) change.lines.take(ThreadView.DIFF_CLAMP_LINES) else change.lines
+                val formatted = remember(shownLines) { formatDiffLines(shownLines) }
+                var textLayout by remember(shownLines) { mutableStateOf<TextLayoutResult?>(null) }
+                CodeScroll(Palette.Bg, bordered = false) { scroll ->
+                    SelectionContainer {
+                        Text(
+                            formatted,
+                            style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, lineHeight = 17.sp),
+                            softWrap = false,
+                            onTextLayout = { textLayout = it },
+                            modifier = scroll
+                                .drawBehind {
+                                    val layout = textLayout ?: return@drawBehind
+                                    val vPad = 6.dp.toPx()
+                                    val count = minOf(shownLines.size, layout.lineCount)
+                                    for (idx in 0 until count) {
+                                        val bg = when (shownLines[idx].kind) {
+                                            DiffLineKind.Add -> Palette.Success.copy(alpha = 0.10f)
+                                            DiffLineKind.Del -> Palette.Danger.copy(alpha = 0.10f)
+                                            DiffLineKind.Hunk -> Palette.Info.copy(alpha = 0.07f)
+                                            else -> Color.Transparent
+                                        }
+                                        if (bg != Color.Transparent) {
+                                            val top = vPad + layout.getLineTop(idx)
+                                            val bottom = vPad + layout.getLineBottom(idx)
+                                            drawRect(bg, topLeft = Offset(0f, top), size = androidx.compose.ui.geometry.Size(size.width, bottom - top))
+                                        }
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
+                    }
                 }
-                b.plan?.let { Plan(Tags.Worker.threadRunPlan(first), it) }
+                if (canClamp) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .background(Palette.SurfaceRaised)
+                            .disclosure(showFull, onToggleFull)
+                            .tagged(Tags.Worker.threadChangeFull(changeKey))
+                            .heightIn(min = 34.dp)
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (showFull) "SHOW LESS" else "SHOW FULL DIFF (${change.lines.size} LINES)",
+                            style = LocalOfficeType.current.eyebrow.copy(color = Palette.Text),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Icon(OfficeIcons.Chevron, null, Modifier.size(12.dp).rotate(if (showFull) -90f else 90f), tint = Palette.TextSecondary)
+                    }
+                } else if (change.truncated) {
+                    Text(
+                        "Showing the first ${change.lines.size} diff lines.",
+                        style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
+            } else if (action.state == ActivityState.Failed) {
+                ActionDetailsBody(action, entry, Modifier.padding(horizontal = 10.dp, vertical = 8.dp))
+            } else {
+                Text(
+                    if (change.generated) "Generated file updated." else "No line changes to display.",
+                    style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+private fun formatDiffLines(lines: List<ThreadDiffLine>): AnnotatedString {
+    // An Edit the office couldn't place in its file has no line numbers: no gutter rather than made-up ones.
+    val numbered = lines.any { it.oldLine != null || it.newLine != null }
+    val maxLine = lines.maxOfOrNull { maxOf(it.oldLine ?: 0, it.newLine ?: 0) } ?: 0
+    val digits = maxLine.toString().length.coerceAtLeast(2)
+    val blankNum = " ".repeat(digits)
+    return buildAnnotatedString {
+        lines.forEachIndexed { idx, line ->
+            val clean = line.text.replace('\n', ' ').replace('\r', ' ')
+            if (!numbered) {
+                val (sign, color) = when (line.kind) {
+                    DiffLineKind.Add -> "+ " to Palette.Success.copy(alpha = 0.75f)
+                    DiffLineKind.Del -> "- " to Palette.Danger.copy(alpha = 0.75f)
+                    DiffLineKind.Ctx -> "  " to Palette.TextTertiary
+                    DiffLineKind.Hunk -> "" to Palette.Info
+                    DiffLineKind.Note -> "" to Palette.TextSecondary
+                }
+                withStyle(SpanStyle(color = color)) { append(sign) }
+                val body = when (line.kind) {
+                    DiffLineKind.Hunk -> Palette.Info
+                    DiffLineKind.Note, DiffLineKind.Ctx -> Palette.TextSecondary
+                    else -> Palette.Text
+                }
+                withStyle(SpanStyle(color = body)) { append(clean) }
+                if (idx < lines.lastIndex) append('\n')
+                return@forEachIndexed
+            }
+            when (line.kind) {
+                DiffLineKind.Hunk, DiffLineKind.Note -> {
+                    val gutter = if (line.kind == DiffLineKind.Hunk) Palette.Info else Palette.TextSecondary
+                    withStyle(SpanStyle(color = gutter)) {
+                        append("$blankNum $blankNum   $clean")
+                    }
+                }
+                DiffLineKind.Add -> {
+                    val newNum = (line.newLine?.toString() ?: "").padStart(digits)
+                    withStyle(SpanStyle(color = Palette.Success.copy(alpha = 0.75f))) {
+                        append("$blankNum $newNum + ")
+                    }
+                    withStyle(SpanStyle(color = Palette.Text)) { append(clean) }
+                }
+                DiffLineKind.Del -> {
+                    val oldNum = (line.oldLine?.toString() ?: "").padStart(digits)
+                    withStyle(SpanStyle(color = Palette.Danger.copy(alpha = 0.75f))) {
+                        append("$oldNum $blankNum - ")
+                    }
+                    withStyle(SpanStyle(color = Palette.Text)) { append(clean) }
+                }
+                DiffLineKind.Ctx -> {
+                    val oldNum = (line.oldLine?.toString() ?: "").padStart(digits)
+                    val newNum = (line.newLine?.toString() ?: "").padStart(digits)
+                    withStyle(SpanStyle(color = Palette.TextTertiary)) {
+                        append("$oldNum $newNum   ")
+                    }
+                    withStyle(SpanStyle(color = Palette.TextSecondary)) { append(clean) }
+                }
+            }
+            if (idx < lines.lastIndex) append('\n')
+        }
+    }
+}
+
+@Composable
+private fun CommandCard(action: ThreadModelAction, entry: ThreadEntry?, isOpen: Boolean, onToggle: () -> Unit) {
+    val reveal = rememberReveal()
+    val cmdText = action.command?.command?.takeIf { it.isNotBlank() } ?: action.detail?.takeIf { it.isNotBlank() } ?: action.title
+    val summaryText = action.command?.summary?.takeIf { it.isNotBlank() && it != cmdText }
+    val borderColor = if (action.state == ActivityState.Failed) Palette.Danger.copy(alpha = 0.4f) else Palette.Border
+    Column(
+        Modifier.fillMaxWidth()
+            .then(reveal.modifier)
+            .panel(RoundedCornerShape(4.dp), Palette.Surface, borderColor)
+            .tagged(Tags.Worker.threadEntry(action.id)),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().background(Palette.SurfaceRaised),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                Modifier.weight(1f)
+                    .disclosure(isOpen) {
+                        if (!isOpen) reveal.ask()
+                        onToggle()
+                    }
+                    .tagged(Tags.Worker.threadToggle(action.id))
+                    .heightIn(min = 42.dp)
+                    .padding(start = 10.dp, top = 7.dp, bottom = 7.dp, end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (action.state == ActivityState.Working) {
+                    Spinner(Modifier.size(11.dp), Palette.Accent)
+                } else {
+                    Icon(
+                        OfficeIcons.Shell,
+                        null,
+                        Modifier.size(13.dp),
+                        tint = if (action.state == ActivityState.Failed) Palette.Danger else Palette.TextSecondary,
+                    )
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        remember(cmdText) { shellLine(cmdText) },
+                        style = LocalOfficeType.current.monoBody.copy(fontSize = 12.5.sp, lineHeight = 17.sp, color = Palette.Text),
+                        maxLines = if (isOpen) 4 else 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    summaryText?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp, color = Palette.TextSecondary),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                CardStatusBadge(action.state, quietComplete = true)
+                Icon(OfficeIcons.Chevron, null, Modifier.size(13.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
+            }
+            DisableSelection {
+                CopyActionChip(
+                    label = "Copy command",
+                    textToCopy = cmdText,
+                    clipTitle = "Command",
+                    tag = Tags.Worker.threadCommandCopy(action.id),
+                    iconOnly = true,
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+            }
+        }
+        if (isOpen) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+            ActionDetailsBody(action, entry, Modifier.padding(horizontal = 10.dp, vertical = 8.dp))
+        }
+    }
+}
+
+@Composable
+private fun DelegationCard(
+    action: ThreadModelAction,
+    entry: ThreadEntry?,
+    isOpen: Boolean,
+    allWorkers: List<WorkerInfo>,
+    deskWorker: (String) -> WorkerInfo?,
+    onOpenWorker: ((String) -> Unit)?,
+    onToggle: () -> Unit,
+) {
+    val reveal = rememberReveal()
+    val del = action.delegation
+    val matchedWorker = remember(del, allWorkers) {
+        if (del == null) null
+        else del.workerId?.let(deskWorker)
+            ?: del.workerName?.let { name -> allWorkers.firstOrNull { it.name.equals(name, ignoreCase = true) } }
+    }
+    val agentName = del?.agent?.ifBlank { null } ?: "Subagent"
+    val metaParts = remember(del, agentName) {
+        listOfNotNull(
+            del?.role?.takeIf { it.isNotBlank() && !it.equals(agentName, ignoreCase = true) },
+            del?.branch?.takeIf { it.isNotBlank() },
+        )
+    }
+    Column(
+        Modifier.fillMaxWidth()
+            .then(reveal.modifier)
+            .panel(RoundedCornerShape(4.dp), Palette.Surface, Palette.Border)
+            .tagged(Tags.Worker.threadEntry(action.id)),
+    ) {
+        Column(Modifier.fillMaxWidth().background(Palette.SurfaceRaised)) {
+            Row(
+                Modifier.fillMaxWidth()
+                    .disclosure(isOpen) {
+                        if (!isOpen) reveal.ask()
+                        onToggle()
+                    }
+                    .tagged(Tags.Worker.threadToggle(action.id))
+                    .heightIn(min = 44.dp)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (action.state == ActivityState.Working) {
+                    Spinner(Modifier.size(12.dp), Palette.Accent)
+                } else {
+                    Icon(OfficeIcons.Agent, null, Modifier.size(14.dp), tint = Palette.Accent)
+                }
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(agentName, style = MaterialTheme.typography.titleSmall.copy(fontSize = 13.5.sp, color = Palette.Text), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (metaParts.isNotEmpty()) {
+                            Text(
+                                metaParts.joinToString(" · "),
+                                style = LocalOfficeType.current.monoBody.copy(fontSize = 11.sp, color = Palette.TextSecondary),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    Text(
+                        del?.summary?.ifBlank { null } ?: action.title,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp, lineHeight = 18.sp, color = Palette.TextSecondary),
+                        maxLines = if (isOpen) 4 else 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                CardStatusBadge(action.state, quietComplete = false)
+                Icon(OfficeIcons.Chevron, null, Modifier.size(13.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
+            }
+            if (onOpenWorker != null && matchedWorker != null) {
+                Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 8.dp), horizontalArrangement = Arrangement.End) {
+                    val shape = RoundedCornerShape(3.dp)
+                    Row(
+                        Modifier.clip(shape)
+                            .border(1.dp, Palette.Accent.copy(alpha = 0.45f), shape)
+                            .background(Palette.AccentMuted)
+                            .clickable(role = Role.Button) { onOpenWorker(matchedWorker.id) }
+                            .tagged(Tags.Worker.threadDelegateOpen(action.id))
+                            .heightIn(min = 30.dp)
+                            .padding(horizontal = 9.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Icon(OfficeIcons.Workers, null, Modifier.size(12.dp), tint = Palette.Accent)
+                        Text("OPEN THREAD", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Accent))
+                    }
+                }
+            }
+        }
+        if (isOpen) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+            ActionDetailsBody(action, entry, Modifier.padding(horizontal = 10.dp, vertical = 8.dp))
+        }
+    }
+}
+
+@Composable
+private fun MiniBadge(label: String, color: Color) {
+    val shape = RoundedCornerShape(3.dp)
+    Box(
+        Modifier.clip(shape)
+            .background(color.copy(alpha = 0.12f))
+            .border(1.dp, color.copy(alpha = 0.35f), shape)
+            .padding(horizontal = 5.dp, vertical = 1.5.dp),
+    ) {
+        Text(label, style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.5.sp, color = color))
+    }
+}
+
+@Composable
+private fun CardStatusBadge(state: ActivityState, quietComplete: Boolean) {
+    when (state) {
+        ActivityState.Working -> MiniBadge("RUNNING", Palette.Warning)
+        ActivityState.Failed -> MiniBadge("FAILED", Palette.Danger)
+        ActivityState.Cancelled -> MiniBadge("CANCELLED", Palette.TextSecondary)
+        ActivityState.Incomplete -> MiniBadge("NO RESULT", Palette.TextSecondary)
+        ActivityState.Complete -> if (quietComplete) Icon(OfficeIcons.Check, null, Modifier.size(12.dp), tint = Palette.TextTertiary)
+    }
+}
+
+@Composable
+private fun ActionDetailsBody(a: ThreadModelAction, entry: ThreadEntry?, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val canShow = LocalPictureSource.current != null
+        when (val d = remember(a, entry?.input, entry?.output, entry?.images, canShow) { ThreadView.detail(a, entry, canShow) }) {
+            ThreadView.Detail.NotLoaded -> Text(ThreadView.NOT_LOADED, style = MaterialTheme.typography.bodySmall, modifier = Modifier.tagged(Tags.Worker.threadNotLoaded(a.id)))
+            is ThreadView.Detail.Shown -> {
+                d.arguments?.let { (label, body) -> Mono(label, body, Palette.Text) }
+                val pictures = d.images.isNotEmpty()
+                if (d.recorded) {
+                    if (d.output.isNotEmpty() || !pictures) {
+                        Mono(d.result, d.output.ifEmpty { "(empty)" }, if (a.state == ActivityState.Cancelled) Palette.TextSecondary else Palette.Text)
+                    }
+                    if (pictures) ThreadPictures(d.images, a.title, a.detail, end = false)
+                } else {
+                    Eyebrow(d.result, color = Palette.TextSecondary)
+                    Text(d.output, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StickyPlanBar(plan: ActivePlan, isOpen: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    val fraction = if (plan.total > 0) (plan.done.toFloat() / plan.total.toFloat()).coerceIn(0f, 1f) else 0f
+    Column(
+        modifier
+            .panel(RoundedCornerShape(4.dp), Palette.Surface, Palette.BorderStrong)
+            .tagged(Tags.Worker.THREAD_PLAN),
+    ) {
+        Row(
+            Modifier.fillMaxWidth()
+                .disclosure(isOpen, onToggle)
+                .tagged(Tags.Worker.THREAD_PLAN_TOGGLE)
+                .heightIn(min = 38.dp)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(Modifier.size(6.dp).clip(CircleShape).background(if (plan.allDone) Palette.Success else Palette.Accent))
+            Text(
+                "${plan.done}/${plan.total} completed",
+                style = LocalOfficeType.current.eyebrow.copy(color = if (plan.allDone) Palette.Success else Palette.Text),
+                maxLines = 1,
+            )
+            Text(
+                plan.current ?: if (plan.allDone) "All steps completed" else "Plan in progress",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp, color = Palette.TextSecondary),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(OfficeIcons.Chevron, null, Modifier.size(13.dp).rotate(if (isOpen) -90f else 90f), tint = Palette.TextSecondary)
+        }
+        Box(Modifier.fillMaxWidth().height(2.dp).background(Palette.SurfaceHigh)) {
+            Box(Modifier.fillMaxWidth(fraction).height(2.dp).background(if (plan.allDone) Palette.Success else Palette.Accent))
+        }
+        if (isOpen && plan.steps.isNotEmpty()) {
+            Column(
+                Modifier.fillMaxWidth()
+                    .heightIn(max = 180.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                for (s in plan.steps) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text(
+                            when {
+                                s.done -> "✓"
+                                s.active -> "●"
+                                else -> "○"
+                            },
+                            style = LocalOfficeType.current.monoBody.copy(
+                                fontSize = 12.sp,
+                                color = when {
+                                    s.done -> Palette.Success
+                                    s.active -> Palette.Accent
+                                    else -> Palette.TextTertiary
+                                },
+                            ),
+                            modifier = Modifier.width(18.dp).clearAndSetSemantics {
+                                contentDescription = if (s.done) "Done" else if (s.active) "Now" else "Next"
+                            },
+                        )
+                        Text(
+                            s.text,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 12.5.sp,
+                                lineHeight = 18.sp,
+                                fontWeight = if (s.active) FontWeight.Medium else FontWeight.Normal,
+                                color = if (s.active) Palette.Text else Palette.TextSecondary,
+                                textDecoration = if (s.done) TextDecoration.LineThrough else null,
+                            ),
+                        )
+                    }
+                }
             }
         }
     }
@@ -974,25 +1768,7 @@ private fun ActionRow(a: ThreadModelAction, entry: ThreadEntry?, open: Boolean, 
             Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(13.dp).rotate(if (open) 90f else 0f), tint = Palette.TextSecondary)
         }
         if (open) {
-            Column(Modifier.fillMaxWidth().padding(start = 22.dp, top = 2.dp, bottom = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                val canShow = LocalPictureSource.current != null
-                when (val d = remember(a, entry?.input, entry?.output, entry?.images, canShow) { ThreadView.detail(a, entry, canShow) }) {
-                    ThreadView.Detail.NotLoaded -> Text(ThreadView.NOT_LOADED, style = MaterialTheme.typography.bodySmall, modifier = Modifier.tagged(Tags.Worker.threadNotLoaded(a.id)))
-                    is ThreadView.Detail.Shown -> {
-                        d.arguments?.let { (label, body) -> Mono(label, body, Palette.Text) }
-                        val pictures = d.images.isNotEmpty()
-                        if (d.recorded) {
-                            if (d.output.isNotEmpty() || !pictures) {
-                                Mono(d.result, d.output.ifEmpty { "(empty)" }, if (a.state == ActivityState.Cancelled) Palette.TextSecondary else Palette.Text)
-                            }
-                            if (pictures) ThreadPictures(d.images, a.title, a.detail, end = false)
-                        } else {
-                            Eyebrow(d.result, color = Palette.TextSecondary)
-                            Text(d.output, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-            }
+            ActionDetailsBody(a, entry, Modifier.padding(start = 22.dp, top = 2.dp, bottom = 10.dp))
         }
     }
 }

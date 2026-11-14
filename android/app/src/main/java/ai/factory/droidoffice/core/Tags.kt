@@ -434,10 +434,16 @@ object Tags {
         const val QUEUE_SEND = "composer.queue_send"
         /** Droid's slash commands matching a draft that starts with `/`, over the composer. */
         const val SLASH_MENU = "composer.slash_menu"
+        /** The worker's files and folders matching an `@` mention under the cursor, over the Thread's composer. */
+        const val MENTION_MENU = "composer.mention_menu"
         /** In the Thread view while the worker is on a turn: stops it with Esc, as Droid's own Esc does. */
         const val STOP = "composer.stop"
         /** Why Send is off while the office is out of reach: the draft stays and nothing is sent later on its own. */
         const val COMPOSER_OFFLINE = "composer.offline"
+        /** Why Send held the message back: over the office's 20,000-character prompt limit, pastes expanded. */
+        const val COMPOSER_TOO_LONG = "composer.too_long"
+        /** Large pastes held in the draft as `[Pasted text #N · X lines]` tokens, as chips over the composer. */
+        const val PASTES = "composer.pastes"
 
         /** A numbered menu choice above the terminal, by the number the menu shows. */
         fun choice(number: Int) = "worker.choice/$number"
@@ -480,6 +486,39 @@ object Tags {
         const val THREAD_JUMP_LABEL = "worker.thread.jump.label"
         /** A Markdown table in a message: its columns line up and it scrolls sideways as one. */
         const val THREAD_TABLE = "worker.thread.table"
+        /** Copies a fenced code block's source to the clipboard. */
+        const val THREAD_CODE_COPY = "worker.thread.code.copy"
+        /** A structured `email` draft card in a message, and its copy/mail actions. */
+        const val THREAD_EMAIL = "worker.thread.email"
+        const val THREAD_EMAIL_COPY_BODY = "worker.thread.email.copy_body"
+        const val THREAD_EMAIL_COPY_ALL = "worker.thread.email.copy_all"
+        const val THREAD_EMAIL_OPEN = "worker.thread.email.open"
+        /** A `<json-render>` widget rendered in a message. */
+        const val THREAD_WIDGET = "worker.thread.widget"
+        /** A ```mermaid block drawn as its diagram (its source until it draws, or when it can't). */
+        const val THREAD_DIAGRAM = "worker.thread.diagram"
+        /** Switches a diagram between the drawing and its source (`checked` is the source). */
+        const val THREAD_DIAGRAM_SOURCE = "worker.thread.diagram.source"
+        const val THREAD_DIAGRAM_ZOOM = "worker.thread.diagram.zoom"
+        const val THREAD_DIAGRAM_COPY = "worker.thread.diagram.copy"
+        /** A diagram full screen, opened by [THREAD_DIAGRAM_ZOOM]: pinch to zoom; Back or [THREAD_DIAGRAM_VIEWER_CLOSE] closes it. */
+        const val THREAD_DIAGRAM_VIEWER = "worker.thread.diagram_viewer"
+        const val THREAD_DIAGRAM_VIEWER_CLOSE = "worker.thread.diagram_viewer.close"
+        /** A `$$…$$` display equation on its own line (content-desc is its TeX). */
+        const val THREAD_MATH = "worker.thread.math"
+        /** A workspace file opened from a `path:line` link: its sheet, path, line note, copy buttons and readable state. */
+        const val THREAD_FILE = "worker.thread.file_preview"
+        const val THREAD_FILE_PATH = "worker.thread.file_preview.path"
+        const val THREAD_FILE_COPY_PATH = "worker.thread.file_preview.copy_path"
+        const val THREAD_FILE_COPY = "worker.thread.file_preview.copy_file"
+        /** Loading, an error, a binary or empty file, or the truncation notice. */
+        const val THREAD_FILE_STATUS = "worker.thread.file_preview.status"
+        /** The lines of the file, a lazy list scrolled to the line the link named. */
+        const val THREAD_FILE_LINES = "worker.thread.file_preview.lines"
+        const val THREAD_FILE_META = "worker.thread.file_preview.meta"
+        /** Sticky collapsible TodoWrite plan progress bar above the composer, and its header toggle (`checked` is open). */
+        const val THREAD_PLAN = "worker.thread.plan"
+        const val THREAD_PLAN_TOGGLE = "worker.thread.plan.toggle"
         /** A picture at full size over the Thread, opened from [threadImage]; tap it or [THREAD_IMAGE_CLOSE] to close. */
         const val THREAD_IMAGE_VIEWER = "worker.thread.image_viewer"
         const val THREAD_IMAGE_CLOSE = "worker.thread.image_viewer.close"
@@ -488,6 +527,10 @@ object Tags {
 
         /** A slash command in [SLASH_MENU], by its name: `composer.slash/model`. */
         fun slash(name: String) = "composer.slash/$name"
+        /** A file or folder in [MENTION_MENU], by its workspace path (folders end in `/`): `composer.mention/src/app.ts`. */
+        fun mention(path: String) = "composer.mention/$path"
+        /** A line of the open file in [THREAD_FILE_LINES], by its number from 1; the line the link named is `selected`. */
+        fun threadFileLine(n: Int) = "worker.thread.file_preview.line/$n"
         /** A message waiting in Droid's queue, by its place in it from 1. */
         fun threadQueued(n: Int) = "worker.thread.queued/$n"
         /** A message, tool call, thought or notice in the thread, by its entry id. */
@@ -518,6 +561,23 @@ object Tags {
         fun threadRunPlan(id: String) = "worker.thread.run.plan/$id"
         /** In an open call whose entry isn't loaded: Load earlier brings what it was given and returned. */
         fun threadNotLoaded(id: String) = "worker.thread.not_loaded/$id"
+        /** A top-level File Change card, by the tool action id (or `actionId:index` for multi-file edits). */
+        fun threadChange(id: String) = "worker.thread.change/$id"
+        /** Shows all lines of a clamped inline diff (`> 80` lines), or clamps it again (`checked` is full). */
+        fun threadChangeFull(id: String) = "worker.thread.change.full/$id"
+        /** Copies a top-level Command card's shell command. */
+        fun threadCommandCopy(id: String) = "worker.thread.command.copy/$id"
+        /** Opens the delegated subagent's own worker Thread from a Delegation card. */
+        fun threadDelegateOpen(id: String) = "worker.thread.delegate.open/$id"
+
+        // File Change card actions and turn grouping.
+        /** Opens a File Change card's file in the preview sheet, at its first changed line when the diff is numbered. */
+        fun threadChangeOpen(id: String) = "worker.thread.change.open/$id"
+        fun threadChangePreview(id: String) = "worker.thread.change.preview/$id"
+        fun threadCardGroup(id: String) = "worker.thread.cards/$id"
+        fun threadCardGroupToggle(id: String) = "worker.thread.cards.toggle/$id"
+        fun threadTurnChanges(id: String) = "worker.thread.turn.changes/$id"
+        fun threadTurnFile(id: String, index: Int) = "worker.thread.turn.file/$id/$index"
 
         /** A quick key, by what TalkBack calls it: "Shift Tab" is `key.shift_tab`. */
         fun key(spoken: String) = "key." + spoken.lowercase().replace(' ', '_')
@@ -528,6 +588,9 @@ object Tags {
         fun arrangeDown(id: String) = "worker.keys_sheet.down/$id"
 
         fun removeImage(number: Int) = "composer.remove_image/$number"
+        /** A chip in [PASTES], by its paste's number: tapping it puts the text back in the draft. */
+        fun paste(number: Int) = "composer.paste/$number"
+        fun removePaste(number: Int) = "composer.remove_paste/$number"
     }
 
     object SendHome {

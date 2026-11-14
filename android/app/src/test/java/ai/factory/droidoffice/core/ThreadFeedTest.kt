@@ -68,6 +68,72 @@ class ThreadFeedTest {
     }
 
     @Test
+    fun aPushedLatestSnapshotAppliesImmediatelyAndClearsInFlightLatestRequest() {
+        val feed = ThreadFeed("w1", "aaaa")
+        val pendingReq = feed.latest(0)!!
+        val pushed = ServerMsg.ThreadSnapshot(
+            workerId = "w1",
+            request = "push",
+            before = null,
+            sessionId = "s1",
+            entries = listOf(text("a", 1), text("b", 2)),
+            hasMore = false,
+            error = null,
+            presentation = rows(listOf(text("a", 1), text("b", 2))),
+            push = true,
+        )
+        assertTrue(feed.receive(pushed))
+        assertEquals(ThreadPhase.Ready, feed.state.phase)
+        assertEquals(listOf("a", "b"), feed.state.entries.map { it.id })
+        // The stale in-flight request that was superseded by the push is ignored when it arrives late.
+        assertFalse(feed.receive(page(feed, pendingReq, listOf(text("a", 1)))))
+        // A push with `before != null` or for another worker is ignored.
+        assertFalse(feed.receive(pushed.copy(workerId = "w2")))
+        assertFalse(feed.receive(pushed.copy(before = 1L)))
+    }
+
+    @Test
+    fun aClippedCardBlockPreservesItsCardKind() {
+        val feed = ThreadFeed("w1")
+        val entries = listOf(
+            ThreadEntry("t1", 1, ThreadRole.Assistant, ThreadKind.Tool, name = "Execute", input = "{\"command\":\"npm test\"}", output = "ok"),
+            ThreadEntry("t2", 2, ThreadRole.Assistant, ThreadKind.Tool, name = "Read", input = "{}", output = "ok"),
+        )
+        val cmdBlock = ThreadBlock.Tools(
+            id = "tools:t1",
+            label = "Ran a command",
+            state = ActivityState.Complete,
+            live = false,
+            card = ThreadCardKind.Command,
+            actions = listOf(
+                ThreadModelAction(
+                    id = "t1",
+                    title = "Ran a command",
+                    category = "command",
+                    state = ActivityState.Complete,
+                    status = "",
+                    result = "Result",
+                    card = ThreadCardKind.Command,
+                    command = ThreadCommandMeta("npm test"),
+                ),
+            ),
+        )
+        val readBlock = ThreadBlock.Tools(
+            id = "tools:t2",
+            label = "Read a file",
+            state = ActivityState.Complete,
+            live = false,
+            actions = listOf(ThreadModelAction(id = "t2", title = "Read a file", category = "read", state = ActivityState.Complete, status = "", result = "Result")),
+        )
+        val full = ThreadRow.Activity("activity:t1", 1, 2, listOf("t1", "t2"), "Ran a command · Read a file", ActivityState.Complete, live = false, blocks = listOf(cmdBlock, readBlock))
+        feed.receive(page(feed, feed.latest(0)!!, entries, hasMore = true, presentation = ThreadPresentation(1, listOf(full))))
+        val slid = ThreadRow.Activity("activity:t2", 2, 2, listOf("t2"), "Read a file", ActivityState.Complete, live = false, blocks = listOf(readBlock))
+        feed.receive(page(feed, feed.latest(1)!!, entries.drop(1), hasMore = true, presentation = ThreadPresentation(1, listOf(slid))))
+        val prefix = feed.state.rows.first() as ThreadRow.Activity
+        assertEquals(ThreadCardKind.Command, (prefix.blocks.single() as ThreadBlock.Tools).card)
+    }
+
+    @Test
     fun aNewSessionClearsTheOldThreadAndDropsItsEarlierPage() {
         val feed = ThreadFeed("w1")
         feed.receive(page(feed, feed.latest(0)!!, listOf(text("a", 5), text("b", 6)), hasMore = true, session = "s1"))

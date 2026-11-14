@@ -1,22 +1,30 @@
-import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
-import { isAsleep, isBusy, needsOwnerInput } from '../../shared/status';
-import { threadArgumentsText, threadOutputText, type ThreadBlock, type ThreadModelAction, type ThreadRow } from '../../shared/thread-presentation';
-import type { ThreadEntry } from '../../shared/worker-thread';
 import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
+import { ORCHESTRATOR_ID } from '../../shared/mission-control';
+import { PROMPT_MAX } from '../../shared/prompts';
+import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { nativeLimits, slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
+import { isAsleep, isBusy, needsOwnerInput } from '../../shared/status';
+import { latestThreadPlan, type ActivePlan, type ThreadBlock, type ThreadRow, type ThreadToolGroup } from '../../shared/thread-presentation';
 import { ThreadQueue } from '../../shared/thread-queue';
+import { todosFinished } from '../../shared/todos';
+import type { ThreadEntry } from '../../shared/worker-thread';
 import type { Net } from '../net';
+import { store } from '../state';
+import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
 import { ThreadHistory } from '../thread-history';
 import { cloudStarting, threadSnapshotError, threadStarting } from '../thread-startup';
-import { TeamThread, TeamThreadPaint, teamThreadVisible } from '../team-thread';
-import { h, STATUS_LABEL } from './dom';
-import { icon } from './icons';
-import { viewPicture } from './picture-viewer';
-import { markdown } from './markdown';
-import { promptImages } from './images';
 import { withToken } from '../token';
-import { store } from '../state';
+import { syncHorizontalScrollCue } from './code-highlight';
+import { h, STATUS_LABEL } from './dom';
 import { openFactoryLimits } from './factory-limits';
+import { openFilePreviewModal } from './file-preview';
+import { icon } from './icons';
+import { promptImages } from './images';
+import { expandPastes, insertQuote, isLargePaste, livePastes, type PastedText, pastedText, replacePaste } from './thread-compose';
+import { viewPicture } from './picture-viewer';
+import { renderCommandCard, renderDelegationCard, renderFileChangeCard, renderToolDisclosure, renderToolGroup, renderTurnChanges, setDisclosureOpen, summarizeExplorationBlocks, type ThreadCardRenderContext } from './thread-diff-view';
+import { threadMarkdown, threadUserMarkdown, type WorkspacePathRef } from './thread-markdown';
+import { applyMention, findMentionQuery, rankWorkspacePaths, type MentionQuery, type WorkspaceMentionItem } from './thread-mention';
 
 export interface WorkerThread {
   element: HTMLElement;
@@ -46,7 +54,11 @@ export interface ThreadOptions {
   team?(): readonly WorkerInfo[];
   /** Open this child's Thread view, without starting or resuming a worker. */
   openWorker?(id: string): void;
-  /** The floor the worker is on: its pictures are fetched from there. Without it, none are shown. */
+  /** Opens a worker's Changes window. Absent where there is none. */
+  openChanges?(id: string): void;
+  /** Puts a file from a worker's workspace on the floor's Whiteboard. */
+  sendToWhiteboard?(workerId: string, path: string): void;
+  /** The floor the worker is on: its pictures and workspace files are fetched from there. */
   floor?: string;
   /** Shown in place of an empty conversation while it returns a node. With no session yet, nothing is read. */
   intro?(): HTMLElement | undefined;
@@ -58,6 +70,10 @@ export interface ThreadOptions {
   /** A prompt starts the worker from rest: the composer stays open while it's asleep, with no Resume. */
   promptWakes?: boolean;
 }
+
+const RECONCILE_INTERVAL_MS = 15_000;
+const STARTUP_RETRY_MS = 1_500;
+const FILES_CACHE_TTL_MS = 10_000;
 
 /**
  * A digest of the fields a row renders from, cached per entry. The office re-sends a page's entries as
@@ -84,9 +100,19 @@ function entryDigest(entry: ThreadEntry | undefined): string {
 const rowContent = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>) =>
   (row.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'thought' ? [block.id] : block.actions.map((item) => item.id))) : [row.id]).map((id) => entryDigest(loaded.get(id)));
 
+const hasDelegateCard = (row: ThreadRow) => row.kind === 'activity' && row.blocks.some((b) => b.kind === 'tools' && b.card === 'delegate');
+
 const localQueues = new Map<string, ThreadQueue>();
 
 const shortcut = (key: string, label: string) => h('span.wt-shortcut', {}, h('span.key', {}, key), label);
+
+interface WorkspaceFilesCache {
+  key: string;
+  at: number;
+  files: string[];
+  dirs: string[];
+  truncated: boolean;
+}
 
 /**
  * A worker's conversation: a local session's JSONL, or a cloud worker's Factory session, which the
@@ -106,6 +132,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let resuming = false;
   let stopping = false;
   let received = false;
+  let watchedWorkerId = '';
+  let hasPushed = false;
+  const floorDirs = new Map<string, string>();
   // Start the grace clock on the first read, not during potentially long worktree setup.
   let startupReadUntil = threadStarting(worker) ? Infinity : 0;
   let error = '';
@@ -119,7 +148,27 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     savedQueue = JSON.parse(sessionStorage.getItem(opts.queueKey) ?? 'null');
   } catch {}
   const queued = localQueues.get(opts.queueKey) ?? new ThreadQueue(savedQueue);
-  const earlier = h('button.btn.sm.wt-earlier.hidden', { type: 'button', onclick: () => read(history.entries[0]?.seq) }, 'Load earlier messages');
+
+  const resolveFloorDir = (): string | undefined => {
+    if (!opts.floor) return undefined;
+    return floorDirs.get(opts.floor) ?? store.floors.find((f) => f.id === opts.floor)?.dir;
+  };
+
+  const canOpenFiles = (author: WorkerInfo): boolean => !author.cloud && (Boolean(opts.floor) || author.id === ORCHESTRATOR_ID);
+
+  const onOpenPathFor = (author: WorkerInfo): ((ref: WorkspacePathRef) => void) | undefined =>
+    canOpenFiles(author)
+      ? (ref) => {
+          openFilePreviewModal({
+            floor: opts.floor ?? '',
+            workerId: author.id,
+            workerName: author.name,
+            ...ref,
+          });
+        }
+      : undefined;
+
+  const earlier = h('button.btn.sm.wt-earlier.hidden', { type: 'button', onclick: () => read(history.entries[0]?.seq, 0) }, 'Load earlier messages');
   const list = h('div.wt-list');
   const empty = h('div.wt-empty', { role: 'status' }, 'Reading the conversation…');
   const queuedBox = h('div.wt-queued', { hidden: true });
@@ -140,7 +189,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         if (history.historical) {
           history.clear(worker.sessionId);
           lastReadAt = 0;
-          read();
+          read(undefined, 0);
         } else follow();
       },
     },
@@ -210,7 +259,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       type: 'button',
       onclick: () => {
         error = '';
-        read();
+        read(undefined, 0);
       },
     },
     'Retry',
@@ -231,29 +280,245 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     },
     'Resume',
   );
+
+  // ---- Sticky Todo / Plan Progress Bar -----------------------------------------------------------
+  let planExpanded = false;
+  let planPaintKey = '';
+  const planCountEl = h('span.wt-plan-count');
+  const planCurrentEl = h('span.wt-plan-current');
+  const planFillEl = h('div.wt-plan-fill');
+  const planTrackEl = h('div.wt-plan-track', { 'aria-hidden': 'true' }, planFillEl);
+  const planChevronEl = h('span.wt-chevron.wt-plan-chevron', { 'aria-hidden': 'true' }, icon('chevron', 14));
+  const planStepsEl = h('ol.wt-plan-steps', { hidden: true });
+  const planHeadBtn = h(
+    'button.wt-plan-head',
+    {
+      type: 'button',
+      'aria-expanded': 'false',
+      onclick: () => {
+        if (planHeadBtn.disabled) return;
+        planExpanded = !planExpanded;
+        paintPlan();
+      },
+    },
+    planCountEl,
+    planCurrentEl,
+    planTrackEl,
+    planChevronEl,
+  );
+  const planBar = h('div.wt-plan-bar', { hidden: true }, planHeadBtn, planStepsEl);
+
+  const currentPlan = (): ActivePlan | undefined => {
+    const busy = isBusy(worker.status);
+    const fromEntries = latestThreadPlan(history.entries, busy);
+    if (fromEntries) return fromEntries;
+    if (worker.todos && !todosFinished(worker.todos)) {
+      return {
+        steps: [],
+        done: worker.todos.done,
+        total: worker.todos.total,
+        ...(worker.todos.current ? { current: worker.todos.current } : {}),
+        allDone: false,
+        stale: false,
+      };
+    }
+    return undefined;
+  };
+
+  const paintPlan = () => {
+    const plan = worker.lost ? undefined : currentPlan();
+    const visible = Boolean(plan && !plan.stale);
+    const hasSteps = Boolean(plan?.steps.length);
+    const expanded = visible && hasSteps && planExpanded;
+    const key = JSON.stringify([visible, expanded, plan]);
+    if (key === planPaintKey) return;
+    planPaintKey = key;
+
+    planBar.hidden = !visible;
+    if (!visible || !plan) return;
+
+    planBar.classList.toggle('is-open', expanded);
+    planBar.classList.toggle('is-done', plan.allDone);
+    planHeadBtn.disabled = !hasSteps;
+    planHeadBtn.setAttribute('aria-expanded', String(expanded));
+    planChevronEl.hidden = !hasSteps;
+
+    planCountEl.textContent = `${plan.done}/${plan.total} completed`;
+    const summaryText = plan.allDone ? 'All steps completed' : (plan.current ?? `${Math.max(0, plan.total - plan.done)} remaining`);
+    planCurrentEl.textContent = summaryText;
+    planCurrentEl.title = summaryText;
+
+    const pct = plan.total > 0 ? Math.min(100, Math.max(0, (plan.done / plan.total) * 100)) : 0;
+    planFillEl.style.setProperty('--pct', `${pct.toFixed(1)}%`);
+
+    planStepsEl.hidden = !expanded;
+    if (expanded) {
+      planStepsEl.replaceChildren(
+        ...plan.steps.map((step) => {
+          const stateCls = step.done ? 'is-done' : step.active ? 'is-active' : 'is-pending';
+          const glyph = step.done ? '✓' : step.active ? '●' : '○';
+          return h(`li.wt-plan-step.${stateCls}` as `li.${string}`, {}, h('span.wt-plan-glyph', { 'aria-hidden': 'true' }, glyph), h('span.wt-plan-step-text', {}, step.text));
+        }),
+      );
+    }
+  };
+
+  // ---- Composer, Slash Commands, and @file Workspace Mention Autocomplete ------------------------
   const input = h('textarea.wt-input', { rows: 1, maxlength: 20000, placeholder: `Reply to ${worker.name}…`, 'aria-label': `Message to ${worker.name}` });
   input.value = opts.draft;
-  input.addEventListener('input', () => {
-    opts.onDraft(input.value);
+
+  // @file mention listbox
+  const mentionMenu = h('div.wt-mention', { role: 'listbox', 'aria-label': 'Workspace files', hidden: true });
+  let mentionShown: WorkspaceMentionItem[] = [];
+  let mentionCursor = 0;
+  let activeMention: MentionQuery | null = null;
+  let mentionDismissedKey = '';
+  let filesCache: WorkspaceFilesCache | undefined;
+  let filesAbort: AbortController | undefined;
+  let filesQueryKey = '';
+  let latestFilteredFiles: { query: string; key: string; files: string[]; dirs: string[] } | undefined;
+
+  const canMentionFiles = () => !cloud && worker.kind === 'agent' && !input.disabled && !worker.lost;
+
+  const syncInputExpandedAria = () => {
+    input.setAttribute('aria-expanded', String(Boolean(slashShown.length || mentionShown.length)));
+  };
+
+  const closeMention = () => {
+    mentionShown = [];
+    mentionCursor = 0;
+    activeMention = null;
+    mentionMenu.hidden = true;
+    mentionMenu.replaceChildren();
+    syncInputExpandedAria();
+  };
+
+  const fetchWorkspaceFiles = (query: string) => {
+    const scopeKey = `${opts.floor ?? ''}:${worker.id}`;
+    const now = Date.now();
+    const validBase = filesCache && filesCache.key === scopeKey && now - filesCache.at < FILES_CACHE_TTL_MS ? filesCache : undefined;
+    const needServerFilter = Boolean(query && validBase?.truncated);
+    if (validBase && !needServerFilter) return;
+
+    const reqQuery = needServerFilter ? query : '';
+    const fetchKey = `${scopeKey}:${reqQuery}`;
+    if (filesQueryKey === fetchKey && filesAbort) return;
+
+    filesAbort?.abort();
+    const controller = new AbortController();
+    filesAbort = controller;
+    filesQueryKey = fetchKey;
+
+    const params = new URLSearchParams({
+      floor: opts.floor ?? '',
+      worker: worker.id,
+      ...(reqQuery ? { q: reqQuery } : {}),
+    });
+
+    void fetch(withToken(`/api/thread/files?${params}`), {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error('Could not list workspace files');
+        return res.json() as Promise<{ files?: unknown; dirs?: unknown; truncated?: unknown }>;
+      })
+      .then((body) => {
+        if (disposed || controller.signal.aborted) return;
+        const files = Array.isArray(body?.files) ? body.files.filter((x): x is string => typeof x === 'string') : [];
+        const dirs = Array.isArray(body?.dirs) ? body.dirs.filter((x): x is string => typeof x === 'string') : [];
+        const truncated = Boolean(body?.truncated);
+        if (!reqQuery) {
+          filesCache = { key: scopeKey, at: Date.now(), files, dirs, truncated };
+          if (truncated && activeMention?.query) {
+            filesAbort = undefined;
+            filesQueryKey = '';
+            fetchWorkspaceFiles(activeMention.query);
+          }
+        } else {
+          latestFilteredFiles = { query: reqQuery, key: scopeKey, files, dirs };
+        }
+        if (filesAbort === controller) {
+          filesAbort = undefined;
+          filesQueryKey = '';
+        }
+        paintMention();
+      })
+      .catch(() => {
+        if (filesAbort === controller) {
+          filesAbort = undefined;
+          filesQueryKey = '';
+        }
+      });
+  };
+
+  const pickMention = (item: WorkspaceMentionItem) => {
+    const queryNow = findMentionQuery(input.value, input.selectionStart ?? input.value.length) ?? activeMention;
+    if (!queryNow) return;
+    const next = applyMention(input.value, queryNow.start, queryNow.end, item.path);
+    input.value = next.value;
+    opts.onDraft(draftText());
     told = '';
-    slashClosed = false;
-    slashCursor = 0;
-    if (input.value.trimStart().startsWith('/')) loadSlash();
+    mentionDismissedKey = '';
+    mentionCursor = 0;
+    input.focus();
+    input.setSelectionRange(next.cursor, next.cursor);
     paintSlash();
-    slashMenu.scrollTop = 0;
+    paintMention();
+    mentionMenu.scrollTop = 0;
     updateControls();
-  });
-  const images = promptImages(input, worker.id);
-  const file = h('input.hidden', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, 'aria-label': 'Choose pictures' });
-  file.addEventListener('change', () => {
-    images.add([...(file.files ?? [])]);
-    file.value = '';
-  });
-  const attach = h('button.btn.icon.sm.ghost.wt-attach', { type: 'button', 'aria-label': 'Attach pictures', title: 'Attach pictures', onclick: () => file.click() }, icon('paperclip', 15));
-  // While a turn runs, Send steers it (Droid reads the message now) and Queue holds it for after the turn.
-  const queue = h('button.btn.sm.wt-queue', { type: 'button', title: 'Send once this turn is over', onclick: () => void submit(true) }, 'Queue');
-  const sendLabel = h('span', {}, 'Send');
-  const send = h('button.btn.sm.primary.wt-send', { type: 'submit' }, sendLabel, icon('arrowUp', 14));
+  };
+
+  const paintMention = () => {
+    if (!canMentionFiles()) {
+      closeMention();
+      return;
+    }
+    const found = findMentionQuery(input.value, input.selectionStart ?? input.value.length);
+    if (!found) {
+      mentionDismissedKey = '';
+      closeMention();
+      return;
+    }
+    const dismissToken = `${found.start}:${found.query}`;
+    if (mentionDismissedKey === dismissToken) {
+      closeMention();
+      return;
+    }
+    activeMention = found;
+    const scopeKey = `${opts.floor ?? ''}:${worker.id}`;
+    fetchWorkspaceFiles(found.query);
+
+    const cached = filesCache?.key === scopeKey ? filesCache : undefined;
+    const validBase = cached && Date.now() - cached.at < FILES_CACHE_TTL_MS ? cached : undefined;
+    const source = found.query && validBase?.truncated && latestFilteredFiles?.key === scopeKey && latestFilteredFiles.query === found.query ? latestFilteredFiles : cached;
+
+    mentionShown = source ? rankWorkspacePaths(source.files, source.dirs, found.query, 12) : [];
+    mentionCursor = Math.min(mentionCursor, Math.max(0, mentionShown.length - 1));
+    mentionMenu.hidden = !mentionShown.length;
+    syncInputExpandedAria();
+
+    mentionMenu.replaceChildren(
+      ...mentionShown.map((item, i) =>
+        h(
+          'button.wt-mention-item',
+          {
+            type: 'button',
+            role: 'option',
+            tabindex: -1,
+            'aria-selected': String(i === mentionCursor),
+            onmousedown: (event: Event) => event.preventDefault(),
+            onclick: () => pickMention(item),
+          },
+          h('span.wt-mention-icon', { 'aria-hidden': 'true' }, icon(item.kind === 'dir' ? 'folder' : 'file', 14)),
+          h('span.wt-mention-path', { title: item.path }, item.path),
+          h('span.wt-mention-tag', {}, item.kind === 'dir' ? 'Folder' : 'File'),
+        ),
+      ),
+    );
+  };
+
   // Droid's slash commands, offered while a draft is a `/` and the start of a name.
   const slashMenu = h('div.wt-slash', { role: 'listbox', 'aria-label': 'Slash commands', hidden: true });
   let slashShown: SlashCommand[] = [];
@@ -286,13 +551,14 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
     paintSlash();
+    paintMention();
     updateControls();
   };
   const paintSlash = () => {
     slashShown = slashClosed || input.disabled ? [] : slashSuggestions(input.value, slashList);
     slashCursor = Math.min(slashCursor, Math.max(0, slashShown.length - 1));
     slashMenu.hidden = !slashShown.length;
-    input.setAttribute('aria-expanded', String(!!slashShown.length));
+    syncInputExpandedAria();
     slashMenu.replaceChildren(
       ...slashShown.map((command, i) =>
         h(
@@ -315,13 +581,97 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       ),
     );
   };
+
+  // Large pastes wait in the draft as tokens shown as chips; the draft and the message carry their text.
+  const pastes: PastedText[] = [];
+  let pasteSeq = 0;
+  let pastesKey = '';
+  const draftText = () => expandPastes(input.value, pastes);
+  const pasteChips = h('div.wt-pastes', { role: 'list', 'aria-label': 'Pasted text', hidden: true });
+  const editPaste = (paste: PastedText, replacement: string) => {
+    const next = replacePaste(input.value, paste, replacement);
+    if (!next) return;
+    input.value = next.value;
+    input.focus();
+    input.setSelectionRange(next.cursor, next.cursor);
+    edited();
+  };
+  const paintPastes = () => {
+    const live = livePastes(input.value, pastes);
+    if (live.length !== pastes.length) pastes.splice(0, pastes.length, ...live);
+    const key = pastes.map((paste) => paste.id).join();
+    if (key === pastesKey) return;
+    pastesKey = key;
+    pasteChips.hidden = !pastes.length;
+    pasteChips.replaceChildren(
+      ...pastes.map((paste) => {
+        const size = paste.lines > 1 ? `${paste.lines.toLocaleString('en-US')} lines` : `${paste.text.length.toLocaleString('en-US')} characters`;
+        return h(
+          'div.wt-paste-chip',
+          { role: 'listitem' },
+          h(
+            'button.wt-paste-open',
+            { type: 'button', title: `${paste.text.slice(0, 400)}${paste.text.length > 400 ? '…' : ''}`, 'aria-label': `Pasted text #${paste.id}, ${size}. Expand it into the message`, onclick: () => editPaste(paste, paste.text) },
+            icon('file', 14),
+            h('span.wt-paste-name', {}, `Pasted text #${paste.id}`),
+            h('span.wt-paste-size', {}, size),
+          ),
+          h('button.wt-paste-x', { type: 'button', title: 'Remove', 'aria-label': `Remove pasted text #${paste.id}`, onclick: () => editPaste(paste, '') }, icon('x', 12)),
+        );
+      }),
+    );
+  };
+  input.addEventListener('paste', (event) => {
+    const text = event.clipboardData?.getData('text/plain') ?? '';
+    if (input.disabled || !isLargePaste(text)) return;
+    event.preventDefault();
+    const paste = pastedText(++pasteSeq, text);
+    pastes.push(paste);
+    input.setRangeText(paste.token, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, 'end');
+    edited();
+  });
+
+  const edited = () => {
+    paintPastes();
+    opts.onDraft(draftText());
+    told = '';
+    slashClosed = false;
+    slashCursor = 0;
+    mentionDismissedKey = '';
+    mentionCursor = 0;
+    if (input.value.trimStart().startsWith('/')) loadSlash();
+    paintSlash();
+    paintMention();
+    slashMenu.scrollTop = 0;
+    mentionMenu.scrollTop = 0;
+    updateControls();
+  };
+  input.addEventListener('input', edited);
+  input.addEventListener('click', () => paintMention());
+  input.addEventListener('keyup', (event) => {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') {
+      paintMention();
+    }
+  });
+
+  const images = promptImages(input, worker.id);
+  const file = h('input.hidden', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, 'aria-label': 'Choose pictures' });
+  file.addEventListener('change', () => {
+    images.add([...(file.files ?? [])]);
+    file.value = '';
+  });
+  const attach = h('button.btn.icon.sm.ghost.wt-attach', { type: 'button', 'aria-label': 'Attach pictures', title: 'Attach pictures', onclick: () => file.click() }, icon('paperclip', 15));
+  // While a turn runs, Send steers it (Droid reads the message now) and Queue holds it for after the turn.
+  const queue = h('button.btn.sm.wt-queue', { type: 'button', title: 'Send once this turn is over', onclick: () => void submit(true) }, 'Queue');
+  const sendLabel = h('span', {}, 'Send');
+  const send = h('button.btn.sm.primary.wt-send', { type: 'submit' }, sendLabel, icon('arrowUp', 14));
   const stop = h('button.btn.sm.wt-stop', { type: 'button', 'aria-label': 'Stop turn', title: 'Stop turn', onclick: () => stopTurn() }, h('span.wt-stop-symbol', { 'aria-hidden': true }), h('span.wt-stop-label', {}, 'Stop'));
   const hint = h('span.wt-send-hint');
-  const box = h('div.wt-compose-box', {}, images.element, input, h('div.wt-compose-bar', {}, attach, hint, h('div.wt-send-buttons', {}, stop, queue, send)));
+  const box = h('div.wt-compose-box', {}, images.element, pasteChips, input, h('div.wt-compose-bar', {}, attach, hint, h('div.wt-send-buttons', {}, stop, queue, send)));
   box.addEventListener('click', (event) => {
     if (!input.disabled && event.target instanceof Element && !event.target.closest('button, .pimgs, textarea')) input.focus();
   });
-  const form = h('form.wt-composer', {}, slashMenu, file, box);
+  const form = h('form.wt-composer', {}, mentionMenu, slashMenu, file, box);
   const progressLabel = h('span.wt-progress-label');
   const progressDetail = h('span.wt-progress-detail', { hidden: true });
   const progress = h(
@@ -337,40 +687,96 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   );
   const blockedText = h('p.wt-blocked-text');
   const blockedNote = h('div.wt-blocked.note.warn', { role: 'status', hidden: true }, icon('lock', 15), blockedText, opts.blockedAction ?? null);
-  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, progress, h('div.wt-feedback', {}, notice, retry, raw, resume), limitsBar, blockedNote, form);
+  // Quote: text selected in the conversation goes into the draft at its cursor as Markdown quote lines.
+  const quote = h('button.btn.sm.wt-quote', { type: 'button', hidden: true, onmousedown: (event: Event) => event.preventDefault(), onclick: () => quoteSelection() }, 'Quote');
+  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, progress, h('div.wt-feedback', {}, notice, retry, raw, resume), limitsBar, blockedNote, planBar, form, quote);
   images.dropZone(form);
+  const quotable = () => {
+    if (input.disabled || !form.checkVisibility()) return undefined;
+    const selection = document.getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed) return undefined;
+    const inTranscript = (node: Node | null) => {
+      const el = node instanceof Element ? node : node?.parentElement;
+      return !!el?.closest('.wt-entry') && (list.contains(el) || teamBody.contains(el));
+    };
+    if (!inTranscript(selection.anchorNode) || !inTranscript(selection.focusNode)) return undefined;
+    const text = selection.toString();
+    if (!text.trim()) return undefined;
+    const range = selection.getRangeAt(0);
+    const rects = range.getClientRects();
+    return { text, rect: rects[rects.length - 1] ?? range.getBoundingClientRect() };
+  };
+  let quoteFrame = 0;
+  const placeQuote = () => {
+    quoteFrame = 0;
+    const found = quotable();
+    const view = scroll.getBoundingClientRect();
+    if (!found || found.rect.bottom < view.top || found.rect.top > view.bottom) {
+      quote.hidden = true;
+      return;
+    }
+    quote.hidden = false;
+    const frame = element.getBoundingClientRect();
+    const x = Math.min(Math.max(found.rect.right - frame.left - quote.offsetWidth / 2, 8), frame.width - quote.offsetWidth - 8);
+    const y = Math.min(Math.max(found.rect.bottom - frame.top + 6, view.top - frame.top + 4), view.bottom - frame.top - quote.offsetHeight - 4);
+    quote.style.setProperty('--quote-x', `${Math.round(x)}px`);
+    quote.style.setProperty('--quote-y', `${Math.round(y)}px`);
+  };
+  const scheduleQuote = () => {
+    if (!quoteFrame) quoteFrame = requestAnimationFrame(placeQuote);
+  };
+  const quoteSelection = () => {
+    const found = quotable();
+    quote.hidden = true;
+    if (!found) return;
+    const next = insertQuote(input.value, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, found.text);
+    if (!next) return;
+    input.value = next.value;
+    document.getSelection()?.removeAllRanges();
+    input.focus();
+    input.setSelectionRange(next.cursor, next.cursor);
+    edited();
+  };
+  document.addEventListener('selectionchange', scheduleQuote);
+  scroll.addEventListener('scroll', scheduleQuote, { passive: true });
+
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
   const expandedMessages = new Set<string>();
-  const updateCode = (frame: HTMLElement) => {
-    const pre = frame.querySelector<HTMLElement>('.wt-horizontal-content');
-    const cue = frame.querySelector<HTMLElement>('.wt-code-cue');
-    if (!pre || !cue) return;
-    const overflowing = pre.scrollWidth > pre.clientWidth + 1;
-    frame.classList.toggle('overflowing', overflowing);
-    frame.classList.toggle('at-end', pre.scrollLeft + pre.clientWidth >= pre.scrollWidth - 1);
-    cue.hidden = !overflowing;
-  };
-  const prepareCode = (body: HTMLElement) => {
-    for (const pre of body.querySelectorAll<HTMLElement>('pre, table')) {
-      const table = pre instanceof HTMLTableElement;
-      const frame = h('div.wt-code-scroll');
-      const cue = h('span.wt-code-cue', {}, 'Scroll horizontally ↔');
-      pre.replaceWith(frame);
-      const content = table ? h('div.wt-table-scroll', {}, pre) : pre;
-      content.classList.add('wt-horizontal-content');
-      frame.append(content, cue);
-      content.tabIndex = 0;
-      content.setAttribute('aria-label', `${table ? 'Table' : 'Code block'}, scroll horizontally`);
-      content.addEventListener('scroll', () => updateCode(frame));
-    }
+  const userToggles = new Map<string, boolean>();
+  const expandedDiffs = new Set<string>();
+
+  // Rows `content-visibility: auto` has rendered. Measuring inside a skipped one would lay it out
+  // again, so a row's clamps and scroll cues are measured once the browser renders it instead.
+  const tracksRows = 'oncontentvisibilityautostatechange' in list;
+  const renderedRows = new WeakSet<Element>();
+  const skipped = (el: Element) => {
+    const row = el.closest('.wt-list > .wt-entry');
+    return tracksRows && !!row && !renderedRows.has(row);
   };
   const updateClamps = (within: HTMLElement = element) => {
+    const clamps: [HTMLButtonElement, boolean][] = [];
     for (const text of within.querySelectorAll<HTMLElement>('.wt-user-content')) {
       const button = text.parentElement?.nextElementSibling?.querySelector<HTMLButtonElement>('.wt-message-more');
-      if (button instanceof HTMLButtonElement) button.hidden = text.classList.contains('clamped') && text.scrollHeight <= text.clientHeight + 1;
+      if (button instanceof HTMLButtonElement && !skipped(text)) clamps.push([button, text.classList.contains('clamped') && text.scrollHeight <= text.clientHeight + 1]);
     }
-    for (const frame of within.querySelectorAll<HTMLElement>('.wt-code-scroll')) updateCode(frame);
+    // Measure every row before changing any: a write between reads forces another layout per row.
+    for (const [button, hidden] of clamps) if (button.hidden !== hidden) button.hidden = hidden;
+    for (const frame of within.querySelectorAll<HTMLElement>('.wt-code-scroll')) if (!skipped(frame)) syncHorizontalScrollCue(frame);
   };
+  list.addEventListener(
+    'contentvisibilityautostatechange',
+    (event) => {
+      const row = event.target;
+      if (!(row instanceof HTMLElement) || !row.matches('.wt-entry')) return;
+      if ('skipped' in event && event.skipped === true) renderedRows.delete(row);
+      else {
+        renderedRows.add(row);
+        updateClamps(row);
+      }
+    },
+    true,
+  );
+
   let followingLayout = true;
   let viewportWidth = scroll.clientWidth;
   let viewportHeight = scroll.clientHeight;
@@ -382,6 +788,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     updateLatest();
   });
   resize.observe(scroll);
+  // Off-screen rows hold estimated heights until they render, so the transcript grows after a jump
+  // to the bottom: keep following it.
+  resize.observe(list);
   let inspecting = false;
   const atBottom = () => scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
   const follow = () => {
@@ -417,40 +826,46 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   scroll.addEventListener(
     'toggle',
     (event) => {
-      if (event.target instanceof HTMLDetailsElement && event.target.open) {
+      if (!(event.target instanceof HTMLDetailsElement)) return;
+      const details = event.target;
+      const expected = details.dataset.expectedOpen;
+      if (expected !== undefined && String(details.open) === expected) return;
+      details.dataset.expectedOpen = String(details.open);
+      const key = details.dataset.disclosure;
+      if (key) userToggles.set(key, details.open);
+      if (details.open) {
         inspecting = true;
         followingLayout = false;
         latest.classList.remove('hidden');
         labelLatest(atBottom() ? 'Follow latest' : 'Jump to latest');
       }
+      updateClamps(details);
     },
     true,
   );
+
   const chevron = () => h('span.wt-chevron', { 'aria-hidden': true }, icon('chevron', 14));
-  const disclosure = <T extends HTMLDetailsElement>(details: T, open: boolean) => {
-    details.open = open;
-    return details;
-  };
-  const thought = (block: Extract<ThreadBlock, { kind: 'thought' }>, entry: ThreadEntry | undefined) =>
-    disclosure(
+  const thought = (block: Extract<ThreadBlock, { kind: 'thought' }>, entry: ThreadEntry | undefined, toggles: ReadonlyMap<string, boolean>) =>
+    setDisclosureOpen(
       h(
         'details.wt-thinking',
         { 'data-disclosure': block.id },
         h('summary', {}, h('span.wt-thought-label', {}, 'Thought'), h('span.wt-thought-preview', {}, block.preview), chevron()),
         h('div.wt-thinking-text', {}, entry?.text ?? block.preview),
       ),
-      block.open,
+      toggles.get(block.id) ?? block.open,
     );
+
   /** An entry's pictures, each opening at full size, read from `owner`'s session. A cloud worker's session has none here. */
   const pictures = (entry: ThreadEntry | undefined, title: string, about?: string, owner: WorkerInfo = worker) => {
-    const images = !owner.cloud && opts.floor ? (entry?.images ?? []) : [];
-    if (!images.length) return null;
+    const imgs = !owner.cloud && opts.floor ? (entry?.images ?? []) : [];
+    if (!imgs.length) return null;
     return h(
       'div.wt-images',
       {},
-      ...images.map((image, i) => {
+      ...imgs.map((image, i) => {
         const src = withToken(`/api/thread/image?${new URLSearchParams({ floor: opts.floor ?? '', worker: owner.id, image: image.id })}`);
-        const name = images.length > 1 ? `${title} · ${i + 1} of ${images.length}` : title;
+        const name = imgs.length > 1 ? `${title} · ${i + 1} of ${imgs.length}` : title;
         return h(
           'button.wt-image',
           { type: 'button', title: 'Open the picture', 'aria-label': `Open ${name}`, onclick: () => viewPicture(src, name, { width: image.width, height: image.height, about }) },
@@ -459,72 +874,135 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       }),
     );
   };
-  const action = (item: ThreadModelAction, entry: ThreadEntry | undefined, owner: WorkerInfo) => {
-    const images = entry ? pictures(entry, item.title, item.detail, owner) : null;
-    const output = entry && images ? threadOutputText(entry) : entry?.output;
-    return disclosure(
-      h(
-        'details.wt-tool',
-        { class: item.state === 'complete' || item.state === 'failed' ? 'done' : 'pending', 'data-disclosure': item.id },
-        h('summary', {}, h('span.wt-tool-main', {}, h('span.wt-tool-title', {}, item.title), item.detail ? h('span.wt-tool-detail', {}, item.detail) : null), h('span.wt-tool-state', {}, item.status), chevron()),
-        ...(entry
-          ? [
-              item.arguments ? h('div.wt-detail-label', {}, item.arguments.label) : null,
-              item.arguments ? h('pre.wt-code', {}, threadArgumentsText(entry.input, item.arguments)) : null,
-              output || !images ? h('div.wt-detail-label', {}, item.result) : null,
-              output || !images ? h('pre.wt-code.wt-output', {}, output ?? 'No result recorded in this session.') : null,
-              images,
-            ]
-          : [h('p.wt-detail-missing', {}, 'Load earlier messages to see what this call was given and returned.')]),
-      ),
-      item.open,
-    );
-  };
-  const run = (block: Extract<ThreadBlock, { kind: 'tools' }>, loaded: ReadonlyMap<string, ThreadEntry>, owner: WorkerInfo) => {
-    const body = h('div.wt-run-body', {}, ...block.actions.map((item) => action(item, loaded.get(item.id), owner)));
-    if (block.plan) {
-      body.append(
-        h(
-          'div.wt-plan',
-          {},
-          h('div.wt-detail-label', {}, 'Plan'),
-          h('ol', {}, ...block.plan.map((step) => h('li', { class: step.done ? 'done' : step.active ? 'active' : '' }, h('span.wt-plan-state', {}, step.done ? 'Done' : step.active ? 'Now' : 'Next'), step.text))),
-        ),
-      );
+
+  interface RenderOptions {
+    author?: WorkerInfo;
+    expanded?: Set<string>;
+    toggles?: Map<string, boolean>;
+    diffs?: Set<string>;
+    isLastRow?: boolean;
+  }
+
+  const changesOf = (author: WorkerInfo) => (opts.openChanges && !author.cloud ? () => opts.openChanges?.(author.id) : undefined);
+
+  /** A row, and below it what its turn changed when it is the turn's last. */
+  const render = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>, asking: boolean, renderOpts: RenderOptions = {}) => {
+    const node = renderRow(row, loaded, asking, renderOpts);
+    if (row.kind !== 'notice' && row.turnChanges) {
+      const author = renderOpts.author ?? worker;
+      node.append(renderTurnChanges(row.turnChanges, { floorDir: resolveFloorDir(), onOpenPath: onOpenPathFor(author), openChanges: changesOf(author) }));
     }
-    return disclosure(h('details.wt-run', { class: block.state, 'data-disclosure': block.id }, h('summary', {}, h('span.wt-run-label', {}, block.label), chevron()), body), block.open);
+    return node;
   };
+
   // While the worker waits on the owner, its run isn't working: the question card says what it's on.
-  const render = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>, asking: boolean, author = worker, expanded = expandedMessages) => {
+  const renderRow = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>, asking: boolean, renderOpts: RenderOptions = {}) => {
+    const author = renderOpts.author ?? worker;
+    const expanded = renderOpts.expanded ?? expandedMessages;
+    const toggles = renderOpts.toggles ?? userToggles;
+    const diffs = renderOpts.diffs ?? expandedDiffs;
+
     const node = h('article.wt-entry', { 'data-entry': row.id });
+    const openChanges = changesOf(author);
     if (row.kind === 'activity') {
       node.classList.add('activity');
-      const details = disclosure(
-        h(
-          'details.wt-activity',
-          { class: row.state, 'data-disclosure': row.id },
+      const cardCtx: ThreadCardRenderContext = {
+        owner: author,
+        floorDir: resolveFloorDir(),
+        userToggles: toggles,
+        expandedDiffs: diffs,
+        onOpenPath: onOpenPathFor(author),
+        team: opts.team?.(),
+        openWorker: opts.openWorker,
+        pictures,
+        onLayoutChange: () => updateLatest(),
+        openChanges,
+        ...(opts.sendToWhiteboard && canOpenFiles(author) ? { sendToWhiteboard: (path: string) => opts.sendToWhiteboard?.(author.id, path) } : {}),
+      };
+      // Blocks a group folds render into its body instead of the row.
+      const groupOf = new Map<string, ThreadToolGroup>();
+      for (const group of row.groups ?? []) for (const id of group.blockIds) groupOf.set(id, group);
+      let target: HTMLElement = node;
+      let group: ThreadToolGroup | undefined;
+
+      let exploreSegment: ThreadBlock[] = [];
+      const flushExplore = () => {
+        if (!exploreSegment.length) return;
+        const segment = exploreSegment;
+        exploreSegment = [];
+        const first = segment[0];
+        const exploreKey = `explore:${first.id}`;
+        const meta = summarizeExplorationBlocks(segment, row.live);
+        const liveNow = meta.live && !asking;
+        const bodyItems: HTMLElement[] = [];
+        for (const blk of segment) {
+          if (blk.kind === 'thought') {
+            bodyItems.push(thought(blk, loaded.get(blk.id), toggles));
+          } else {
+            for (const item of blk.actions) {
+              bodyItems.push(renderToolDisclosure(item, loaded.get(item.id), author, pictures, toggles));
+            }
+          }
+        }
+        const details = setDisclosureOpen(
           h(
-            'summary',
-            {},
-            h('span.wt-activity-mark', { 'aria-hidden': true }),
-            h('span.wt-activity-label', {}, `${row.live && !asking ? 'Working · ' : ''}${row.label}`),
-            row.status ? h('span.wt-activity-status', {}, row.status) : null,
-            chevron(),
+            'details.wt-explore',
+            { class: liveNow ? 'working' : meta.state, 'data-disclosure': exploreKey },
+            h(
+              'summary',
+              {},
+              h('span.wt-activity-mark', { 'aria-hidden': true }),
+              h('span.wt-activity-label', {}, `${liveNow ? 'Working · ' : ''}${meta.label}`),
+              meta.status ? h('span.wt-activity-status', {}, meta.status) : null,
+              chevron(),
+            ),
+            h('div.wt-explore-body', {}, ...bodyItems),
           ),
-          h('div.wt-activity-body', {}, ...row.blocks.map((block) => (block.kind === 'thought' ? thought(block, loaded.get(block.id)) : run(block, loaded, author)))),
-        ),
-        row.open,
-      );
-      node.append(details);
-      if (row.live && row.running && row.running !== row.label) node.append(h('p.wt-running', { role: 'status' }, row.running));
+          toggles.get(exploreKey) ?? false,
+        );
+        target.append(details);
+      };
+
+      let hasWorkingCard = false;
+      for (const block of row.blocks) {
+        const into = groupOf.get(block.id);
+        if (into !== group) {
+          flushExplore();
+          group = into;
+          target = node;
+          if (into) {
+            const body = h('div');
+            node.append(renderToolGroup(into, body, into.live && row.live && !asking, toggles));
+            target = body;
+          }
+        }
+        if (block.kind === 'tools' && block.card) {
+          flushExplore();
+          for (const act of block.actions) {
+            if (act.state === 'working') hasWorkingCard = true;
+            if (block.card === 'change') target.append(renderFileChangeCard(act, loaded.get(act.id), cardCtx));
+            else if (block.card === 'command') target.append(renderCommandCard(act, loaded.get(act.id), cardCtx));
+            else target.append(renderDelegationCard(act, loaded.get(act.id), cardCtx));
+          }
+        } else {
+          exploreSegment.push(block);
+        }
+      }
+      flushExplore();
+
+      if (row.live && !asking && !hasWorkingCard && row.running && row.running !== row.label) {
+        node.append(h('p.wt-running', { role: 'status' }, row.running));
+      }
       return node;
     }
+
     node.classList.add(row.role, row.kind === 'message' ? 'text' : 'notice');
     if (row.kind === 'notice') {
-      const images = row.tone === 'attachment' ? pictures(loaded.get(row.id), row.role === 'user' ? 'Picture you sent' : `Picture from ${author.name}`, undefined, author) : null;
-      node.append(images ?? h('p.wt-turn', { class: row.tone }, row.text));
+      const imgs = row.tone === 'attachment' ? pictures(loaded.get(row.id), row.role === 'user' ? 'Picture you sent' : `Picture from ${author.name}`, undefined, author) : null;
+      node.append(imgs ?? h('p.wt-turn', { class: row.tone }, row.text));
       return node;
     }
+
     const entry = loaded.get(row.id);
     const text = entry?.text ?? '';
     if (row.role === 'assistant') {
@@ -533,16 +1011,24 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         dot.style.setProperty('--who', author.color);
         node.append(h('div.wt-who', {}, dot, author.name));
       }
-      const body = markdown(text);
-      prepareCode(body);
+      const streaming = isBusy(author.status) && Boolean(renderOpts.isLastRow);
+      const body = threadMarkdown(text, {
+        streaming,
+        onOpenPath: onOpenPathFor(author),
+      });
       node.append(body);
       return node;
     }
+
     // The pictures sent with the prompt, above its text, in place of where the office kept them.
     const sent = pictures(entry, 'Picture you sent', undefined, author);
     if (sent) node.append(sent);
     if (sent && !text.trim()) return node;
-    const content = h('div.wt-user-content', { id: `wt-message-${author.id}-${row.id}`, class: expanded.has(row.id) ? '' : 'clamped' }, text);
+    const userMd = threadUserMarkdown(text);
+    while (userMd.lastChild?.nodeType === Node.TEXT_NODE && !userMd.lastChild.textContent?.trim()) {
+      userMd.lastChild.remove();
+    }
+    const content = h('div.wt-user-content', { id: `wt-message-${author.id}-${row.id}`, class: expanded.has(row.id) ? '' : 'clamped' }, userMd);
     const more = h(
       'button.btn.sm.ghost.wt-message-more',
       {
@@ -565,6 +1051,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     node.append(h('div.wt-message-actions', {}, more));
     return node;
   };
+
   const teamNodes = new Map<
     string,
     {
@@ -577,9 +1064,32 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       note: HTMLElement;
       open: HTMLButtonElement;
       expanded: Set<string>;
+      toggles: Map<string, boolean>;
+      diffs: Set<string>;
       rows: Map<string, { key: string; node: HTMLElement }>;
     }
   >();
+  teamBody.addEventListener(
+    'toggle',
+    (event) => {
+      if (!(event.target instanceof HTMLDetailsElement)) return;
+      const details = event.target;
+      const expected = details.dataset.expectedOpen;
+      if (expected !== undefined && String(details.open) === expected) return;
+      details.dataset.expectedOpen = String(details.open);
+      const key = details.dataset.disclosure;
+      if (!key) return;
+      for (const card of teamNodes.values()) {
+        if (card.element.contains(details)) {
+          card.toggles.set(key, details.open);
+          break;
+        }
+      }
+      updateClamps(details);
+    },
+    true,
+  );
+
   const paintTeam = (force = false) => {
     if (disposed || !teamPaint.changed(team.revision, connected, teamSection.open, active && !document.hidden && element.isConnected, force)) return;
     // The rollup is a sibling of the conversation. Only a size change can affect its viewport.
@@ -599,6 +1109,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         if (focused) teamSection.querySelector('summary')?.focus({ preventScroll: true });
       }
     }
+    const rosterKey = (opts.team?.() ?? []).map((w) => `${w.id}:${w.name}:${w.lead ?? ''}`).join(',');
     for (const [id, member] of team.members) {
       const child = member.worker;
       let card = teamNodes.get(id);
@@ -609,15 +1120,15 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         const body = h('div.wt-team-entries');
         const note = h('p.wt-team-note');
         const open = h('button.btn.sm', { type: 'button', onclick: () => opts.openWorker?.(id) }, 'Open thread');
-        const element = h(
+        const memberEl = h(
           'details.wt-team-member',
           {},
           h('summary', {}, h('span.wt-team-who', {}, name, activity), status, h('span.wt-chevron', { 'aria-hidden': true }, icon('chevron', 14))),
           h('div.wt-team-content', {}, h('div.wt-team-actions', {}, open), body, note),
         );
-        card = { sessionId: child.sessionId, element, name, status, activity, body, note, open, expanded: new Set(), rows: new Map() };
+        card = { sessionId: child.sessionId, element: memberEl, name, status, activity, body, note, open, expanded: new Set(), toggles: new Map(), diffs: new Set(), rows: new Map() };
         teamNodes.set(id, card);
-        teamBody.append(element);
+        teamBody.append(memberEl);
       }
       card.name.textContent = child.name;
       card.name.title = child.name;
@@ -631,19 +1142,11 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       const activity = child.activity || (last?.kind === 'activity' ? last.label : last?.kind === 'message' ? loaded.get(last.id)?.text : last?.text) || child.title || 'No recent activity';
       card.activity.textContent = activity.split('\n')[0].slice(0, 200);
       card.activity.title = card.activity.textContent;
-      card.note.textContent = member.error
-        ? `Conversation unavailable: ${member.error}`
-        : child.lost
-          ? 'This worker’s checkout is unavailable.'
-          : !child.sessionId
-            ? 'Waiting for a local session…'
-            : !member.received
-              ? teamSection.open
-                ? 'Reading the conversation…'
-                : 'Expand Team activity to read recent messages and tools.'
-              : rows.length
-                ? 'Recent activity only. Open the worker thread for more messages and recorded patches.'
-                : 'No conversation recorded yet.';
+      if (member.error) card.note.textContent = `Conversation unavailable: ${member.error}`;
+      else if (child.lost) card.note.textContent = 'This worker’s checkout is unavailable.';
+      else if (!child.sessionId) card.note.textContent = 'Waiting for a local session…';
+      else if (!member.received) card.note.textContent = teamSection.open ? 'Reading the conversation…' : 'Expand Team activity to read recent messages and tools.';
+      else card.note.textContent = rows.length ? 'Recent activity only. Open the worker thread for more messages and recorded patches.' : 'No conversation recorded yet.';
       const keep = new Set(rows.map((row) => row.id));
       const selection = document.getSelection();
       const pinned = new Set<string>();
@@ -663,7 +1166,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       // At most one focused and one selected old row stay above the four newest rows.
       while (at && pinned.has(at.getAttribute('data-entry') ?? '')) at = at.nextElementSibling;
       for (const row of rows) {
-        const key = JSON.stringify([row, child.status === 'needs_input', child.name, rowContent(row, loaded)]);
+        const isLastRow = row === last;
+        const streamFlag = isLastRow && row.kind === 'message' && row.role === 'assistant' && isBusy(child.status);
+        const key = JSON.stringify([row, child.status === 'needs_input', child.name, streamFlag, hasDelegateCard(row) ? rosterKey : '', rowContent(row, loaded)]);
         let had = card.rows.get(row.id);
         // Don't discard text while the owner is selecting a command or patch to copy.
         if (!had || (had.key !== key && (selection?.isCollapsed !== false || !had.node.contains(selection.anchorNode)))) {
@@ -671,9 +1176,13 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
           const focus = focused instanceof HTMLElement && had?.node.contains(focused) ? focused : undefined;
           const disclosure = focus?.closest<HTMLDetailsElement>('details[data-disclosure]')?.dataset.disclosure;
           const control = focus?.matches('.wt-message-more') ? '.wt-message-more' : undefined;
-          const node = render(row, loaded, child.status === 'needs_input', child, card.expanded);
-          const opened = new Set([...(had?.node.querySelectorAll<HTMLDetailsElement>('details[open][data-disclosure]') ?? [])].map((details) => details.dataset.disclosure));
-          for (const details of node.querySelectorAll<HTMLDetailsElement>('details[data-disclosure]')) details.open = opened.has(details.dataset.disclosure);
+          const node = render(row, loaded, child.status === 'needs_input', {
+            author: child,
+            expanded: card.expanded,
+            toggles: card.toggles,
+            diffs: card.diffs,
+            isLastRow,
+          });
           const positions = [...(had?.node.querySelectorAll<HTMLElement>('pre, .wt-horizontal-content') ?? [])].map((content) => [content.scrollTop, content.scrollLeft]);
           had?.node.replaceWith(node);
           if (focus && !focus.isConnected) {
@@ -698,9 +1207,35 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (teamBody.scrollTop !== teamTop) teamBody.scrollTop = teamTop;
     if (teamSection.offsetHeight !== height && scroll.scrollTop !== top) scroll.scrollTop = top;
   };
+
+  const syncWatch = () => {
+    if (!connected) {
+      watchedWorkerId = '';
+      hasPushed = false;
+      return;
+    }
+    const wantWatch = active && !disposed && !document.hidden && (Boolean(worker.sessionId) || !opts.intro?.());
+    if (!wantWatch) {
+      if (watchedWorkerId) {
+        net.send({ t: 'thread.watch', workerId: watchedWorkerId, on: false });
+        watchedWorkerId = '';
+      }
+      return;
+    }
+    if (watchedWorkerId && watchedWorkerId !== worker.id) {
+      net.send({ t: 'thread.watch', workerId: watchedWorkerId, on: false });
+      watchedWorkerId = '';
+    }
+    if (watchedWorkerId !== worker.id && net.send({ t: 'thread.watch', workerId: worker.id, on: true })) {
+      watchedWorkerId = worker.id;
+    }
+  };
+
   const syncTeam = () => {
     team.sync(`${opts.queueKey}:${worker.id}:${worker.sessionId ?? ''}`, worker.id, opts.team?.() ?? []);
     team.enable(teamThreadVisible(active && !disposed, connected, !document.hidden && element.isConnected, teamSection.open));
+    if (connected) team.syncWatches((msg) => net.send(msg));
+    else team.resetWatches();
   };
   const readTeam = () => {
     if (!opts.team || disposed) return;
@@ -753,31 +1288,33 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       empty.replaceChildren(h('span.spinner.wt-loading-spinner', { 'aria-hidden': true }), h('b', {}, `Starting on ${worker.cloud?.computerName}…`), h('p', {}, 'Its messages appear here as Factory lists them, a few seconds behind.'));
     else empty.replaceChildren(h('span.wt-empty-mark', { 'aria-hidden': true }), h('b', {}, 'Start a conversation'), h('p', {}, 'Your messages and the worker’s replies will appear here.'));
   };
+
   const paintEntries = (older: boolean) => {
     const stick = !received || (!older && !inspecting && atBottom());
     const top = scroll.scrollTop;
     const height = scroll.scrollHeight;
     const want: HTMLElement[] = [];
     const keep = new Set<string>();
-    const opened = new Set([...list.querySelectorAll<HTMLDetailsElement>('details[open][data-disclosure]')].map((el) => el.dataset.disclosure));
-    const openSources = new Set([...nodes.values()].filter((item) => item.node.querySelector<HTMLDetailsElement>('.wt-activity')?.open).flatMap((item) => item.sourceIds));
     const focused = document.activeElement;
     const focusedDisclosure = focused instanceof HTMLElement && focused.matches('summary') && list.contains(focused) ? focused.parentElement?.dataset.disclosure : undefined;
     const rows = history.rows;
+    const lastRow = rows.at(-1);
     const loaded = new Map(history.entries.map((entry) => [entry.id, entry]));
     const asking = worker.status === 'needs_input';
+    const rosterKey = (opts.team?.() ?? []).map((w) => `${w.id}:${w.name}:${w.lead ?? ''}`).join(',');
+
     for (const row of rows) {
-      const key = JSON.stringify([row, asking, rowContent(row, loaded)]);
+      const isLastRow = row === lastRow;
+      const streamFlag = isLastRow && row.kind === 'message' && row.role === 'assistant' && isBusy(worker.status);
+      const key = JSON.stringify([row, asking, streamFlag, hasDelegateCard(row) ? rosterKey : '', rowContent(row, loaded)]);
       let had = nodes.get(row.id);
       if (!had || had.key !== key) {
-        const node = render(row, loaded, asking);
-        for (const disclosure of node.querySelectorAll<HTMLDetailsElement>('details[data-disclosure]')) {
-          if (opened.has(disclosure.dataset.disclosure)) disclosure.open = true;
-        }
-        if (row.kind === 'activity' && row.sourceIds.some((id) => openSources.has(id))) {
-          const group = node.querySelector<HTMLDetailsElement>('.wt-activity');
-          if (group) group.open = true;
-        }
+        const positions = [...(had?.node.querySelectorAll<HTMLElement>('pre, .wt-horizontal-content') ?? [])].map((content) => [content.scrollTop, content.scrollLeft]);
+        const node = render(row, loaded, asking, { isLastRow });
+        [...node.querySelectorAll<HTMLElement>('pre, .wt-horizontal-content')].forEach((content, index) => {
+          content.scrollTop = positions[index]?.[0] ?? 0;
+          content.scrollLeft = positions[index]?.[1] ?? 0;
+        });
         had = { key, node, sourceIds: row.kind === 'activity' ? row.sourceIds : [] };
         nodes.set(row.id, had);
       }
@@ -807,11 +1344,13 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     labelLatest(history.historical ? 'Back to the latest' : 'Jump to latest');
     empty.hidden = rows.length > 0;
     paintEmpty();
+    paintPlan();
     if (stick) follow();
     else if (older) scroll.scrollTop = top + scroll.scrollHeight - height;
     else updateLatest();
     if (history.historical) latest.classList.remove('hidden');
   };
+
   let waitingShown = false;
   // One stable signal outside the scrolling transcript, including gaps between recorded messages.
   // The JSONL isn't a token stream: don't infer "Thinking" or "Generating" from its last entry.
@@ -830,6 +1369,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
     progressDetail.hidden = !detail;
   };
+
   const updateControls = () => {
     const broken = worker.cloud?.error;
     const blocked = opts.blocked?.();
@@ -843,6 +1383,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (needsOwnerInput(worker) && !waitingShown) requestAnimationFrame(() => opts.question.scrollIntoView({ block: 'nearest' }));
     waitingShown = waiting;
     input.disabled = !allowed || sending || waiting;
+    if (input.disabled) {
+      if (slashShown.length) paintSlash();
+      if (mentionShown.length) closeMention();
+    }
     attach.disabled = input.disabled;
     const busy = isBusy(worker.status);
     send.disabled = input.disabled;
@@ -860,13 +1404,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       return cloud ? `Queue a message for after this turn…` : `Steer ${worker.name}, or queue for after this turn…`;
     };
     input.placeholder = placeholder();
-    hint.replaceChildren(
-      ...(cloud
-        ? [shortcut('Enter', busy ? 'queue' : 'send'), shortcut('⇧ Enter', 'new line')]
-        : busy
-          ? [shortcut('Enter', 'steer'), shortcut('Ctrl Enter', 'queue'), shortcut('⇧ Enter', 'new line')]
-          : [shortcut('Enter', 'send'), shortcut('⇧ Enter', 'new line'), shortcut('/', 'commands')]),
-    );
+    if (cloud) hint.replaceChildren(shortcut('Enter', busy ? 'queue' : 'send'), shortcut('⇧ Enter', 'new line'));
+    else if (busy) hint.replaceChildren(shortcut('Enter', 'steer'), shortcut('Ctrl Enter', 'queue'), shortcut('⇧ Enter', 'new line'));
+    else if (worker.kind === 'agent') hint.replaceChildren(shortcut('Enter', 'send'), shortcut('⇧ Enter', 'new line'), shortcut('@', 'files'), shortcut('/', 'commands'));
+    else hint.replaceChildren(shortcut('Enter', 'send'), shortcut('⇧ Enter', 'new line'), shortcut('/', 'commands'));
     earlier.disabled = !!pending || !connected;
     retry.classList.toggle('hidden', !error);
     retry.disabled = !connected || !!pending;
@@ -881,15 +1422,17 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     resume.disabled = !active || !connected || !!worker.lost || resuming;
     resume.textContent = broken ? (resuming ? 'Checking…' : 'Check again') : resuming ? 'Resuming…' : 'Resume';
     element.classList.toggle('has-feedback', !!notice.textContent);
+    paintPlan();
     paintQueue();
     paintProgress();
   };
-  const read = (before?: number) => {
+
+  const read = (before?: number, minIntervalMs = 1000) => {
     if (!active || !connected || disposed || document.hidden || pending) return;
     if (threadStarting(worker) && !worker.sessionId) return;
     if (!worker.sessionId && opts.intro?.()) return;
     if (before === undefined && history.historical) return;
-    if (before === undefined && Date.now() - lastReadAt < 1000) return;
+    if (before === undefined && minIntervalMs > 0 && Date.now() - lastReadAt < minIntervalMs) return;
     const request = `thread-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     if (net.send({ t: 'thread.read', workerId: worker.id, request, ...(before !== undefined ? { before } : {}) })) {
       lastReadAt = Date.now();
@@ -898,25 +1441,54 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
     updateControls();
   };
+
   const receive = (msg: ServerMsg) => {
     if (disposed) return;
+    if (msg.t === 'welcome' || msg.t === 'floors') {
+      floorDirs.clear();
+      for (const f of msg.floors) floorDirs.set(f.id, f.dir);
+    }
     if (msg.t === 'floor.enter' || msg.t === 'welcome') {
+      if (msg.t === 'welcome' || watchedWorkerId !== ORCHESTRATOR_ID) {
+        watchedWorkerId = '';
+        hasPushed = false;
+      }
+      team.resetWatches();
       team.clear();
       team.enable(false);
+      syncWatch();
       paintTeam();
       return;
     }
     if (msg.t === 'thread.snapshot' && msg.workerId !== worker.id) {
       syncTeam();
-      if (team.receive(msg)) paintTeam();
+      if (team.receive(msg, Date.now())) paintTeam();
       return;
     }
-    if (msg.t !== 'thread.snapshot' || !active || !pending || msg.workerId !== worker.id || msg.request !== pending.request) return;
-    const older = pending.before !== undefined;
-    pending = undefined;
+    if (msg.t !== 'thread.snapshot' || !active || msg.workerId !== worker.id) return;
+    const isPush = msg.push === true && msg.before === undefined && !history.historical;
+    const isReply = Boolean(pending && msg.request === pending.request);
+    if (!isPush && !isReply) return;
+
+    if (!msg.error && worker.sessionId && msg.sessionId !== worker.sessionId) {
+      if (isReply) {
+        pending = undefined;
+        updateControls();
+      }
+      return;
+    }
+
+    const older = Boolean(isReply && pending?.before !== undefined);
+    if (isReply || (isPush && pending && pending.before === undefined)) {
+      pending = undefined;
+    }
+    if (isPush) {
+      hasPushed = true;
+      lastReadAt = Date.now();
+    }
+
     error = threadSnapshotError(worker, msg.error, !received && Date.now() < startupReadUntil);
     if (!msg.error) {
-      if (worker.sessionId && msg.sessionId !== worker.sessionId) return;
       history.apply(msg);
       if (history.unsupported) error = `This office sent a Thread this page can’t read. Reload the page, or ${fallback}.`;
       opts.onEntries?.();
@@ -925,15 +1497,18 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
     updateControls();
   };
+
   const clearDraft = () => {
     input.value = '';
+    paintPastes();
     opts.onDraft('');
     told = '';
     paintSlash();
+    closeMention();
   };
   const submit = async (queueSend = false) => {
-    const text = input.value.trim();
     if ((queueSend ? queue.disabled || queue.hidden : send.disabled) || sending) return;
+    const text = draftText().trim();
     if (active && !disposed && !queueSend && nativeLimits(text, store.factory.connection.connected && !store.factory.connection.rejected)) {
       openFactoryLimits();
       clearDraft();
@@ -947,6 +1522,11 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       return;
     }
     if (!text && !images.ids().length && !images.busy()) return input.focus();
+    if (text.length > PROMPT_MAX) {
+      told = `This message is ${text.length.toLocaleString('en-US')} characters, over the ${PROMPT_MAX.toLocaleString('en-US')}-character limit. Remove some pasted text.`;
+      updateControls();
+      return;
+    }
     sending = true;
     updateControls();
     await images.settled();
@@ -966,13 +1546,14 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       clearDraft();
       if (history.historical) history.clear(worker.sessionId);
       follow();
-      read();
+      read(undefined, 0);
     }
     error = result ?? '';
     updateControls();
     // Droid answers most of its slash commands with a dialog, which only its terminal shows.
     if (!result && !cloud && slashOf(text)?.command?.kind === 'tty') opts.raw?.();
   };
+
   const stopTurn = () => {
     if (stop.disabled) return;
     if (cloud || opts.interrupt) {
@@ -989,12 +1570,35 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     told = typeKeys('\u001b') ? '' : 'Disconnected. Nothing was sent.';
     updateControls();
   };
+
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     void submit();
   });
+
   input.addEventListener('keydown', (event) => {
     if (event.isComposing) return;
+    if (mentionShown.length) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        mentionCursor = (mentionCursor + (event.key === 'ArrowDown' ? 1 : mentionShown.length - 1)) % mentionShown.length;
+        paintMention();
+        mentionMenu.children[mentionCursor]?.scrollIntoView({ block: 'nearest' });
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (activeMention) mentionDismissedKey = `${activeMention.start}:${activeMention.query}`;
+        paintMention();
+        return;
+      }
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        event.preventDefault();
+        pickMention(mentionShown[mentionCursor]);
+        return;
+      }
+    }
     if (slashShown.length) {
       const typed = slashOf(input.value)?.name;
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -1023,6 +1627,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       void submit(!cloud && (event.ctrlKey || event.metaKey) && isBusy(worker.status));
     }
   });
+
   const off = net.onMessage(receive);
   const offFactory = store.on('factory', () => {
     paintSlash();
@@ -1038,39 +1643,54 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       error = cloud ? 'The office did not return this conversation. Retry, or open it in Factory.' : 'The office did not return this conversation. Retry, or use Raw TTY on an older office.';
       updateControls();
     }
-    if (!error) read();
+    if (!error) read(undefined, received ? RECONCILE_INTERVAL_MS : STARTUP_RETRY_MS);
   }, 1000);
+
   const visibility = () => {
+    syncWatch();
     paintProgress();
     readTeam();
-    if (!document.hidden && active) read();
+    if (!document.hidden && active) read(undefined, 0);
   };
   document.addEventListener('visibilitychange', visibility);
+
   return {
     element,
     entries: () => history.entries,
     update(next, online) {
-      if (online && !connected && active) net.send({ t: 'worker.attach', workerId: next.id });
-      if (next.sessionId !== worker.sessionId) {
+      const reconnected = online && !connected;
+      const workerChanged = next.id !== worker.id;
+      const sessionChanged = next.sessionId !== worker.sessionId || workerChanged;
+      if (reconnected && active) net.send({ t: 'worker.attach', workerId: next.id });
+      if (sessionChanged) {
         startupReadUntil = threadStarting(worker) || threadStarting(next) ? Infinity : 0;
         history.clear(next.sessionId);
         received = false;
+        hasPushed = false;
         pending = undefined;
+        lastReadAt = 0;
         error = '';
         nodes.clear();
         expandedMessages.clear();
+        userToggles.clear();
+        expandedDiffs.clear();
         list.replaceChildren();
         paintEntries(false);
       }
       worker = next;
       connected = online;
       if (!online) {
+        watchedWorkerId = '';
+        hasPushed = false;
         pending = undefined;
         error = '';
+        team.resetWatches();
       }
+      syncWatch();
       if (received) paintEntries(false);
       updateControls();
-      read();
+      if (reconnected || sessionChanged) read(undefined, 0);
+      else read(undefined, received && hasPushed ? RECONCILE_INTERVAL_MS : 1000);
       readTeam();
     },
     dropZone: (zone, mark) => images.dropZone(zone, mark),
@@ -1078,11 +1698,14 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       if (active === on) return;
       active = on;
       pending = undefined;
+      syncWatch();
       if (on) {
         net.send({ t: 'worker.attach', workerId: worker.id });
-        read();
+        read(undefined, 0);
         loadSlash();
-      } else net.send({ t: 'worker.detach', workerId: worker.id });
+      } else {
+        net.send({ t: 'worker.detach', workerId: worker.id });
+      }
       updateControls();
       readTeam();
     },
@@ -1091,18 +1714,23 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       if (active) net.send({ t: 'worker.detach', workerId: worker.id });
       disposed = true;
       active = false;
+      syncWatch();
+      filesAbort?.abort();
+      filesAbort = undefined;
       paintProgress();
       clearInterval(timer);
       document.removeEventListener('visibilitychange', visibility);
       teamSection.removeEventListener('toggle', teamDisclosure, true);
       teamSection.removeEventListener('focusout', teamFocus);
       document.removeEventListener('selectionchange', teamSelection);
+      document.removeEventListener('selectionchange', scheduleQuote);
+      cancelAnimationFrame(quoteFrame);
       off();
       offFactory();
       resize.disconnect();
       questionChanges.disconnect();
       images.discard();
-      team.dispose();
+      team.dispose(connected ? (msg) => net.send(msg) : undefined);
       teamNodes.clear();
     },
   };

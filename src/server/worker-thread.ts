@@ -1,11 +1,14 @@
+import { existsSync } from 'node:fs';
 import { open, readdir, realpath, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
-import { IMAGE_PLACEHOLDER, pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation.js';
+import { editedFilePaths } from '../shared/thread-diff.js';
+import { IMAGE_PLACEHOLDER, pageRows, presentThread, THREAD_MODEL_VERSION, type ThreadFileText, type ThreadPresentation, type ThreadRow } from '../shared/thread-presentation.js';
 import type { ThreadEntry, ThreadImage } from '../shared/worker-thread.js';
 import { LABEL_TEXT_CHARS } from '../shared/worker-labels.js';
 import { hideOfficeText, OFFICE_SAYS } from '../shared/prompts.js';
 import { DROID_SESSIONS_DIR } from './droid-session.js';
 import { imageAddress, imageAt, imageRef, IMAGES_PER_ENTRY, promptPictures } from './thread-images.js';
+import { WorkspaceTexts } from './thread-workspace.js';
 
 const PAGE_SIZE = 100;
 const FIELD_CHARS = 12_000;
@@ -133,12 +136,51 @@ const entryBytes = (entry: ThreadEntry) => Buffer.byteLength(JSON.stringify(entr
 /** A bounded recent window, with disk scans only for explicit older-page requests. */
 export class WorkerThreadReader {
   private sessions = new Map<string, CachedSession>();
+  private files = new WorkspaceTexts();
 
   constructor(
     private root = DROID_SESSIONS_DIR,
-    private limits = { sessions: 8, entries: 1000, bytes: 2 * 1024 * 1024 },
+    private limits = { sessions: 16, entries: 1000, bytes: 2 * 1024 * 1024 },
     private textOnly = false,
   ) {}
+
+  /** Synchronous best-effort paths for immediate `fs.watch` binding before async canonical discovery completes. */
+  sessionPathsSync(source: ThreadSession): { file?: string; dir: string; root: string } | undefined {
+    const { sessionId, cwd, transcript } = source;
+    if (!SESSION_ID.test(sessionId) || !path.isAbsolute(cwd)) return undefined;
+    const name = `${sessionId}.jsonl`;
+    const key = JSON.stringify([cwd, sessionId, source.since ?? 0]);
+    const cached = this.sessions.get(key)?.file;
+    if (cached && existsSync(cached)) return { file: cached, dir: path.dirname(cached), root: this.root };
+    if (transcript && path.basename(transcript) === name) {
+      const rel = path.relative(this.root, transcript);
+      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+        return { ...(existsSync(transcript) ? { file: transcript } : {}), dir: path.dirname(transcript), root: this.root };
+      }
+    }
+    const dir = path.join(this.root, cwd.replace(/[^a-zA-Z0-9-]/g, '-'));
+    const guess = path.join(dir, name);
+    return { ...(existsSync(guess) ? { file: guess } : {}), dir, root: this.root };
+  }
+
+  /** Canonical `.jsonl` file (when created) and expected session directory for `fs.watch` subscriptions. */
+  async sessionPaths(source: ThreadSession): Promise<{ file?: string; dir: string; root: string } | undefined> {
+    const { sessionId, cwd, transcript } = source;
+    if (!SESSION_ID.test(sessionId) || !path.isAbsolute(source.cwd)) return undefined;
+    const file = await this.find(source);
+    if (file) return { file, dir: path.dirname(file), root: this.root };
+    const name = `${sessionId}.jsonl`;
+    if (transcript && path.basename(transcript) === name) {
+      const rel = path.relative(this.root, transcript);
+      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+        return { dir: path.dirname(transcript), root: this.root };
+      }
+    }
+    // Droid may name the folder after the cwd as given or as resolved (symlinked tmp or worktree paths), as find() allows.
+    const canonical = await realpath(cwd).catch(() => cwd);
+    const dirs = [cwd, canonical].map((p) => path.join(this.root, p.replace(/[^a-zA-Z0-9-]/g, '-')));
+    return { dir: dirs.find((d) => existsSync(d)) ?? dirs[1], root: this.root };
+  }
 
   /** Independent text window: a long stretch of tools cannot evict the conversation. */
   async readText(source: ThreadSession): Promise<string | undefined> {
@@ -173,14 +215,16 @@ export class WorkerThreadReader {
       if (!state.file) return this.unavailable('The local conversation file is not available yet.');
       const oldest = state.projection.entries[0]?.seq ?? Infinity;
       if (before === undefined || !state.projection.dropped || before > oldest) {
-        const key = `${state.stamp}:${busy}`;
-        if (state.rows?.key !== key) state.rows = { key, rows: presentThread(state.projection.entries, busy) };
+        // Edit diffs are numbered from the files as they are now, so the rows change when those do.
+        const files = this.textOnly ? undefined : await this.files.read(cwd, editedFilePaths(state.projection.entries));
+        const key = `${state.stamp}:${busy}:${files?.key ?? ''}`;
+        if (state.rows?.key !== key) state.rows = { key, rows: presentThread(state.projection.entries, busy, { fileText: files?.text }) };
         return { sessionId, ...this.page(state.projection, before, state.rows.rows) };
       }
       let page = state.pages.get(before);
       if (!page) {
         if (state.pages.size >= 4) return this.unavailable('Conversation reader is busy. Try again shortly.');
-        page = this.older(state.file, sessionId, before, source.drops).finally(() => state.pages.delete(before));
+        page = this.older(state.file, sessionId, before, source.drops, cwd).finally(() => state.pages.delete(before));
         state.pages.set(before, page);
       }
       return await page;
@@ -530,7 +574,7 @@ export class WorkerThreadReader {
     }
   }
 
-  private page(state: Projection, before = Infinity, rows?: readonly ThreadRow[]): Omit<ThreadPage, 'sessionId'> {
+  private page(state: Projection, before = Infinity, rows?: readonly ThreadRow[], fileText?: ThreadFileText): Omit<ThreadPage, 'sessionId'> {
     const candidates = state.entries.filter((entry) => entry.seq < before);
     const entries = candidates.slice(-PAGE_SIZE).map((entry) => ({ ...entry }));
     let bytes = Buffer.byteLength(JSON.stringify(entries));
@@ -539,17 +583,18 @@ export class WorkerThreadReader {
       if (removed) bytes -= entryBytes(removed) + 1;
     }
     // Rows come from the whole window, so a group that began before this page keeps its first entry and counts.
-    const presentation: ThreadPresentation = { version: THREAD_MODEL_VERSION, rows: pageRows(rows ?? presentThread(state.entries, false), entries, before) };
+    const presentation: ThreadPresentation = { version: THREAD_MODEL_VERSION, rows: pageRows(rows ?? presentThread(state.entries, false, { fileText }), entries, before) };
     return { entries, hasMore: candidates.length > entries.length || (state.dropped && before > 0), presentation };
   }
 
-  private async older(file: string, sessionId: string, before: number, drops?: string): Promise<ThreadPage> {
+  private async older(file: string, sessionId: string, before: number, drops: string | undefined, cwd: string): Promise<ThreadPage> {
     const state = this.empty();
     state.projection = projection(before, 0, drops);
     const handle = await open(file, 'r');
     try {
       await this.consume(handle, state, (await handle.stat()).size);
-      return { sessionId, ...this.page(state.projection, before) };
+      const files = this.textOnly ? undefined : await this.files.read(cwd, editedFilePaths(state.projection.entries));
+      return { sessionId, ...this.page(state.projection, before, undefined, files?.text) };
     } finally {
       await handle.close();
     }

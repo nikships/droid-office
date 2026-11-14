@@ -53,7 +53,21 @@ for (const example of fixture.cases) {
       assert.equal(row.to, Math.max(...seqs));
       assert.ok(row.blocks.length, 'an Activity with nothing to show leaves no row');
       assert.equal(row.open, false, 'every disclosure starts closed');
-      for (const block of row.blocks) assert.equal(block.open, false);
+      for (const block of row.blocks) {
+        assert.equal(block.open, false);
+        if (block.kind === 'tools') {
+          assert.equal(block.id, `tools:${block.actions[0]?.id}`);
+          if (block.card) {
+            assert.equal(block.actions.length, 1, 'card blocks hold a single action');
+            assert.equal(block.actions[0].card, block.card);
+          } else {
+            assert.ok(
+              block.actions.every((action) => action.card === undefined),
+              'exploration blocks never swallow V3 card actions',
+            );
+          }
+        }
+      }
       const actions = actionsIn(row);
       assert.doesNotMatch(row.status ?? '', /failed/i, 'tool failures never add a summary count');
       for (const action of actions.filter((item) => item.state === 'failed')) {

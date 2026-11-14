@@ -61,6 +61,7 @@ import { NO_PIPELINES } from '../shared/pipelines.js';
 import { RenderEngine } from './whiteboard-render.js';
 import { officePrompt } from './prompts.js';
 import { Answers } from './answers.js';
+import { ThreadWatchHub } from './thread-watch.js';
 import { WorkerThreadReader } from './worker-thread.js';
 import { WorkerLabels } from './worker-labels.js';
 import { LabelModelError, openAiLabel, WorkerLabelModel } from './worker-label-model.js';
@@ -150,6 +151,7 @@ export async function startServer(cfg: Config) {
   const transport = createClientTransport({ clients, floors });
   const { sendTo, broadcast, toFloor, termData, clearOffFloorThrottle, broadcastOffFloorScreen } = transport;
   const workerThreads = new WorkerThreadReader();
+  let threadWatches: ThreadWatchHub | undefined;
   /** The office Mac's trackpad taps for a charging shot; a silent no-op off macOS (see haptics.ts). */
   const trackpadHaptics = new TrackpadHaptics();
   /** The droid every floor runs, by absolute path; null until it's installed (Setup sets it then). */
@@ -284,6 +286,7 @@ export async function startServer(cfg: Config) {
     const version = Number(url.searchParams.get('v')) || 0;
     const reply = workers.hookReply(workerId, token, event, payload, version);
     if (reply === undefined) return send(res, 401, {});
+    threadWatches?.notifyWorker(workerId);
     // What the command prints is what its droid reads: nothing, or the office's hook output.
     res.writeHead(200, { 'content-type': reply ? 'application/json' : 'text/plain' });
     res.end(reply);
@@ -356,6 +359,8 @@ export async function startServer(cfg: Config) {
     modelGate,
     changed: () => {
       answers.changed(ORCHESTRATOR_ID, orchestrator.info?.status);
+      if (orchestrator.info) threadWatches?.notifyWorker(ORCHESTRATOR_ID);
+      else threadWatches?.unwatchWorker(ORCHESTRATOR_ID);
       missionChanged();
     },
     data: termData,
@@ -496,6 +501,7 @@ export async function startServer(cfg: Config) {
       modelName: (id) => droidModels.peek()?.models.find((m) => m.id === id)?.displayName,
       toast: (floorId, text, level) => toastFloor(floors.get(floorId), text, level),
       prompt: (id, vars) => officePrompt(prompts, id, vars),
+      onThreadChange: (workerId) => threadWatches?.notifyWorker(workerId),
     },
     // Every floor's workers (desk and cloud) with a session, so each shows what it has cost.
     // Cloud workers live in the floor's CloudWorkers store, not WorkerManager, hence everyone().
@@ -509,6 +515,42 @@ export async function startServer(cfg: Config) {
     },
   });
   const cloud = factory.cloud!;
+  threadWatches = new ThreadWatchHub({
+    workerThreads,
+    resolveWorker: (workerId) => {
+      if (workerId === ORCHESTRATOR_ID) {
+        if (!orchestrator.info) return undefined;
+        return {
+          kind: 'local',
+          floorId: null,
+          busy: orchestrator.workers.threadBusy(ORCHESTRATOR_ID),
+          local: orchestrator.workers.threadSession(ORCHESTRATOR_ID),
+        };
+      }
+      const cloudOwner = cloud.find(workerId);
+      if (cloudOwner) {
+        return {
+          kind: 'cloud',
+          floorId: cloudOwner.floor.id,
+          busy: cloudOwner.info.status === 'working' || cloudOwner.info.status === 'starting',
+        };
+      }
+      const floor = workerFloor(workerId);
+      const info = floor?.workers.get(workerId);
+      if (!floor || !info || info.kind !== 'agent') return undefined;
+      return {
+        kind: 'local',
+        floorId: floor.id,
+        busy: floor.workers.threadBusy(workerId),
+        local: floor.workers.threadSession(workerId),
+      };
+    },
+    readCloud: (workerId) => (setup.state().airgapped ? undefined : cloud.thread(workerId)),
+    send: (clientId, msg) => {
+      const target = clients.get(clientId);
+      if (target) sendTo(target, msg);
+    },
+  });
   const labelPreferences = new WorkerLabelPreferences(cfg.dataDir);
   let labelSettingsRevision = 0;
   const labelThreads = new WorkerThreadReader(undefined, { sessions: 500, entries: 0, bytes: 0 }, true);
@@ -655,6 +697,8 @@ export async function startServer(cfg: Config) {
     },
     workerChanged: (floor, w) => {
       answers.changed(typeof w === 'string' ? w : w.id, typeof w === 'string' ? undefined : w.status);
+      if (typeof w === 'string') threadWatches?.unwatchWorker(w);
+      else threadWatches?.notifyWorker(w.id);
       if (typeof w === 'string' || w.status !== 'needs_input') clearOffFloorThrottle(typeof w === 'string' ? w : w.id);
       if (floors.get(floor.id) === floor) {
         if (typeof w === 'string') broadcast({ t: 'building.remove', floor: floor.id, workerId: w });
@@ -1006,6 +1050,7 @@ export async function startServer(cfg: Config) {
       }
       factory.drop(id);
       officeVibes.dropClient(id);
+      threadWatches?.unwatchClient(id);
       floorsChanged();
     });
     ws.on('error', () => ws.terminate());
@@ -1070,6 +1115,7 @@ export async function startServer(cfg: Config) {
         sendTo(c, { t: 'toast', text: next ? `🛗 ${who} took ${name} off the building, so you rode the elevator to ${next.def.name}` : `🛗 ${who} took ${name}, the last floor, off the building`, level: 'warn' });
       } else sendTo(c, { t: 'toast', text: `🛗 ${who} took ${name} off the building`, level: 'info' });
     }
+    for (const w of floor.everyone()) threadWatches?.unwatchWorker(w.id);
     floors.delete(floor.id);
     floorActivity.forget(floor.id);
     officeVibes.dropFloor(floor.id);
@@ -1088,6 +1134,7 @@ export async function startServer(cfg: Config) {
       was.cloud.detachAll(c.id);
       was.changes.unwatchAll(c.id);
     }
+    threadWatches?.unwatchClient(c.id, true);
     leaveFloorTerminals(c);
     const spot = at ?? { ...elevatorSpot(), y: 0, rotY: 0 };
     return { spot };
@@ -1282,15 +1329,21 @@ export async function startServer(cfg: Config) {
           const reply = { t: 'thread.snapshot' as const, workerId: ORCHESTRATOR_ID, request, ...(before !== undefined ? { before } : {}) };
           const none = (error: string) => sendTo(c, { ...reply, entries: [], hasMore: false, error });
           const source = orch.threadSession(ORCHESTRATOR_ID);
+          const busy = orch.threadBusy(ORCHESTRATOR_ID);
           if (msg.before !== undefined && (before === undefined || !Number.isSafeInteger(before) || before < 0)) none('Invalid conversation page.');
           else if (!source) none('The Orchestrator has no conversation yet.');
           else
-            void workerThreads.read(source, before, orch.threadBusy(ORCHESTRATOR_ID)).then((page) => {
+            void workerThreads.read(source, before, busy).then((page) => {
               if (orch.threadSession(ORCHESTRATOR_ID)?.sessionId !== source.sessionId) return none('The Orchestrator’s conversation changed. Read the thread again.');
+              if (before === undefined) threadWatches?.seed(ORCHESTRATOR_ID, page, busy);
               sendTo(c, { ...reply, ...page });
             });
           return unanswered();
         }
+        case 'thread.watch':
+          if (typeof msg.on !== 'boolean') return stop('Send {"on": true} or {"on": false}.');
+          threadWatches?.watch(c.id, ORCHESTRATOR_ID, msg.on);
+          return done(undefined, ORCHESTRATOR_ID);
         default:
           return done('The Orchestrator works from Mission Control: it has no desk, worktree or changes of its own.');
       }
@@ -1740,6 +1793,7 @@ export async function startServer(cfg: Config) {
               sendTo(c, { ...reply, entries: [], hasMore: false, error: 'The active floor or worker session changed. Read the thread again.' });
               return;
             }
+            if (before === undefined && still) threadWatches?.seed(workerId, page, still.info.status === 'working' || still.info.status === 'starting');
             sendTo(c, { ...reply, ...page });
           });
           break;
@@ -1748,14 +1802,23 @@ export async function startServer(cfg: Config) {
           sendTo(c, { ...reply, entries: [], hasMore: false, error: 'Thread is available only for office-owned Droid workers with a session on this floor. Shells have no thread.' });
           break;
         }
-        void workerThreads.read(source, before, floor.workers.threadBusy(workerId)).then((page) => {
+        const busy = floor.workers.threadBusy(workerId);
+        void workerThreads.read(source, before, busy).then((page) => {
           const current = floor.workers.threadSession(workerId);
           if (floors.get(floor.id) !== floor || current?.sessionId !== source.sessionId || current.cwd !== source.cwd) {
             sendTo(c, { ...reply, entries: [], hasMore: false, error: 'The active floor or worker session changed. Read the thread again.' });
             return;
           }
+          if (before === undefined) threadWatches?.seed(workerId, page, busy);
           sendTo(c, { ...reply, ...page });
         });
+        break;
+      }
+      case 'thread.watch': {
+        if (typeof msg.on !== 'boolean') return stop('Send {"on": true} or {"on": false}.');
+        const workerId = str(msg.workerId, 32);
+        if (workerId) threadWatches?.watch(c.id, workerId, msg.on);
+        done(undefined, workerId || undefined);
         break;
       }
       case 'worker.interrupt': {
@@ -2235,6 +2298,7 @@ export async function startServer(cfg: Config) {
         interruptOrchestrator();
         break;
       case 'orchestrator.reset':
+        threadWatches?.unwatchWorker(ORCHESTRATOR_ID);
         orchestrator.reset();
         toastAll(`🛰️ ${who} started a new conversation with the Orchestrator`);
         done();
@@ -2285,6 +2349,7 @@ export async function startServer(cfg: Config) {
 
   /** With `keep` (a restart), workers' terminals keep running for the next office to pick up. */
   const shutdown = (keep = false) => {
+    threadWatches?.close();
     const labelsStopped = workerLabels.stop();
     hostUpdates.dispose();
     finder?.stop();

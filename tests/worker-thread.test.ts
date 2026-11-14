@@ -748,3 +748,64 @@ test("the conversation file the worker's hooks named is read first, and only fro
     ['Found by its folder'],
   );
 });
+
+test('an Edit deep in a workspace file is numbered from the file as it is now', async (t) => {
+  const edit = { file_path: '', old_str: 'value = 1;', new_str: 'value = 2;' };
+  const { root, source, file } = await rig(t);
+  await mkdir(source.cwd, { recursive: true });
+  const target = path.join(source.cwd, 'deep.ts');
+  edit.file_path = target;
+  await writeFile(target, [...Array.from({ length: 499 }, (_, i) => `// line ${i + 1}`), 'value = 2;', 'end'].join('\n'));
+  await appendFile(file, lines(message('edit', 'assistant', [{ type: 'tool_use', id: 'e1', name: 'Edit', input: edit }]), message('edit-result', 'user', [{ type: 'tool_result', tool_use_id: 'e1', content: 'ok' }])));
+  const reader = new WorkerThreadReader(root);
+  const lineOf = async () => {
+    const page = await reader.read(source);
+    const row = page.presentation?.rows.find((r) => r.kind === 'activity');
+    const action = row?.kind === 'activity' ? row.blocks.flatMap((b) => (b.kind === 'tools' ? b.actions : [])).find((a) => a.id === 'tool:e1') : undefined;
+    return action?.changes?.[0].lines.find((l) => l.kind === 'add')?.newLine;
+  };
+  assert.equal(await lineOf(), 500);
+  // The file moved on: the same session file gives new rows, never the stale line.
+  await writeFile(target, ['header', 'value = 2;'].join('\n'));
+  assert.equal(await lineOf(), 2);
+  await writeFile(target, 'value = 2;\nvalue = 2;\n');
+  assert.equal(await lineOf(), undefined);
+});
+
+test('an older page numbers an Edit from the file too, and a text-only reader never reads workspace files', async (t) => {
+  const { root, source, file } = await rig(t);
+  await mkdir(source.cwd, { recursive: true });
+  const target = path.join(source.cwd, 'deep.ts');
+  await writeFile(target, [...Array.from({ length: 499 }, (_, i) => `// line ${i + 1}`), 'value = 2;'].join('\n'));
+  const edit = { file_path: target, old_str: 'value = 1;', new_str: 'value = 2;' };
+  await appendFile(
+    file,
+    lines(
+      message('edit', 'assistant', [{ type: 'tool_use', id: 'e1', name: 'Edit', input: edit }]),
+      message('edit-result', 'user', [{ type: 'tool_result', tool_use_id: 'e1', content: 'ok' }]),
+      ...Array.from({ length: 6 }, (_, i) => text(`later-${i}`, `Later ${i}`)),
+    ),
+  );
+  const lineIn = (page: Awaited<ReturnType<WorkerThreadReader['read']>>) => {
+    const row = page.presentation?.rows.find((r) => r.kind === 'activity');
+    const action = row?.kind === 'activity' ? row.blocks.flatMap((b) => (b.kind === 'tools' ? b.actions : [])).find((a) => a.id === 'tool:e1') : undefined;
+    return action ? (action.changes?.[0].lines.find((l) => l.kind === 'add')?.newLine ?? null) : 'missing';
+  };
+  const limits = { sessions: 8, entries: 3, bytes: 8_000_000 };
+  // The window holds only the last three entries, so the Edit is read from disk as an older page.
+  const olderPage = async (reader: WorkerThreadReader) => {
+    assert.equal((await reader.read(source)).entries[0].seq, 4);
+    return reader.read(source, 1);
+  };
+  assert.equal(lineIn(await olderPage(new WorkerThreadReader(root, limits))), 500);
+  const labels = new WorkerThreadReader(root, limits, true);
+  const reads: string[][] = [];
+  Reflect.set(Reflect.get(labels, 'files'), 'read', async (_cwd: string, paths: string[]) => {
+    reads.push(paths);
+    return { key: '', text: () => undefined };
+  });
+  await labels.read(source);
+  await labels.read(source, 1);
+  assert.match((await labels.readText(source)) ?? '', /Later 5$/);
+  assert.deepEqual(reads, []);
+});
