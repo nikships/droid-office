@@ -50,6 +50,7 @@ import { isAsleep } from '../shared/status.js';
 import { ORCHESTRATOR_ID, type MissionControlState, type OrchestratorSettings } from '../shared/mission-control.js';
 import { AIRGAPPED_REASON, droidReady } from '../shared/setup.js';
 import { cannotRun } from '../shared/subscriptions.js';
+import { factoryModelGate, factoryModelTier } from '../shared/factory-limits.js';
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { STREAM } from '../shared/jukebox.js';
 import { Jukebox } from './jukebox.js';
@@ -159,7 +160,20 @@ export async function startServer(cfg: Config) {
     const catalogue = await droidModels.get();
     return setup.state().airgapped ? customModelCatalogue(catalogue) : catalogue;
   };
-  const modelGate = (model: string | undefined) => airgappedModelError(setup.state().airgapped, model, readDroidModels()) ?? subscriptions.gate(model || readDroidModels().defaultModel);
+  const modelGate = (model: string | undefined) => {
+    const settings = readDroidModels();
+    const catalogue = droidModels.peek() ?? settings;
+    const id = model || settings.defaultModel || catalogue.defaultModel;
+    const existing = airgappedModelError(setup.state().airgapped, model, settings) ?? subscriptions.gate(id);
+    if (existing || !id) return existing;
+    const descriptor = settings.models.find((m) => m.id === id && m.custom) ?? catalogue.models.find((m) => m.id === id) ?? { id };
+    return factoryModelGate(
+      factory.state(),
+      descriptor,
+      catalogue.models.filter((m) => !subscriptions.gate(m.id)),
+      Date.now(),
+    );
+  };
   // And the skills and custom commands it offers as slash commands, in each worker's own folder.
   const droidCommands = createDroidCommandCatalogue({ command: () => agentPath ?? cfg.agentCmd });
   const hiddenModels = new HiddenModels(cfg.dataDir);
@@ -455,6 +469,16 @@ export async function startServer(cfg: Config) {
     dataDir: cfg.dataDir,
     broadcast: (state) => broadcast({ t: 'factory', state }),
     toast: (text, level) => toastAll(text, level),
+    hostedWorkers: () => {
+      const models = droidModels.peek() ?? readDroidModels();
+      return [...floors.values()]
+        .flatMap((f) => f.everyone())
+        .concat(orchestrator.workers.list())
+        .some((w) => {
+          const id = w.activeModel ?? w.model ?? models.defaultModel;
+          return w.kind === 'agent' && (w.status === 'working' || w.status === 'starting') && !!id && !!factoryModelTier(models.models.find((m) => m.id === id) ?? { id });
+        });
+    },
     // Cloud workers: their Droid session runs on a Factory computer (factory/cloud.ts, cloud-workers.ts).
     cloud: {
       floors: () =>
@@ -663,6 +687,8 @@ export async function startServer(cfg: Config) {
     modelAvailability: (model) => subscriptions.availability(model),
     modelUsage: (model, now) => subscriptions.usage(model, now),
     recheckModels: () => subscriptions.recheck(),
+    factory: () => factory.state(),
+    recheckFactoryLimits: () => factory.recheckLimits(),
     workerLabelsOn: () => labelPreferences.get().on,
     floor: (id) => floors.get(id),
     liveDeskElsewhere: (floor, deskId) => {
@@ -2228,7 +2254,7 @@ export async function startServer(cfg: Config) {
     unanswered();
   };
 
-  const ownerOffice = createOwnerOffice({ floors, orchestrator, missionState, workerFloor, workersOf, cloud, subscriptions, subagents, labelPreferences, remoteOffice, workerThreads, acting, handleMessage });
+  const ownerOffice = createOwnerOffice({ floors, orchestrator, missionState, workerFloor, workersOf, cloud, factory, subscriptions, subagents, labelPreferences, remoteOffice, workerThreads, acting, handleMessage });
 
   const stopClientTimers = transport.startTimers(attachTerminal, devices);
 

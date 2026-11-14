@@ -1,6 +1,6 @@
 import { redact } from '../jira.js';
 
-/** Factory's public API. Every path below is under `/api/v0`. */
+/** Factory's public API; billing uses `/api` rather than `/api/v0`. */
 export const FACTORY_API = 'https://api.factory.ai';
 /** Most calls answer within a second or two; this is for a slow one. */
 export const TIMEOUT_MS = 20_000;
@@ -74,6 +74,12 @@ export class FactoryApi {
 
   /** `path` is under /api/v0, like `/computers` or `/sessions/abc`. */
   async request<T>(method: Method, path: string, opts: RequestOptions = {}): Promise<T> {
+    return this.requestApi<T>(method, `/api/v0${path}`, opts);
+  }
+
+  /** A non-versioned API path, with exactly the same auth, timeout, redaction and GET retries. */
+  async requestApi<T>(method: Method, path: string, opts: RequestOptions = {}): Promise<T> {
+    if (!path.startsWith('/api/') || path.includes('\\') || path.includes('..')) throw new Error('Use a Factory /api/ path');
     const retry = method === 'GET' && opts.retry !== false;
     try {
       return await this.once<T>(method, path, opts);
@@ -84,9 +90,9 @@ export class FactoryApi {
   }
 
   private async once<T>(method: Method, path: string, opts: RequestOptions): Promise<T> {
-    const url = new URL(`/api/v0${path}`, this.base);
+    const url = new URL(path, this.base);
     for (const [k, v] of Object.entries(opts.query ?? {})) if (v !== undefined) url.searchParams.set(k, String(v));
-    const timeoutMs = opts.timeoutMs ?? (slow(path) ? SLOW_TIMEOUT_MS : TIMEOUT_MS);
+    const timeoutMs = opts.timeoutMs ?? (slow(path.replace(/^\/api\/v0/, '')) ? SLOW_TIMEOUT_MS : TIMEOUT_MS);
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), timeoutMs);
     let res: Response;
@@ -147,6 +153,14 @@ export class FactoryApi {
   }
 
   // ---- The reads the probe and the first pollers make. Raw answers: the features shape them. ----
+
+  limits(): Promise<unknown> {
+    return this.requestApi('GET', '/api/billing/limits');
+  }
+
+  setOveragePreference(overagePreference: 'droidCore' | 'extraUsage'): Promise<unknown> {
+    return this.requestApi('POST', '/api/organization/subscription/set-overage-preference', { body: { overagePreference } });
+  }
 
   providers(): Promise<{ providers?: unknown[] }> {
     return this.get('/computers/providers');
