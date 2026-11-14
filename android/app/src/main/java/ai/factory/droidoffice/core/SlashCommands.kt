@@ -96,6 +96,9 @@ object SlashCommands {
     /** What sending [draft] does: run in the thread, run and open Raw TTY, or nothing. A plain message is [Kind.Thread]. */
     fun kind(draft: String): Kind = of(draft)?.second?.kind ?: Kind.Thread
 
+    /** A connected Factory account opens the office sheet, even when limits are unreadable or not applicable. */
+    fun nativeLimits(draft: String, connected: Boolean): Boolean = connected && of(draft)?.first == "limits"
+
     /** The commands to offer while a `/` and the start of a name are typed: prefix matches, then aliases, then names containing it. */
     fun suggestions(draft: String, commands: List<Command> = ALL): List<Command> {
         val typed = TYPING.find(draft.trimStart())?.groupValues?.get(1)?.lowercase() ?: return emptyList()
