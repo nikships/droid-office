@@ -2,35 +2,31 @@ import http from 'node:http';
 import https from 'node:https';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Config } from './config.js';
 import type { AddressInfo } from 'node:net';
-import { bearerToken, isLoopback, lanAllowed, loopbackHost, lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
-import { DevicesStore, machineName, pairingAddresses } from './devices.js';
-import { serveDeepLinkBounce } from './deep-links.js';
-import { DEEP_LINK_OPEN_PREFIX, pickDeepLinkBase } from '../shared/deep-links.js';
+import { lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
+import { DevicesStore, pairingAddresses } from './devices.js';
+import { pickDeepLinkBase } from '../shared/deep-links.js';
 import { TailscaleWatch } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
-import { COMPANION_OFF, pairingLink, type PairedDevice, type PairingState } from '../shared/devices.js';
+import type { PairedDevice } from '../shared/devices.js';
 import { MAX_REPOS, childEnv, resolveAgent, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidCommandCatalogue } from './droid-commands.js';
 import { airgappedModelError, createDroidModelCatalogue, customModelCatalogue, readDroidModels } from './droid-models.js';
 import { HiddenModels } from './hidden-models.js';
 import { Upgrader } from './upgrade.js';
-import { officeStatus } from './office-status.js';
-import { HostUpdates, hostUpdateCommand } from './host-updates.js';
+import { HostUpdates } from './host-updates.js';
 import { PhoneSizes } from './phone-sizes.js';
-import { UPLOAD_MAX_BYTES } from '../shared/decor.js';
 import { ImageProxy } from './decor.js';
 import { JiraOffice } from './jira.js';
 import { AUTOPILOT_NAME, LinearOffice } from './linear.js';
 import { DEFAULT_AUTOPILOT, linearIssueRef, linearPriority } from '../shared/linear.js';
-import { mountFactory, sendDownload } from './factory/index.js';
+import { mountFactory } from './factory/index.js';
 import { mountSetup, readSetupFile } from './setup/index.js';
 import { mountSubscriptions } from './subscriptions/index.js';
 import { MAX_WORKER_LIMIT, Machine, parseWorkerLimit } from './machine.js';
@@ -42,36 +38,26 @@ import { LeaveOnMerge } from './leave-on-merge.js';
 import { FreshMain } from './saved-switch.js';
 import { Subagents, removeBundledSkills } from './subagents.js';
 import { createOfficeMcp, OFFICE_MCP_PATH, syncOfficeMcpConnection, type OfficeMcpServer } from './office-mcp/index.js';
-import { OWNER_REPLIES, type OwnerOffice, type OwnerReply } from './office-mcp/owner.js';
+import type { OwnerOffice } from './office-mcp/owner.js';
 import { formatBlockingSteerWarning } from './worker-queue.js';
 import { OfficePrompts } from './prompts.js';
 import { HotReload, sourceAppDir } from './hot-reload.js';
-import { readGpuStats } from './gpu-stats.js';
 import { TrackpadHaptics } from './haptics.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
-import type { Arrival, ClientMsg, FloorInfo, FloorView, SearchResults, ServerMsg, WorkerInfo } from '../shared/protocol.js';
-import { AUTO_DESK, GH_COMMENT_MAX, GH_LABEL_MAX, isAgentEffort } from '../shared/protocol.js';
+import type { Arrival, ClientMsg, FloorInfo, FloorView, WorkerInfo } from '../shared/protocol.js';
+import { AUTO_DESK, isAgentEffort } from '../shared/protocol.js';
 import { isAsleep } from '../shared/status.js';
-import { readHeadBranch } from './floor-watch.js';
-import { ORCHESTRATOR_ID, orchestratorNeedsOwner, type MissionControlState, type OrchestratorSettings } from '../shared/mission-control.js';
+import { ORCHESTRATOR_ID, type MissionControlState, type OrchestratorSettings } from '../shared/mission-control.js';
 import { AIRGAPPED_REASON, droidReady } from '../shared/setup.js';
-import { cannotRun, isSubscriptionModel } from '../shared/subscriptions.js';
+import { cannotRun } from '../shared/subscriptions.js';
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { STREAM } from '../shared/jukebox.js';
 import { Jukebox } from './jukebox.js';
-import { resolveSoundCloudStation } from './soundcloud.js';
-import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../shared/search.js';
-import { DROP_MAX_BYTES, PROMPT_IMAGES_MAX, PROMPT_IMAGE_ID } from '../shared/drops.js';
-import { DROP_IMAGE_ID } from './thread-images.js';
 import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
 import { ROOF } from '../shared/rooftop.js';
 import { NO_PIPELINES } from '../shared/pipelines.js';
-import { MAX_ASSET_BYTES, OWNER_AUTHOR, PINGED_KEY, findCard, parseEnvelope, pinged } from '../shared/whiteboard.js';
-import { pingEligibility } from '../shared/whiteboard-ping.js';
-import { CARD_ROUTE, cardResponse, renderInfo, renderStatus, type CardResponse } from './whiteboard.js';
 import { RenderEngine } from './whiteboard-render.js';
-import { deliverPress, freshPresses, type ButtonPress } from './whiteboard-buttons.js';
 import { officePrompt } from './prompts.js';
 import { Answers } from './answers.js';
 import { WorkerThreadReader } from './worker-thread.js';
@@ -83,31 +69,23 @@ import { FinderDispatch, finderCatalogue, handleFinder, publishFinder } from './
 import { RemoteWorkers } from './remote-workers.js';
 import { RemoteOffice } from './remote-office.js';
 import { RemoteMcp } from './remote-mcp-http.js';
-import type { RemoteMcpState } from '../shared/remote-mcp.js';
 import { Orchestrator } from './orchestrator.js';
 import { missionTeam, type BuildingAgents } from './building-agent.js';
-import { buildWorkerInspection, inspectTerminalRetry } from './worker-status.js';
 import { GeminiDecisionsStore } from './gemini-decisions.js';
 import { OfficeVibes, type VibesFloorView } from './office-vibes.js';
 import { WakeFilter } from './wake-filter.js';
-
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.ico': 'image/x-icon',
-  '.json': 'application/json',
-  '.webmanifest': 'application/manifest+json',
-  '.woff2': 'font/woff2',
-  '.wasm': 'application/wasm',
-  '.glb': 'model/gltf-binary',
-  '.gltf': 'model/gltf+json',
-  '.mp3': 'audio/mpeg',
-  '.ogg': 'audio/ogg',
-};
+import { createBoardCommands } from './server-runtime/board-commands.js';
+import { createClientTransport } from './server-runtime/transport.js';
+import { createOwnerOffice } from './server-runtime/owner.js';
+import { createAccess } from './server-runtime/access.js';
+import { createHttpHandler } from './server-runtime/http.js';
+import { createFloorHttp } from './server-runtime/floor-http.js';
+import type { Client, ToastLevel } from './server-runtime/client.js';
+import { readBody, send, sameOrigin, refuseUpgrade } from './server-runtime/http-utils.js';
+import { str, num, repoOf, imageIds } from './server-runtime/validation.js';
+import { createStaticFiles } from './server-runtime/static-files.js';
+import { createAutomation } from './server-runtime/automation.js';
+import { createWhiteboardRuntime } from './server-runtime/whiteboard.js';
 
 const CLEANUPS = new Set(['keep', 'worktree', 'all']);
 
@@ -116,43 +94,6 @@ const MODEL_MAX = DROID_MODEL_MAX;
 /** The longest worktree setup command a floor can be given in Settings. */
 const SETUP_MAX = 2000;
 
-type ToastLevel = Extract<ServerMsg, { t: 'toast' }>['level'];
-
-interface Client {
-  id: string;
-  /** An external MCP worker's owner action runs on a socket of its own that is never in `clients` (see ownerOffice). */
-  ws: Pick<WebSocket, 'readyState' | 'bufferedAmount' | 'send' | 'close' | 'ping' | 'terminate'>;
-  /** The floor this connection is on (ROOF, or null out in the empty lobby); routing reads this. */
-  floor: string | null;
-  /**
-   * Display provenance only: the name (?name=, or the `profile` message) and color this
-   * connection's toasts, createdBy and score names are written with. Nothing routes or filters
-   * by it; every connection is the owner.
-   */
-  peer: { name: string; color: string };
-  attached: Set<string>;
-  /** Terminals whose output was skipped because this client fell behind; re-snapshotted later. */
-  stale: Set<string>;
-  lastGongAt: number;
-  /** Cleared at each heartbeat ping and set again by the pong; still clear at the next one means gone. */
-  isAlive: boolean;
-  /** The paired phone this connection came in with (its device token), if it did. */
-  device?: string;
-  /** Terminals this phone resized, put back when it disconnects (see phone-sizes.ts). */
-  phoneSizes?: PhoneSizes;
-  /** A non-scene browser must never receive window.office automation commands. */
-  dashboard: boolean;
-  requests: Set<string>;
-  /** The Whiteboard epoch this connection numbers its batches in, per floor (see WhiteboardStore.issueEpoch). */
-  boards: Map<string, string>;
-  /** An external worker's owner action: `refused` is the first warning it was given, its outcome when nothing else says. */
-  owner?: { refused?: string; unconfirmed?: boolean };
-}
-
-const SLOW_CLIENT_BYTES = 8 * 1024 * 1024;
-/** How long an external worker's owner action waits for its outcome before saying it is still under way. */
-const OWNER_ACTION_WAIT_MS = 30_000;
-
 function findPublicDir(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [path.resolve(here, '../../public'), path.resolve(here, '../../dist/public')];
@@ -160,68 +101,6 @@ function findPublicDir(): string {
   throw new Error(`Client bundle not found (looked in ${candidates.join(', ')}). Run \`npm run build\`.`);
 }
 
-function readBody(req: http.IncomingMessage, limit = 1024 * 1024): Promise<string> {
-  return readBytes(req, limit).then((b) => b.toString('utf8'));
-}
-
-function readBytes(req: http.IncomingMessage, limit: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    let size = 0;
-    const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => {
-      size += c.length;
-      if (size > limit) {
-        reject(new Error('too large'));
-        req.destroy();
-      } else chunks.push(c);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
-  });
-}
-
-/**
- * Whether the page asking is the office itself. Loopback requests bypass the LAN token (they are the
- * office's own machine), so upgrades and owner writes always need the Origin to match too: without
- * that, any site the owner has open could drive their office over loopback.
- */
-function sameOrigin(req: http.IncomingMessage, cfg: Config): boolean {
-  const origin = req.headers.origin;
-  const host = (cfg.trustProxy && (req.headers['x-forwarded-host'] as string)) || req.headers.host;
-  try {
-    return !!origin && new URL(origin).host === host;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Whether a request for `/api/status` comes from the Mac app's main process: from this machine, to a loopback
- * host name (not a site whose name a DNS rebinding pointed here), and not from another site's page (which sends Origin).
- */
-function statusRequest(req: http.IncomingMessage): boolean {
-  return isLoopback(req.socket.remoteAddress) && loopbackHost(req.headers.host) && !req.headers.origin;
-}
-
-function refuseUpgrade(socket: Duplex) {
-  socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
-  socket.destroy();
-}
-
-function send(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
-  const json = JSON.stringify(body);
-  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers });
-  res.end(json);
-}
-
-const str = (v: unknown, max: number) => (typeof v === 'string' ? v.slice(0, max) : '');
-/** Which of a worker's repositories a Changes message is about: another floor's (see WorkerInfo.repos), or none for its own. */
-const repoOf = (v: unknown) => str(v, 64) || undefined;
-const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-/** What an office tab answered a relayed automation command with (see automationRequest). */
-type AutomationAnswer = { ok: boolean; value?: unknown; error?: string; timedOut?: boolean };
-/** How long a relayed automation command waits on the tab by default: longer than a walk across the floor. */
-const AUTOMATION_TIMEOUT = 90_000;
 /** Where someone going to another floor says they arrive (see `floor.go`): on the grounds, or nowhere (the elevator). */
 function arrivalSpot(at: unknown): { x: number; y: number; z: number; rotY: number } | undefined {
   if (!at || typeof at !== 'object') return undefined;
@@ -236,14 +115,10 @@ function spotFrom(q: URLSearchParams): ReturnType<typeof arrivalSpot> {
   const [x, y, z, rotY] = ['x', 'y', 'z', 'rotY'].map(n);
   return Number.isFinite(x) && Number.isFinite(z) ? arrivalSpot({ x, y, z, rotY }) : undefined;
 }
-/** The ids of the pictures a prompt carries, in the order they were added: well-formed, no repeats, no more than a prompt can take. */
-const imageIds = (v: unknown): string[] => (Array.isArray(v) ? [...new Set(v.map((x) => str(x, 16)).filter((x) => PROMPT_IMAGE_ID.test(x)))].slice(0, PROMPT_IMAGES_MAX) : []);
 const issueNumber = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : undefined);
 /** Who a floor's Linear autopilot hires as, through the owner's own handler (see FloorContext.linearHire). */
 const LINEAR_AUTOPILOT: WorkerInfo = { id: 'linear-autopilot', kind: 'agent', deskId: '', name: AUTOPILOT_NAME, color: '#5e6ad2', status: 'idle', acked: true, createdBy: AUTOPILOT_NAME, createdAt: 0, cols: 80, rows: 24, open: false };
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
-/** The most lines per worker's terminal a search answers with. */
-const SEARCH_TERMINAL_HITS = 25;
 
 /**
  * Closes the terminals a connection had open on the floor it leaves. Mission Control is on every floor: the
@@ -270,6 +145,9 @@ export async function startServer(cfg: Config) {
   const companion = new WebCompanion(cfg.dataDir);
   const hostUpdates = new HostUpdates();
   const clients = new Map<string, Client>();
+  const floors = new Map<string, Floor>();
+  const transport = createClientTransport({ clients, floors });
+  const { sendTo, broadcast, toFloor, termData, clearOffFloorThrottle, broadcastOffFloorScreen } = transport;
   const workerThreads = new WorkerThreadReader();
   /** The office Mac's trackpad taps for a charging shot; a silent no-op off macOS (see haptics.ts). */
   const trackpadHaptics = new TrackpadHaptics();
@@ -286,23 +164,6 @@ export async function startServer(cfg: Config) {
   const droidCommands = createDroidCommandCatalogue({ command: () => agentPath ?? cfg.agentCmd });
   const hiddenModels = new HiddenModels(cfg.dataDir);
 
-  const sendTo = (c: Client, msg: ServerMsg) => {
-    if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(msg));
-  };
-  const broadcast = (msg: ServerMsg, except?: string, droppable = false): boolean => {
-    let json: string | undefined;
-    let dropped = false;
-    for (const c of clients.values()) {
-      if (c.id === except || c.ws.readyState !== WebSocket.OPEN) continue;
-      if (droppable && c.ws.bufferedAmount > 4 * 1024 * 1024) {
-        dropped = true;
-        continue;
-      }
-      json ??= JSON.stringify(msg);
-      c.ws.send(json);
-    }
-    return dropped;
-  };
   /** The toasts an external worker's owner action raises, through every callback that action starts. */
   const acting = new AsyncLocalStorage<(text: string) => void>();
   const toastAll = (text: string, level: ToastLevel = 'info') => {
@@ -316,7 +177,6 @@ export async function startServer(cfg: Config) {
     const err = building.setProjectsDir(cfg.projects, 'the command line');
     if (err) console.error(`droid-office: --projects: ${err}`);
   }
-  const floors = new Map<string, Floor>();
   const floorActivity = new FloorActivity(cfg.dataDir);
   const remoteWorkers = new RemoteWorkers(cfg.dataDir, () => missionChanged());
   let remoteMcp: RemoteMcp | undefined;
@@ -339,21 +199,6 @@ export async function startServer(cfg: Config) {
   const workerFloor = (workerId: string): Floor | undefined => {
     for (const f of floors.values()) if (f.workers.get(workerId)) return f;
     return undefined;
-  };
-  /** To everyone on one floor. */
-  const toFloor = (floor: Floor, msg: ServerMsg, droppable = false): boolean => {
-    let json: string | undefined;
-    let dropped = false;
-    for (const c of clients.values()) {
-      if (c.floor !== floor.id || c.ws.readyState !== WebSocket.OPEN) continue;
-      if (droppable && c.ws.bufferedAmount > 4 * 1024 * 1024) {
-        dropped = true;
-        continue;
-      }
-      json ??= JSON.stringify(msg);
-      c.ws.send(json);
-    }
-    return dropped;
   };
   const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info', workerId?: string) => {
     if (!floor) return;
@@ -482,17 +327,6 @@ export async function startServer(cfg: Config) {
   setInterval(() => syncOfficeMcp(subagents.settings.officeMcp), 30_000).unref();
 
   // --- Mission Control: the building's agents, with no desk on any floor (docs/mission-control.md) ---
-  const termData = (workerId: string, data: string, connectionIds: string[]) => {
-    const json = JSON.stringify({ t: 'term.data', workerId, data } satisfies ServerMsg);
-    for (const id of connectionIds) {
-      const c = clients.get(id);
-      if (!c || c.ws.readyState !== WebSocket.OPEN) continue;
-      // A connection on a slow link skips output and gets a fresh snapshot once it catches up,
-      // instead of queueing unbounded data in server memory.
-      if (c.stale.has(workerId) || c.ws.bufferedAmount > SLOW_CLIENT_BYTES) c.stale.add(workerId);
-      else c.ws.send(json);
-    }
-  };
   const orchestrator = new Orchestrator({
     dataDir: cfg.dataDir,
     agentCmd: cfg.agentCmd,
@@ -770,46 +604,6 @@ export async function startServer(cfg: Config) {
   );
   machine.start();
 
-  const offFloorThrottle = new Map<string, { lastAt: number; timer?: ReturnType<typeof setTimeout> }>();
-  const clearOffFloorThrottle = (workerId: string) => {
-    const entry = offFloorThrottle.get(workerId);
-    if (entry?.timer) clearTimeout(entry.timer);
-    offFloorThrottle.delete(workerId);
-  };
-  const flushOffFloorScreen = (floor: Floor, workerId: string) => {
-    if (floors.get(floor.id) !== floor) return;
-    if (floor.workers.get(workerId)?.status !== 'needs_input') return;
-    const frame = floor.workers.fullScreen(workerId);
-    if (!frame) return;
-    const json = JSON.stringify({ t: 'screen', workerId, ...frame, full: true } satisfies ServerMsg);
-    for (const c of clients.values()) {
-      if (c.floor === floor.id || c.ws.readyState !== WebSocket.OPEN) continue;
-      if (c.ws.bufferedAmount > 4 * 1024 * 1024) continue;
-      c.ws.send(json);
-    }
-  };
-  /** Sends a worker's full screen to connections not on `floor`, coalescing rapid TUI redraws. */
-  const broadcastOffFloorScreen = (floor: Floor, workerId: string) => {
-    const now = Date.now();
-    const entry = offFloorThrottle.get(workerId);
-    const elapsed = entry ? now - entry.lastAt : Infinity;
-    if (elapsed >= 50) {
-      if (entry?.timer) clearTimeout(entry.timer);
-      offFloorThrottle.set(workerId, { lastAt: now });
-      flushOffFloorScreen(floor, workerId);
-      return;
-    }
-    if (entry?.timer) return;
-    const timer = setTimeout(() => {
-      const cur = offFloorThrottle.get(workerId);
-      if (cur) cur.timer = undefined;
-      if (cur) cur.lastAt = Date.now();
-      flushOffFloorScreen(floor, workerId);
-    }, 50 - elapsed);
-    timer.unref();
-    offFloorThrottle.set(workerId, { lastAt: entry?.lastAt ?? now, timer });
-  };
-
   const floorContext: FloorContext = {
     building: buildingAgents,
     agentCmd: cfg.agentCmd,
@@ -1024,784 +818,42 @@ export async function startServer(cfg: Config) {
   );
 
   // --- HTTP ------------------------------------------------------------------------------------
-  /**
-   * `immutable` is only for content-hashed names. `revalidate` is for files whose name stays put while
-   * their bytes change between releases: the browser keeps them but asks each load, and gets a 304.
-   */
-  const serveFile = (res: http.ServerResponse, file: string, cache: boolean | 'revalidate', req?: http.IncomingMessage) => {
-    const ext = path.extname(file);
-    const headers: http.OutgoingHttpHeaders = {
-      'content-type': MIME[ext] ?? 'application/octet-stream',
-      'cache-control': cache === 'revalidate' ? 'no-cache' : cache ? 'public, max-age=31536000, immutable' : 'no-store',
-      'x-content-type-options': 'nosniff',
-      'x-frame-options': 'DENY',
-      'referrer-policy': 'no-referrer',
-    };
-    if (cache === 'revalidate') {
-      const st = statSync(file);
-      headers.etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
-      if (req?.headers['if-none-match'] === headers.etag) {
-        res.writeHead(304, headers).end();
-        return;
-      }
-    }
-    res.writeHead(200, headers);
-    createReadStream(file)
-      .on('error', (err) => res.destroy(err))
-      .pipe(res);
-  };
+  const staticFiles = createStaticFiles(hotReload);
+  const accessRuntime = createAccess({ cfg, lanToken, devices, tailscale, companion, clients, version: upgrader.version, address: () => server.address() });
+  const { access, pairingState } = accessRuntime;
 
-  /** A file of the client bundle, or undefined when it's missing, a folder, or outside the bundle. */
-  const publicFile = (p: string): string | undefined => hotReload.file(p);
+  const automation = createAutomation(clients, sendTo);
+  const automationRequest = automation.request;
 
-  const serveIndex = (res: http.ServerResponse, token: string | null) => {
-    let html = readFileSync(path.join(hotReload.publicDir, 'index.html'), 'utf8');
-    html = html.replace(/<meta\b[^>]*name=["']office-revision["'][^>]*>/gi, '').replace(/<script\b[^>]*src=["']\/api\/hot-reload\/client\.js["'][^>]*>\s*<\/script>/gi, '');
-    // A <script> tag can't append the LAN token itself, so the page carries it into the URL.
-    const recovery = `<meta name="office-revision" content="${hotReload.state().revision}"><script src="/api/hot-reload/client.js${token ? `?t=${encodeURIComponent(token)}` : ''}" defer></script>`;
-    // Also inject when a source edit deletes the original tags (or even the head).
-    html = /<head\b[^>]*>/i.test(html) ? html.replace(/<head\b[^>]*>/i, (head) => head + recovery) : recovery + html;
-    res.writeHead(200, { 'content-type': MIME['.html'], 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' });
-    res.end(html);
-  };
+  const { serveCard, whiteboardRequest, sendBoard, applyBoard, pingWorker } = createWhiteboardRuntime({ floors, prompts, sendTo, warn });
 
-  /**
-   * Who may reach the office: loopback, this start's LAN token (`?t=`), or a paired phone's device
-   * token (`Authorization: Bearer`, or `?d=`). A device token that isn't paired (any more) is refused
-   * outright, even on loopback, so a forgotten phone always hears that it was forgotten.
-   */
-  const access = (req: http.IncomingMessage, url: URL): { ok: boolean; device?: PairedDevice; header?: boolean; unpaired?: boolean } => {
-    const header = bearerToken(req);
-    const token = header ?? url.searchParams.get('d');
-    if (token) {
-      const device = devices.verify(token);
-      return device ? { ok: true, device, header: header !== undefined } : { ok: false, unpaired: true };
-    }
-    return { ok: lanAllowed(req, url, lanToken) };
-  };
-  /**
-   * The office's own page on its own machine: loopback, and a same-origin request (the Origin header,
-   * or for a GET, which carries none, the browser's Sec-Fetch-Site). What the Phone window reads and
-   * changes (the pairing link, the paired phones) answers nothing else: no phone, no LAN browser.
-   */
-  const ownPage = (req: http.IncomingMessage) => isLoopback(req.socket.remoteAddress) && !bearerToken(req) && (sameOrigin(req, cfg) || (!req.headers.origin && req.headers['sec-fetch-site'] === 'same-origin'));
-  const officeCard = () => ({ name: machineName(), version: upgrader.version });
-  /** The Phone window's view: the pairing link with the addresses it carries, and the paired phones. */
-  const pairingState = async (): Promise<PairingState> => {
-    const port = (server.address() as AddressInfo | null)?.port ?? cfg.port;
-    const scheme = cfg.tls ? 'https' : 'http';
-    const tailnet = await tailscale.get();
-    const addresses = pairingAddresses({ scheme, host: cfg.host, port, lan: lanIPv4s(), tailscale: tailnet, tailscaleIps: tailscaleIPv4s() });
-    const office = officeCard();
-    const reachable = !(cfg.host === '127.0.0.1' || cfg.host === '::1' || cfg.host === 'localhost' || cfg.host.startsWith('127.'));
-    const reason = addresses.length
-      ? undefined
-      : cfg.host === '0.0.0.0' || cfg.host === '::'
-        ? 'This machine has no Wi-Fi or Tailscale address a phone could reach it at. Join a network and reopen this window.'
-        : 'The office only listens on this machine (--host 127.0.0.1), so no phone can reach it. Start it without --host to pair one.';
-    const urls = addresses.map((a) => a.url);
-    const link = urls.length ? pairingLink(office.name, lanToken, urls) : undefined;
-    return {
-      office,
-      companion: companion.on,
-      local: `${scheme}://localhost:${port}`,
-      reachable,
-      tailscale: !!tailnet || tailscaleIPv4s().length > 0,
-      ...(link ? { link } : {}),
-      addresses,
-      ...(reason ? { reason } : {}),
-      devices: devices.list(),
-    };
-  };
-  /** Turns the web companion on or off. Off closes every companion socket; paired browsers stay paired. */
-  const setCompanion = (on: boolean) => {
-    if (companion.on === on) return;
-    companion.set(on, 'owner');
-    console.log(`  🌐  The web companion is ${on ? 'on' : 'off'}`);
-    if (!on) for (const c of clients.values()) if (c.dashboard) c.ws.close(4403, 'The web companion was turned off');
-  };
-  /** Unpairs a phone: its token stops working, and its open connections are closed. */
-  const forgetDevice = (id: string): boolean => {
-    const name = devices.list().find((d) => d.id === id)?.name;
-    if (!devices.forget(id)) return false;
-    for (const c of clients.values()) if (c.device === id) c.ws.close(4401, 'This device was unpaired');
-    console.log(`  📱 ${name} is no longer paired with the office`);
-    return true;
-  };
-
-  /** Off the machine without this start's token: APIs get JSON, pages get a pointer to the join link. */
-  const refuseHttp = (res: http.ServerResponse, api: boolean, unpaired = false) => {
-    if (unpaired) return send(res, 401, { error: 'This device is not paired with the office any more. Pair it again from ⚙️ Settings → Phone & web.' });
-    const hint = 'Open the join link from the office’s terminal (it prints a QR code on startup).';
-    if (api) return send(res, 401, { error: `This office needs its join link (?t=). ${hint}` });
-    res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' });
-    res.end(
-      `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Join link needed · Droid Office</title></head><body style="font:16px/1.5 system-ui,sans-serif;color:#2b2d42;background:#bfe3ff;display:grid;place-items:center;min-height:100vh;margin:0"><main style="background:#fffaf3;border:3px solid #2b2d42;border-radius:18px;padding:28px 32px;max-width:440px;margin:16px"><h1 style="margin:0 0 8px;font-size:22px">🔒 Join link needed</h1><p style="margin:0">This office only opens with its join link. ${hint}</p></main></body></html>`,
-    );
-  };
-
-  /** Automation commands relayed to an office tab (POST /api/automation), each waiting on that tab's answer. */
-  const automationWaits = new Map<string, { client: string; done: (answer: AutomationAnswer) => void }>();
-  /**
-   * POST /api/automation {"cmd": "goTo", "args": ["desk-3"]}: runs a `window.office` command in the
-   * office tab opened last (not a phone) and answers with what it resolved to. For a command line,
-   * so it takes no Origin but the office's own, and JSON only, which a web page elsewhere can't send
-   * without a preflight the office never answers.
-   */
-  const automationRequest = async (req: http.IncomingMessage, res: http.ServerResponse, own: boolean) => {
-    if (req.method !== 'POST') return send(res, 405, { error: 'POST a JSON command' }, { allow: 'POST' });
-    if (req.headers.origin && !own) return send(res, 403, { error: 'Forbidden' });
-    if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) return send(res, 415, { error: 'Send JSON (content-type: application/json)' });
-    let body: { cmd?: unknown; args?: unknown; timeout?: unknown } | null;
-    try {
-      body = JSON.parse(await readBody(req, 64 * 1024));
-    } catch {
-      body = null;
-    }
-    const cmd = body && typeof body === 'object' ? str(body.cmd, 32) : '';
-    if (!body || !cmd) return send(res, 400, { error: 'Send JSON: {"cmd": "goTo", "args": ["desk-3"]}' });
-    const args = Array.isArray(body.args) ? body.args : body.args === undefined ? [] : [body.args];
-    const timeout = Math.min(Math.max(num(body.timeout) || AUTOMATION_TIMEOUT, 1000), 5 * 60_000);
-    let tab: Client | undefined;
-    for (const c of clients.values()) if (!c.device && !c.dashboard && c.ws.readyState === WebSocket.OPEN) tab = c;
-    if (!tab) return send(res, 409, { ok: false, error: 'No office tab is open: open the office in a browser first' });
-    const id = randomBytes(6).toString('hex');
-    const answer = await new Promise<AutomationAnswer>((resolve) => {
-      const timer = setTimeout(() => {
-        automationWaits.delete(id);
-        resolve({ ok: false, error: `The office tab didn't answer within ${Math.round(timeout / 1000)}s`, timedOut: true });
-      }, timeout);
-      automationWaits.set(id, {
-        client: tab.id,
-        done: (a) => {
-          clearTimeout(timer);
-          automationWaits.delete(id);
-          resolve(a);
-        },
-      });
-      sendTo(tab, { t: 'automation.run', id, cmd, args });
-    });
-    const { timedOut, ...out } = answer;
-    return send(res, answer.ok ? 200 : timedOut ? 504 : 422, out);
-  };
-
-  /** The 🔎 search: lines of the terminals of every worker on that floor, with the words in them. */
-  const search = (q: string, floor: Floor | undefined): SearchResults => {
-    q = q.slice(0, SEARCH_MAX);
-    const needle = searchKey(q);
-    if (needle.length < SEARCH_MIN) return { q, terminals: [], more: false };
-    const shown = floor?.workers.search(needle, SEARCH_TERMINAL_HITS) ?? { hits: [], more: false };
-    return { q, terminals: shown.hits, more: shown.more };
-  };
-
-  /** `/whiteboard/c/<cap>/<path>`: whichever floor's store the capability belongs to answers, or nobody does. */
-  const serveCard = (req: http.IncomingMessage, res: http.ServerResponse, rest: string) => {
-    const slash = rest.indexOf('/');
-    const cap = slash < 0 ? rest : rest.slice(0, slash);
-    let rel: string;
-    try {
-      rel =
-        slash < 0
-          ? ''
-          : rest
-              .slice(slash + 1)
-              .split('/')
-              .map(decodeURIComponent)
-              .join('/');
-    } catch {
-      rel = '\0';
-    }
-    const ifRange = req.headers['if-range'];
-    const opts = { method: req.method, ifNoneMatch: req.headers['if-none-match'], range: req.headers.range, ifRange: Array.isArray(ifRange) ? ifRange[0] : ifRange };
-    let out: CardResponse | undefined;
-    if (/^[ks][A-Za-z0-9_-]{20,80}$/.test(cap)) for (const f of floors.values()) if ((out = f.whiteboard.serve(cap, rel, opts))) break;
-    out ??= cardResponse(undefined, rel, () => undefined, opts);
-    res.writeHead(out.status, out.headers);
-    res.end(out.body);
-  };
-  /** The window's Whiteboard routes besides the WebSocket: renders, a card's files by hash, uploads. */
-  const whiteboardRequest = async (req: http.IncomingMessage, res: http.ServerResponse, p: string, url: URL, floor: Floor | undefined, own: boolean) => {
-    if (!floor) return send(res, 404, { error: 'No such floor' });
-    const store = floor.whiteboard;
-    const cardId = str(url.searchParams.get('card'), 64);
-    const card = store.board.cards.find((x) => x.id === cardId);
-    if (p === '/api/whiteboard/render/status' && req.method === 'GET') return send(res, 200, renderStatus(store.renderer, card, cardId));
-    if (p === '/api/whiteboard/render' && req.method === 'GET') {
-      // An image made before the renderer went away is still served; x-whiteboard-current says how fresh it is.
-      const image = store.renderer.latest(cardId).image;
-      if (!image) {
-        const status = store.renderer.status();
-        if (!status.available) return send(res, 503, status);
-        return send(res, 404, { error: 'This card has no image yet', status: renderStatus(store.renderer, card, cardId) });
-      }
-      const thumb = url.searchParams.get('size') === 'thumb';
-      const tile = Math.max(0, Math.floor(Number(url.searchParams.get('tile')) || 0));
-      const body = thumb ? (image.thumb ?? image.tiles[0]) : image.tiles[tile];
-      if (!body) return send(res, 404, { error: `This image has ${image.tiles.length} tiles` });
-      const current = !!card && renderStatus(store.renderer, card, cardId).image?.current;
-      res.writeHead(200, {
-        'content-type': 'image/png',
-        'content-length': String(body.length),
-        'cache-control': 'no-store',
-        'x-content-type-options': 'nosniff',
-        'x-whiteboard-rev': String(image.rev),
-        'x-whiteboard-rendered-at': String(image.at),
-        'x-whiteboard-age-ms': String(Math.max(0, Date.now() - image.at)),
-        'x-whiteboard-current': current ? '1' : '0',
-        'x-whiteboard-tiles': String(image.tiles.length),
-        'x-whiteboard-tile-height': String(image.tileHeight),
-        'x-whiteboard-size': `${image.width}x${image.height}`,
-      });
-      return res.end(body);
-    }
-    if (p === '/api/whiteboard/file' && req.method === 'GET') {
-      const got = store.cardFile(cardId, str(url.searchParams.get('hash'), 64));
-      if (!got) return send(res, 404, { error: 'This card holds no such file' });
-      res.writeHead(200, {
-        'content-type': got.ref.mime,
-        'content-length': String(got.body.length),
-        // Content-addressed: the bytes for a hash never change.
-        'cache-control': 'private, max-age=31536000, immutable',
-        'x-content-type-options': 'nosniff',
-        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-        'cross-origin-resource-policy': 'same-origin',
-      });
-      return res.end(got.body);
-    }
-    if (p === '/api/whiteboard/blob') {
-      if (req.method !== 'POST') return send(res, 405, { error: 'POST the file' }, { allow: 'POST' });
-      if (!own) return send(res, 403, { error: 'Forbidden' });
-      const mime = str(url.searchParams.get('mime') || req.headers['content-type'], 128) || 'application/octet-stream';
-      const tooBig = `That file is too big for the Whiteboard (${MAX_ASSET_BYTES / 1024 / 1024} MB a file at most)`;
-      if (Number(req.headers['content-length']) > MAX_ASSET_BYTES) return send(res, 413, { error: tooBig });
-      let body: Buffer;
-      try {
-        body = await readBytes(req, MAX_ASSET_BYTES);
-      } catch (err) {
-        return (err as Error).message === 'too large' ? send(res, 413, { error: tooBig }) : send(res, 400, { error: 'Bad request' });
-      }
-      return send(res, 200, store.stage(body, mime));
-    }
-    return send(res, 404, { error: 'Not found' });
-  };
-
-  const handler = async (req: http.IncomingMessage, res: http.ServerResponse) => {
-    try {
-      let url: URL;
-      let p: string;
-      try {
-        url = new URL(req.url ?? '/', 'http://x');
-        p = decodeURIComponent(url.pathname);
-      } catch {
-        return send(res, 400, { error: 'Bad request' });
-      }
-      // The client bundle's static files: hashed scripts, models, fonts and icons. They carry no
-      // office data, and <script> tags, stylesheets and 3D loaders can't append the LAN token, so
-      // they load openly; the office itself (below) always needs it.
-      if (p.startsWith('/assets/')) {
-        const file = publicFile(p);
-        if (file) return serveFile(res, file, true);
-        res.writeHead(404).end();
-        return;
-      }
-      // Props keep their names when a release or a regenerate changes them (manifest.json gains rows),
-      // so a cached copy is checked every load; an immutable one would hide new props after an update.
-      if (p.startsWith('/props/')) {
-        const file = publicFile(p);
-        if (file) return serveFile(res, file, 'revalidate', req);
-        res.writeHead(404).end();
-        return;
-      }
-      if (p === '/favicon.svg' || p === '/factory-glyph.svg' || p === '/manifest.webmanifest' || p.startsWith('/icons/') || p.startsWith('/fonts/')) {
-        const file = publicFile(p);
-        if (file) return serveFile(res, file, false);
-        res.writeHead(404).end();
-        return;
-      }
-      // A Whiteboard card's files (see whiteboard.ts): the capability in the path is the only credential,
-      // so the sandboxed frame and its relative assets load without the LAN token.
-      if (url.pathname.startsWith(CARD_ROUTE)) return serveCard(req, res, url.pathname.slice(CARD_ROUTE.length));
-      // Android deep links shared in chat (`/open/worker/...`, `/open/floor/...`, `/open/card/...`,
-      // `/open/question/...`): zero office state or credentials, redirecting Android browsers into
-      // `droidoffice://open/...` with a fallback launch card when uninstalled or on desktop.
-      if (p === '/open' || p.startsWith(DEEP_LINK_OPEN_PREFIX)) {
-        const scheme = cfg.tls ? 'https' : 'http';
-        return serveDeepLinkBounce(req, res, req.url ?? p, scheme, deepLinkBase());
-      }
-      // Public bootstrap only: no office state or injected credentials. Saved browser tokens are
-      // origin-scoped JS storage and cannot accompany a top-level bookmarked navigation.
-      if (p === '/dashboard' || p === '/dashboard/' || p === '/dashboard.html') {
-        const file = publicFile('/dashboard.html');
-        if (!file) return send(res, 503, { error: 'Companion bundle missing. Rebuild or update Droid Office.' });
-        return serveFile(res, file, false);
-      }
-      // A phone pairing: it scanned this start's QR code, so it has the LAN token (or it's on this
-      // machine). A device token doesn't pair another device. A web page's cross-origin POST is refused.
-      if (p === '/api/mobile/pair' && req.method === 'POST') {
-        if (!lanAllowed(req, url, lanToken)) return refuseHttp(res, true);
-        if (req.headers.origin && !sameOrigin(req, cfg)) return send(res, 403, { error: 'Forbidden' });
-        let body: { device?: unknown; kind?: unknown } | null;
-        try {
-          const text = await readBody(req, 4096);
-          body = text.trim() ? JSON.parse(text) : {};
-        } catch {
-          return send(res, 400, { error: 'Send JSON: {"device": "Pixel 10 Pro XL"}' });
-        }
-        const browser = body?.kind === 'browser';
-        if (browser && !companion.on) return send(res, 403, { error: COMPANION_OFF, companionOff: true });
-        if (browser && !sameOrigin(req, cfg)) return send(res, 403, { error: 'Pair this browser from the office’s own address.' });
-        const paired = devices.pair(body && typeof body === 'object' ? body.device : undefined, browser ? 'browser' : undefined);
-        if (!paired) return send(res, 409, { error: 'Too many devices are paired with this office. Forget one in ⚙️ Settings → Phone & web first.' });
-        console.log(`  📱 ${paired.device.name} paired with the office`);
-        toastAll(`📱 ${paired.device.name} paired with the office`);
-        return send(res, 200, { deviceId: paired.device.id, token: paired.token, office: officeCard(), ...(browser ? { device: paired.device } : {}) });
-      }
-      // Everything else needs this start's token or a paired phone's from off the machine (loopback connects freely).
-      const gate = access(req, url);
-      if (!gate.ok) return refuseHttp(res, p.startsWith('/api/'), gate.unpaired);
-      // Off, the companion's own check-in and every paired browser's request hear why, not a bare refusal.
-      if (!companion.on && (gate.device?.kind === 'browser' || (p === '/api/mobile/hello' && url.searchParams.get('client') === 'dashboard'))) return send(res, 403, { error: COMPANION_OFF, companionOff: true });
-      // Query credentials authenticate embedded resources too, but never make a foreign browser
-      // origin an office page. Native clients without Origin keep their existing bearer contract.
-      if (req.headers.origin && !sameOrigin(req, cfg)) return send(res, 403, { error: 'Forbidden' });
-      if (gate.device) devices.seen(gate.device.id);
-      // A paired phone's bearer header can't come from a web page (it would need a CORS preflight the
-      // office never answers), so it counts as the office's own request where the Origin is checked.
-      const ownRequest = () => sameOrigin(req, cfg) || (!!gate.device && !!gate.header);
-
-      if (p === '/api/health') return send(res, 200, { ok: true });
-      if (p === '/api/host/update') {
-        if (req.method !== 'GET' && req.method !== 'POST') return send(res, 405, { error: 'Use GET or POST' });
-        if (req.method === 'POST' && !ownRequest()) return send(res, 403, { error: 'Forbidden' });
-        let command = hostUpdateCommand(null);
-        if (req.method === 'POST') {
-          try {
-            command = hostUpdateCommand(JSON.parse(await readBody(req, 1024)));
-          } catch {
-            return send(res, 400, { error: 'Send an update action as JSON.' });
-          }
-          if (!command) return send(res, 400, { error: 'Use check, or install with the offered version.' });
-        }
-        try {
-          return send(res, 200, await hostUpdates.request(command ?? { action: 'status' }));
-        } catch (err) {
-          return send(res, 409, { error: (err as Error).message });
-        }
-      }
-      if (p === '/api/automation') return automationRequest(req, res, ownRequest());
-      if (p === '/api/mobile/hello' && req.method === 'GET') return send(res, 200, { ok: true, office: officeCard(), ...(gate.device ? { deviceId: gate.device.id } : {}) });
-      if (p === '/api/mobile/pair' && req.method === 'DELETE') {
-        // The phone's own "Unpair": only with its device token.
-        if (!gate.device) return send(res, 400, { error: 'Send the device token to unpair (Authorization: Bearer <token>)' });
-        if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
-        forgetDevice(gate.device.id);
-        return send(res, 200, { ok: true });
-      }
-      if (p === '/api/mobile/pairing' || p === '/api/mobile/companion' || p.startsWith('/api/mobile/devices/')) {
-        if (gate.device || !ownPage(req)) return send(res, 403, { error: 'Pair devices from the office itself, on its own machine' });
-        if (p === '/api/mobile/pairing' && req.method === 'GET') return send(res, 200, await pairingState());
-        if (p === '/api/mobile/companion' && req.method === 'PUT') {
-          let body: { on?: unknown } | null;
-          try {
-            body = JSON.parse(await readBody(req, 1024));
-          } catch {
-            return send(res, 400, { error: 'Send JSON: {"on": true}' });
-          }
-          if (typeof body?.on !== 'boolean') return send(res, 400, { error: 'Send JSON: {"on": true}' });
-          setCompanion(body.on);
-          return send(res, 200, await pairingState());
-        }
-        if (p.startsWith('/api/mobile/devices/') && req.method === 'DELETE') {
-          return forgetDevice(p.slice('/api/mobile/devices/'.length)) ? send(res, 200, await pairingState()) : send(res, 404, { error: 'No such phone' });
-        }
-        return send(res, 405, { error: 'Method not allowed' });
-      }
-      // External workers' MCP on the tailnet. Its state holds every bot's credential, so only the office's own page.
-      if (p === '/api/remote-mcp') {
-        if (gate.device || !ownPage(req)) return send(res, 403, { error: 'External workers are set up from the office itself, on its own computer' });
-        if (!remoteMcp) return send(res, 200, { on: false, status: 'off', locked: 'This office was started with DROID_OFFICE_REMOTE_MCP=off.', bots: [] } satisfies RemoteMcpState);
-        if (req.method === 'GET') return send(res, 200, await remoteMcp.refresh());
-        if (req.method !== 'PUT' && req.method !== 'POST') return send(res, 405, { error: 'Use GET, PUT or POST' });
-        let body: Record<string, unknown>;
-        try {
-          const raw: unknown = JSON.parse(await readBody(req, 8192));
-          body = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-        } catch {
-          return send(res, 400, { error: 'Send JSON' });
-        }
-        if (req.method === 'PUT') return typeof body.on === 'boolean' ? send(res, 200, await remoteMcp.set(body.on)) : send(res, 400, { error: 'Send JSON: {"on": true}' });
-        const name = typeof body.name === 'string' ? body.name.trim() : '';
-        const id = typeof body.id === 'string' ? body.id : '';
-        const parseGrokArg = (raw: unknown): { webhookUrl: string; webhookToken?: string } | null | undefined => {
-          if (raw === undefined) return undefined;
-          if (raw === null) return null;
-          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('grokBot takes null or {webhookUrl, webhookToken}');
-          const g = raw as Record<string, unknown>;
-          return {
-            webhookUrl: typeof g.webhookUrl === 'string' ? g.webhookUrl : '',
-            ...(typeof g.webhookToken === 'string' ? { webhookToken: g.webhookToken } : {}),
-          };
-        };
-        try {
-          if (body.action === 'add' && name && name.length <= 60) {
-            const grokBot = parseGrokArg(body.grokBot);
-            if (grokBot === null) return send(res, 400, { error: 'Omit grokBot or pass {webhookUrl, webhookToken} when adding a bot' });
-            return send(res, 200, remoteMcp.add(name, grokBot));
-          }
-          if (body.action === 'set-grok-bot' && id && 'grokBot' in body) {
-            const grokBot = parseGrokArg(body.grokBot);
-            if (grokBot !== undefined) return send(res, 200, remoteMcp.setGrokBot(id, grokBot));
-          }
-          if (body.action === 'test-webhook' && id) {
-            const { state, result } = await remoteMcp.testWebhook(id);
-            return result.ok ? send(res, 200, state) : send(res, 502, { error: result.error ?? 'Webhook test failed', state });
-          }
-          if (body.action === 'rotate' && id) return send(res, 200, remoteMcp.rotate(id));
-          if (body.action === 'revoke' && id) return send(res, 200, remoteMcp.revoke(id));
-          if (body.action === 'add-key' && id && name && name.length <= 60) return send(res, 200, remoteMcp.addKey(id, name));
-          if (body.action === 'revoke-key' && id && typeof body.key === 'string' && body.key) return send(res, 200, remoteMcp.revokeKey(id, body.key));
-        } catch (err) {
-          return send(res, 409, { error: (err as Error).message });
-        }
-        return send(res, 400, {
-          error:
-            'Send {"action": "add", "name", "grokBot"?}, {"action": "set-grok-bot", "id", "grokBot"}, {"action": "test-webhook", "id"}, {"action": "rotate" | "revoke", "id"}, {"action": "add-key", "id", "name"} or {"action": "revoke-key", "id", "key"}',
-        });
-      }
-      // The Mac app's menu bar icon: busy workers, who is waiting and connected devices. Only the app itself gets them:
-      // a request from this Mac, to a loopback host name, with no device token and no Origin.
-      if (p === '/api/status' && req.method === 'GET') {
-        if (gate.device || !statusRequest(req)) return send(res, 403, { error: 'Forbidden' });
-        return send(
-          res,
-          200,
-          officeStatus(
-            [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, workers: f.everyone() })),
-            [...clients.values()].map((c) => ({ device: c.device, phone: !!c.phoneSizes })),
-            orchestratorNeedsOwner(missionState()) ? [orchestrator.info!] : [],
-          ),
-        );
-      }
-      // The Mac's GPU load for the performance overlay. Only a page on this machine draws on this GPU.
-      if (p === '/api/gpu' && req.method === 'GET') {
-        if (!ownPage(req)) return send(res, 200, { stats: null, reason: 'not on the office’s machine' });
-        const stats = await readGpuStats();
-        return send(res, 200, stats ? { stats } : { stats: null, reason: process.platform === 'darwin' ? 'ioreg failed' : 'macOS only' });
-      }
-      // A charged shot's trackpad taps. Only a page on this machine has a finger on this trackpad;
-      // any other page is told there is nothing to feel so it stops asking (see haptics.ts).
-      if (p === '/api/haptics') {
-        if (req.method !== 'POST') return send(res, 405, { error: 'POST' }, { allow: 'POST' });
-        if (!ownPage(req)) return send(res, 200, { ok: false, supported: false, reason: 'not on the office’s machine' });
-        let body: { pattern?: unknown } | null;
-        try {
-          body = JSON.parse(await readBody(req, 1024));
-        } catch {
-          return send(res, 400, { error: 'Send JSON: {"pattern": "tick" | "charged" | "super"}' });
-        }
-        const result = trackpadHaptics.perform(body && typeof body === 'object' ? body.pattern : undefined);
-        return result.ok ? send(res, 200, result) : send(res, result.supported ? 400 : 200, { ...result, ...(result.supported ? { error: 'Unknown pattern' } : {}) });
-      }
-      if (p === '/api/hot-reload/client.js' && req.method === 'GET') {
-        res.writeHead(200, { 'content-type': MIME['.js'], 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
-        return res.end(reloadScript);
-      }
-      if (p === '/api/hot-reload') {
-        const state = () => hotReload.state();
-        if (req.method === 'GET') return send(res, 200, state());
-        if (req.method !== 'POST') return send(res, 405, { error: 'GET or POST' }, { allow: 'GET, POST' });
-        if (!sameOrigin(req, cfg)) return send(res, 403, { error: 'Use source hot reload from the office itself' });
-        let body: { enabled?: unknown; rebuild?: unknown } | null;
-        try {
-          body = JSON.parse(await readBody(req, 4096));
-        } catch {
-          return send(res, 400, { error: 'Send JSON with enabled or rebuild' });
-        }
-        if (!body || typeof body !== 'object' || (typeof body.enabled === 'boolean') === (body.rebuild === true)) return send(res, 400, { error: 'Choose enabled (boolean) or rebuild (true)' });
-        const error = typeof body.enabled === 'boolean' ? await hotReload.setEnabled(body.enabled) : hotReload.rebuild();
-        return error ? send(res, 400, { error }) : send(res, 200, state());
-      }
-      if (p === '/api/agents/droid/models' && req.method === 'GET') {
-        try {
-          const catalogue = await availableDroidModels();
-          return send(res, 200, { models: catalogue.models, customOnly: catalogue.customOnly, defaultModel: catalogue.defaultModel, defaultReasoningEffort: catalogue.defaultReasoningEffort });
-        } catch {
-          return send(res, 502, { error: 'Could not load Droid models' });
-        }
-      }
-      if (p === '/api/agents/droid/commands' && req.method === 'GET') {
-        // The skills and custom commands a worker's droid offers as slash commands (droid-commands.ts).
-        const workerId = str(url.searchParams.get('worker'), 32);
-        // The Orchestrator's folder is there before its first prompt starts a session, and the composer asks at its first "/".
-        const folder = workerId === ORCHESTRATOR_ID ? orchestrator.cwd : workerId ? workersOf(workerId)?.agentFolder(workerId) : undefined;
-        if (!folder) return send(res, 404, { error: 'No such worker' });
-        return send(res, 200, { commands: await droidCommands.get(folder) });
-      }
-      if (p === '/api/jukebox/soundcloud' && req.method === 'GET') {
-        const r = await resolveSoundCloudStation(url.searchParams.get('url') ?? '');
-        return 'error' in r ? send(res, r.status, { error: r.error }) : send(res, 200, r);
-      }
-      if (p === '/api/image' && req.method === 'GET') {
-        // A picture on the wall, fetched by the office so the 3D view can draw it (see decor.ts).
-        const r = await images.get(url.searchParams.get('url') ?? '');
-        if ('error' in r) return send(res, r.status, { error: r.error });
-        res.writeHead(200, {
-          'content-type': r.type,
-          'content-length': String(r.body.length),
-          'cache-control': 'private, max-age=3600',
-          'x-content-type-options': 'nosniff',
-          // Opened on its own (an SVG, say), it still can't run anything on the office's origin.
-          'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-          'cross-origin-resource-policy': 'same-origin',
-        });
-        res.end(r.body);
-        return;
-      }
-      // Which floor a request is about: its boards and its workers.
-      const floor = floors.get(url.searchParams.get('floor') ?? '');
-      if (p === '/api/thread/image' && req.method === 'GET') {
-        // A picture a worker read or was sent, shown in its Thread (worker-thread.ts reads it from the session).
-        const workerId = str(url.searchParams.get('worker'), 32);
-        const id = str(url.searchParams.get('image'), 160);
-        // The Orchestrator's thread is the same from every floor; cross-floor thread views fall back to the worker's floor.
-        const owner = workerId === ORCHESTRATOR_ID ? orchestrator.workers : (floor?.workers ?? workerFloor(workerId)?.workers);
-        const source = owner?.threadSession(workerId);
-        // A picture sent with a prompt is served from that worker's own drops, never from the path the message names.
-        const drop = DROP_IMAGE_ID.exec(id)?.[1];
-        const image = !source ? undefined : drop ? owner?.dropPicture(workerId, drop) : await workerThreads.image(source, id);
-        if (!image) return send(res, 404, { error: 'That picture is no longer in the conversation.' });
-        res.writeHead(200, {
-          'content-type': image.type,
-          'content-length': String(image.body.length),
-          // The id names the picture's bytes, so the same id is always the same picture.
-          'cache-control': 'private, max-age=86400, immutable',
-          'x-content-type-options': 'nosniff',
-          'content-security-policy': "default-src 'none'; sandbox",
-          'cross-origin-resource-policy': 'same-origin',
-        });
-        res.end(image.body);
-        return;
-      }
-      if (p === '/api/term/drop') {
-        // A file dropped or pasted into a worker's terminal, kept on this machine for the terminal to type its path.
-        if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed' });
-        if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
-        const workerId = str(url.searchParams.get('worker'), 32);
-        const mission = workerId === ORCHESTRATOR_ID;
-        if (!floor && !mission) return send(res, 404, { error: 'No such floor' });
-        const shellDrop = workerId === OFFICE_SHELL_ID;
-        const target = mission ? orchestrator.workers : floor?.workers;
-        if (!shellDrop && !target?.get(workerId)) return send(res, 404, { error: 'No such worker' });
-        const tooBig = `That file is too big to drop into a terminal (${DROP_MAX_BYTES / 1024 / 1024} MB at most)`;
-        if (Number(req.headers['content-length']) > DROP_MAX_BYTES) return send(res, 413, { error: tooBig });
-        let body: Buffer;
-        try {
-          body = await readBytes(req, DROP_MAX_BYTES);
-        } catch (err) {
-          return (err as Error).message === 'too large' ? send(res, 413, { error: tooBig }) : send(res, 400, { error: 'Bad request' });
-        }
-        const name = str(url.searchParams.get('name'), 256);
-        const type = str(req.headers['content-type'], 128);
-        const file = shellDrop ? floor?.shell.drop(name, type, body) : target?.drop(workerId, name, type, body);
-        return file ? send(res, 200, { path: file }) : send(res, 500, { error: 'The office could not keep that file' });
-      }
-      if (p === '/api/prompt/image') {
-        // A picture pasted into a prompt that isn't sent yet, kept on this machine until it is (POST), or taken out again (DELETE).
-        if (req.method !== 'POST' && req.method !== 'DELETE') return send(res, 405, { error: 'Method not allowed' });
-        if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
-        // ?worker=orchestrator: for a prompt to the Orchestrator, kept where its session reads it.
-        const stage = url.searchParams.get('worker') === ORCHESTRATOR_ID ? orchestrator.workers : floor?.workers;
-        if (!stage) return send(res, 404, { error: 'No such floor' });
-        if (req.method === 'DELETE') {
-          stage.unstage(imageIds([url.searchParams.get('id')]));
-          return send(res, 200, {});
-        }
-        const tooBig = `That picture is too big to send with a prompt (${DROP_MAX_BYTES / 1024 / 1024} MB at most)`;
-        if (Number(req.headers['content-length']) > DROP_MAX_BYTES) return send(res, 413, { error: tooBig });
-        let body: Buffer;
-        try {
-          body = await readBytes(req, DROP_MAX_BYTES);
-        } catch (err) {
-          return (err as Error).message === 'too large' ? send(res, 413, { error: tooBig }) : send(res, 400, { error: 'Bad request' });
-        }
-        const id = stage.stageImage(str(url.searchParams.get('name'), 256), body);
-        return id ? send(res, 200, { id }) : send(res, 415, { error: 'Only PNG, JPEG, GIF and WebP pictures can be sent with a prompt' });
-      }
-      if (p === '/api/decor/picture') {
-        // A picture from the owner's computer for this floor's walls: kept (POST, converted when browsers can't draw it), or shown (GET).
-        if (!floor) return send(res, 404, { error: 'No such floor' });
-        if (req.method === 'GET') {
-          const r = await floor.decor.pictures.read(str(url.searchParams.get('name'), 128));
-          if (!r) return send(res, 404, { error: 'That picture is no longer kept on this floor' });
-          res.writeHead(200, {
-            'content-type': r.type,
-            'content-length': String(r.body.length),
-            // Named by the hash of its bytes, which never change.
-            'cache-control': 'private, max-age=31536000, immutable',
-            'x-content-type-options': 'nosniff',
-            'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-            'cross-origin-resource-policy': 'same-origin',
-          });
-          return res.end(r.body);
-        }
-        if (req.method !== 'POST') return send(res, 405, { error: 'GET or POST' }, { allow: 'GET, POST' });
-        if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
-        const tooBig = `That file is over ${UPLOAD_MAX_BYTES / 1024 / 1024} MB. Try a smaller copy of it.`;
-        if (Number(req.headers['content-length']) > UPLOAD_MAX_BYTES) return send(res, 413, { error: tooBig });
-        let body: Buffer;
-        try {
-          body = await readBytes(req, UPLOAD_MAX_BYTES);
-        } catch (err) {
-          return (err as Error).message === 'too large' ? send(res, 413, { error: tooBig }) : send(res, 400, { error: 'Bad request' });
-        }
-        const r = await floor.decor.pictures.save(body, str(url.searchParams.get('name'), 256));
-        return 'error' in r ? send(res, r.status, { error: r.error }) : send(res, 200, r);
-      }
-      if (p === '/api/changes/file') {
-        // A changed picture in the Changes window at a desk: before (old) or after (new) the worker's edits.
-        if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
-        const workerId = str(url.searchParams.get('worker'), 32);
-        const file = str(url.searchParams.get('path'), 4096);
-        const side = url.searchParams.get('side');
-        if (!workerId || !file || (side !== 'old' && side !== 'new')) return send(res, 400, { error: 'Bad request' });
-        if (!floor) return send(res, 404, { error: 'No such floor' });
-        if (!floor.workers.get(workerId)) return send(res, 404, { error: 'No such worker' });
-        const r = await floor.changes.file(workerId, file, side, repoOf(url.searchParams.get('repo')));
-        if ('error' in r) return send(res, r.status, { error: r.error });
-        res.writeHead(200, {
-          'content-type': r.type,
-          'content-length': String(r.body.length),
-          // The worker may change it again any moment.
-          'cache-control': 'no-store',
-          'x-content-type-options': 'nosniff',
-          'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-          'cross-origin-resource-policy': 'same-origin',
-        });
-        res.end(r.body);
-        return;
-      }
-      if (p.startsWith('/api/factory/')) {
-        // A Factory feature's actions and on-demand reads (see factory/registry.ts); anything but a GET only from the office's own page.
-        if (setup.state().airgapped) return send(res, 403, { error: AIRGAPPED_REASON });
-        const r = await factory.registry.http(req.method ?? 'GET', p.slice('/api/factory'.length), url.searchParams, (limit) => readBody(req, limit), { trusted: ownRequest(), by: str(req.headers['x-droid-office-name'], 24) });
-        if (r.download) return sendDownload(res, r.download);
-        return send(res, r.status, r.body);
-      }
-      if (p === '/api/linear/issue' && req.method === 'GET') {
-        // What a Linear ticket's window shows beyond its card (see linear.ts). Only the floor's team's tickets.
-        if (!floor) return send(res, 404, { error: 'No such floor' });
-        try {
-          return send(res, 200, await floor.linear.detail(url.searchParams.get('id') ?? ''));
-        } catch (err) {
-          const status = (err as { status?: number }).status;
-          return send(res, status === 400 || status === 403 || status === 404 || status === 409 ? status : 502, { error: (err as Error).message });
-        }
-      }
-      if (p === '/api/linear/image' && req.method === 'GET') {
-        // An image on uploads.linear.app in a ticket's description or comments, fetched with the office's key.
-        if (!floor) return send(res, 404, { error: 'No such floor' });
-        const r = await floor.linear.image(url.searchParams.get('url') ?? '');
-        if ('error' in r) return send(res, r.status, { error: r.error });
-        res.writeHead(200, {
-          'content-type': r.type,
-          'content-length': String(r.body.length),
-          'cache-control': 'private, max-age=3600',
-          'x-content-type-options': 'nosniff',
-          'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-          'cross-origin-resource-policy': 'same-origin',
-        });
-        res.end(r.body);
-        return;
-      }
-      if (p === '/api/jira/ticket' && req.method === 'GET') {
-        // What a Jira ticket's window shows beyond its card (see jira.ts). Only the floor's epic's tickets.
-        if (!floor) return send(res, 404, { error: 'No such floor' });
-        try {
-          return send(res, 200, await floor.jira.detail(url.searchParams.get('key') ?? ''));
-        } catch (err) {
-          const status = (err as { status?: number }).status;
-          return send(res, status === 400 || status === 403 || status === 404 ? status : 502, { error: (err as Error).message });
-        }
-      }
-      if (p.startsWith('/api/docs')) {
-        // The bookshelf: the project's docs and text files, one to read or save, search across them, and pictures (see docs.ts).
-        if (!floor) return send(res, 404, { error: 'No such floor' });
-        if (p === '/api/docs/file' && req.method === 'PUT') {
-          if (!ownRequest()) return send(res, 403, { error: 'Forbidden' });
-          let body: { path?: unknown; text?: unknown; baseMtime?: unknown };
-          try {
-            body = JSON.parse(await readBody(req, 3 * 1024 * 1024));
-          } catch (err) {
-            return (err as Error).message === 'too large' ? send(res, 413, { error: 'That file is over 2 MB' }) : send(res, 400, { error: 'Bad JSON' });
-          }
-          const file = typeof body?.path === 'string' ? str(body.path, 4096) : '';
-          const text = typeof body?.text === 'string' ? body.text : undefined;
-          const baseMtime = typeof body?.baseMtime === 'number' && Number.isFinite(body.baseMtime) ? body.baseMtime : undefined;
-          if (!file || text === undefined) return send(res, 400, { error: 'Bad request' });
-          const r = await floor.docs.write(file, text, baseMtime);
-          return 'error' in r ? send(res, r.status, { error: r.error, ...(r.mtime !== undefined ? { mtime: r.mtime } : {}) }) : send(res, 200, r);
-        }
-        if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
-        if (p === '/api/docs') return send(res, 200, await floor.docs.list(url.searchParams.get('all') === '1'));
-        if (p === '/api/docs/search') {
-          const q = str(url.searchParams.get('q'), 256) ?? '';
-          return send(res, 200, await floor.docs.search(q, url.searchParams.get('all') !== '0'));
-        }
-        const file = str(url.searchParams.get('path'), 4096);
-        if (!file) return send(res, 400, { error: 'Bad request' });
-        if (p === '/api/docs/file') {
-          const r = await floor.docs.read(file);
-          return 'error' in r ? send(res, r.status, { error: r.error }) : send(res, 200, r);
-        }
-        if (p === '/api/docs/picture') {
-          const r = await floor.docs.picture(file);
-          if ('error' in r) return send(res, r.status, { error: r.error });
-          res.writeHead(200, {
-            'content-type': r.type,
-            'content-length': String(r.body.length),
-            'cache-control': 'no-store',
-            'x-content-type-options': 'nosniff',
-            'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-            'cross-origin-resource-policy': 'same-origin',
-          });
-          res.end(r.body);
-          return;
-        }
-        return send(res, 404, { error: 'Not found' });
-      }
-      if (p.startsWith('/api/whiteboard/')) return whiteboardRequest(req, res, p, url, floor, ownRequest());
-      if (p === '/api/search' && req.method === 'GET') return send(res, 200, search(url.searchParams.get('q') ?? '', floor));
-      if (p.startsWith('/api/gh/') && req.method === 'GET') {
-        // What the issue and PR windows show beyond the board cards (see github.ts and gitlab.ts).
-        const n = Number(url.searchParams.get('number'));
-        // The repo's labels (for the label picker) are the one thing not about a single issue or PR.
-        if (p !== '/api/gh/labels' && (!Number.isSafeInteger(n) || n <= 0)) return send(res, 400, { error: 'Bad number' });
-        if (!floor) return send(res, 404, { error: 'No such floor' });
-        const board = floor.board;
-        try {
-          if (p === '/api/gh/labels') return send(res, 200, await board.repoLabels());
-          if (p === '/api/gh/pull') return send(res, 200, await board.pullDetail(n));
-          if (p === '/api/gh/issue') return send(res, 200, await board.issueDetail(n));
-          if (p === '/api/gh/pull/diff') {
-            const diff = await board.pullDiff(n);
-            res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
-            res.end(diff);
-            return;
-          }
-        } catch (err) {
-          return send(res, 502, { error: (err as Error).message });
-        }
-        return send(res, 404, { error: 'Not found' });
-      }
-      if (p === '/' || p === '/index.html') return serveIndex(res, url.searchParams.get('t'));
-      const file = publicFile(p);
-      if (file) return serveFile(res, file, false);
-      res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
-    } catch (err) {
-      console.error(err);
-      if (!res.headersSent) send(res, 500, { error: 'Internal error' });
-    }
-  };
+  const floorRequest = createFloorHttp({ floors, orchestrator, workerFloor, workerThreads, factory, setup, whiteboardRequest });
+  const handler = createHttpHandler({
+    cfg,
+    lanToken,
+    devices,
+    companion,
+    clients,
+    floors,
+    orchestrator,
+    missionState,
+    deepLinkBase,
+    toastAll,
+    hostUpdates,
+    automationRequest,
+    trackpadHaptics,
+    hotReload,
+    reloadScript,
+    availableDroidModels,
+    droidCommands,
+    workersOf,
+    images,
+    serveCard,
+    floorRequest,
+    remoteMcp: () => remoteMcp,
+    ...accessRuntime,
+    ...staticFiles,
+  });
 
   const server = cfg.tls ? https.createServer({ cert: cfg.tls.cert, key: cfg.tls.key }, handler) : http.createServer(handler);
 
@@ -1917,7 +969,7 @@ export async function startServer(cfg: Config) {
       clients.delete(id);
       for (const r of client.phoneSizes?.restores((wid) => workersOf(wid)?.get(wid)) ?? []) workersOf(r.workerId)?.resize(r.workerId, r.size.cols, r.size.rows);
       orchestrator.workers.detachAll(id);
-      for (const wait of automationWaits.values()) if (wait.client === id) wait.done({ ok: false, error: 'The office tab closed before it answered' });
+      automation.disconnect(id);
       for (const f of floors.values()) {
         f.workers.detachAll(id);
         f.shell.detach(id);
@@ -1929,84 +981,6 @@ export async function startServer(cfg: Config) {
       floorsChanged();
     });
     ws.on('error', () => ws.terminate());
-  };
-
-  /**
-   * A floor's whole Whiteboard for `c`, with the epoch this connection numbers its batches for that
-   * floor in (the same one each time, so a resync's resends are still recognised), every card's
-   * capability, and whether cards can be rendered.
-   */
-  const sendBoard = (c: Client, floor: Floor) => {
-    const store = floor.whiteboard;
-    let epoch = c.boards.get(floor.id);
-    if (!epoch) {
-      epoch = store.issueEpoch();
-      c.boards.set(floor.id, epoch);
-    }
-    sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'snapshot', board: store.board, epoch }, caps: store.allCaps(), renderer: store.renderer.status() });
-    for (const card of store.board.cards) {
-      const info = renderInfo(store.renderer, card, card.id);
-      if (info) sendTo(c, { t: 'whiteboard.rendered', floor: floor.id, card: card.id, info });
-    }
-  };
-  /** The owner's batch from the window, answered to `c` once it's committed (or why it wasn't). */
-  const applyBoard = (c: Client, floorId: string, raw: unknown) => {
-    const floor = floors.get(floorId);
-    if (!floor) return warn(c, 'That floor is no longer in the building');
-    const env = parseEnvelope(raw);
-    if (typeof env === 'string') return warn(c, `The Whiteboard change was malformed: ${env}`);
-    const presses = freshPresses(floor.whiteboard.board, env.ops);
-    let out: ReturnType<typeof floor.whiteboard.apply>;
-    try {
-      out = floor.whiteboard.apply(env, OWNER_AUTHOR, 'window');
-    } catch (err) {
-      // Not committed: the window keeps it pending and sends it again after its next resync.
-      console.error(`droid-office: the ${floor.def.name} Whiteboard couldn't be saved: ${(err as Error).message}`);
-      return warn(c, `The Whiteboard couldn't be saved: ${(err as Error).message}`);
-    }
-    const head = { epoch: env.epoch, seq: env.seq };
-    if (out.kind === 'ack') {
-      sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'ack', ...head, rev: out.rev } });
-      // A retry the record recognised applied nothing new, so a press in it was already delivered.
-      if (!out.duplicate) pressButtons(c, floor, presses);
-    } else if (out.reason === 'expired') sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'rejected', ...head, reason: 'expired' } });
-    else sendTo(c, { t: 'whiteboard', floor: floor.id, update: { kind: 'rejected', ...head, reason: 'invalid', error: out.error } });
-  };
-  /**
-   * The first press of each `data-wb-ping` button in the owner's batch goes to the worker who last
-   * edited its card's page. One that can't get there is taken back, so its button works again, and
-   * the owner is told why.
-   */
-  const pressButtons = (c: Client, floor: Floor, presses: ButtonPress[]) => {
-    for (const press of presses) {
-      const card = findCard(floor.whiteboard.board, press.card);
-      if (!card || !pinged(card.state, press.name)) continue;
-      const out = deliverPress(floor.whiteboard.board, press, floor.everyone(), floor.workers, floor.def.name, prompts);
-      if (out.ok) continue;
-      floor.whiteboard.applyOffice([{ op: 'state.del', card: press.card, path: [PINGED_KEY, press.name] }]);
-      warn(c, `“${press.ping.label || press.name}” didn't reach a worker: ${out.error}`);
-    }
-  };
-  /** Ping a worker: the Whiteboard line typed into its terminal, as its status allows (see whiteboard-ping.ts). */
-  const pingWorker = (c: Client, id: string) => {
-    const pinged = (ok: boolean, rest: { how?: 'type' | 'resume' | 'queue'; error?: string }) => sendTo(c, { t: 'whiteboard.pinged', worker: id, ok, ...rest });
-    let floor: Floor | undefined;
-    let info: ReturnType<Floor['everyone']>[number] | undefined;
-    for (const f of floors.values()) {
-      info = f.everyone().find((w) => w.id === id);
-      if (info) {
-        floor = f;
-        break;
-      }
-    }
-    if (!floor || !info) return pinged(false, { error: 'That worker is no longer in the office' });
-    const can = pingEligibility(info);
-    if (!can.ok) return pinged(false, { error: can.reason });
-    const text = officePrompt(prompts, 'whiteboard.ping', { floor: floor.def.name });
-    // Mid-turn, its hooks hand the line over with its next tool call; a hook command that can't, gets it queued behind the turn.
-    const err = can.how === 'resume' ? floor.workers.resume(id, text) : can.how === 'queue' && floor.workers.notice(id, text) ? undefined : floor.workers.prompt(id, text, [], can.how === 'queue');
-    if (err) return pinged(false, { error: `${info.name}: ${err}` });
-    pinged(true, { how: can.how });
   };
 
   const decorChanged = (floor: Floor) => toFloor(floor, { t: 'decor', items: floor.decor.list() });
@@ -2143,6 +1117,8 @@ export async function startServer(cfg: Config) {
 
   /** Opens a worker's terminal for `c`. */
   const attachTerminal = (wid: string, c: Client) => workersOf(wid)?.attach(wid, c.id);
+
+  const handleBoardCommand = createBoardCommands({ floorOf, sendTo, toastFloor });
 
   const handleMessage = (c: Client, msg: ClientMsg) => {
     const who = c.peer.name;
@@ -2783,128 +1759,23 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'gh.refresh':
-        void floorOf(c)?.board.refresh();
+      case 'gh.merge':
+      case 'gh.comment':
+      case 'gh.close':
+      case 'gh.labels':
+      case 'pipelines.refresh':
+      case 'pipelines.detail':
+      case 'pipelines.rerun':
+      case 'pipelines.cancel':
+      case 'pipelines.run':
+        handleBoardCommand(c, msg, here);
         break;
-      case 'gh.merge': {
-        const floor = here();
-        const n = num(msg.number);
-        const method = (['squash', 'merge', 'rebase'] as const).find((m) => m === msg.method);
-        if (!floor || !Number.isSafeInteger(n) || n <= 0 || !method) break;
-        void floor.board.merge(n, method, msg.deleteBranch === true, msg.auto === true).then((error) => {
-          sendTo(c, { t: 'gh.merged', number: n, error });
-          if (error) return;
-          const w = forgeWords(floor.board.forge);
-          toastFloor(floor, msg.auto ? `${who} set ${w.pr} ${w.ref(n)} to merge once its checks pass` : `🎉 ${who} merged ${w.pr} ${w.ref(n)}`);
-          // An auto-merge rings once the host gets round to it and the boards see it merged.
-          if (!msg.auto) floor.merged(n, who);
-        });
-        break;
-      }
-      case 'gh.comment': {
-        const floor = here();
-        const n = num(msg.number);
-        const kind = msg.kind === 'pull' ? 'pull' : 'issue';
-        if (!floor || !Number.isSafeInteger(n) || n <= 0) break;
-        const body = typeof msg.body === 'string' ? msg.body : '';
-        // Refused rather than cut short: a comment that silently lost its end would read as finished.
-        const invalid = !body.trim() ? 'The comment is empty' : body.length > GH_COMMENT_MAX ? `${forgeWords(floor.board.forge).site} takes comments of up to ${GH_COMMENT_MAX} characters` : '';
-        if (invalid) {
-          sendTo(c, { t: 'gh.commented', kind, number: n, error: invalid });
-          break;
-        }
-        void floor.board.comment(kind, n, body).then((r) => {
-          sendTo(c, { t: 'gh.commented', kind, number: n, ...r });
-          const w = forgeWords(floor.board.forge);
-          if (r.comment) toastFloor(floor, `💬 ${who} commented on ${kind === 'pull' ? `${w.pr} ${w.ref(n)}` : `issue #${n}`}`);
-        });
-        break;
-      }
       case 'gong': {
         const floor = floorOf(c);
         const now = Date.now();
         if (!floor || now - c.lastGongAt < 500) break;
         c.lastGongAt = now;
         toFloor(floor, { t: 'gong', why: 'hit', by: who });
-        break;
-      }
-      case 'gh.close': {
-        const floor = here();
-        const n = num(msg.number);
-        const kind = msg.kind === 'issue' || msg.kind === 'pull' ? msg.kind : undefined;
-        if (!floor || !Number.isSafeInteger(n) || n <= 0 || !kind) break;
-        const reason = msg.reason === 'not planned' ? 'not planned' : 'completed';
-        void floor.board.close(kind, n, { comment: str(msg.comment, 20000).trim() || undefined, reason, deleteBranch: msg.deleteBranch === true }).then((error) => {
-          sendTo(c, { t: 'gh.closed', kind, number: n, error });
-          if (error) return;
-          const w = forgeWords(floor.board.forge);
-          if (kind === 'pull') return toastFloor(floor, `${who} closed ${w.pr} ${w.ref(n)} without merging`);
-          toastFloor(floor, `${who} closed issue #${n}${reason === 'not planned' ? ' as not planned' : ''}`);
-        });
-        break;
-      }
-      case 'gh.labels': {
-        const floor = here();
-        const n = num(msg.number);
-        const kind = msg.kind === 'issue' || msg.kind === 'pull' ? msg.kind : undefined;
-        if (!floor || !Number.isSafeInteger(n) || n <= 0 || !kind) break;
-        const names = (v: unknown) => [...new Set((Array.isArray(v) ? v : []).map((l) => str(l, GH_LABEL_MAX + 1)).filter((l) => l && l.length <= GH_LABEL_MAX))].slice(0, 100);
-        const add = names(msg.add);
-        const remove = names(msg.remove).filter((l) => !add.includes(l));
-        if (!add.length && !remove.length) {
-          sendTo(c, { t: 'gh.labeled', kind, number: n, error: 'No labels to change' });
-          break;
-        }
-        void floor.board.setLabels(kind, n, add, remove).then((r) => {
-          sendTo(c, { t: 'gh.labeled', kind, number: n, ...r });
-          const w = forgeWords(floor.board.forge);
-          if (r.labels) toastFloor(floor, `${who} labeled ${kind === 'pull' ? `${w.pr} ${w.ref(n)}` : `issue #${n}`}: ${[...add.map((l) => `+${l}`), ...remove.map((l) => `−${l}`)].join(' ')}`);
-        });
-        break;
-      }
-      case 'pipelines.refresh':
-        void here()?.pipelines.refresh();
-        break;
-      case 'pipelines.detail': {
-        const floor = here();
-        const id = num(msg.id);
-        if (!floor || !Number.isSafeInteger(id) || id <= 0) break;
-        void floor.pipelines.detail(id).then(
-          (detail) => sendTo(c, { t: 'pipelines.detail', id, detail }),
-          (err: Error) => sendTo(c, { t: 'pipelines.detail', id, error: err.message }),
-        );
-        break;
-      }
-      case 'pipelines.rerun':
-      case 'pipelines.cancel': {
-        const floor = here();
-        const id = num(msg.id);
-        if (!floor || !Number.isSafeInteger(id) || id <= 0) break;
-        const run = floor.pipelines.state.runs.find((r) => r.id === id);
-        const action = msg.t === 'pipelines.rerun' ? 'rerun' : 'cancel';
-        const failed = msg.t === 'pipelines.rerun' && 'failed' in msg && msg.failed === true;
-        void (action === 'rerun' ? floor.pipelines.rerun(id, failed) : floor.pipelines.cancel(id)).then((error) => {
-          sendTo(c, { t: 'pipelines.done', action, id, error });
-          if (error || !run) return;
-          const what = `${run.workflow} #${run.number}`;
-          toastFloor(floor, action === 'cancel' ? `⏹️ ${who} cancelled ${what} on ${run.branch}` : `🔁 ${who} re-ran ${failed ? `the failed jobs of ${what}` : what} on ${run.branch}`);
-        });
-        break;
-      }
-      case 'pipelines.run': {
-        const floor = here();
-        if (!floor) break;
-        const workflow = str(msg.workflow, 200);
-        const ref = str(msg.ref, 255);
-        const inputs: Record<string, string> = {};
-        if (msg.inputs && typeof msg.inputs === 'object' && !Array.isArray(msg.inputs)) {
-          for (const [k, v] of Object.entries(msg.inputs).slice(0, 50)) if (typeof v === 'string' && /^[\w.-]{1,100}$/.test(k)) inputs[k] = v.slice(0, 2000);
-        }
-        void floor.pipelines.run(workflow, ref, inputs).then((error) => {
-          sendTo(c, { t: 'pipelines.done', action: 'run', error });
-          if (error) return;
-          const name = floor.pipelines.state.workflows.find((w) => w.id === workflow)?.name ?? workflow;
-          toastFloor(floor, `🚀 ${who} started ${name} on ${ref.trim() || floor.pipelines.state.defaultBranch}`);
-        });
         break;
       }
       case 'leaveOnMerge.set': {
@@ -3326,12 +2197,9 @@ export async function startServer(cfg: Config) {
         toastAll(`🔇 ${who} turned the jukebox off`);
         break;
       }
-      case 'automation.result': {
-        const wait = automationWaits.get(str(msg.id, 16));
-        if (!wait || wait.client !== c.id) break;
-        wait.done(msg.ok === true ? { ok: true, value: msg.value } : { ok: false, error: str(msg.error, 2000) || 'The command failed' });
+      case 'automation.result':
+        automation.answer(c, msg);
         break;
-      }
       case 'orchestrator.prompt':
         promptOrchestrator(msg);
         break;
@@ -3360,206 +2228,9 @@ export async function startServer(cfg: Config) {
     unanswered();
   };
 
-  /**
-   * The owner's window for building agents. Each action goes through handleMessage on a connection
-   * of its own, named for the worker, so it has the owner's checks, effects and toasts exactly.
-   */
-  const ownerOffice: OwnerOffice = {
-    floors: () =>
-      [...floors.values()].map((f) => {
-        const live = !f.plain ? readHeadBranch(f.dir) : { found: false as const };
-        return {
-          id: f.id,
-          name: f.def.name,
-          dir: f.dir,
-          plain: f.plain,
-          branch: f.plain ? undefined : live.found ? live.branch : f.project.branch,
-          baseBranch: f.plain ? undefined : (f.workers.selectedBranch ?? f.workers.baseBranch ?? f.project.branch),
-          watchedBy: (leadId, workerId) => f.team.isWatching(leadId, workerId),
-          workers: f.everyone(),
-        };
-      }),
-    mission: () => {
-      const state = missionState();
-      const agent = orchestrator.rosterAgent();
-      return [...(agent ? [agent] : []), ...state.bots];
-    },
-    tail: (id, lines, floorId) => (id === OFFICE_SHELL_ID ? floors.get(floorId ?? '')?.shell.tail(lines) : workersOf(id)?.tail(id, lines)),
-    labelsOn: () => labelPreferences.get().on,
-    inspect: async (id, floorId) => {
-      if (id === OFFICE_SHELL_ID) return undefined;
-      if (id === ORCHESTRATOR_ID) {
-        const w = orchestrator.workers.get(ORCHESTRATOR_ID);
-        if (!w) return undefined;
-        const runtime = orchestrator.workers.runtime(ORCHESTRATOR_ID);
-        const model = w.activeModel ?? w.model;
-        if (w.status === 'working' && model && isSubscriptionModel(model) && subscriptions.availability(model)?.state !== 'exhausted' && inspectTerminalRetry(runtime?.screenRows, w.status, Boolean(runtime?.currentTool))?.retrying) {
-          try {
-            await subscriptions.recheck();
-          } catch {
-            // Fall back to cached availability.
-          }
-        }
-        const now = Date.now();
-        return buildWorkerInspection({
-          worker: w,
-          runtime,
-          availability: model ? subscriptions.availability(model) : undefined,
-          usage: model ? subscriptions.usage(model, now) : undefined,
-          labelsOn: labelPreferences.get().on,
-          now,
-        });
-      }
-      const floor = floorId ? floors.get(floorId) : workerFloor(id);
-      const w = floor?.everyone().find((x) => x.id === id);
-      if (!floor || !w) return undefined;
-      await floor.team.recheckIfRetrying([w]);
-      return floor.team.inspectWorker(w);
-    },
-    workerMeta: (id) => {
-      const f = workerFloor(id);
-      if (!f) return undefined;
-      const queue = f.workers.queueState(id);
-      const blocking = f.workers.blockingTool(id);
-      if (!queue?.count && !blocking) return undefined;
-      return {
-        ...(queue?.count ? { queuedMessages: queue } : {}),
-        ...(blocking ? { blockingTool: blocking } : {}),
-      };
-    },
-    threadImages: async (workerId, entries, floorId) => {
-      const targetWorkers = workerId === ORCHESTRATOR_ID ? orchestrator.workers : ((floorId ? floors.get(floorId) : undefined)?.workers ?? workerFloor(workerId)?.workers);
-      const source = targetWorkers?.threadSession(workerId);
-      if (!source || !targetWorkers) return [];
-      try {
-        return await remoteOffice.images.collectThreadImages(entries, {
-          dropPicture: (name) => targetWorkers.dropPicture(workerId, name),
-          sessionPicture: (imageId) => workerThreads.image(source, imageId),
-        });
-      } catch {
-        return [];
-      }
-    },
-    act: async (by: WorkerInfo, msg, opts = {}) => {
-      // A building agent's hire gets the model list its team_hire gets: here is the one way in for its owner-level actions.
-      if (msg.t === 'worker.spawn' && msg.kind !== 'shell' && !opts.owner) {
-        const model = typeof msg.model === 'string' && msg.model.trim() ? msg.model.trim() : undefined;
-        const cloudSpawn = msg.kind === 'cloud' || Boolean(msg.cloud && typeof msg.cloud === 'object');
-        const at = floors.get(opts.floor ?? (typeof msg.floor === 'string' ? msg.floor : ''));
-        const refused = at ? await at.team.refuseSpawnModel(by, model, cloudSpawn) : undefined;
-        if (refused) return { error: refused, notes: [] };
-        const fallback = !model && cloudSpawn && subagents.settings.models?.length ? at?.workers.officeDefault?.model : undefined;
-        if (fallback && !fallback.startsWith('custom:')) msg = { ...msg, model: fallback };
-      }
-      return new Promise<OwnerReply>((resolve) => {
-        const notes: string[] = [];
-        const expects = OWNER_REPLIES[msg.t];
-        const requestId = randomBytes(8).toString('hex');
-        let receipt: { error?: string; workerId?: string } | undefined;
-        let reply: ServerMsg | undefined;
-        let settled = false;
-        const onAbort = () => finish(true);
-        const complete = () => !!receipt && (!!receipt.error || !expects || !!reply);
-        const finish = (timedOut = false) => {
-          if (settled) return;
-          // A receipt already in is the outcome, even if the wait ends before its toasts are collected.
-          const pending = timedOut && !complete();
-          settled = true;
-          clearTimeout(timer);
-          opts.signal?.removeEventListener('abort', onAbort);
-          const refused = receipt?.error ?? (reply && 'error' in reply && typeof reply.error === 'string' ? reply.error : undefined);
-          // A success toast is confirmation enough; silence is not.
-          const unconfirmed = !refused && !pending && !reply && !notes.length && client.owner?.unconfirmed;
-          resolve({
-            ...(refused ? { error: refused } : {}),
-            ...(pending ? { pending } : {}),
-            ...(unconfirmed ? { unconfirmed } : {}),
-            ...(receipt?.workerId ? { workerId: receipt.workerId } : {}),
-            notes,
-            ...(reply ? { reply } : {}),
-          });
-        };
-        let ready = false;
-        const check = () => {
-          if (ready || !complete()) return;
-          ready = true;
-          // Handlers often toast right after done(), in the same turn: let those land in the notes first.
-          setImmediate(() => finish());
-        };
-        const timer = setTimeout(() => finish(true), OWNER_ACTION_WAIT_MS);
-        const workerId = typeof msg.workerId === 'string' ? msg.workerId : undefined;
-        const worksOn = workerId ? (workerFloor(workerId) ?? floors.get(cloud.find(workerId)?.floor.id ?? '')) : undefined;
-        const home = [...floors.values()].find((f) => f.workers.get(by.id));
-        const socket = {
-          readyState: WebSocket.OPEN,
-          bufferedAmount: 0,
-          send: (json: string) => {
-            const m = JSON.parse(json) as ServerMsg;
-            if (m.t === 'action.result' && m.requestId === requestId) receipt = { ...(m.error ? { error: m.error } : {}), ...(m.workerId ? { workerId: m.workerId } : {}) };
-            else if (m.t === 'toast') {
-              if (settled) return;
-              notes.push(m.text);
-              // A synchronous handler refuses by warning without done(); only the first warning counts.
-              if (m.level !== 'info') client.owner!.refused ??= m.text;
-            } else if (m.t === expects) reply = m;
-            check();
-          },
-          close() {},
-          ping() {},
-          terminate() {},
-        };
-        const client: Client = {
-          id: `mcp-${requestId}`,
-          ws: socket,
-          // A worker action runs where that worker sits, as the owner's window has to be on its floor.
-          floor: worksOn?.id ?? opts.floor ?? (typeof msg.floor === 'string' && floors.has(msg.floor) ? msg.floor : undefined) ?? home?.id ?? null,
-          peer: { name: by.name, color: by.color },
-          attached: new Set([...(workerId ? [workerId] : []), OFFICE_SHELL_ID]),
-          stale: new Set(),
-          lastGongAt: 0,
-          isAlive: true,
-          dashboard: true,
-          requests: new Set(),
-          boards: new Map(),
-          owner: {},
-        };
-        if (opts.signal?.aborted) return finish(true);
-        opts.signal?.addEventListener('abort', onAbort, { once: true });
-        // Timers a hire starts keep this context after the action settles; they no longer add to its notes.
-        acting.run(
-          (text) => {
-            if (!settled) notes.push(text);
-          },
-          () => handleMessage(client, { ...msg, requestId } as unknown as ClientMsg),
-        );
-      });
-    },
-  };
+  const ownerOffice = createOwnerOffice({ floors, orchestrator, missionState, workerFloor, workersOf, cloud, subscriptions, subagents, labelPreferences, remoteOffice, workerThreads, acting, handleMessage });
 
-  const resync = setInterval(() => {
-    for (const c of clients.values()) {
-      if (!c.stale.size || c.ws.bufferedAmount > SLOW_CLIENT_BYTES / 8) continue;
-      for (const wid of c.stale) {
-        const snap = c.attached.has(wid) ? attachTerminal(wid, c) : undefined;
-        if (snap) sendTo(c, { t: 'term.snapshot', workerId: wid, ...snap });
-      }
-      c.stale.clear();
-    }
-  }, 1000);
-
-  // Drop dead connections so ghosts don't linger in the office.
-  const heartbeat = setInterval(() => {
-    for (const c of clients.values()) {
-      if (!c.isAlive) {
-        c.ws.terminate();
-        continue;
-      }
-      c.isAlive = false;
-      c.ws.ping();
-      // A phone that stays connected is still being seen (written down once a minute at most).
-      if (c.device) devices.seen(c.device);
-    }
-  }, 20_000);
+  const stopClientTimers = transport.startTimers(attachTerminal, devices);
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -3574,11 +2245,9 @@ export async function startServer(cfg: Config) {
     hostUpdates.dispose();
     finder?.stop();
     finderToken = undefined;
-    clearInterval(heartbeat);
-    clearInterval(resync);
+    stopClientTimers();
     clearTimeout(floorsTimer);
-    for (const e of offFloorThrottle.values()) if (e.timer) clearTimeout(e.timer);
-    offFloorThrottle.clear();
+    transport.clearOffFloorScreens();
     upgrader.stop();
     void hotReload.stop().catch((err) => console.error('droid-office: source reload cleanup:', err));
     machine.stop();
