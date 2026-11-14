@@ -39,7 +39,7 @@ export function geminiSettings(net: Net): { card: { desc: Node; below: Node[] };
   const vibesToggle = toggle({
     label: 'Living 3D reactions & mood lighting',
     description:
-      "Gemini reads what each desk's output means for its task (on track or in trouble, stuck or in flow, how much is riding on it, how close it is to done, corners cut, rabbit holes, desks at cross purposes) and the room answers with glowing desk rings and progress arcs, emoji pops, room-wide flashes, breathing mood light and lively postures. Hires, finished tasks, pull requests, send-offs and shots play their own effects. Graded in one shared forward pass only while a 3D floor is open and uncovered; the pedestal button beneath each floor’s ceiling glyph and the Living 3D switch in the corner of the 3D view flip it too.",
+      "Gemini reads what each desk's output means for its task (on track or in trouble, stuck or in flow, how much is riding on it, how close it is to done, corners cut, rabbit holes, desks at cross purposes) and the room answers with glowing desk rings and progress arcs, emoji pops, room-wide flashes, breathing mood light and lively postures. Hires, finished tasks, pull requests, send-offs and shots play their own effects. Graded in one shared forward pass only while a 3D floor is open and uncovered; the pedestal button beneath each floor’s ceiling glyph flips it too.",
     checked: true,
     onChange: (on) => {
       failure = '';

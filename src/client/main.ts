@@ -124,7 +124,6 @@ import { SidearmCharge, SHOT_CHARGE_PREVIEW_MS } from './sidearm-charge';
 import { ChargeHaptics } from './haptics';
 import { Confetti, type Area } from './world/confetti';
 import { VibeFx } from './world/vibe-fx';
-import { vibesBadge } from './ui/vibes-badge';
 import { Hanger } from './hanging';
 import { plainLabel, redrawText } from './world/toon';
 import { OfficeSound } from './sound';
@@ -477,7 +476,7 @@ store.on('decor', () => gallery.sync(store.decor));
 const confetti = new Confetti((x, z, y) => groundAt(office.colliders, x, z, y, false));
 scene.add(confetti.mesh);
 
-// Living 3D's desk rings, emoji pops and shockwaves (Gemini Decision 1), and the switch in the corner.
+// Living 3D's desk rings, emoji pops and shockwaves (Gemini Decision 1).
 const vibeFx = new VibeFx();
 scene.add(vibeFx.group);
 let vibeFxMoving = false;
@@ -485,10 +484,6 @@ let lastFloorEventSeq = 0;
 /** The last room-wide event and desk moment this view played (for automation). */
 let lastRoomEvent: FloorEvent | 'ship_it' | null = null;
 let lastDeskMoment: { kind: DeskMoment; worker: string } | null = null;
-/** A line the Living 3D switch shows for a few seconds in place of the mood (a reaction or floor event). */
-let badgeNote = '';
-let badgeNoteUntil = 0;
-let livingBadge: ReturnType<typeof vibesBadge> | null = null;
 /** Whether Living 3D was on at the last `gemini` update, to play the switch-on and switch-off sweeps; null before the first. */
 let vibesWasOn: boolean | null = null;
 
@@ -4467,7 +4462,6 @@ async function startWhenReady() {
 const indoorHere = () => !upTop && Boolean(store.floor && store.floor !== ROOF);
 let vibesWatching = false;
 function syncVibesWatch() {
-  paintVibesBadge();
   if (!net.up) {
     vibesWatching = false;
     return;
@@ -4487,37 +4481,6 @@ sky.calmMotion = vibeFx.calmMotion = reduceMotion.matches;
 reduceMotion.addEventListener('change', () => {
   sky.calmMotion = vibeFx.calmMotion = reduceMotion.matches;
 });
-livingBadge = vibesBadge({
-  toggle: (on) => net.send({ t: 'gemini.vibes', on }),
-  settings: () => showSettings('connections'),
-});
-$('hud').append(livingBadge.el);
-
-/** The Living 3D switch: hidden without a key or off a floor, else on (in the mood's color), off, or paused on a rejected key. */
-function paintVibesBadge() {
-  if (!livingBadge) return;
-  const g = store.gemini;
-  if (!g.connected || store.setup.airgapped || !indoorHere()) return livingBadge.paint({ mode: 'hidden' });
-  if (g.rejected) return livingBadge.paint({ mode: 'rejected' });
-  if (!g.vibesOn) return livingBadge.paint({ mode: 'off' });
-  const vibes = store.vibes;
-  const desks = vibes ? Object.keys(vibes.workers).filter((id) => workerViews.has(id)).length : 0;
-  livingBadge.paint({
-    mode: 'on',
-    mood: vibes && isFloorMood(vibes.mood) ? vibes.mood : 'calm_planning',
-    stakes: vibes?.stakes ?? 0.5,
-    desks,
-    ...(performance.now() < badgeNoteUntil ? { note: badgeNote } : {}),
-  });
-}
-
-/** Shows `note` on the Living 3D switch for a few seconds. */
-function noteOnBadge(note: string) {
-  badgeNote = note;
-  badgeNoteUntil = performance.now() + 4000;
-  paintVibesBadge();
-  setTimeout(paintVibesBadge, 4100);
-}
 
 /** Where a worker's head is, and the floor under its desk. */
 function deskPoints(v: WorkerView): { head: THREE.Vector3; feet: THREE.Vector3 } {
@@ -4538,7 +4501,6 @@ function vibeReactionFx(id: string, v: WorkerView, kind: WorkerMicroReaction) {
   if (kind === 'breakthrough') burstOver(v.deskId, 90);
   else if (kind === 'risky_move') sky.flashRoom(fx.hex, 1.4, 2, 3.2);
   else if (down && !reduceMotion.matches) addEffect(new Puff(head, new THREE.Vector3(0, 1, 0)));
-  noteOnBadge(`${fx.glyph} ${v.name} · ${fx.label}`);
 }
 
 /**
@@ -4553,7 +4515,6 @@ function deskMomentFx(id: string, v: WorkerView, kind: DeskMoment) {
   if (kind === 'shot') sky.flashRoom(fx.hex, 2.4, 1, 2.6);
   else if (kind === 'sent_home') sky.flashRoom(fx.hex, 0.9, 1, 1.4);
   lastDeskMoment = { kind, worker: id };
-  noteOnBadge(`${fx.glyph} ${v.name} · ${fx.label}`);
   activeAt = performance.now();
   renderWake();
 }
@@ -4603,7 +4564,6 @@ function playFloorEvent(kind: FloorEvent | 'ship_it') {
   if (kind === 'convergence') for (const h of heads) vibeFx.deskMoment(h.id, fx.glyph, fx.hex, h.head, h.feet, { beam: true, sparks: 20 });
   if (kind === 'ship_it') confetti.rain(FLOOR, floorArea(FLOOR) * 1.2, 2.5, ceilingOver);
   lastRoomEvent = kind;
-  noteOnBadge(`${fx.glyph} ${fx.label}`);
 }
 
 function syncFloorVibes(snap = false) {
@@ -4642,8 +4602,6 @@ function syncFloorVibes(snap = false) {
       changed = true;
     }
   }
-  if (!snap) livingBadge?.beat();
-  paintVibesBadge();
   if (changed || vibeFx.enabled) {
     activeAt = performance.now();
     renderWake();
@@ -4666,7 +4624,6 @@ function syncVibesPower() {
     renderWake();
   }
   vibesWasOn = on;
-  paintVibesBadge();
 }
 
 net.onStatus((up) => {
@@ -4874,7 +4831,6 @@ const automation = createAutomation({
           vibes: {
             on: store.gemini.vibesOn,
             live: vibesLiveHere(),
-            badge: livingBadge?.mode ?? 'hidden',
             watching3d: store.gemini.watching3d,
             calls: store.gemini.calls,
             inputTokens: store.gemini.inputTokens,

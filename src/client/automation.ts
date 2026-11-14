@@ -236,12 +236,10 @@ export interface RawState {
   vibesSwitch?: VibesSwitchState;
   /** Living 3D Studio telemetry and postures when Gemini Decision 1 is connected. */
   vibes?: {
-    /** The Living 3D setting (Settings, the pedestal switch and the corner switch all flip it). */
+    /** The Living 3D setting (Settings and the pedestal switch both flip it). */
     on?: boolean;
     /** Living 3D is running on this floor right now: on, connected, key accepted, and indoors. */
     live: boolean;
-    /** What the switch in the corner shows: hidden, on, off or rejected. */
-    badge: string;
     watching3d: number;
     calls: number;
     inputTokens: number;
@@ -350,7 +348,6 @@ export function buildSnapshot(raw: RawState): Snapshot {
           vibes: {
             ...(raw.vibes.on !== undefined ? { on: raw.vibes.on } : {}),
             live: raw.vibes.live,
-            badge: raw.vibes.badge,
             watching3d: raw.vibes.watching3d,
             calls: raw.vibes.calls,
             inputTokens: raw.vibes.inputTokens,

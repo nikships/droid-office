@@ -128,14 +128,13 @@ export const POSTURE_AURA_HEX: Record<WorkerVibePosture, string> = {
 /**
  * Studio fill tint, intensity multiplier, and a slow breathing pulse (amplitude as a fraction of the
  * fill, rate in Hz), scaled by the owner's Overhead lights slider and never altering GI bake keys.
- * `calm_planning` stays the baseline clear-night fill that Remastered bakes against. `accent` is the
- * bright version the Living 3D badge and Settings show.
+ * `calm_planning` stays the baseline clear-night fill that Remastered bakes against.
  */
-export const FLOOR_MOOD_LIGHTING: Record<FloorMood, { hex: string; fillScale: number; pulse: number; pulseHz: number; label: string; accent: string }> = {
-  calm_planning: { hex: '#383a46', fillScale: 1, pulse: 0, pulseHz: 0, label: 'Calm planning', accent: '#ee6018' },
-  deep_crunch: { hex: '#1d3c8f', fillScale: 0.9, pulse: 0.14, pulseHz: 0.22, label: 'Deep crunch', accent: '#4f7dff' },
-  debugging_tension: { hex: '#8f2418', fillScale: 0.95, pulse: 0.38, pulseHz: 0.7, label: 'Debugging tension', accent: '#ff4d3d' },
-  celebration_swell: { hex: '#a06a12', fillScale: 1.5, pulse: 0.24, pulseHz: 1.1, label: 'Celebration swell', accent: '#ffc233' },
+export const FLOOR_MOOD_LIGHTING: Record<FloorMood, { hex: string; fillScale: number; pulse: number; pulseHz: number; label: string }> = {
+  calm_planning: { hex: '#383a46', fillScale: 1, pulse: 0, pulseHz: 0, label: 'Calm planning' },
+  deep_crunch: { hex: '#1d3c8f', fillScale: 0.9, pulse: 0.14, pulseHz: 0.22, label: 'Deep crunch' },
+  debugging_tension: { hex: '#8f2418', fillScale: 0.95, pulse: 0.38, pulseHz: 0.7, label: 'Debugging tension' },
+  celebration_swell: { hex: '#a06a12', fillScale: 1.5, pulse: 0.24, pulseHz: 1.1, label: 'Celebration swell' },
 };
 
 export interface TriggeredMicroReaction {
