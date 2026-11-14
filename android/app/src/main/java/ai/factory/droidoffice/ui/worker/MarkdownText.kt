@@ -99,7 +99,8 @@ private const val COPY_FEEDBACK_MS = 1_500L
 /**
  * A message's Markdown, laid out with the office's type. Links open in the browser. [surface] is
  * what the message sits on, which a table's overflow fade blends into. With [onOpenPath], the
- * workspace files the text names (`src/a.ts:12`) are links that open them.
+ * workspace files the text names (`src/a.ts:12`) are links that open them. With [rich] (an
+ * assistant's reply, as the web Thread draws them), ```mermaid blocks are drawn as diagrams.
  */
 @Composable
 internal fun MarkdownText(
@@ -110,6 +111,7 @@ internal fun MarkdownText(
     breaks: Boolean = false,
     streaming: Boolean = false,
     onOpenPath: ((WorkspacePaths.Ref) -> Unit)? = null,
+    rich: Boolean = false,
 ) {
     val paths = onOpenPath != null
     val blocks = remember(source, breaks, paths) { Markdown.parse(source, breaks, paths) }
@@ -145,7 +147,7 @@ internal fun MarkdownText(
                     Box(Modifier.width(2.dp).fillMaxHeight().background(Palette.BorderStrong))
                     Text(styled(b.spans, mono, opener), style = body.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 10.dp))
                 }
-                is Markdown.Block.Code -> CodeBlockCard(b, mono)
+                is Markdown.Block.Code -> if (rich && b.language.equals("mermaid", ignoreCase = true)) MermaidBlock(b, streaming, mono) else CodeBlockCard(b, mono)
                 is Markdown.Block.Email -> EmailDraftCard(b, body)
                 is Markdown.Block.Widget -> WidgetBlock(b, streaming, mono)
                 Markdown.Block.Rule -> Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(Palette.Border))
@@ -158,7 +160,6 @@ internal fun MarkdownText(
 @Composable
 private fun CodeBlockCard(b: Markdown.Block.Code, mono: FontFamily) {
     val label = remember(b.language) { (b.language?.trim()?.ifEmpty { null } ?: "code").uppercase() }
-    val highlighted = remember(b.text, b.language, mono) { highlightedCode(b.text, b.language) }
     val shape = RoundedCornerShape(4.dp)
     Column(Modifier.fillMaxWidth().panel(shape, Palette.Surface, Palette.Border)) {
         DisableSelection {
@@ -182,14 +183,21 @@ private fun CodeBlockCard(b: Markdown.Block.Code, mono: FontFamily) {
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
-        CodeScroll(Palette.Surface, bordered = false) { scroll ->
-            Text(
-                highlighted,
-                style = LocalOfficeType.current.monoBody.copy(fontSize = 12.5.sp, lineHeight = 18.sp),
-                softWrap = false,
-                modifier = scroll.background(Palette.Surface).padding(horizontal = 10.dp, vertical = 8.dp),
-            )
-        }
+        CodeBody(b.text, b.language, mono)
+    }
+}
+
+/** A code block's highlighted text, scrolling sideways rather than wrapping. */
+@Composable
+internal fun CodeBody(text: String, language: String?, mono: FontFamily) {
+    val highlighted = remember(text, language, mono) { highlightedCode(text, language) }
+    CodeScroll(Palette.Surface, bordered = false) { scroll ->
+        Text(
+            highlighted,
+            style = LocalOfficeType.current.monoBody.copy(fontSize = 12.5.sp, lineHeight = 18.sp),
+            softWrap = false,
+            modifier = scroll.background(Palette.Surface).padding(horizontal = 10.dp, vertical = 8.dp),
+        )
     }
 }
 

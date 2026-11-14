@@ -856,7 +856,7 @@ private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, images: L
         Column(tag) {
             if (m.startsTurn) Eyebrow(w.name.ifBlank { "Droid" }, Modifier.padding(bottom = 6.dp))
             val files = LocalFilePreview.current
-            SelectionContainer { MarkdownText(text, streaming = streaming, onOpenPath = files?.let { it::open }) }
+            SelectionContainer { MarkdownText(text, streaming = streaming, onOpenPath = files?.let { it::open }, rich = true) }
             m.turnChanges?.let { TurnChanges(m.id, it, floorDir, Modifier.padding(top = 10.dp)) }
         }
     }

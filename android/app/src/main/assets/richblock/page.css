@@ -1,0 +1,30 @@
+/* The app serves Geist from its own font resources (ui/worker/RichBlock.kt). */
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/geist.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+}
+html, body {
+  margin: 0;
+  background: transparent;
+  color: #eeeeee;
+  font-family: 'Geist', sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+#stage {
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+}
+#stage svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+/* Full screen, the drawing sits in the middle of the screen and the WebView's pinch zooms it. */
+body.zoom #stage {
+  box-sizing: border-box;
+  min-height: 100vh;
+  align-items: center;
+}

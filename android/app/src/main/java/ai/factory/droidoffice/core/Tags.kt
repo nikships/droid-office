@@ -480,6 +480,15 @@ object Tags {
         const val THREAD_EMAIL_OPEN = "worker.thread.email.open"
         /** A `<json-render>` widget rendered in a message. */
         const val THREAD_WIDGET = "worker.thread.widget"
+        /** A ```mermaid block drawn as its diagram (its source until it draws, or when it can't). */
+        const val THREAD_DIAGRAM = "worker.thread.diagram"
+        /** Switches a diagram between the drawing and its source (`checked` is the source). */
+        const val THREAD_DIAGRAM_SOURCE = "worker.thread.diagram.source"
+        const val THREAD_DIAGRAM_ZOOM = "worker.thread.diagram.zoom"
+        const val THREAD_DIAGRAM_COPY = "worker.thread.diagram.copy"
+        /** A diagram full screen, opened by [THREAD_DIAGRAM_ZOOM]: pinch to zoom; Back or [THREAD_DIAGRAM_VIEWER_CLOSE] closes it. */
+        const val THREAD_DIAGRAM_VIEWER = "worker.thread.diagram_viewer"
+        const val THREAD_DIAGRAM_VIEWER_CLOSE = "worker.thread.diagram_viewer.close"
         /** A workspace file opened from a `path:line` link: its sheet, path, line note, copy buttons and readable state. */
         const val THREAD_FILE = "worker.thread.file_preview"
         const val THREAD_FILE_PATH = "worker.thread.file_preview.path"
