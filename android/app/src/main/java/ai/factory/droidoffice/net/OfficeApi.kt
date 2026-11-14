@@ -63,6 +63,10 @@ data class ModelOption(
     val promo: String? = null,
 )
 
+/** A worker's workspace listing for `@` mentions: capped by the office, [truncated] when there is more. */
+@Serializable
+data class ThreadFiles(val files: List<String> = emptyList(), val dirs: List<String> = emptyList(), val truncated: Boolean = false)
+
 @Serializable
 data class ModelCatalogue(val models: List<ModelOption> = emptyList(), val defaultModel: String? = null, val defaultReasoningEffort: String? = null, val customOnly: Boolean = false)
 
@@ -244,6 +248,38 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
             }
         } catch (_: IOException) {
             null
+        }
+    }
+
+    /** A worker's workspace files and folders for `@` mentions (GET /api/thread/files); null when the office can't list them. */
+    suspend fun threadFiles(base: String, auth: OfficeAuth, floor: String?, worker: String, query: String): ThreadFiles? = withContext(Dispatchers.IO) {
+        val params = buildList {
+            floor?.let { add("floor" to it) }
+            add("worker" to worker)
+            if (query.isNotEmpty()) add("q" to query)
+        }
+        val req = request(base, "api/thread/files", auth, *params.toTypedArray()).header("Cache-Control", "no-store").get().build()
+        try {
+            client.newCall(req).await().use { res ->
+                if (!res.isSuccessful) null else runCatching { OfficeJson.decodeFromString<ThreadFiles>(res.body.string()) }.getOrNull()
+            }
+        } catch (_: IOException) {
+            null
+        }
+    }
+
+    /** One file of a worker's workspace as the office previews it (GET /api/thread/file): its status and JSON, or why it couldn't be asked. */
+    suspend fun threadFile(base: String, auth: OfficeAuth, floor: String?, worker: String, path: String): Result<Pair<Int, String>> = withContext(Dispatchers.IO) {
+        val params = buildList {
+            floor?.let { add("floor" to it) }
+            add("worker" to worker)
+            add("path" to path)
+        }
+        val req = request(base, "api/thread/file", auth, *params.toTypedArray()).get().build()
+        try {
+            client.newCall(req).await().use { res -> Result.success(res.code to res.body.string()) }
+        } catch (e: IOException) {
+            Result.failure(e)
         }
     }
 

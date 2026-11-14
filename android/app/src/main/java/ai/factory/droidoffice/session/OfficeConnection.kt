@@ -43,6 +43,7 @@ import ai.factory.droidoffice.net.ModelCatalogue
 import ai.factory.droidoffice.net.NetworkMonitor
 import ai.factory.droidoffice.net.OfficeApi
 import ai.factory.droidoffice.net.OfficeAuth
+import ai.factory.droidoffice.net.ThreadFiles
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -474,6 +475,16 @@ class OfficeConnection(
     suspend fun threadImage(floor: String, worker: String, image: String): ByteArray? {
         val (base, auth) = current ?: return null
         return api.threadImage(base, auth, floor, worker, image)
+    }
+
+    suspend fun threadFiles(floor: String?, worker: String, query: String): ThreadFiles? {
+        val (base, auth) = current ?: return null
+        return api.threadFiles(base, auth, floor, worker, query)
+    }
+
+    suspend fun threadFile(floor: String?, worker: String, path: String): Result<Pair<Int, String>> {
+        val (base, auth) = current ?: return Result.failure(IllegalStateException("Not connected to the office"))
+        return api.threadFile(base, auth, floor, worker, path)
     }
 
     suspend fun boardImage(floor: String, card: String, thumb: Boolean, tile: Int, version: Long): ByteArray? {

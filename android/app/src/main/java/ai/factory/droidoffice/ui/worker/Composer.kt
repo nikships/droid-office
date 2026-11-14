@@ -90,6 +90,8 @@ import ai.factory.droidoffice.core.SlashCommands
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.ThreadQueue
 import ai.factory.droidoffice.core.WorkerInfo
+import ai.factory.droidoffice.core.WorkspaceMention
+import ai.factory.droidoffice.net.ThreadFiles
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.components.Spinner
@@ -152,6 +154,30 @@ fun Composer(
     // While Droid is on a turn, Send steers it (Enter) and Queue holds the message for after the turn
     // (Ctrl+Enter), as Droid's own input box offers both.
     val queueable = !w.isShell && !w.isCloud && w.state.busy
+    // `@` mentions of the worker's files, in the Thread of a Droid that works in a folder of this machine.
+    val mentionable = thread && !w.isShell && !w.isCloud
+    val mention = if (mentionable) WorkspaceMention.find(text, value.selection.end) else null
+    val files = remember(w.id) { MentionFiles() }
+    LaunchedEffect(w.id, mention?.query, connected) {
+        val query = mention?.query ?: return@LaunchedEffect
+        if (!connected) return@LaunchedEffect
+        val d = graph.connection.data.value
+        val floor = if (w.id == ORCHESTRATOR_ID) null else d.workerFloorId(w.id) ?: d.floorId
+        if (!files.fresh(System.currentTimeMillis())) {
+            graph.connection.threadFiles(floor, w.id, "")?.let { files.keep(it, System.currentTimeMillis()) }
+        }
+        // The office lists at most 5,000 paths at once: past that, it ranks the rest for the query itself.
+        if (query.isNotEmpty() && files.base?.truncated == true && files.filtered?.first != query) {
+            delay(150)
+            graph.connection.threadFiles(floor, w.id, query)?.let { files.filtered = query to it }
+        }
+    }
+    val mentionItems = remember(mention?.query, files.base, files.filtered) {
+        val query = mention?.query ?: return@remember emptyList()
+        val base = files.base ?: return@remember emptyList()
+        val source = files.filtered?.takeIf { query.isNotEmpty() && base.truncated && it.first == query }?.second ?: base
+        WorkspaceMention.rank(source.files, source.dirs, query)
+    }
     val images = remember(w.id) { mutableStateListOf<Attachment>() }
     val uploading = images.any { it.id == null }
     // With the keyboard up the conversation keeps most of the room: the field shows three lines and scrolls the rest.
@@ -227,7 +253,16 @@ fun Composer(
     // On a wide screen the Thread's composer keeps to the conversation's reading width.
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
     Column(Modifier.then(if (thread) Modifier.widthIn(max = READING_WIDTH + 20.dp) else Modifier).fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp)) {
-        val suggestions = if (w.isShell) emptyList() else SlashCommands.suggestions(text, slashList)
+        val mentions = if (mention != null) mentionItems else emptyList()
+        AnimatedVisibility(mentions.isNotEmpty()) {
+            MentionMenu(mentions) { item ->
+                val q = WorkspaceMention.find(value.text, value.selection.end) ?: mention ?: return@MentionMenu
+                val next = WorkspaceMention.apply(value.text, q.start, q.end, item.path)
+                value = TextFieldValue(next.value, selection = TextRange(next.cursor))
+                focus.requestFocus()
+            }
+        }
+        val suggestions = if (w.isShell || mentions.isNotEmpty()) emptyList() else SlashCommands.suggestions(text, slashList)
         AnimatedVisibility(suggestions.isNotEmpty()) {
             SlashMenu(suggestions, thread, w.state.busy) { c ->
                 val filled = "/${c.name} "
@@ -390,6 +425,62 @@ private fun SlashMenu(commands: List<SlashCommands.Command>, thread: Boolean, bu
                             style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextTertiary), modifier = Modifier.padding(start = 8.dp),
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/** A worker's workspace listing for `@` mentions, kept for ten seconds as the web composer keeps it. */
+private class MentionFiles {
+    var base by mutableStateOf<ThreadFiles?>(null)
+        private set
+    private var at = 0L
+    /** The office's own ranking for one query, when [base] is cut short. */
+    var filtered by mutableStateOf<Pair<String, ThreadFiles>?>(null)
+
+    fun fresh(now: Long) = base != null && now - at < FILES_TTL_MS
+
+    fun keep(files: ThreadFiles, now: Long) {
+        base = files
+        at = now
+        filtered = null
+    }
+}
+
+private const val FILES_TTL_MS = 10_000L
+
+/**
+ * The worker's files and folders for the `@` mention being typed, over the composer: tapping a file
+ * puts `@path ` in the draft, and tapping a folder puts `@folder/` there to keep narrowing.
+ */
+@Composable
+private fun MentionMenu(items: List<WorkspaceMention.Item>, onPick: (WorkspaceMention.Item) -> Unit) {
+    val shape = RoundedCornerShape(4.dp)
+    val listState = rememberLazyListState()
+    LaunchedEffect(items) { listState.scrollToItem(0) }
+    Column(
+        Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(shape).background(Palette.Surface).border(1.dp, Palette.BorderStrong, shape)
+            .tagged(Tags.Worker.MENTION_MENU).padding(vertical = 4.dp),
+    ) {
+        LazyColumn(Modifier.heightIn(max = 220.dp), state = listState) {
+            items(items, key = { it.path }) { item ->
+                val dir = item.kind == WorkspaceMention.Kind.Dir
+                Row(
+                    Modifier.fillMaxWidth().clickable(role = Role.Button, onClickLabel = "Mention ${item.path}") { onPick(item) }
+                        .tagged(Tags.Worker.mention(item.path)).heightIn(min = 44.dp).padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(if (dir) OfficeIcons.Folder else OfficeIcons.File, null, tint = Palette.TextSecondary, modifier = Modifier.size(15.dp))
+                    Text(
+                        item.path,
+                        style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = Palette.Text),
+                        maxLines = 1, overflow = TextOverflow.MiddleEllipsis, modifier = Modifier.weight(1f).padding(start = 10.dp),
+                    )
+                    Text(
+                        if (dir) "FOLDER" else "FILE",
+                        style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextTertiary), modifier = Modifier.padding(start = 8.dp),
+                    )
                 }
             }
         }

@@ -423,6 +423,8 @@ object Tags {
         const val QUEUE_SEND = "composer.queue_send"
         /** Droid's slash commands matching a draft that starts with `/`, over the composer. */
         const val SLASH_MENU = "composer.slash_menu"
+        /** The worker's files and folders matching an `@` mention under the cursor, over the Thread's composer. */
+        const val MENTION_MENU = "composer.mention_menu"
         /** In the Thread view while the worker is on a turn: stops it with Esc, as Droid's own Esc does. */
         const val STOP = "composer.stop"
         /** Why Send is off while the office is out of reach: the draft stays and nothing is sent later on its own. */
@@ -489,6 +491,8 @@ object Tags {
 
         /** A slash command in [SLASH_MENU], by its name: `composer.slash/model`. */
         fun slash(name: String) = "composer.slash/$name"
+        /** A file or folder in [MENTION_MENU], by its workspace path (folders end in `/`): `composer.mention/src/app.ts`. */
+        fun mention(path: String) = "composer.mention/$path"
         /** A message waiting in Droid's queue, by its place in it from 1. */
         fun threadQueued(n: Int) = "worker.thread.queued/$n"
         /** A message, tool call, thought or notice in the thread, by its entry id. */
