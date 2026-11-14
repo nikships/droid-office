@@ -10,6 +10,7 @@ import type { FactorySessionsState } from './factory-sessions.js';
 import { emptySessions } from './factory-sessions.js';
 import type { FactoryWikiState } from './factory-wiki.js';
 import { emptyWiki } from './factory-wiki.js';
+import { emptyLimits, type FactoryLimitsState } from './factory-limits.js';
 
 // The office's connection to Factory (factory.ai) with an API key, and the read state of each
 // Factory feature the office shows. See docs/factory.md for the contract a feature follows.
@@ -18,8 +19,8 @@ import { emptyWiki } from './factory-wiki.js';
 export const FACTORY_KEYS_URL = 'https://app.factory.ai/settings/api-keys';
 
 /** The Factory features the office polls, each with its own slice of FactoryState. */
-export type FactoryFeatureId = 'computers' | 'environments' | 'sessions' | 'ci' | 'wiki' | 'cloud';
-export const FACTORY_FEATURES: readonly FactoryFeatureId[] = ['computers', 'environments', 'sessions', 'ci', 'wiki', 'cloud'];
+export type FactoryFeatureId = 'computers' | 'environments' | 'sessions' | 'ci' | 'wiki' | 'cloud' | 'limits';
+export const FACTORY_FEATURES: readonly FactoryFeatureId[] = ['computers', 'environments', 'sessions', 'ci', 'wiki', 'cloud', 'limits'];
 
 export function isFactoryFeature(v: unknown): v is FactoryFeatureId {
   return typeof v === 'string' && (FACTORY_FEATURES as readonly string[]).includes(v);
@@ -93,11 +94,12 @@ export interface FactoryState {
   ci: FactoryCiState;
   wiki: FactoryWikiState;
   cloud: FactoryCloudState;
+  limits: FactoryLimitsState;
 }
 
 /** The slices before anything is read: what a disconnected office shows. */
 export function emptyFactoryState(): FactoryState {
-  return { connection: { connected: false, capabilities: [] }, computers: emptyComputers(), environments: emptyEnvironments(), sessions: emptySessions(), ci: emptyCi(), wiki: emptyWiki(), cloud: emptyCloud() };
+  return { connection: { connected: false, capabilities: [] }, computers: emptyComputers(), environments: emptyEnvironments(), sessions: emptySessions(), ci: emptyCi(), wiki: emptyWiki(), cloud: emptyCloud(), limits: emptyLimits() };
 }
 
 /** One group's capability, if the probe has said. */
