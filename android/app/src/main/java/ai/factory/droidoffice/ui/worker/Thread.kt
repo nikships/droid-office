@@ -96,6 +96,7 @@ import ai.factory.droidoffice.core.ClientMsg
 import ai.factory.droidoffice.core.DiffLineKind
 import ai.factory.droidoffice.core.DroidQueue
 import ai.factory.droidoffice.core.FileChangeKind
+import ai.factory.droidoffice.core.Markdown
 import ai.factory.droidoffice.core.MissionControl
 import ai.factory.droidoffice.core.NoticeTone
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
@@ -117,6 +118,8 @@ import ai.factory.droidoffice.core.ThreadRole
 import ai.factory.droidoffice.core.ThreadRow
 import ai.factory.droidoffice.core.ThreadState
 import ai.factory.droidoffice.core.ThreadSupport
+import ai.factory.droidoffice.core.ThreadToolGroup
+import ai.factory.droidoffice.core.ThreadTurnChanges
 import ai.factory.droidoffice.core.ThreadView
 import ai.factory.droidoffice.core.WorkerInfo
 import ai.factory.droidoffice.core.WorkerStatus
@@ -463,7 +466,7 @@ internal fun Thread(
                                 is ThreadRow.Message -> {
                                     val all = open[MORE + r.id] == true
                                     val isStreaming = w.state.busy && i == rows.lastIndex && r.role == ThreadRole.Assistant
-                                    Message(w, r, loaded[r.id]?.text.orEmpty(), loaded[r.id]?.images.orEmpty(), all, isStreaming) { flip(MORE + r.id, all) }
+                                    Message(w, r, loaded[r.id]?.text.orEmpty(), loaded[r.id]?.images.orEmpty(), all, isStreaming, floorDir) { flip(MORE + r.id, all) }
                                 }
                                 is ThreadRow.Notice -> Notice(w, r, loaded[r.id])
                                 is ThreadRow.Activity -> Activity(
@@ -820,7 +823,7 @@ private fun Modifier.userBlock() = this.background(Palette.SurfaceHover, Rounded
     .padding(horizontal = 12.dp, vertical = 9.dp)
 
 @Composable
-private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, images: List<ThreadImage>, all: Boolean, streaming: Boolean, onMore: () -> Unit) {
+private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, images: List<ThreadImage>, all: Boolean, streaming: Boolean, floorDir: String?, onMore: () -> Unit) {
     val tag = Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(m.id))
     if (m.role == ThreadRole.User) {
         val reveal = rememberReveal()
@@ -853,6 +856,7 @@ private fun Message(w: WorkerInfo, m: ThreadRow.Message, text: String, images: L
         Column(tag) {
             if (m.startsTurn) Eyebrow(w.name.ifBlank { "Droid" }, Modifier.padding(bottom = 6.dp))
             SelectionContainer { MarkdownText(text, streaming = streaming) }
+            m.turnChanges?.let { TurnChanges(m.id, it, floorDir, Modifier.padding(top = 10.dp)) }
         }
     }
 }
@@ -908,39 +912,165 @@ private fun Activity(
     onFlip: (String, Boolean) -> Unit,
 ) {
     val first = a.id.removePrefix("activity:")
-    val segments = remember(a) { ThreadView.segments(a) }
+    val items = remember(a) { ThreadView.items(a, ThreadView.segments(a)) }
+    @Composable
+    fun SegmentView(seg: ThreadView.Segment) {
+        when (seg) {
+            is ThreadView.Segment.Exploration -> {
+                val segOpen = ThreadView.Open.exploration(seg, a.open, open)
+                ExplorationDisclosure(
+                    seg = seg,
+                    isOpen = segOpen,
+                    open = open,
+                    loaded = loaded,
+                    asking = asking,
+                    onToggle = { onToggleExploration(seg, a.open) },
+                    onFlip = onFlip,
+                )
+            }
+            is ThreadView.Segment.Card -> {
+                CardSegment(
+                    seg = seg,
+                    open = open,
+                    loaded = loaded,
+                    allWorkers = allWorkers,
+                    deskWorker = deskWorker,
+                    onOpenWorker = onOpenWorker,
+                    floorDir = floorDir,
+                    onFlip = onFlip,
+                )
+            }
+        }
+    }
     Column(
         Modifier.fillMaxWidth().tagged(Tags.Worker.threadGroup(first)),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        for (seg in segments) {
-            when (seg) {
-                is ThreadView.Segment.Exploration -> {
-                    val segOpen = ThreadView.Open.exploration(seg, a.open, open)
-                    ExplorationDisclosure(
-                        seg = seg,
-                        isOpen = segOpen,
-                        open = open,
-                        loaded = loaded,
-                        asking = asking,
-                        onToggle = { onToggleExploration(seg, a.open) },
-                        onFlip = onFlip,
-                    )
-                }
-                is ThreadView.Segment.Card -> {
-                    CardSegment(
-                        seg = seg,
-                        open = open,
-                        loaded = loaded,
-                        allWorkers = allWorkers,
-                        deskWorker = deskWorker,
-                        onOpenWorker = onOpenWorker,
-                        floorDir = floorDir,
-                        onFlip = onFlip,
-                    )
+        for (item in items) {
+            when (item) {
+                is ThreadView.Item.One -> SegmentView(item.segment)
+                is ThreadView.Item.Group -> {
+                    val groupOpen = ThreadView.Open.group(item.group, open)
+                    CardGroup(item.group, working = item.group.live && a.live && !asking, isOpen = groupOpen, onToggle = { onFlip(item.group.id, groupOpen) }) {
+                        for (seg in item.segments) SegmentView(seg)
+                    }
                 }
             }
         }
+        a.turnChanges?.let { TurnChanges(a.id, it, floorDir, Modifier.padding(top = 2.dp)) }
+    }
+}
+
+/** Three or more cards in a run, under one line saying what they did and changed; open in the latest turn. */
+@Composable
+private fun CardGroup(group: ThreadToolGroup, working: Boolean, isOpen: Boolean, onToggle: () -> Unit, content: @Composable () -> Unit) {
+    val reveal = rememberReveal()
+    val tag = group.id.removePrefix("group:tools:")
+    Column(Modifier.fillMaxWidth().then(reveal.modifier).tagged(Tags.Worker.threadCardGroup(tag))) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).disclosure(isOpen) {
+                if (!isOpen) reveal.ask()
+                onToggle()
+            }.tagged(Tags.Worker.threadCardGroupToggle(tag)).heightIn(min = 40.dp).padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (working) Spinner(Modifier.size(11.dp), Palette.Accent)
+            Text(
+                if (working) ThreadView.WORKING + group.label else group.label,
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.5.sp, lineHeight = 19.sp, color = Palette.TextSecondary),
+                maxLines = if (isOpen) 3 else 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (group.files > 0) {
+                Text(filesWord(group.files), style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary), maxLines = 1)
+                DiffCounts(group.additions, group.deletions)
+            }
+            if (!working) CardStatusBadge(group.state, quietComplete = true)
+            Icon(OfficeIcons.Chevron, null, Modifier.size(14.dp).rotate(if (isOpen) 90f else 0f), tint = Palette.TextSecondary)
+        }
+        if (isOpen) {
+            Column(
+                Modifier.fillMaxWidth().padding(start = 7.dp, bottom = 4.dp).drawBehind {
+                    drawLine(Palette.Border, Offset(0f, 0f), Offset(0f, size.height), 1.dp.toPx())
+                }.padding(start = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) { content() }
+        }
+    }
+}
+
+private fun filesWord(count: Int) = if (count == 1) "1 file" else "$count files"
+
+@Composable
+private fun DiffCounts(additions: Int, deletions: Int) {
+    Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("+$additions", style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, color = Palette.Success))
+        Text("-$deletions", style = LocalOfficeType.current.monoBody.copy(fontSize = 11.5.sp, color = Palette.Danger))
+    }
+}
+
+/** What a finished turn changed, under its last message or Activity: each file opens in the file preview where there is one. */
+@Composable
+private fun TurnChanges(rowId: String, changes: ThreadTurnChanges, floorDir: String?, modifier: Modifier = Modifier) {
+    val preview = LocalFilePreview.current
+    Column(modifier.fillMaxWidth().panel(RoundedCornerShape(4.dp), Palette.Surface, Palette.Border).tagged(Tags.Worker.threadTurnChanges(rowId))) {
+        Row(
+            Modifier.fillMaxWidth().background(Palette.SurfaceRaised).heightIn(min = 40.dp).padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Changed ${filesWord(changes.count)}", style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, color = Palette.Text, fontWeight = FontWeight.Medium), modifier = Modifier.weight(1f))
+            DiffCounts(changes.additions, changes.deletions)
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+        Column(Modifier.padding(vertical = 4.dp)) {
+            changes.files.forEachIndexed { i, file ->
+                val rel = remember(file.path, floorDir) { ThreadView.workspacePath(file.path, floorDir) }
+                val openFile: (() -> Unit)? = if (preview != null && rel != null) {
+                    { preview.openFilePreview(rel) }
+                } else null
+                Row(
+                    Modifier.fillMaxWidth()
+                        .then(if (openFile != null) Modifier.clickable(onClickLabel = "Open file", role = Role.Button, onClick = openFile) else Modifier)
+                        .tagged(Tags.Worker.threadTurnFile(rowId, i))
+                        .heightIn(min = 36.dp)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        file.shortPath,
+                        style = LocalOfficeType.current.monoBody.copy(
+                            fontSize = 12.sp, lineHeight = 16.sp, color = Palette.Text,
+                            textDecoration = if (openFile != null) TextDecoration.Underline else null,
+                        ),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                    )
+                    DiffCounts(file.additions, file.deletions)
+                }
+            }
+            val more = changes.count - changes.files.size
+            if (more > 0) {
+                Text("and $more more", style = MaterialTheme.typography.bodySmall.copy(color = Palette.TextSecondary), modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
+            }
+        }
+    }
+}
+
+/** A command as the shell reads it, after an accent prompt. */
+private fun shellLine(command: String): AnnotatedString = buildAnnotatedString {
+    withStyle(SpanStyle(color = Palette.Accent)) { append("$ ") }
+    for (tok in Markdown.tokenizeCode(command, "sh")) {
+        val color = when (tok.kind) {
+            Markdown.TokenKind.Plain -> null
+            Markdown.TokenKind.Keyword -> Palette.AccentHover
+            Markdown.TokenKind.Type -> Palette.Info
+            Markdown.TokenKind.String -> Palette.Success
+            Markdown.TokenKind.Number -> Palette.Warning
+            Markdown.TokenKind.Comment -> Palette.TextSecondary
+        }
+        if (color == null) append(tok.text) else withStyle(SpanStyle(color = color)) { append(tok.text) }
     }
 }
 
@@ -1037,7 +1167,7 @@ private fun CardSegment(
                         Column(Modifier.fillMaxWidth().tagged(Tags.Worker.threadEntry(action.id)), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             changes.forEachIndexed { idx, change ->
                                 val changeKey = if (changes.size == 1) action.id else "${action.id}:$idx"
-                                val isOpen = ThreadView.Open.change(changeKey, change.generated, open)
+                                val isOpen = ThreadView.Open.change(changeKey, change, open)
                                 val fullKey = DIFF_FULL + changeKey
                                 val showFull = open[fullKey] == true
                                 FileChangeCard(
@@ -1327,7 +1457,7 @@ private fun CommandCard(action: ThreadModelAction, entry: ThreadEntry?, isOpen: 
                 }
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "$ $cmdText",
+                        remember(cmdText) { shellLine(cmdText) },
                         style = LocalOfficeType.current.monoBody.copy(fontSize = 12.5.sp, lineHeight = 17.sp, color = Palette.Text),
                         maxLines = if (isOpen) 4 else 1,
                         overflow = TextOverflow.Ellipsis,

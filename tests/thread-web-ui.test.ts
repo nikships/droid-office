@@ -60,6 +60,7 @@ async function mountV3Thread(t: TestContext, mounted: WorkerInfo = baseWorker, f
       w.actions = [];
       w.fetches = [];
       w.openedWorkers = [];
+      w.openedChanges = [];
       w.team = [];
       w.filesPayload = {
         files: ['package.json', 'src/client/style.css', 'src/client/ui/worker-thread.ts'],
@@ -144,6 +145,7 @@ async function mountV3Thread(t: TestContext, mounted: WorkerInfo = baseWorker, f
         },
         team: () => w.team,
         openWorker: (id: string) => w.openedWorkers.push(id),
+        openChanges: (id: string) => w.openedChanges.push(id),
         floor,
       });
 
@@ -397,8 +399,10 @@ test('renders V3 1-level exploration disclosures and top-level File Change, Comm
   await page.keyboard.press('Escape');
   assert.equal(await previewModal.count(), 0);
 
-  // 80-line diff clamping + Show full diff toggle
+  // 80-line diff clamping + Show full diff toggle. A diff this big starts closed.
   const bigCard = page.locator('details.wt-change-file[data-disclosure*="src/big.ts"]');
+  assert.equal(await bigCard.evaluate((el) => (el as HTMLDetailsElement).open), false);
+  await bigCard.locator('> summary').click();
   assert.equal(await bigCard.locator('.wt-diff-row').count(), 80);
   // Its file isn't readable here, so it has no gutter rather than numbers counted from 1.
   assert.equal(await bigCard.locator('table.wt-diff-table.is-unnumbered').count(), 1);
@@ -609,6 +613,71 @@ test('renders rich Markdown replies, sticky collapsible Plan Bar, @file workspac
     { entries: staleEntries, rows: presentThread(staleEntries, false) },
   );
   assert.equal(await planBar.isVisible(), false, 'stale completed plan hides cleanly');
+
+  await page.evaluate(() => (window as any).thread.dispose());
+  assert.deepEqual(errors, []);
+});
+
+test('folds a run of cards into one group, ends a finished turn with what it changed, and highlights commands', { skip: chromium }, async (t) => {
+  const { page, errors } = await mountV3Thread(t);
+  const edit = (id: string, seq: number, file: string, from: string, to: string): ThreadEntry => ({
+    id,
+    seq,
+    role: 'assistant',
+    kind: 'tool',
+    name: 'Edit',
+    input: JSON.stringify({ file_path: `/Users/nik/repos/droid-office/${file}`, old_str: from, new_str: to }),
+    output: `Edited ${file}`,
+  });
+  const entries: ThreadEntry[] = [
+    { id: 'u1', seq: 1, role: 'user', kind: 'text', text: 'Tidy the docs' },
+    edit('e1', 2, 'docs/a.md', 'old a', 'new a'),
+    edit('e2', 3, 'docs/b.md', 'old b', 'new b\nmore b'),
+    { id: 'c1', seq: 4, role: 'assistant', kind: 'tool', name: 'Execute', input: JSON.stringify({ command: 'grep -rn "TODO" docs | wc -l' }), output: '0' },
+    { id: 'm1', seq: 5, role: 'assistant', kind: 'text', text: 'Done.' },
+    { id: 'u2', seq: 6, role: 'user', kind: 'text', text: 'And the guide' },
+    edit('e3', 7, 'docs/c.md', 'old c', 'new c'),
+  ];
+  const push = (rows: unknown) =>
+    page.evaluate(
+      ({ entries, rows }) => {
+        (window as any).receive({ t: 'thread.snapshot', workerId: 'worker-1', request: 'push', push: true, sessionId: 'session-1', entries, hasMore: false, presentation: { version: 1, rows } });
+      },
+      { entries, rows },
+    );
+  await push(presentThread(entries, false));
+
+  // The earlier turn's three cards fold under one closed group that counts its files.
+  const group = page.locator('details.wt-card-group[data-disclosure="group:tools:e1"]');
+  assert.equal(await group.evaluate((el) => (el as HTMLDetailsElement).open), false);
+  assert.match(await group.locator('> summary').innerText(), /Edited 2 files · Ran a command[\s\S]*2 files[\s\S]*\+3[\s\S]*-2/);
+  assert.equal(await group.locator('.wt-group-body .wt-change-card').count(), 2);
+  assert.equal(await group.locator('.wt-group-body .wt-command-card').count(), 1);
+  await group.locator('> summary').click();
+  // Diffs from before the latest turn start closed.
+  assert.deepEqual(await group.locator('details.wt-change-file').evaluateAll((els) => els.map((el) => (el as HTMLDetailsElement).open)), [false, false]);
+
+  // The command line is highlighted as shell.
+  const cmd = page.locator('details.wt-command[data-disclosure="c1"] .wt-cmd-text');
+  await page.waitForFunction(() => document.querySelector('details.wt-command[data-disclosure="c1"] .wt-cmd-text [class*="tok-"]'));
+  assert.equal(await cmd.innerText(), 'grep -rn "TODO" docs | wc -l');
+
+  // The earlier turn ends on its summary, under its last message; the latest turn's opens its small diff.
+  const summary = page.locator('.wt-entry[data-entry="m1"] .wt-turn-changes');
+  assert.match(await summary.locator('.wt-turn-head').innerText(), /Changed 2 files[\s\S]*\+3[\s\S]*-2/);
+  assert.deepEqual(await summary.locator('.wt-turn-file .wt-change-path').allTextContents(), ['…/droid-office/docs/a.md', '…/droid-office/docs/b.md']);
+  await summary.locator('.wt-turn-review').click();
+  assert.deepEqual(await page.evaluate(() => (window as any).openedChanges), ['worker-1']);
+  await summary.locator('button.wt-change-path', { hasText: 'docs/b.md' }).click();
+  const preview = page.locator('.modal.wt-file-modal');
+  await preview.locator('.wt-file-lines').waitFor();
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('details.wt-change-file[data-disclosure*="docs/c.md"]').evaluate((el) => (el as HTMLDetailsElement).open), true);
+  assert.equal(await page.locator('.wt-turn-changes').count(), 2);
+
+  // While the latest turn runs it has no summary yet.
+  await push(presentThread(entries, true));
+  assert.equal(await page.locator('.wt-turn-changes').count(), 1);
 
   await page.evaluate(() => (window as any).thread.dispose());
   assert.deepEqual(errors, []);

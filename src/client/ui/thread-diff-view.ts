@@ -1,6 +1,17 @@
 import type { WorkerInfo } from '../../shared/protocol';
 import { intralineDiffSpans, type ThreadDiffLine, type ThreadDiffSpan, type ThreadFileChange } from '../../shared/thread-diff';
-import { activityState, threadArgumentsText, threadOutputText, type ActionKind, type ActivityState, type ThreadBlock, type ThreadDelegationMeta, type ThreadModelAction } from '../../shared/thread-presentation';
+import {
+  activityState,
+  threadArgumentsText,
+  threadOutputText,
+  type ActionKind,
+  type ActivityState,
+  type ThreadBlock,
+  type ThreadDelegationMeta,
+  type ThreadModelAction,
+  type ThreadToolGroup,
+  type ThreadTurnChanges,
+} from '../../shared/thread-presentation';
 import type { ThreadEntry } from '../../shared/worker-thread';
 import { attachCopyFeedback, highlightLine, MAX_HIGHLIGHT_CHARS, renderCodeFrame, resolveCodeLanguage, syncHorizontalScrollCue, tokenizeCode, type CodeToken } from './code-highlight';
 import { h } from './dom';
@@ -55,6 +66,8 @@ export interface ThreadCardRenderContext {
   openWorker?: (id: string) => void;
   pictures: (entry: ThreadEntry | undefined, title: string, about?: string, owner?: WorkerInfo) => HTMLElement | null;
   onLayoutChange?: () => void;
+  /** Opens the worker's Changes window. */
+  openChanges?: () => void;
 }
 
 /** Sets `details.open` while marking `data-expected-open` so programmatic renders never masquerade as user toggles. */
@@ -374,7 +387,7 @@ export function renderFileChangeCard(action: ThreadModelAction, entry: ThreadEnt
   const fileSections = action.changes.map((change) => {
     const disclosureKey = `change:${action.id}:${change.path}`;
     const diffKey = `${action.id}:${change.path}`;
-    const defaultOpen = !change.generated;
+    const defaultOpen = change.open ?? !change.generated;
     const isOpen = ctx.userToggles.get(disclosureKey) ?? defaultOpen;
 
     const relPath = ctx.onOpenPath ? toWorkspaceRelPath(change.path, ctx.floorDir) : null;
@@ -496,7 +509,12 @@ export function renderCommandCard(action: ThreadModelAction, entry: ThreadEntry 
     h(
       'summary.wt-command-summary',
       {},
-      h('span.wt-cmd-main', {}, h('span.wt-cmd-line', { title: cmdText }, h('span.wt-cmd-prompt', { 'aria-hidden': 'true' }, '$'), cmdText), showSub ? h('span.wt-cmd-summary', { title: subText }, subText) : null),
+      h(
+        'span.wt-cmd-main',
+        {},
+        h('span.wt-cmd-line', { title: cmdText }, h('span.wt-cmd-prompt', { 'aria-hidden': 'true' }, '$'), h('span.wt-cmd-text', {}, highlightLine(cmdText, 'sh'))),
+        showSub ? h('span.wt-cmd-summary', { title: subText }, subText) : null,
+      ),
       copyBtn,
       cardStatePill(action.state),
       chevronNode(),
@@ -564,4 +582,54 @@ export function renderDelegationCard(action: ThreadModelAction, entry: ThreadEnt
   const details = h('details.wt-delegate-details', { 'data-disclosure': action.id }, h('summary.wt-delegate-details-summary', {}, h('span.wt-delegate-toggle-label', {}, 'Prompt & report'), chevronNode()), detailsBody);
 
   return h('div.wt-card.wt-delegate-card', { class: `is-${action.state}` }, head, summaryEl, setDisclosureOpen(details, isOpen));
+}
+
+function diffStats(additions: number, deletions: number): HTMLElement {
+  return h('span.wt-diff-stats', { 'aria-label': `${additions} additions, ${deletions} deletions` }, h('span.wt-diff-add', {}, `+${additions}`), h('span.wt-diff-del', {}, `-${deletions}`));
+}
+
+const filesWord = (count: number) => (count === 1 ? '1 file' : `${count} files`);
+
+/** A group of tool cards (`details.wt-card-group`): its summary, with `body` holding the cards it folds. */
+export function renderToolGroup(group: ThreadToolGroup, body: HTMLElement, live: boolean, userToggles: ReadonlyMap<string, boolean>): HTMLDetailsElement {
+  const state = live ? 'working' : group.state;
+  const details = h(
+    'details.wt-card-group',
+    { class: state, 'data-disclosure': group.id },
+    h(
+      'summary',
+      {},
+      h('span.wt-activity-mark', { 'aria-hidden': true }),
+      h('span.wt-activity-label', { title: group.label }, `${live ? 'Working · ' : ''}${group.label}`),
+      group.files ? h('span.wt-group-files', {}, filesWord(group.files)) : null,
+      group.files ? diffStats(group.additions, group.deletions) : null,
+      live ? null : cardStatePill(group.state),
+      chevronNode(),
+    ),
+    body,
+  );
+  body.classList.add('wt-group-body');
+  return setDisclosureOpen(details, userToggles.get(group.id) ?? group.open);
+}
+
+/** What a finished turn changed (`.wt-card.wt-turn-changes`), each file opening in place and the whole in the Changes window. */
+export function renderTurnChanges(changes: ThreadTurnChanges, ctx: Pick<ThreadCardRenderContext, 'floorDir' | 'onOpenPath' | 'openChanges'>): HTMLElement {
+  const files = changes.files.map((file) => {
+    const rel = ctx.onOpenPath ? toWorkspaceRelPath(file.path, ctx.floorDir) : null;
+    const name = rel ? h('button.wt-change-path.wt-file-link', { type: 'button', title: file.path, onclick: () => ctx.onOpenPath?.({ path: rel }) }, file.shortPath) : h('span.wt-change-path', { title: file.path }, file.shortPath);
+    return h('li.wt-turn-file', {}, name, diffStats(file.additions, file.deletions));
+  });
+  const more = changes.count - changes.files.length;
+  return h(
+    'section.wt-card.wt-turn-changes',
+    { 'aria-label': 'Changes in this turn' },
+    h(
+      'div.wt-turn-head',
+      {},
+      h('span.wt-turn-title', {}, `Changed ${filesWord(changes.count)}`),
+      diffStats(changes.additions, changes.deletions),
+      ctx.openChanges ? h('button.btn.sm.wt-turn-review', { type: 'button', onclick: () => ctx.openChanges?.() }, 'Review changes') : null,
+    ),
+    h('ul.wt-turn-files', {}, ...files, more > 0 ? h('li.wt-turn-more', {}, `and ${more} more`) : null),
+  );
 }

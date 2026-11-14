@@ -287,9 +287,44 @@ class ThreadViewTest {
         assertEquals(ThreadCardKind.Command, (segments[2] as ThreadView.Segment.Card).kind)
 
         val choices = HashMap<String, Boolean>()
-        assertTrue(ThreadView.Open.change("t2", generated = false, choices))
-        assertFalse(ThreadView.Open.change("t2", generated = true, choices))
+        val change = editRun.actions.single().changes!!.single()
+        assertTrue(ThreadView.Open.change("t2", change, choices))
+        assertFalse(ThreadView.Open.change("t2", change.copy(generated = true), choices))
+        // The office's choice wins over the generated guess; the owner's wins over both.
+        assertFalse(ThreadView.Open.change("t2", change.copy(open = false), choices))
+        assertTrue(ThreadView.Open.change("t2", change.copy(open = false), mapOf("t2" to true)))
         assertTrue(ThreadView.Open.command(cmdRun.actions.single(), choices))
         assertFalse(ThreadView.Open.command(cmdRun.actions.single().copy(state = ActivityState.Complete), choices))
+    }
+
+    @Test
+    fun aGroupFoldsTheSegmentsFromItsFirstCardToItsLast() {
+        fun card(id: String) = ThreadBlock.Tools(
+            "tools:$id", "Ran a command", ActivityState.Complete, live = false, card = ThreadCardKind.Command,
+            actions = listOf(action(id).copy(card = ThreadCardKind.Command, command = ThreadCommandMeta("ls"))),
+        )
+        val read = ThreadBlock.Tools("tools:r1", "Read a file", ActivityState.Complete, live = false, actions = listOf(action("r1")))
+        val read2 = ThreadBlock.Tools("tools:r2", "Read a file", ActivityState.Complete, live = false, actions = listOf(action("r2")))
+        val blocks = listOf(read, card("c1"), read2, card("c2"), card("c3"))
+        val group = ThreadToolGroup("group:tools:c1", listOf("tools:c1", "tools:r2", "tools:c2", "tools:c3"), "Ran 3 commands", ActivityState.Complete, live = false, open = false)
+        val row = ThreadRow.Activity(
+            id = "activity:r1", from = 1, to = 5, sourceIds = listOf("r1", "c1", "r2", "c2", "c3"), label = "Read 2 files · Ran 3 commands",
+            state = ActivityState.Complete, live = false, blocks = blocks, groups = listOf(group),
+        )
+        val items = ThreadView.items(row, ThreadView.segments(row))
+        assertEquals(2, items.size)
+        assertTrue((items[0] as ThreadView.Item.One).segment is ThreadView.Segment.Exploration)
+        val folded = items[1] as ThreadView.Item.Group
+        assertEquals(group, folded.group)
+        assertEquals(listOf("tools:c1", "tools:r2", "tools:c2", "tools:c3"), folded.segments.map {
+            when (it) {
+                is ThreadView.Segment.Card -> it.block.id
+                is ThreadView.Segment.Exploration -> it.blocks.first().id
+            }
+        })
+        assertFalse(ThreadView.Open.group(group, emptyMap()))
+        assertTrue(ThreadView.Open.group(group.copy(open = true), emptyMap()))
+        assertFalse(ThreadView.Open.group(group.copy(open = true), mapOf(group.id to false)))
+        assertEquals(ThreadView.segments(row).size, ThreadView.items(row.copy(groups = emptyList()), ThreadView.segments(row)).size)
     }
 }

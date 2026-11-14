@@ -4,7 +4,7 @@ import { PROMPT_MAX } from '../../shared/prompts';
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { isAsleep, isBusy, needsOwnerInput } from '../../shared/status';
-import { latestThreadPlan, type ActivePlan, type ThreadBlock, type ThreadRow } from '../../shared/thread-presentation';
+import { latestThreadPlan, type ActivePlan, type ThreadBlock, type ThreadRow, type ThreadToolGroup } from '../../shared/thread-presentation';
 import { ThreadQueue } from '../../shared/thread-queue';
 import { todosFinished } from '../../shared/todos';
 import type { ThreadEntry } from '../../shared/worker-thread';
@@ -21,7 +21,7 @@ import { icon } from './icons';
 import { promptImages } from './images';
 import { expandPastes, insertQuote, isLargePaste, livePastes, type PastedText, pastedText, replacePaste } from './thread-compose';
 import { viewPicture } from './picture-viewer';
-import { renderCommandCard, renderDelegationCard, renderFileChangeCard, renderToolDisclosure, setDisclosureOpen, summarizeExplorationBlocks, type ThreadCardRenderContext } from './thread-diff-view';
+import { renderCommandCard, renderDelegationCard, renderFileChangeCard, renderToolDisclosure, renderToolGroup, renderTurnChanges, setDisclosureOpen, summarizeExplorationBlocks, type ThreadCardRenderContext } from './thread-diff-view';
 import { threadMarkdown, threadUserMarkdown, type WorkspacePathRef } from './thread-markdown';
 import { applyMention, findMentionQuery, rankWorkspacePaths, type MentionQuery, type WorkspaceMentionItem } from './thread-mention';
 
@@ -53,6 +53,8 @@ export interface ThreadOptions {
   team?(): readonly WorkerInfo[];
   /** Open this child's Thread view, without starting or resuming a worker. */
   openWorker?(id: string): void;
+  /** Opens a worker's Changes window. Absent where there is none. */
+  openChanges?(id: string): void;
   /** The floor the worker is on: its pictures and workspace files are fetched from there. */
   floor?: string;
   /** Shown in place of an empty conversation while it returns a node. With no session yet, nothing is read. */
@@ -874,14 +876,27 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     isLastRow?: boolean;
   }
 
-  // While the worker waits on the owner, its run isn't working: the question card says what it's on.
+  const changesOf = (author: WorkerInfo) => (opts.openChanges && !author.cloud ? () => opts.openChanges?.(author.id) : undefined);
+
+  /** A row, and below it what its turn changed when it is the turn's last. */
   const render = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>, asking: boolean, renderOpts: RenderOptions = {}) => {
+    const node = renderRow(row, loaded, asking, renderOpts);
+    if (row.kind !== 'notice' && row.turnChanges) {
+      const author = renderOpts.author ?? worker;
+      node.append(renderTurnChanges(row.turnChanges, { floorDir: resolveFloorDir(), onOpenPath: onOpenPathFor(author), openChanges: changesOf(author) }));
+    }
+    return node;
+  };
+
+  // While the worker waits on the owner, its run isn't working: the question card says what it's on.
+  const renderRow = (row: ThreadRow, loaded: ReadonlyMap<string, ThreadEntry>, asking: boolean, renderOpts: RenderOptions = {}) => {
     const author = renderOpts.author ?? worker;
     const expanded = renderOpts.expanded ?? expandedMessages;
     const toggles = renderOpts.toggles ?? userToggles;
     const diffs = renderOpts.diffs ?? expandedDiffs;
 
     const node = h('article.wt-entry', { 'data-entry': row.id });
+    const openChanges = changesOf(author);
     if (row.kind === 'activity') {
       node.classList.add('activity');
       const cardCtx: ThreadCardRenderContext = {
@@ -894,7 +909,13 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         openWorker: opts.openWorker,
         pictures,
         onLayoutChange: () => updateLatest(),
+        openChanges,
       };
+      // Blocks a group folds render into its body instead of the row.
+      const groupOf = new Map<string, ThreadToolGroup>();
+      for (const group of row.groups ?? []) for (const id of group.blockIds) groupOf.set(id, group);
+      let target: HTMLElement = node;
+      let group: ThreadToolGroup | undefined;
 
       let exploreSegment: ThreadBlock[] = [];
       const flushExplore = () => {
@@ -931,18 +952,29 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
           ),
           toggles.get(exploreKey) ?? false,
         );
-        node.append(details);
+        target.append(details);
       };
 
       let hasWorkingCard = false;
       for (const block of row.blocks) {
+        const into = groupOf.get(block.id);
+        if (into !== group) {
+          flushExplore();
+          group = into;
+          target = node;
+          if (into) {
+            const body = h('div');
+            node.append(renderToolGroup(into, body, into.live && row.live && !asking, toggles));
+            target = body;
+          }
+        }
         if (block.kind === 'tools' && block.card) {
           flushExplore();
           for (const act of block.actions) {
             if (act.state === 'working') hasWorkingCard = true;
-            if (block.card === 'change') node.append(renderFileChangeCard(act, loaded.get(act.id), cardCtx));
-            else if (block.card === 'command') node.append(renderCommandCard(act, loaded.get(act.id), cardCtx));
-            else node.append(renderDelegationCard(act, loaded.get(act.id), cardCtx));
+            if (block.card === 'change') target.append(renderFileChangeCard(act, loaded.get(act.id), cardCtx));
+            else if (block.card === 'command') target.append(renderCommandCard(act, loaded.get(act.id), cardCtx));
+            else target.append(renderDelegationCard(act, loaded.get(act.id), cardCtx));
           }
         } else {
           exploreSegment.push(block);

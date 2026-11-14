@@ -112,12 +112,45 @@ export interface ThreadFailure {
   /** Diagnostic metadata retained for wire compatibility, not a collapsed-row callout. */
   preview: string;
 }
+/**
+ * Three or more tool cards in one Activity fold under one disclosure: the blocks from its first card
+ * to its last. It starts open in the latest turn, so its open diffs show, and closed before it.
+ */
+export interface ThreadToolGroup {
+  /** 'group:' + its first block's id. */
+  id: string;
+  /** The blocks it folds, in order: always consecutive in the Activity's `blocks`. */
+  blockIds: string[];
+  label: string;
+  state: ActivityState;
+  live: boolean;
+  open: boolean;
+  /** Files its finished change cards changed, counted once, and their lines. */
+  files: number;
+  additions: number;
+  deletions: number;
+}
+export interface ThreadTurnFile {
+  path: string;
+  shortPath: string;
+  additions: number;
+  deletions: number;
+}
+/** What a finished turn changed, on its last message or Activity row. */
+export interface ThreadTurnChanges {
+  /** Every file the turn's finished change cards changed, counted once. */
+  count: number;
+  additions: number;
+  deletions: number;
+  /** The first files it changed, in order. */
+  files: ThreadTurnFile[];
+}
 export type ThreadBlock =
   | { kind: 'thought'; id: string; preview: string; live: boolean; open: boolean }
   | { kind: 'tools'; id: string; label: string; state: ActivityState; live: boolean; open: boolean; card?: ThreadCardKind; actions: ThreadModelAction[]; plan?: PlanStep[] };
 /** `from` and `to` are the seqs of the first and last entry a row stands for, hidden ones included. */
 export type ThreadRow =
-  | { kind: 'message'; id: string; from: number; to: number; role: 'user' | 'assistant'; startsTurn: boolean }
+  | { kind: 'message'; id: string; from: number; to: number; role: 'user' | 'assistant'; startsTurn: boolean; turnChanges?: ThreadTurnChanges }
   | { kind: 'notice'; id: string; from: number; to: number; role: ThreadEntry['role']; text: string; tone: 'quiet' | 'danger' | 'attachment' }
   | {
       kind: 'activity';
@@ -135,6 +168,8 @@ export type ThreadRow =
       running?: string;
       failed: ThreadFailure[];
       blocks: ThreadBlock[];
+      groups?: ThreadToolGroup[];
+      turnChanges?: ThreadTurnChanges;
     };
 
 const bookkeeping = new Set(['todowrite', 'todoread', 'toolsearch', 'skill', 'todo_write', 'todo_read', 'update_plan', 'waitforscript', 'taskoutput']);
@@ -575,6 +610,86 @@ function modelAction(action: ThreadAction, fileText?: ThreadFileText): ThreadMod
   };
 }
 
+/** An Activity with at least this many tool cards folds them under one group. */
+export const GROUP_MIN_CARDS = 3;
+/** In the latest turn, a diff of at most this many changed lines starts open, */
+export const SMALL_DIFF_LINES = 40;
+/** and at most this many of them do. Diffs in earlier turns start closed. */
+export const OPEN_DIFFS_PER_TURN = 3;
+const TURN_FILES = 20;
+
+/** What finished change cards changed, by file in first-changed order. A failed or unfinished edit changed nothing known. */
+function changeTotals(actions: readonly ThreadModelAction[]): { files: ThreadTurnFile[]; additions: number; deletions: number } {
+  const byPath = new Map<string, ThreadTurnFile>();
+  let additions = 0;
+  let deletions = 0;
+  for (const action of actions) {
+    if (action.card !== 'change' || action.state !== 'complete') continue;
+    for (const change of action.changes ?? []) {
+      const file = byPath.get(change.path) ?? { path: change.path, shortPath: change.shortPath, additions: 0, deletions: 0 };
+      file.additions += change.additions;
+      file.deletions += change.deletions;
+      byPath.set(change.path, file);
+      additions += change.additions;
+      deletions += change.deletions;
+    }
+  }
+  return { files: [...byPath.values()], additions, deletions };
+}
+
+function toolGroups(blocks: readonly ThreadBlock[], actionsOf: ReadonlyMap<string, ThreadAction[]>): ThreadToolGroup[] {
+  const cards = blocks.flatMap((block, index) => (block.kind === 'tools' && block.card ? [index] : []));
+  if (cards.length < GROUP_MIN_CARDS) return [];
+  const folded = blocks.slice(cards[0], cards[cards.length - 1] + 1);
+  const tools = folded.filter((block): block is Extract<ThreadBlock, { kind: 'tools' }> => block.kind === 'tools');
+  const wired = tools.flatMap((block) => block.actions);
+  const live = folded.some((block) => block.live);
+  const totals = changeTotals(wired);
+  return [
+    {
+      id: `group:${folded[0].id}`,
+      blockIds: folded.map((block) => block.id),
+      label: activityLabel(tools.flatMap((block) => actionsOf.get(block.id) ?? [])),
+      state: activityState(wired, live),
+      live,
+      open: false,
+      files: totals.files.length,
+      additions: totals.additions,
+      deletions: totals.deletions,
+    },
+  ];
+}
+
+/**
+ * Turns run from one owner message to the next. Diffs and card groups open by default only in the
+ * latest turn, and only small diffs, a few of them; a finished turn's last message or Activity says
+ * what it changed.
+ */
+function finishTurns(rows: ThreadRow[], busy: boolean): void {
+  const turns: ThreadRow[][] = [[]];
+  for (const row of rows) {
+    if (row.kind === 'message' && row.role === 'user') turns.push([]);
+    else turns[turns.length - 1].push(row);
+  }
+  for (const [index, turn] of turns.entries()) {
+    const latest = index === turns.length - 1;
+    for (const row of turn) if (row.kind === 'activity') for (const group of row.groups ?? []) group.open = latest;
+    const actions = turn.flatMap((row) => (row.kind === 'activity' ? row.blocks.flatMap((block) => (block.kind === 'tools' && block.card === 'change' ? block.actions : [])) : []));
+    let opened = 0;
+    for (const change of actions.flatMap((action) => action.changes ?? [])) {
+      const open = latest && !change.generated && change.lines.length > 0 && change.additions + change.deletions <= SMALL_DIFF_LINES && opened < OPEN_DIFFS_PER_TURN;
+      if (open) opened++;
+      change.open = open;
+    }
+    if (latest && busy) continue;
+    const totals = changeTotals(actions);
+    let last: ThreadRow | undefined;
+    for (const row of turn) if (row.kind !== 'notice') last = row;
+    if (!totals.files.length || !last || last.kind === 'notice') continue;
+    last.turnChanges = { count: totals.files.length, additions: totals.additions, deletions: totals.deletions, files: totals.files.slice(0, TURN_FILES) };
+  }
+}
+
 /** The state a run's actions add up to. `live` only matters while the run can still be working. */
 export function activityState(actions: readonly ThreadModelAction[], live = false): ActivityState {
   const count = (state: ActivityState) => actions.filter((action) => action.state === state && !action.causedBy).length;
@@ -595,6 +710,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean, op
   const rows: ThreadRow[] = [];
   let section: ThreadEntry[] = [];
   let blocks: ThreadBlock[] = [];
+  let blockActions = new Map<string, ThreadAction[]>();
   let actions: ThreadAction[] = [];
   let run: ThreadEntry[] = [];
   let lastPlan = '';
@@ -654,6 +770,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean, op
       const isLast = groupIndex === groups.length - 1;
       const blockLive = live && (isLast || group.wired.some((a) => a.state === 'working'));
       const includePlan = groupIndex === 0 ? changedPlan : undefined;
+      blockActions.set(`tools:${group.items[0].entry.id}`, group.items);
       blocks.push({
         kind: 'tools',
         id: `tools:${group.items[0].entry.id}`,
@@ -672,8 +789,10 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean, op
     const source = section;
     const shown = blocks;
     const all = actions;
+    const groups = toolGroups(shown, blockActions);
     section = [];
     blocks = [];
+    blockActions = new Map();
     actions = [];
     if (!shown.length) return;
     const failed = all.filter((a) => a.state === 'failed' && !a.causedBy);
@@ -708,6 +827,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean, op
         ),
       })),
       blocks: shown,
+      ...(groups.length ? { groups } : {}),
     });
   };
   const last = entries.at(-1);
@@ -738,6 +858,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean, op
     }
   }
   flush(busy);
+  finishTurns(rows, busy);
   return rows;
 }
 

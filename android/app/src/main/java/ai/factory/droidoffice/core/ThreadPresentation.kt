@@ -87,6 +87,8 @@ data class ThreadFileChange(
     val generated: Boolean,
     val truncated: Boolean = false,
     val lines: List<ThreadDiffLine> = emptyList(),
+    /** Whether the diff starts open: only a few small ones in the latest turn do. Null from an older office. */
+    val open: Boolean? = null,
 )
 
 data class ThreadCommandMeta(
@@ -142,6 +144,34 @@ data class ThreadModelAction(
 
 data class ThreadFailure(val id: String, val title: String, val preview: String)
 
+/** Three or more tool cards in one Activity fold under one disclosure: the blocks from its first card to its last. */
+data class ThreadToolGroup(
+    /** `group:` + its first block's id. */
+    val id: String,
+    /** The blocks it folds, in order, always consecutive in the Activity's blocks. */
+    val blockIds: List<String>,
+    val label: String,
+    val state: ActivityState,
+    val live: Boolean,
+    val open: Boolean = false,
+    /** Files its finished change cards changed, counted once, and their lines. */
+    val files: Int = 0,
+    val additions: Int = 0,
+    val deletions: Int = 0,
+)
+
+data class ThreadTurnFile(val path: String, val shortPath: String, val additions: Int, val deletions: Int)
+
+/** What a finished turn changed, on its last message or Activity row. */
+data class ThreadTurnChanges(
+    /** Every file the turn's finished change cards changed, counted once. */
+    val count: Int,
+    val additions: Int,
+    val deletions: Int,
+    /** The first files it changed, in order. */
+    val files: List<ThreadTurnFile>,
+)
+
 data class PlanStep(val done: Boolean, val active: Boolean, val text: String)
 
 data class ActivePlan(
@@ -181,7 +211,14 @@ sealed interface ThreadRow {
     /** Every entry the row stands for. */
     val sourceIds: List<String>
 
-    data class Message(override val id: String, override val from: Long, override val to: Long, val role: ThreadRole, val startsTurn: Boolean) : ThreadRow {
+    data class Message(
+        override val id: String,
+        override val from: Long,
+        override val to: Long,
+        val role: ThreadRole,
+        val startsTurn: Boolean,
+        val turnChanges: ThreadTurnChanges? = null,
+    ) : ThreadRow {
         override val sourceIds get() = listOf(id)
     }
 
@@ -204,6 +241,8 @@ sealed interface ThreadRow {
         val running: String? = null,
         val failed: List<ThreadFailure> = emptyList(),
         val blocks: List<ThreadBlock> = emptyList(),
+        val groups: List<ThreadToolGroup> = emptyList(),
+        val turnChanges: ThreadTurnChanges? = null,
     ) : ThreadRow
 }
 
@@ -228,7 +267,14 @@ data class ThreadPresentation(val version: Int, val rows: List<ThreadRow>) {
             val from = o.long("from") ?: return null
             val to = o.long("to") ?: return null
             return when (o.str("kind")) {
-                "message" -> ThreadRow.Message(id, from, to, ThreadRole.of(o.str("role")) ?: return null, o.bool("startsTurn") ?: false)
+                "message" -> ThreadRow.Message(
+                    id,
+                    from,
+                    to,
+                    ThreadRole.of(o.str("role")) ?: return null,
+                    o.bool("startsTurn") ?: false,
+                    (o["turnChanges"] as? JsonObject)?.let(::turnChanges),
+                )
                 "notice" -> ThreadRow.Notice(id, from, to, ThreadRole.of(o.str("role")) ?: return null, o.str("text").orEmpty(), NoticeTone.of(o.str("tone")) ?: return null)
                 "activity" -> ThreadRow.Activity(
                     id = id,
@@ -243,10 +289,38 @@ data class ThreadPresentation(val version: Int, val rows: List<ThreadRow>) {
                     running = o.str("running"),
                     failed = (o["failed"] as? JsonArray)?.mapNotNull(::failure).orEmpty(),
                     blocks = (o["blocks"] as? JsonArray)?.mapNotNull(::block).orEmpty(),
+                    groups = (o["groups"] as? JsonArray)?.mapNotNull(::group).orEmpty(),
+                    turnChanges = (o["turnChanges"] as? JsonObject)?.let(::turnChanges),
                 )
                 else -> null
             }
         }
+
+        private fun group(e: JsonElement): ThreadToolGroup? {
+            val o = e as? JsonObject ?: return null
+            return ThreadToolGroup(
+                id = o.str("id")?.takeIf { it.isNotEmpty() } ?: return null,
+                blockIds = o.strings("blockIds"),
+                label = o.str("label").orEmpty(),
+                state = ActivityState.of(o.str("state")) ?: return null,
+                live = o.bool("live") ?: false,
+                open = o.bool("open") ?: false,
+                files = o.int("files") ?: 0,
+                additions = o.int("additions") ?: 0,
+                deletions = o.int("deletions") ?: 0,
+            )
+        }
+
+        private fun turnChanges(o: JsonObject): ThreadTurnChanges = ThreadTurnChanges(
+            count = o.int("count") ?: 0,
+            additions = o.int("additions") ?: 0,
+            deletions = o.int("deletions") ?: 0,
+            files = (o["files"] as? JsonArray)?.mapNotNull { e ->
+                val f = e as? JsonObject ?: return@mapNotNull null
+                val path = f.str("path") ?: return@mapNotNull null
+                ThreadTurnFile(path, f.str("shortPath") ?: path, f.int("additions") ?: 0, f.int("deletions") ?: 0)
+            }.orEmpty(),
+        )
 
         private fun block(e: JsonElement): ThreadBlock? {
             val o = e as? JsonObject ?: return null
@@ -301,6 +375,7 @@ data class ThreadPresentation(val version: Int, val rows: List<ThreadRow>) {
                 generated = o.bool("generated") ?: false,
                 truncated = o.bool("truncated") ?: false,
                 lines = (o["lines"] as? JsonArray)?.mapNotNull(::diffLine).orEmpty(),
+                open = o.bool("open"),
             )
         }
 

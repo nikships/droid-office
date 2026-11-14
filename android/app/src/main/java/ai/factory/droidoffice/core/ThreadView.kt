@@ -135,6 +135,39 @@ object ThreadView {
         return out
     }
 
+    /** A segment on its own, or the segments a [ThreadToolGroup] folds under one disclosure. */
+    sealed interface Item {
+        data class One(val segment: Segment) : Item
+
+        data class Group(val group: ThreadToolGroup, val segments: List<Segment>) : Item
+    }
+
+    private fun Segment.firstBlockId(): String = when (this) {
+        is Segment.Card -> block.id
+        is Segment.Exploration -> blocks.first().id
+    }
+
+    /**
+     * [segments] of [a] with its groups' segments folded in place. A group runs from a card to a card,
+     * so every segment is wholly in a group or wholly out of it.
+     */
+    fun items(a: ThreadRow.Activity, segments: List<Segment>): List<Item> {
+        if (a.groups.isEmpty()) return segments.map(Item::One)
+        val groupOf = HashMap<String, ThreadToolGroup>()
+        for (g in a.groups) for (id in g.blockIds) groupOf[id] = g
+        val out = ArrayList<Item>()
+        for (seg in segments) {
+            val group = groupOf[seg.firstBlockId()]
+            val last = out.lastOrNull()
+            when {
+                group == null -> out += Item.One(seg)
+                last is Item.Group && last.group.id == group.id -> out[out.lastIndex] = last.copy(segments = last.segments + seg)
+                else -> out += Item.Group(group, listOf(seg))
+            }
+        }
+        return out
+    }
+
     private val hunkStart = Regex("""^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@""")
 
     /** Whether [change]'s lines carry file line numbers: an Edit the office couldn't place in its file has none. */
@@ -353,8 +386,10 @@ object ThreadView {
 
         fun action(a: ThreadModelAction, choices: Map<String, Boolean>): Boolean = choices[a.id] ?: a.open
 
-        /** File Change cards start expanded unless the path looks generated, respecting user overrides. */
-        fun change(key: String, generated: Boolean, choices: Map<String, Boolean>): Boolean = choices[key] ?: !generated
+        /** A diff opens as the office says (a few small ones in the latest turn), or, from an older office, unless it looks generated. */
+        fun change(key: String, change: ThreadFileChange, choices: Map<String, Boolean>): Boolean = choices[key] ?: change.open ?: !change.generated
+
+        fun group(g: ThreadToolGroup, choices: Map<String, Boolean>): Boolean = choices[g.id] ?: g.open
 
         /** Command cards start expanded only when they failed, respecting user overrides. */
         fun command(a: ThreadModelAction, choices: Map<String, Boolean>): Boolean =

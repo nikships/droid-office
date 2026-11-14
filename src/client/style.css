@@ -3031,6 +3031,26 @@ summary:hover > .wt-chevron { color: var(--text-secondary); }
 .wt-card-pill { flex-shrink: 0; }
 .wt-card-error { border-top: 1px solid var(--border); padding: var(--space-2) var(--space-3) var(--space-3); background: var(--danger-muted); }
 
+/* A run of three or more cards folds under one disclosure; a finished turn ends on what it changed. */
+.wt-card-group { min-width: 0; }
+.wt-card-group > summary { display: flex; align-items: center; gap: var(--space-2); min-height: 36px; cursor: pointer; list-style: none; color: var(--text-secondary); font: 400 var(--text-small)/1.5 var(--font-sans); transition: color var(--duration) var(--ease); }
+.wt-card-group > summary::-webkit-details-marker { display: none; }
+.wt-card-group > summary:hover { color: var(--text); }
+.wt-card-group > summary:focus-visible { outline: 1px solid var(--accent); outline-offset: var(--space-1); border-radius: var(--radius); }
+.wt-card-group.working > summary .wt-activity-mark { display: block; background: var(--accent); }
+.wt-card-group[open] > summary > .wt-chevron { transform: rotate(90deg); }
+.wt-card-group > summary > .wt-diff-stats { margin-left: 0; }
+.wt-group-files { flex-shrink: 0; color: var(--text-secondary); font: 400 var(--text-small)/1.5 var(--font-sans); }
+.wt-group-body { display: flex; flex-direction: column; gap: var(--space-2); border-left: 1px solid var(--border-strong); padding-left: var(--space-3); margin: 0 0 var(--space-1) var(--space-1); }
+.wt-turn-changes { margin-top: var(--space-2); }
+.wt-turn-head { display: flex; align-items: center; gap: var(--space-2); min-height: 38px; padding: var(--space-1) var(--space-3); background: var(--surface-raised); border-bottom: 1px solid var(--border); }
+.wt-turn-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 var(--text-small)/1.4 var(--font-sans); color: var(--text); }
+.wt-turn-head > .wt-diff-stats { margin-left: 0; }
+.wt-turn-review { flex-shrink: 0; }
+.wt-turn-files { list-style: none; margin: 0; padding: var(--space-1) 0; max-height: 220px; overflow-y: auto; }
+.wt-turn-file { display: flex; align-items: center; gap: var(--space-2); min-height: 28px; padding: 0 var(--space-3); }
+.wt-turn-more { padding: var(--space-1) var(--space-3); color: var(--text-secondary); font-size: var(--text-small); }
+
 /* File Change Card & Inline Unified Diffs */
 .wt-change-multi-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); background: var(--surface-raised); }
 .wt-change-multi-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 var(--text-small)/1.4 var(--font-sans); color: var(--text); }
@@ -3079,6 +3099,7 @@ button.wt-change-path:hover { color: var(--accent); text-decoration: underline; 
 .wt-cmd-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: var(--space-1) 0; }
 .wt-cmd-line { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 12.5px/1.4 var(--font-mono); color: var(--text); }
 .wt-cmd-prompt { flex: none; color: var(--accent); user-select: none; }
+.wt-cmd-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wt-cmd-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 var(--text-small)/1.35 var(--font-sans); color: var(--text-secondary); }
 .wt-cmd-copy { flex-shrink: 0; }
 .wt-command-body { padding: var(--space-2) var(--space-3); background: var(--bg); min-width: 0; }

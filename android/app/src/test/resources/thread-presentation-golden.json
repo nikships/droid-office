@@ -4,12 +4,14 @@
   "schema": {
     "case": "{ name: string (unique), busy: boolean (the worker is in a turn), entries: ThreadEntry[] (wire shape, oldest first), expected: ThreadRow[] }",
     "presentation": "{ version: 1, rows: ThreadRow[] } on thread.snapshot. A client that gets a version it doesn't know, or none, says so and offers Raw TTY instead of guessing.",
-    "message": "{ kind: 'message', id: entry id, from, to: its seq, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name) }",
+    "message": "{ kind: 'message', id: entry id, from, to: its seq, role: 'user' | 'assistant', startsTurn: boolean (first assistant message after the owner's, or the first one: the only one that carries the worker's name), turnChanges?: TurnChanges }",
     "notice": "{ kind: 'notice', id: entry id, from, to: its seq, role, text: string (the copy shown), tone: 'quiet' | 'danger' | 'attachment' }",
-    "activity": "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: cancellation and missing-result counts only, running?: newest working action's title while live, failed: { id, title, preview }[] (diagnostic metadata, never a callout), blocks: Block[] }",
+    "activity": "{ kind: 'activity', id: 'activity:' + first entry id, from, to: seqs of its first and last entry (hidden ones included), sourceIds: every entry it stands for, label: the closed line, state, live: newest while busy, open: false (the default disclosure), status?: cancellation and missing-result counts only, running?: newest working action's title while live, failed: { id, title, preview }[] (diagnostic metadata, never a callout), blocks: Block[], groups?: Group[], turnChanges?: TurnChanges }",
+    "group": "{ id: 'group:' + its first block's id, blockIds: the consecutive blocks from the Activity's first card block to its last (only with three or more card blocks), label, state, live, open: true in the latest turn, false before it, files, additions, deletions: what its finished change cards changed, each file counted once }",
+    "turnChanges": "{ count: files the turn's finished change cards changed, each counted once, additions, deletions, files: { path, shortPath, additions, deletions }[] (the first 20, in first-changed order) }, on the last message or Activity row of a turn that changed files, absent on the latest turn while busy",
     "thought": "{ kind: 'thought', id: entry id, preview: first non-blank line, asterisks stripped, clipped to 120, live: busy and the last entry, open: false }",
     "tools": "{ kind: 'tools', id: 'tools:' + first visible entry id of the block, label, state, live, open: false, card?: 'change' | 'command' | 'delegate' (single-action V3 card block; absent on grouped exploration blocks), actions: Action[], plan?: { done, active, text }[] (the run's plan, only when it changed since the last one shown) }",
-    "action": "{ id: tool entry id, title: human, never a raw command, JSON or home path, detail?: short path, pattern or subagent type, category, state: 'complete' | 'working' | 'failed' | 'incomplete' | 'cancelled', status: the state in words or '', causedBy?: the child entry whose failure this wrapper repeats, arguments?: { label, field? } (field: key of the input JSON, '.' for a JSON string, absent for the whole input), result: 'Result' | 'Error' | 'Cancelled', open: false, card?: 'change' | 'command' | 'delegate', changes?: ThreadFileChange[], command?: { command, summary? }, delegation?: { agent, role?, summary, workerId?, workerName?, branch? } }",
+    "action": "{ id: tool entry id, title: human, never a raw command, JSON or home path, detail?: short path, pattern or subagent type, category, state: 'complete' | 'working' | 'failed' | 'incomplete' | 'cancelled', status: the state in words or '', causedBy?: the child entry whose failure this wrapper repeats, arguments?: { label, field? } (field: key of the input JSON, '.' for a JSON string, absent for the whole input), result: 'Result' | 'Error' | 'Cancelled', open: false, card?: 'change' | 'command' | 'delegate', changes?: (ThreadFileChange & { open?: boolean })[] (open: the diff starts open), command?: { command, summary? }, delegation?: { agent, role?, summary, workerId?, workerName?, branch? } }",
     "paging": "{ name, busy, steps: { snapshot: thread.snapshot fields (before?, entries, hasMore, presentation), expected: { entries: ids loaded, rows: ThreadRow[] held } }[] }. A latest page replaces the rows from its first row on; an earlier page adds only rows that end before the first row already held.",
     "rules": [
       "Messages and shown notices are top-level rows. Everything between them is one Activity row holding, in order, its thoughts, grouped exploration tool runs, and single-action V3 card blocks (change, command, delegate); thoughts and card actions split exploration runs in chronological order without splitting the Activity. An Activity with nothing to show leaves no row.",
@@ -19,7 +21,8 @@
       "Turn ended · completed is hidden; Turn cancelled is a quiet notice. Only an exact CLI by-user result proves owner cancellation; a bare 'Tool execution was interrupted' stays failed.",
       "A call with no output is 'working' only in the live run; otherwise 'incomplete'. Never 'complete' without output.",
       "Labels: verb phrases per kind in first-seen order, then 'N more' past three kinds; edited and created files are unique; failed bookkeeping isn't counted. An Activity with only thoughts is 'Thought'.",
-      "Every disclosure starts closed. Clients keep the owner's choices by id across polls, result updates and earlier pages, and drop them for a new session."
+      "Every disclosure starts closed except in the latest turn (a turn runs from one owner message to the next): there card groups start open, and so do its first three diffs of at most 40 changed lines that aren't generated. Clients keep the owner's choices by id across polls, result updates and earlier pages, and drop them for a new session.",
+      "An Activity with three or more card blocks folds the blocks from its first card to its last under one group. A finished turn that changed files ends with what it changed, on its last message or Activity row."
     ]
   },
   "cases": [
@@ -400,6 +403,23 @@
                   }
                 }
               ]
+            }
+          ],
+          "groups": [
+            {
+              "id": "group:tools:tool:toolu_5",
+              "blockIds": [
+                "tools:tool:toolu_5",
+                "tools:tool:toolu_8",
+                "tools:tool:toolu_9"
+              ],
+              "label": "Ran 3 commands",
+              "state": "complete",
+              "live": false,
+              "open": true,
+              "files": 0,
+              "additions": 0,
+              "deletions": 0
             }
           ]
         },
@@ -2114,7 +2134,8 @@
                           "kind": "add",
                           "text": "b"
                         }
-                      ]
+                      ],
+                      "open": true
                     }
                   ]
                 }
@@ -2160,7 +2181,8 @@
                           "text": "# x",
                           "newLine": 1
                         }
-                      ]
+                      ],
+                      "open": true
                     }
                   ]
                 }
@@ -2196,7 +2218,8 @@
                       "additions": 0,
                       "deletions": 0,
                       "generated": false,
-                      "lines": []
+                      "lines": [],
+                      "open": false
                     },
                     {
                       "path": "/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/shared/thread-presentation.ts",
@@ -2205,7 +2228,8 @@
                       "additions": 0,
                       "deletions": 0,
                       "generated": false,
-                      "lines": []
+                      "lines": [],
+                      "open": false
                     }
                   ]
                 }
@@ -2321,7 +2345,57 @@
                 }
               ]
             }
-          ]
+          ],
+          "groups": [
+            {
+              "id": "group:tools:tool:toolu_3",
+              "blockIds": [
+                "tools:tool:toolu_3",
+                "tools:tool:toolu_4",
+                "tools:tool:toolu_5",
+                "tools:tool:toolu_6",
+                "tools:tool:toolu_8"
+              ],
+              "label": "Edited 3 files · Created a file · Read a web page · 2 more",
+              "state": "complete",
+              "live": false,
+              "open": true,
+              "files": 4,
+              "additions": 2,
+              "deletions": 1
+            }
+          ],
+          "turnChanges": {
+            "count": 4,
+            "additions": 2,
+            "deletions": 1,
+            "files": [
+              {
+                "path": "/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/android/README.md",
+                "shortPath": "android/README.md",
+                "additions": 1,
+                "deletions": 1
+              },
+              {
+                "path": "/Users/nik/notes/thread.md",
+                "shortPath": "~/notes/thread.md",
+                "additions": 1,
+                "deletions": 0
+              },
+              {
+                "path": "/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/client/ui/worker-thread.ts",
+                "shortPath": "…/client/ui/worker-thread.ts",
+                "additions": 0,
+                "deletions": 0
+              },
+              {
+                "path": "/Users/nik/repos/droid-office/.droid-office/worktrees/byte-090d/src/shared/thread-presentation.ts",
+                "shortPath": "src/shared/thread-presentation.ts",
+                "additions": 0,
+                "deletions": 0
+              }
+            ]
+          }
         }
       ]
     },
@@ -3673,6 +3747,23 @@
                         }
                       ]
                     }
+                  ],
+                  "groups": [
+                    {
+                      "id": "group:tools:tool:toolu_5",
+                      "blockIds": [
+                        "tools:tool:toolu_5",
+                        "tools:tool:toolu_8",
+                        "tools:tool:toolu_9"
+                      ],
+                      "label": "Ran 3 commands",
+                      "state": "complete",
+                      "live": false,
+                      "open": true,
+                      "files": 0,
+                      "additions": 0,
+                      "deletions": 0
+                    }
                   ]
                 },
                 {
@@ -3838,6 +3929,23 @@
                         }
                       }
                     ]
+                  }
+                ],
+                "groups": [
+                  {
+                    "id": "group:tools:tool:toolu_5",
+                    "blockIds": [
+                      "tools:tool:toolu_5",
+                      "tools:tool:toolu_8",
+                      "tools:tool:toolu_9"
+                    ],
+                    "label": "Ran 3 commands",
+                    "state": "complete",
+                    "live": false,
+                    "open": true,
+                    "files": 0,
+                    "additions": 0,
+                    "deletions": 0
                   }
                 ]
               },
@@ -4041,6 +4149,23 @@
                         }
                       ]
                     }
+                  ],
+                  "groups": [
+                    {
+                      "id": "group:tools:tool:toolu_5",
+                      "blockIds": [
+                        "tools:tool:toolu_5",
+                        "tools:tool:toolu_8",
+                        "tools:tool:toolu_9"
+                      ],
+                      "label": "Ran 3 commands",
+                      "state": "complete",
+                      "live": false,
+                      "open": true,
+                      "files": 0,
+                      "additions": 0,
+                      "deletions": 0
+                    }
                   ]
                 }
               ]
@@ -4202,6 +4327,23 @@
                         }
                       }
                     ]
+                  }
+                ],
+                "groups": [
+                  {
+                    "id": "group:tools:tool:toolu_5",
+                    "blockIds": [
+                      "tools:tool:toolu_5",
+                      "tools:tool:toolu_8",
+                      "tools:tool:toolu_9"
+                    ],
+                    "label": "Ran 3 commands",
+                    "state": "complete",
+                    "live": false,
+                    "open": true,
+                    "files": 0,
+                    "additions": 0,
+                    "deletions": 0
                   }
                 ]
               },
@@ -4413,6 +4555,23 @@
                         }
                       ]
                     }
+                  ],
+                  "groups": [
+                    {
+                      "id": "group:tools:tool:toolu_5",
+                      "blockIds": [
+                        "tools:tool:toolu_5",
+                        "tools:tool:toolu_8",
+                        "tools:tool:toolu_9"
+                      ],
+                      "label": "Ran 3 commands",
+                      "state": "complete",
+                      "live": false,
+                      "open": true,
+                      "files": 0,
+                      "additions": 0,
+                      "deletions": 0
+                    }
                   ]
                 }
               ]
@@ -4586,6 +4745,23 @@
                         }
                       }
                     ]
+                  }
+                ],
+                "groups": [
+                  {
+                    "id": "group:tools:tool:toolu_5",
+                    "blockIds": [
+                      "tools:tool:toolu_5",
+                      "tools:tool:toolu_8",
+                      "tools:tool:toolu_9"
+                    ],
+                    "label": "Ran 3 commands",
+                    "state": "complete",
+                    "live": false,
+                    "open": true,
+                    "files": 0,
+                    "additions": 0,
+                    "deletions": 0
                   }
                 ]
               },

@@ -656,3 +656,82 @@ test('latestThreadPlan tracks active steps and marks completed plans stale after
   assert.equal(latestThreadPlan(withFollowUp, true)?.stale, false, 'not stale while busy');
   assert.equal(latestThreadPlan(withFollowUp, false)?.stale, true, 'stale once idle after a newer user turn');
 });
+
+// A turn of edits: `n` Edit cards, each changing `lines` lines of its own file.
+const message = (id: string, seq: number, role: 'user' | 'assistant'): ThreadEntry => ({ id, seq, role, kind: 'text', text: 'Next.' });
+const edits = (prefix: string, from: number, n: number, lines = 1): ThreadEntry[] =>
+  Array.from({ length: n }, (_, i) => {
+    const seq = from + i;
+    const old = Array.from({ length: lines }, (_, l) => `old ${l}`).join('\n');
+    return tool(`${prefix}${seq}`, 'Edit', { file_path: `/repo/src/${prefix}${i}.ts`, old_str: old, new_str: old.replaceAll('old', 'new') }, { seq });
+  });
+const changesOf = (rows: ThreadRow[]) => rows.flatMap((row) => actionsOf(row).flatMap((action) => action.changes ?? []));
+
+test('only the latest turn opens diffs, and only a few small ones', () => {
+  const rows = presentThread([message('u1', 1, 'user'), ...edits('a', 2, 2), message('m1', 10, 'assistant'), message('u2', 11, 'user'), ...edits('b', 12, 3), ...edits('c', 15, 1, 30), ...edits('d', 16, 2)], false);
+  const [older, latest] = [rows.slice(0, 3), rows.slice(3)];
+  assert.deepEqual(
+    changesOf(older).map((change) => change.open),
+    [false, false],
+  );
+  // The 60-line diff stays closed and doesn't use up one of the three.
+  assert.deepEqual(
+    changesOf(latest).map((change) => [change.additions + change.deletions, change.open]),
+    [
+      [2, true],
+      [2, true],
+      [2, true],
+      [60, false],
+      [2, false],
+      [2, false],
+    ],
+  );
+});
+
+test("a turn's card groups open only while it is the latest", () => {
+  const rows = presentThread([message('u1', 1, 'user'), ...edits('a', 2, 3), message('u2', 10, 'user'), ...edits('b', 11, 4)], false);
+  const groups = rows.flatMap((row) => (row.kind === 'activity' ? (row.groups ?? []) : []));
+  assert.deepEqual(
+    groups.map((group) => [group.id, group.blockIds.length, group.open, group.files, group.additions, group.deletions]),
+    [
+      ['group:tools:a2', 3, false, 3, 3, 3],
+      ['group:tools:b11', 4, true, 4, 4, 4],
+    ],
+  );
+  assert.equal(groups[0].label, 'Edited 3 files');
+});
+
+test('two cards stay ungrouped', () => {
+  const [row] = presentThread(edits('a', 1, 2), false);
+  assert.equal(row.kind === 'activity' && row.groups, undefined);
+});
+
+test("a finished turn ends with what it changed; the latest turn's waits until it finishes", () => {
+  const entries = [
+    message('u1', 1, 'user'),
+    ...edits('a', 2, 2),
+    tool('a4', 'Edit', { file_path: '/repo/src/a0.ts', old_str: 'x', new_str: 'y\nz' }, { seq: 4 }),
+    message('m1', 5, 'assistant'),
+    message('u2', 6, 'user'),
+    ...edits('b', 7, 1),
+  ];
+  const rows = presentThread(entries, true);
+  const summary = rows.find((row) => row.id === 'm1');
+  assert.deepEqual(summary?.kind === 'message' && summary.turnChanges, {
+    count: 2,
+    additions: 4,
+    deletions: 3,
+    files: [
+      { path: '/repo/src/a0.ts', shortPath: '/repo/src/a0.ts', additions: 3, deletions: 2 },
+      { path: '/repo/src/a1.ts', shortPath: '/repo/src/a1.ts', additions: 1, deletions: 1 },
+    ],
+  });
+  assert.equal(rows.filter((row) => row.kind !== 'notice' && row.turnChanges).length, 1);
+  const done = presentThread(entries, false).at(-1);
+  assert.equal(done?.kind === 'activity' && done.turnChanges?.count, 1);
+});
+
+test('a failed edit changed nothing the turn counts', () => {
+  const [row] = presentThread([tool('e1', 'Edit', { file_path: '/repo/a.ts', old_str: 'a', new_str: 'b' }, { seq: 1, error: true, output: 'String not found' })], false);
+  assert.equal(row.kind === 'activity' && row.turnChanges, undefined);
+});

@@ -32,6 +32,8 @@ export interface ThreadFileChange {
   generated: boolean;
   truncated?: boolean;
   lines: ThreadDiffLine[];
+  /** Whether the diff starts expanded; set by the presentation (see presentThread). */
+  open?: boolean;
 }
 
 const baseName = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '').split('/').at(-1) || path;

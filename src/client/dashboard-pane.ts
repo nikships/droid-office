@@ -65,6 +65,8 @@ export interface PaneHost {
   /** Asks, then starts the Orchestrator's conversation over. */
   resetOrchestrator(): void;
   settings(pane?: SettingsPane): void;
+  /** Opens a worker's Changes window. */
+  changes?(id: string): void;
 }
 
 export interface PaneState {
@@ -344,6 +346,7 @@ export function createPane(host: PaneHost, index: number): Pane {
               if (!orchestrator || orchestratorAwake(host.mission())) host.setView(w.id, 'terminal');
             },
         floor: intended,
+        ...(host.changes && !w.cloud ? { openChanges: (id: string) => host.changes?.(id) } : {}),
         ...(orchestrator
           ? {
               intro: () => (orchestratorStarted(host.mission()) ? undefined : (intro ??= orchestratorIntro())),

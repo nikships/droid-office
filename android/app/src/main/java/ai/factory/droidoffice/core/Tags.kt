@@ -531,6 +531,10 @@ object Tags {
         // File Change card actions and turn grouping.
         /** Opens a File Change card's file in the preview sheet, at its first changed line when the diff is numbered. */
         fun threadChangeOpen(id: String) = "worker.thread.change.open/$id"
+        fun threadCardGroup(id: String) = "worker.thread.cards/$id"
+        fun threadCardGroupToggle(id: String) = "worker.thread.cards.toggle/$id"
+        fun threadTurnChanges(id: String) = "worker.thread.turn.changes/$id"
+        fun threadTurnFile(id: String, index: Int) = "worker.thread.turn.file/$id/$index"
 
         /** A quick key, by what TalkBack calls it: "Shift Tab" is `key.shift_tab`. */
         fun key(spoken: String) = "key." + spoken.lowercase().replace(' ', '_')

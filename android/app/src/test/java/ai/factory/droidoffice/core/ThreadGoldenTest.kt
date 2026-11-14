@@ -131,6 +131,7 @@ class ThreadGoldenTest {
                     put("to", r.to)
                     put("role", r.role.wire)
                     put("startsTurn", r.startsTurn)
+                    r.turnChanges?.let { put("turnChanges", encode(it)) }
                 }
                 is ThreadRow.Notice -> {
                     put("kind", "notice")
@@ -161,8 +162,38 @@ class ThreadGoldenTest {
                         })
                     })
                     put("blocks", buildJsonArray { r.blocks.forEach { add(encode(it)) } })
+                    if (r.groups.isNotEmpty()) {
+                        put("groups", buildJsonArray {
+                            for (g in r.groups) add(buildJsonObject {
+                                put("id", g.id)
+                                put("blockIds", buildJsonArray { g.blockIds.forEach { add(JsonPrimitive(it)) } })
+                                put("label", g.label)
+                                put("state", g.state.wire)
+                                put("live", g.live)
+                                put("open", g.open)
+                                put("files", g.files)
+                                put("additions", g.additions)
+                                put("deletions", g.deletions)
+                            })
+                        })
+                    }
+                    r.turnChanges?.let { put("turnChanges", encode(it)) }
                 }
             }
+        }
+
+        private fun encode(t: ThreadTurnChanges): JsonObject = buildJsonObject {
+            put("count", t.count)
+            put("additions", t.additions)
+            put("deletions", t.deletions)
+            put("files", buildJsonArray {
+                for (f in t.files) add(buildJsonObject {
+                    put("path", f.path)
+                    put("shortPath", f.shortPath)
+                    put("additions", f.additions)
+                    put("deletions", f.deletions)
+                })
+            })
         }
 
         private fun encode(b: ThreadBlock): JsonObject = buildJsonObject {
@@ -252,6 +283,7 @@ class ThreadGoldenTest {
                     l.newLine?.let { put("newLine", it) }
                 })
             })
+            c.open?.let { put("open", it) }
         }
     }
 }
