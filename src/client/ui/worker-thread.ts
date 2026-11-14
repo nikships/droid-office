@@ -633,13 +633,37 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const userToggles = new Map<string, boolean>();
   const expandedDiffs = new Set<string>();
 
+  // Rows `content-visibility: auto` has rendered. Measuring inside a skipped one would lay it out
+  // again, so a row's clamps and scroll cues are measured once the browser renders it instead.
+  const tracksRows = 'oncontentvisibilityautostatechange' in list;
+  const renderedRows = new WeakSet<Element>();
+  const skipped = (el: Element) => {
+    const row = el.closest('.wt-list > .wt-entry');
+    return tracksRows && !!row && !renderedRows.has(row);
+  };
   const updateClamps = (within: HTMLElement = element) => {
+    const clamps: [HTMLButtonElement, boolean][] = [];
     for (const text of within.querySelectorAll<HTMLElement>('.wt-user-content')) {
       const button = text.parentElement?.nextElementSibling?.querySelector<HTMLButtonElement>('.wt-message-more');
-      if (button instanceof HTMLButtonElement) button.hidden = text.classList.contains('clamped') && text.scrollHeight <= text.clientHeight + 1;
+      if (button instanceof HTMLButtonElement && !skipped(text)) clamps.push([button, text.classList.contains('clamped') && text.scrollHeight <= text.clientHeight + 1]);
     }
-    for (const frame of within.querySelectorAll<HTMLElement>('.wt-code-scroll')) syncHorizontalScrollCue(frame);
+    // Measure every row before changing any: a write between reads forces another layout per row.
+    for (const [button, hidden] of clamps) if (button.hidden !== hidden) button.hidden = hidden;
+    for (const frame of within.querySelectorAll<HTMLElement>('.wt-code-scroll')) if (!skipped(frame)) syncHorizontalScrollCue(frame);
   };
+  list.addEventListener(
+    'contentvisibilityautostatechange',
+    (event) => {
+      const row = event.target;
+      if (!(row instanceof HTMLElement) || !row.matches('.wt-entry')) return;
+      if ('skipped' in event && event.skipped === true) renderedRows.delete(row);
+      else {
+        renderedRows.add(row);
+        updateClamps(row);
+      }
+    },
+    true,
+  );
 
   let followingLayout = true;
   let viewportWidth = scroll.clientWidth;
@@ -652,6 +676,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     updateLatest();
   });
   resize.observe(scroll);
+  // Off-screen rows hold estimated heights until they render, so the transcript grows after a jump
+  // to the bottom: keep following it.
+  resize.observe(list);
   let inspecting = false;
   const atBottom = () => scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
   const follow = () => {
