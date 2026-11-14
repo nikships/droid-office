@@ -34,11 +34,17 @@ interface WorkerWatch {
   dirPath?: string;
   dirWatcher?: FSWatcher;
   timer?: NodeJS.Timeout;
+  /** Re-reads while the session file is missing; see pollMissing. */
+  missingTimer?: NodeJS.Timeout;
+  missingDelay?: number;
   reading: boolean;
   again: boolean;
   closed: boolean;
   lastDigest?: string;
 }
+
+const MISSING_POLL_MIN_MS = 250;
+const MISSING_POLL_MAX_MS = 5000;
 
 function sessionKeyOf(target: WatchedThreadTarget): string {
   if (target.kind === 'cloud') return 'cloud';
@@ -202,8 +208,10 @@ export class ThreadWatchHub {
     const expectedKey = key;
     void this.opts.workerThreads.sessionPaths(target.local).then((resolved) => {
       if (entry.closed || !entry.clients.size || entry.sessionKey !== expectedKey || !resolved) return;
+      const hadFile = entry.filePath !== undefined;
       const rebound = this.applyPaths(entry, resolved);
-      if (rebound && wakeOnRebind) this.schedule(entry, this.localCoalesceMs);
+      // A file first bound here may already hold lines its watcher never saw, so read it once.
+      if (rebound && (wakeOnRebind || (!hadFile && entry.filePath))) this.schedule(entry, this.localCoalesceMs);
     });
   }
 
@@ -258,7 +266,31 @@ export class ThreadWatchHub {
       }
     }
 
+    if (entry.filePath) this.clearMissing(entry);
+    else this.pollMissing(entry);
     return changed;
+  }
+
+  /**
+   * macOS delivers directory events through FSEvents, whose stream starts asynchronously and can drop a
+   * folder or file created right after the watcher binds. Until the session file exists, re-read on a
+   * backing-off timer so a new session still shows up without a later wake.
+   */
+  private pollMissing(entry: WorkerWatch): void {
+    if (entry.missingTimer || entry.closed || this.stopped) return;
+    const delay = Math.min((entry.missingDelay ?? MISSING_POLL_MIN_MS / 2) * 2, MISSING_POLL_MAX_MS);
+    entry.missingDelay = delay;
+    entry.missingTimer = setTimeout(() => {
+      entry.missingTimer = undefined;
+      this.schedule(entry, 0);
+    }, delay);
+    entry.missingTimer.unref?.();
+  }
+
+  private clearMissing(entry: WorkerWatch): void {
+    if (entry.missingTimer) clearTimeout(entry.missingTimer);
+    entry.missingTimer = undefined;
+    entry.missingDelay = undefined;
   }
 
   private schedule(entry: WorkerWatch, delayMs: number): void {
@@ -381,6 +413,7 @@ export class ThreadWatchHub {
   private closeWatchers(entry: WorkerWatch): void {
     this.closeFileWatcher(entry);
     this.closeDirWatcher(entry);
+    this.clearMissing(entry);
   }
 
   private teardown(entry: WorkerWatch): void {

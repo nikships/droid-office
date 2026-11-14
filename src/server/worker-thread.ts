@@ -176,9 +176,10 @@ export class WorkerThreadReader {
         return { dir: path.dirname(transcript), root: this.root };
       }
     }
+    // Droid may name the folder after the cwd as given or as resolved (symlinked tmp or worktree paths), as find() allows.
     const canonical = await realpath(cwd).catch(() => cwd);
-    const dir = path.join(this.root, canonical.replace(/[^a-zA-Z0-9-]/g, '-'));
-    return { dir, root: this.root };
+    const dirs = [cwd, canonical].map((p) => path.join(this.root, p.replace(/[^a-zA-Z0-9-]/g, '-')));
+    return { dir: dirs.find((d) => existsSync(d)) ?? dirs[1], root: this.root };
   }
 
   /** Independent text window: a long stretch of tools cannot evict the conversation. */
