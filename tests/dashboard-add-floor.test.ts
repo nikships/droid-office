@@ -276,6 +276,10 @@ test('web companion UI drives the full Add floor flow live against the real serv
     assert.deepEqual(await page.locator('.dash-floor-chip:not([hidden]) .dash-floor-name').allInnerTexts(), ['api', 'Home']);
     assert.equal(await page.locator('.dash-quiet-bay').isHidden(), true, 'every floor has a tab, so no "+N more"');
     assert.equal(await page.locator('.dash-git-pill').textContent(), 'api/main');
+    // The current floor's tab shows its number, name and status; its branch lives in the git pill and the tooltip.
+    const currentTab = page.locator('.dash-floor-chip.on');
+    assert.deepEqual(await currentTab.locator(':scope > span').allTextContents(), ['01', 'api', 'empty']);
+    assert.match((await currentTab.getAttribute('title')) ?? '', / · ⎇ main · /);
 
     // Open the Add floor dialog from the top bar.
     await page.getByRole('button', { name: 'Add floor' }).click();
@@ -320,6 +324,7 @@ test('web companion UI drives the full Add floor flow live against the real serv
     await dialog.waitFor({ state: 'detached' });
     await page.waitForFunction(() => document.querySelector('.dash-floor-chip.on .dash-floor-name')?.textContent === 'web');
     assert.deepEqual(await page.locator('.dash-floor-chip:not([hidden]) .dash-floor-name').allInnerTexts(), ['api', 'Home', 'web']);
+    assert.doesNotMatch((await page.locator('.dash-floor-chip.on').textContent()) ?? '', /main/, 'the newly current tab shows no branch either');
     assert.equal(await page.locator('.dash-side-title').innerText(), 'web');
     assert.equal(await page.locator('.dash-side-sub').innerText(), 'main');
 

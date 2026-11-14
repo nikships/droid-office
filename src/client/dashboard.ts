@@ -1152,7 +1152,6 @@ function paintConsole(up: boolean, buildingRows: readonly BuildingWorkerRow[]) {
     floors.replaceChildren(
       ...(store.floor === ROOF ? [h('span.dash-floor-chip.on.dash-floor-roof', {}, 'Rooftop')] : []),
       ...latestTriageItems.map((item) => {
-        const on = item.floor.id === store.floor;
         let waitingSummary = '';
         if (item.needsInput > 0) waitingSummary = `${item.needsInput} needs you`;
         else if (item.unackedDone > 0) waitingSummary = `${item.unackedDone} done`;
@@ -1162,12 +1161,13 @@ function paintConsole(up: boolean, buildingRows: readonly BuildingWorkerRow[]) {
             type: 'button',
             'data-floor': item.floor.id,
             'data-triage': item.triage,
-            title: [`F${item.number} ${item.floor.name}`, item.floor.repo ?? (item.floor.plain ? 'plain folder' : 'git'), waitingSummary, item.chord ? `(${item.chord})` : ''].filter(Boolean).join(' · '),
+            title: [`F${item.number} ${item.floor.name}`, item.floor.repo ?? (item.floor.plain ? 'plain folder' : 'git'), item.branch ? `⎇ ${item.branch}` : '', waitingSummary, item.chord ? `(${item.chord})` : '']
+              .filter(Boolean)
+              .join(' · '),
             onclick: () => goFloor(item.floor.id),
           },
           h('span.dash-floor-number', { 'aria-hidden': 'true' }, item.number),
           h('span.dash-floor-name', {}, item.floor.name),
-          on && item.branch ? h('span.dash-floor-branch', {}, `/${item.branch}`) : null,
           bayStats(item),
         );
       }),
