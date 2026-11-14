@@ -416,7 +416,7 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
     cannotRun: () => {
       const id = picker.value() || defaultModel();
       if (store.setup.airgapped && !catalogue?.models.some((m) => m.custom && m.id === id)) return 'Choose a configured custom model in airgapped mode.';
-      return availabilityOf(id, store.subscriptions, Date.now()).reason;
+      return availabilityOf(id, store.subscriptions, Date.now(), store.factory, pickedModel()).reason;
     },
   };
 }
