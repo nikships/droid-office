@@ -6,8 +6,8 @@ import type { Collider, Interactable } from './office';
 import { mergeByMaterial, mesh, toon, toonUnique } from './toon';
 
 // The Living 3D reactions & mood lighting pedestal switch: a circular pushbutton atop a thin
-// dark-steel column rising to the player character's abdomen, centered directly beneath the
-// spinning Factory ceiling glyph on every indoor floor.
+// dark-steel column rising to waist height, centered directly beneath the spinning Factory
+// ceiling glyph on every indoor floor.
 
 export interface VibesSwitchPalette {
   cap: string;

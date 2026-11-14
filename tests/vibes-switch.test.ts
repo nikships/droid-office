@@ -12,16 +12,18 @@ import { buildVibesSwitch, VIBES_SWITCH_PALETTE } from '../src/client/world/vibe
 import { GeminiDecisionsStore } from '../src/server/gemini-decisions.js';
 import { OfficeVibes } from '../src/server/office-vibes.js';
 import { emptyGeminiState, type GeminiConnectionState, resolveVibesSwitchState, VibesSwitchToggle } from '../src/shared/gemini-vibes.js';
-import { CEILING_GLYPH, SPAWN, VIBES_SWITCH } from '../src/shared/layout.js';
+import { CEILING_GLYPH, DESK_SIZE, SPAWN, VIBES_SWITCH } from '../src/shared/layout.js';
 import { route, walkable } from '../src/shared/nav.js';
 
 const TEST_KEY = 'AIzaSyTestKey1234567890abcdef123456789';
 
-test('VIBES_SWITCH stands directly beneath the spinning ceiling Factory glyph at character abdomen height', () => {
+test('VIBES_SWITCH stands directly beneath the spinning ceiling Factory glyph at waist height', () => {
   assert.equal(VIBES_SWITCH.x, CEILING_GLYPH.x);
   assert.equal(VIBES_SWITCH.z, CEILING_GLYPH.z);
-  assert.ok(VIBES_SWITCH.height > HIPS + 0.15, 'rises comfortably above character hip height');
-  assert.ok(VIBES_SWITCH.height < 0.78, 'stays below chest ID card and desk height, at the character abdomen');
+  assert.equal(VIBES_SWITCH.height, 1.02, 'raised 50% from 0.68 m to 1.02 m');
+  assert.ok(VIBES_SWITCH.height > DESK_SIZE.height, 'rises comfortably above desk height');
+  assert.ok(VIBES_SWITCH.height > HIPS + 0.5, 'rises comfortably above character hip height');
+  assert.ok(VIBES_SWITCH.height < EYE_HEIGHT - 0.3, 'stays comfortably below first-person eye height');
   assert.ok(VIBES_SWITCH.height > STEP, 'taller than STEP so walking against the column never steps onto it');
   assert.ok(VIBES_SWITCH.columnRadius < VIBES_SWITCH.buttonRadius * 0.4, 'a thin vertical column beneath a wider circular button');
 });
@@ -203,7 +205,7 @@ test('window.office automation lists, resolves, stands at, and snapshots the Liv
     const blocked = (x: number, z: number) => Math.hypot(x - VIBES_SWITCH.x, z - VIBES_SWITCH.z) < VIBES_SWITCH.colliderRadius + 0.32;
     const pose = standFor(res.target, blocked, { x: VIBES_SWITCH.x, y: VIBES_SWITCH.height / 2, z: VIBES_SWITCH.z });
     assert.ok(pose, 'finds unblocked standing pose facing the pedestal');
-    assert.ok(pose.lookPitch < -0.3 && pose.lookPitch > -1.1, 'looks down comfortably at the abdomen-height pedestal');
+    assert.ok(pose.lookPitch < -0.3 && pose.lookPitch > -1.1, 'looks down comfortably at the waist-height pedestal');
   }
 
   const raw: RawState = {

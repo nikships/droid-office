@@ -222,12 +222,12 @@ export const CEILING_GLYPH = { x: 4.2, y: 4.95, z: -2, size: 2.9, ring: 1.62, sp
 
 /**
  * The Living 3D reactions & mood lighting pedestal switch: a circular button atop a thin vertical
- * column rising to the player character's abdomen, centered directly beneath `CEILING_GLYPH`.
+ * column rising to waist height (1.02 m), centered directly beneath `CEILING_GLYPH`.
  */
 export const VIBES_SWITCH = {
   x: CEILING_GLYPH.x,
   z: CEILING_GLYPH.z,
-  height: 0.68,
+  height: 1.02,
   columnRadius: 0.04,
   buttonRadius: 0.135,
   baseRadius: 0.2,
