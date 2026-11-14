@@ -1,5 +1,11 @@
 package ai.factory.droidoffice.ui.mission
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,13 +30,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,25 +77,39 @@ import ai.factory.droidoffice.ui.theme.Palette
 @Composable
 fun MissionControlSection(mission: MissionControlState?, now: Long, selected: String?, onOpen: (String) -> Unit, modifier: Modifier = Modifier) {
     if (mission == null || !MissionControl.shown(mission)) return
-    Column(modifier.fillMaxWidth().tagged(Tags.Mission.SECTION), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+    var expanded by rememberSaveable { mutableStateOf(true) }
+    val rotation by animateFloatAsState(if (expanded) 90f else 0f, label = "Mission Control arrow")
+    Column(modifier.fillMaxWidth().tagged(Tags.Mission.SECTION)) {
+        Row(
+            Modifier.fillMaxWidth()
+                .tagged(Tags.Mission.TOGGLE)
+                .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
+                .clickable(onClickLabel = if (expanded) "Collapse Mission Control" else "Expand Mission Control") { expanded = !expanded }
+                .padding(horizontal = 4.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Eyebrow("Mission Control", Modifier.weight(1f))
             Eyebrow(MissionControl.caption(mission), color = Palette.TextTertiary)
+            Icon(OfficeIcons.Chevron, null, Modifier.padding(start = 8.dp).size(16.dp).rotate(rotation), tint = Palette.TextTertiary)
         }
-        val o = mission.orchestrator
-        val openOrchestrator = { onOpen(ORCHESTRATOR_ID) }
-        if (o.settings.on) OrchestratorCard(o.agent, MissionControl.team(o), MissionControl.orchestratorBlocked(o), now, selected == ORCHESTRATOR_ID, openOrchestrator) else OrchestratorOffRow(openOrchestrator)
-        if (mission.bots.isNotEmpty()) {
-            Column(Modifier.fillMaxWidth().panel(RoundedCornerShape(12.dp))) {
-                mission.bots.forEachIndexed { i, bot ->
-                    key(bot.worker.id) {
-                        if (i > 0) HorizontalDivider(color = Palette.Border)
-                        BotRow(bot, selected == bot.worker.id) { onOpen(bot.worker.id) }
+        AnimatedVisibility(expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val o = mission.orchestrator
+                val openOrchestrator = { onOpen(ORCHESTRATOR_ID) }
+                if (o.settings.on) OrchestratorCard(o.agent, MissionControl.team(o), MissionControl.orchestratorBlocked(o), now, selected == ORCHESTRATOR_ID, openOrchestrator) else OrchestratorOffRow(openOrchestrator)
+                if (mission.bots.isNotEmpty()) {
+                    Column(Modifier.fillMaxWidth().panel(RoundedCornerShape(12.dp))) {
+                        mission.bots.forEachIndexed { i, bot ->
+                            key(bot.worker.id) {
+                                if (i > 0) HorizontalDivider(color = Palette.Border)
+                                BotRow(bot, selected == bot.worker.id) { onOpen(bot.worker.id) }
+                            }
+                        }
                     }
                 }
+                Spacer(Modifier.height(2.dp))
             }
         }
-        Spacer(Modifier.height(2.dp))
     }
 }
 

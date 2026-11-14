@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { buildSync } from 'esbuild';
@@ -24,7 +25,8 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
     write: false,
     target: 'es2022',
   }).outputFiles[0].text;
-  await page.setContent('<!doctype html><nav id="mission"></nav><div id="panes"></div><div id="modal-root"></div>');
+  await page.setContent('<!doctype html><nav id="mission" class="dash-mission"></nav><div id="panes"></div><div id="modal-root"></div>');
+  const styles = await page.addStyleTag({ content: readFileSync(new URL('../src/client/style.css', import.meta.url), 'utf8') });
   await page.addScriptTag({ content: 'window.__name = (fn) => fn;' });
   await page.addScriptTag({ content: bundle });
   await page.evaluate(() => {
@@ -67,10 +69,10 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   });
   const roster = page.locator('#mission');
   const text = await roster.innerText();
-  assert.match(text, /Mission Control/);
+  assert.match(text, /Mission Control/i);
   assert.match(text, /1 needs you/, 'a subagent’s question counts');
   assert.match(text, /Orchestrator[\s\S]*Get CI green on every floor/);
-  assert.match(text, /OpenClaw[\s\S]*Runs externally[\s\S]*used 2m ago/);
+  assert.match(text, /OpenClaw[\s\S]*Runs externally[\s\S]*used 2m ago/i);
   assert.match(text, /2 subagents · 2 floors/);
   assert.equal(await roster.locator('.dash-mission-member.elsewhere').count(), 2, 'Dot and Nibble sit on another floor');
   assert.deepEqual(await roster.locator('.dash-mission-member .dash-row-floor').allInnerTexts(), ['web-app', 'api', 'api']);
@@ -102,6 +104,56 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
     ['orchestrator', 'bot-claw', 'w-nib'],
   );
   await roster.locator('.dash-team-toggle').first().click();
+
+  // The section collapses without rebuilding rows or losing its live activity count.
+  const toggle = roster.locator('.dash-mission-head');
+  assert.equal(await toggle.getAttribute('aria-label'), 'Collapse Mission Control');
+  const body = roster.locator('.dash-mission-body');
+  const height = () => body.evaluate((el) => el.getBoundingClientRect().height);
+  const expandedHeight = await height();
+  assert.ok(expandedHeight > 0);
+  await toggle.click();
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(await toggle.getAttribute('aria-label'), 'Expand Mission Control');
+  assert.equal(await body.evaluate((el) => (el as HTMLElement).inert), true);
+  assert.deepEqual(await walked(), [], 'arrow navigation skips the collapsed section');
+  assert.equal(await page.evaluate(() => (window as any).roster.button('orchestrator') === document.activeElement), true, 'sidebar focus returns to the heading while collapsed');
+  await body.evaluate((el) => {
+    for (const animation of el.getAnimations()) {
+      animation.pause();
+      animation.currentTime = 110;
+    }
+  });
+  const middle = await height();
+  assert.ok(middle > 0 && middle < expandedHeight, `height animates between endpoints: ${middle} / ${expandedHeight}`);
+  await body.evaluate((el) => el.getAnimations().forEach((animation) => animation.finish()));
+  assert.equal(await height(), 0);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.mission.orchestrator.agent.team[0].status = 'needs_input';
+    w.paintRoster();
+  });
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'false', 'status ticks keep the collapsed state');
+  assert.match(await roster.locator('.dash-mission-caption').innerText(), /2 needs? you/);
+  await toggle.press('Enter');
+  await page.waitForFunction(() => document.querySelector('.dash-mission-body')!.getAnimations().length === 0);
+  assert.equal(await body.evaluate((el) => (el as HTMLElement).inert), false);
+  assert.equal(await height(), expandedHeight);
+  assert.equal((await walked()).length, 5);
+  // Reverse an in-flight transition, then respect reduced motion.
+  await toggle.evaluate((el: HTMLButtonElement) => {
+    el.click();
+    el.click();
+  });
+  assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await toggle.click();
+  assert.equal(await height(), 0);
+  assert.equal(await body.evaluate((el) => getComputedStyle(el).transitionDuration), '0s');
+  await toggle.press('Space');
+  assert.equal(await body.evaluate((el) => (el as HTMLElement).inert), false);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await styles.evaluate((el) => el.remove());
 
   // Off: one row that points to Settings, and its team is nobody's.
   await page.evaluate(() => {
