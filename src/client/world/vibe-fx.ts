@@ -1,25 +1,133 @@
 import * as THREE from 'three';
+import { WALL_HEIGHT } from '../../shared/layout';
 import { Sparkles } from './wand';
 
-// Living 3D effects driven by Gemini Decision 1: shockwave rings racing across the floor, beams of
-// light, crackling links between desks, and sparks. Everything is unlit additive MeshBasicMaterial
-// (no outlines, no shadows), parented to one group that probe bakes hide, so none of it reaches
-// the Remastered GI cache.
+// Living 3D effects driven by Gemini Decision 1: feathered ceiling rays, stationary soft radial glow
+// pools, luminous arc filaments between colliding desks, and delicate motes. Every effect uses soft
+// vertex-color falloff to black under additive blending so no hard ring or silhouette edge ever
+// appears on the floor or in mid-air. Parented to one group hidden during Remastered GI probe bakes.
 
-/** How far above the floor floor-level effects float, clear of the rug and the floor's own decals. */
+/** How far above the floor floor-level glows float, clear of the rug and the floor's own decals. */
 const LIFT = 0.018;
+const WHITE = new THREE.Color('#ffffff');
 
-let waveGeo: THREE.RingGeometry | null = null;
-let beamGeo: THREE.CylinderGeometry | null = null;
+let poolGeo: THREE.BufferGeometry | null = null;
+let beamShaftGeo: THREE.BufferGeometry | null = null;
 
-function flat<T extends THREE.BufferGeometry>(g: T): T {
-  g.rotateX(-Math.PI / 2);
-  return g;
+/**
+ * Polar disc of unit radius on XZ whose vertex RGB falls smoothly from 1 at the center to 0 at r = 1
+ * with zero slope at both ends, producing a soft pool of light with no visible outer boundary.
+ */
+function buildRadialGlowGeo(rings = 8, segs = 40): THREE.BufferGeometry {
+  const verts = 1 + rings * segs;
+  const pos = new Float32Array(verts * 3);
+  const norm = new Float32Array(verts * 3);
+  const col = new Float32Array(verts * 3);
+  norm[1] = 1;
+  col[0] = col[1] = col[2] = 1;
+  for (let r = 1; r <= rings; r++) {
+    const u = r / rings;
+    const w = Math.cos(u * Math.PI * 0.5) ** 2.6;
+    const base = 1 + (r - 1) * segs;
+    for (let s = 0; s < segs; s++) {
+      const a = (s / segs) * Math.PI * 2;
+      const idx = (base + s) * 3;
+      pos[idx] = Math.cos(a) * u;
+      pos[idx + 1] = 0;
+      pos[idx + 2] = Math.sin(a) * u;
+      norm[idx + 1] = 1;
+      col[idx] = col[idx + 1] = col[idx + 2] = w;
+    }
+  }
+  const indices: number[] = [];
+  for (let s = 0; s < segs; s++) {
+    const next = (s + 1) % segs;
+    indices.push(0, 1 + next, 1 + s);
+  }
+  for (let r = 2; r <= rings; r++) {
+    const prev = 1 + (r - 2) * segs;
+    const curr = 1 + (r - 1) * segs;
+    for (let s = 0; s < segs; s++) {
+      const next = (s + 1) % segs;
+      indices.push(prev + s, prev + next, curr + next, prev + s, curr + next, curr + s);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(norm, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setIndex(indices);
+  return geo;
+}
+
+/**
+ * Volumetric ray shaft built from four intersecting tapered vertical planes (0°, 45°, 90°, 135°)
+ * whose vertex colors feather smoothly to zero across width (`u = ±1`) as well as at the floor and
+ * ceiling (`v = 0, 1`), eliminating hard cylinder silhouette edges from every viewing angle.
+ */
+function buildBeamShaftGeo(topR = 0.22, botR = 0.72, fins = 4, cols = 12, rows = 16): THREE.BufferGeometry {
+  const perFin = (cols + 1) * (rows + 1);
+  const verts = fins * perFin;
+  const pos = new Float32Array(verts * 3);
+  const norm = new Float32Array(verts * 3);
+  const col = new Float32Array(verts * 3);
+  const indices: number[] = [];
+
+  for (let f = 0; f < fins; f++) {
+    const angle = (f / fins) * Math.PI;
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    const nx = -sinA;
+    const nz = cosA;
+    const finBase = f * perFin;
+
+    for (let r = 0; r <= rows; r++) {
+      const v = r / rows;
+      const y = v * WALL_HEIGHT;
+      const halfW = botR + (topR - botR) * v;
+      const botFade = THREE.MathUtils.smoothstep(v, 0, 0.16);
+      const topFade = 1 - THREE.MathUtils.smoothstep(v, 0.78, 1);
+      const vWeight = botFade * topFade * (0.55 + 0.45 * Math.sin(v * Math.PI * 0.75));
+
+      for (let c = 0; c <= cols; c++) {
+        const u = (c / cols) * 2 - 1;
+        const cCos = Math.cos(u * Math.PI * 0.5);
+        const hWeight = 0.6 * cCos ** 2.6 + 0.4 * cCos ** 8;
+        const w = vWeight * hWeight;
+        const idx = (finBase + r * (cols + 1) + c) * 3;
+        pos[idx] = cosA * u * halfW;
+        pos[idx + 1] = y;
+        pos[idx + 2] = sinA * u * halfW;
+        norm[idx] = nx;
+        norm[idx + 1] = 0;
+        norm[idx + 2] = nz;
+        col[idx] = col[idx + 1] = col[idx + 2] = w;
+      }
+    }
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const a = finBase + r * (cols + 1) + c;
+        const b = a + 1;
+        const d = a + (cols + 1);
+        const e = d + 1;
+        indices.push(a, b, e, a, e, d);
+      }
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(norm, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setIndex(indices);
+  return geo;
 }
 
 function fxMaterial(color: THREE.ColorRepresentation): THREE.MeshBasicMaterial {
   const mat = new THREE.MeshBasicMaterial({
     color,
+    vertexColors: true,
     transparent: true,
     opacity: 0,
     depthWrite: false,
@@ -44,90 +152,127 @@ interface Effect {
   dispose(): void;
 }
 
-/** A ring racing out across the floor from `at` (or in toward it), fading as it goes. */
-class Shockwave implements Effect {
+/** A stationary, feathered pool of light that gently breathes in and dissolves with no outer edge. */
+class SoftPool implements Effect {
   readonly group: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   private t = 0;
 
   constructor(
     at: THREE.Vector3,
     hex: string,
-    private from: number,
-    private to: number,
-    private seconds: number,
+    private radius = 1.2,
+    private seconds = 1.4,
+    private gain = 0.18,
+  ) {
+    poolGeo ??= buildRadialGlowGeo();
+    this.group = fxMesh(poolGeo, fxMaterial(hex));
+    this.group.position.set(at.x, at.y + LIFT, at.z);
+    this.group.scale.set(radius * 0.86, 1, radius * 0.86);
+  }
+
+  update(dt: number): boolean {
+    this.t += dt;
+    const p = Math.min(1, this.t / this.seconds);
+    const rise = Math.sin(Math.min(1, p / 0.28) * Math.PI * 0.5);
+    const fade = (1 - p) ** 1.7;
+    const r = this.radius * (0.88 + 0.18 * rise);
+    this.group.scale.set(r, 1, r);
+    this.group.material.opacity = this.gain * rise * fade;
+    return p < 1;
+  }
+
+  dispose() {
+    this.group.material.dispose();
+  }
+}
+
+/**
+ * A gossamer tapered shaft of light streaming down from the ceiling onto a desk, with a feathered
+ * stationary floor glow (never an expanding ring and never a hard cylinder silhouette).
+ */
+class Beam implements Effect {
+  readonly group = new THREE.Group();
+  private shaft: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  private pool: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  private t = 0;
+
+  constructor(
+    at: THREE.Vector3,
+    hex: string,
+    private seconds = 2.0,
     private gain = 1,
   ) {
-    waveGeo ??= flat(new THREE.RingGeometry(0.92, 1, 96));
-    this.group = fxMesh(waveGeo, fxMaterial(hex));
-    this.group.position.set(at.x, at.y + LIFT * 2, at.z);
-    this.group.scale.setScalar(Math.max(0.001, from));
+    beamShaftGeo ??= buildBeamShaftGeo();
+    poolGeo ??= buildRadialGlowGeo();
+    const tint = new THREE.Color(hex).lerp(WHITE, 0.32);
+    this.shaft = fxMesh(beamShaftGeo, fxMaterial(tint));
+    this.pool = fxMesh(poolGeo, fxMaterial(tint));
+    this.pool.position.y = LIFT;
+    this.group.position.set(at.x, at.y, at.z);
+    this.group.add(this.shaft, this.pool);
+    this.apply(0);
+  }
+
+  private apply(p: number) {
+    const open = Math.sin(Math.min(1, p / 0.26) * Math.PI * 0.5);
+    const fade = (1 - p) ** 1.75;
+    const env = open * fade * this.gain;
+    const width = Math.max(0.001, (0.78 + 0.22 * open) * (1 - p * 0.22));
+    this.shaft.scale.set(width, 1, width);
+    const poolR = 1.2 * (0.86 + 0.16 * open);
+    this.pool.scale.set(poolR, 1, poolR);
+    this.shaft.material.opacity = 0.085 * env;
+    this.pool.material.opacity = 0.13 * env;
   }
 
   update(dt: number): boolean {
     this.t += dt;
     const p = Math.min(1, this.t / this.seconds);
-    const eased = 1 - (1 - p) ** 3;
-    const r = this.from + (this.to - this.from) * eased;
-    this.group.scale.set(Math.max(0.001, r), 1, Math.max(0.001, r));
-    this.group.material.opacity = this.gain * (1 - p) ** 1.5;
+    this.apply(p);
     return p < 1;
   }
 
   dispose() {
-    this.group.material.dispose();
+    this.shaft.material.dispose();
+    this.pool.material.dispose();
   }
 }
 
-/** A column of light shooting up from a desk and fading: someone arriving. */
-class Beam implements Effect {
-  readonly group: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
-  private t = 0;
-
-  constructor(
-    at: THREE.Vector3,
-    hex: string,
-    private seconds = 1.6,
-  ) {
-    beamGeo ??= new THREE.CylinderGeometry(0.55, 0.75, 1, 32, 1, true).translate(0, 0.5, 0);
-    this.group = fxMesh(beamGeo, fxMaterial(hex));
-    this.group.position.set(at.x, at.y + LIFT, at.z);
-    this.group.scale.set(1, 0.001, 1);
-  }
-
-  update(dt: number): boolean {
-    this.t += dt;
-    const p = Math.min(1, this.t / this.seconds);
-    const rise = 1 - (1 - Math.min(1, p / 0.35)) ** 3;
-    this.group.scale.set(1 - p * 0.55, Math.max(0.001, rise * 4.2), 1 - p * 0.55);
-    this.group.material.opacity = 0.75 * (1 - p) ** 1.4;
-    return p < 1;
-  }
-
-  dispose() {
-    this.group.material.dispose();
-  }
-}
-
-/** A jagged line of light crackling between two points, re-zigzagged every few frames: desks at odds. */
+/** A luminous arc shimmering gently between two desks at cross purposes, feathered at both ends. */
 class Crackle implements Effect {
   readonly group: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   private t = 0;
   private sinceJitter = 1;
-  private readonly points: number;
+  private readonly points = 20;
 
   constructor(
     private from: THREE.Vector3,
     private to: THREE.Vector3,
     hex: string,
-    private seconds = 2.2,
+    private seconds = 2.0,
+    private gain = 0.42,
   ) {
-    this.points = 14;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.points * 3), 3));
-    const mat = new THREE.LineBasicMaterial({ color: hex, transparent: true, opacity: 0, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, toneMapped: false });
+    const colors = new Float32Array(this.points * 3);
+    for (let i = 0; i < this.points; i++) {
+      const u = i / (this.points - 1);
+      const w = Math.sin(u * Math.PI) ** 0.85;
+      colors[i * 3] = colors[i * 3 + 1] = colors[i * 3 + 2] = w;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const mat = new THREE.LineBasicMaterial({
+      color: hex,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
     mat.userData.outlineParameters = { visible: false };
     this.group = new THREE.Line(geo, mat);
-    this.group.renderOrder = 11;
+    this.group.renderOrder = 6;
     this.group.frustumCulled = false;
     this.jitter();
   }
@@ -135,10 +280,13 @@ class Crackle implements Effect {
   private jitter() {
     const pos = this.group.geometry.getAttribute('position') as THREE.BufferAttribute;
     const span = this.from.distanceTo(this.to);
+    const arch = Math.min(0.65, 0.22 + span * 0.05);
+    const amp = Math.min(0.24, span * 0.04);
     for (let i = 0; i < this.points; i++) {
       const u = i / (this.points - 1);
-      const sway = i === 0 || i === this.points - 1 ? 0 : (Math.random() - 0.5) * Math.min(0.9, span * 0.12);
-      pos.setXYZ(i, this.from.x + (this.to.x - this.from.x) * u + sway, this.from.y + (this.to.y - this.from.y) * u + Math.sin(u * Math.PI) * 0.5 + sway * 0.6, this.from.z + (this.to.z - this.from.z) * u - sway);
+      const env = Math.sin(u * Math.PI);
+      const sway = (Math.random() - 0.5) * amp * env;
+      pos.setXYZ(i, this.from.x + (this.to.x - this.from.x) * u + sway, this.from.y + (this.to.y - this.from.y) * u + env * arch + sway * 0.5, this.from.z + (this.to.z - this.from.z) * u - sway);
     }
     pos.needsUpdate = true;
   }
@@ -146,12 +294,14 @@ class Crackle implements Effect {
   update(dt: number): boolean {
     this.t += dt;
     this.sinceJitter += dt;
-    if (this.sinceJitter > 0.07) {
+    if (this.sinceJitter > 0.065) {
       this.sinceJitter = 0;
       this.jitter();
     }
     const p = Math.min(1, this.t / this.seconds);
-    this.group.material.opacity = (p < 0.1 ? p / 0.1 : (1 - p) ** 0.8) * (0.6 + Math.random() * 0.4);
+    const fadeIn = Math.min(1, p / 0.16);
+    const fadeOut = (1 - p) ** 1.3;
+    this.group.material.opacity = this.gain * fadeIn * fadeOut * (0.82 + Math.random() * 0.18);
     return p < 1;
   }
 
@@ -180,7 +330,7 @@ export class VibeFx {
   private queued: { at: number; run: () => void }[] = [];
   private clock = 0;
   private on = false;
-  /** Prefers reduced motion: nothing races across the floor. */
+  /** Prefers reduced motion: skips rays, glow pools and shimmering filaments. */
   calmMotion = false;
 
   constructor() {
@@ -196,64 +346,103 @@ export class VibeFx {
     this.on = on;
   }
 
-  /** A worker's micro-reaction: sparks in its color and an optional shockwave. */
-  react(hex: string, head: THREE.Vector3, feet: THREE.Vector3, opts: { sparks?: number; lift?: number; wave?: boolean } = {}) {
-    this.add(new Wrapped(new Sparkles(head.clone().add(new THREE.Vector3(0, 0.2, 0)), null, { colors: [hex, '#ffffff', hex], count: opts.sparks ?? 34, speed: 1.6, size: 0.032, seconds: 1.5, lift: opts.lift ?? 0.9 })));
-    if (opts.wave !== false && !this.calmMotion) this.add(new Shockwave(feet, hex, 0.6, 3.4, 1.1, 0.9));
+  /** A worker's micro-reaction: delicate motes in its color and a soft, stationary floor glow. */
+  react(hex: string, head: THREE.Vector3, feet: THREE.Vector3, opts: { sparks?: number; lift?: number; glow?: boolean } = {}) {
+    this.add(
+      new Wrapped(
+        new Sparkles(head.clone().add(new THREE.Vector3(0, 0.18, 0)), null, {
+          colors: [hex, '#ffffff', hex],
+          count: opts.sparks ?? 18,
+          speed: 1.1,
+          size: 0.024,
+          seconds: 1.4,
+          lift: opts.lift ?? 0.75,
+        }),
+      ),
+    );
+    if (opts.glow !== false && !this.calmMotion) this.add(new SoftPool(feet, hex, 1.05, 1.3, 0.14));
   }
 
   /**
    * Something the office knows happened at a desk (hired, finished, shipped, sent home, shot):
-   * sparks, a shockwave racing out (or closing in with `implode`), and with `beam` a column of light
-   * shooting up from the desk.
+   * floating motes, plus either a feathered ceiling ray (`beam`) or a quiet stationary glow pool.
    */
   deskMoment(hex: string, head: THREE.Vector3, feet: THREE.Vector3, opts: { beam?: boolean; implode?: boolean; sparks?: number } = {}) {
-    this.add(new Wrapped(new Sparkles(head.clone().add(new THREE.Vector3(0, 0.2, 0)), null, { colors: [hex, '#ffffff', hex], count: opts.sparks ?? 40, speed: 1.8, size: 0.034, seconds: 1.6, lift: opts.implode ? -0.4 : 1 })));
+    this.add(
+      new Wrapped(
+        new Sparkles(head.clone().add(new THREE.Vector3(0, 0.18, 0)), null, {
+          colors: [hex, '#ffffff', hex],
+          count: opts.sparks ?? 24,
+          speed: 1.25,
+          size: 0.026,
+          seconds: 1.55,
+          lift: opts.implode ? -0.35 : 0.85,
+        }),
+      ),
+    );
     if (this.calmMotion) return;
-    if (opts.implode) this.add(new Shockwave(feet, hex, 4.2, 0.3, 1.2, 1));
-    else this.add(new Shockwave(feet, hex, 0.5, 4.4, 1.2, 1));
     if (opts.beam) this.add(new Beam(feet, hex));
+    else this.add(new SoftPool(feet, hex, opts.implode ? 1.1 : 1.25, 1.35, 0.16));
   }
 
-  /** Crackling links of light between pairs of heads, for desks at cross purposes. */
+  /** Shimmering arc filaments between pairs of heads, for desks at cross purposes. */
   links(pairs: [THREE.Vector3, THREE.Vector3][], hex: string) {
     if (this.calmMotion) return;
     for (const [a, b] of pairs) {
       const from = a.clone().add(new THREE.Vector3(0, 0.35, 0));
       const to = b.clone().add(new THREE.Vector3(0, 0.35, 0));
-      this.add(new Crackle(from, to, hex));
-      this.add(new Crackle(from, to, '#ffffff', 1.6));
+      this.add(new Crackle(from, to, hex, 2.0, 0.42));
+      this.add(new Crackle(from, to, '#ffffff', 1.5, 0.24));
     }
   }
 
   /**
-   * A room-wide moment: a ring racing out from `center` across the floor, then each of `heads` (with
-   * `feet` under it) lighting up in turn as the ring reaches it.
+   * A room-wide moment: each graded desk blooms in turn outward from `center` with a soft pool of
+   * light and gentle rising motes, without casting any ring across the floor.
    */
   roomWave(center: THREE.Vector3, hex: string, heads: { head: THREE.Vector3; feet: THREE.Vector3; id?: string }[]) {
-    if (!this.calmMotion) {
-      this.add(new Shockwave(center, hex, 0.5, 26, 2.2, 1));
-      this.add(new Shockwave(center, '#ffffff', 0.3, 18, 1.8, 0.45));
-    }
     for (const h of heads) {
-      const delay = this.calmMotion ? 0 : (Math.hypot(h.feet.x - center.x, h.feet.z - center.z) / 26) * 2.2 * 0.6;
+      const delay = this.calmMotion ? 0 : (Math.hypot(h.feet.x - center.x, h.feet.z - center.z) / 26) * 1.1;
       this.later(delay, () => {
-        this.add(new Wrapped(new Sparkles(h.head.clone().add(new THREE.Vector3(0, 0.25, 0)), null, { colors: [hex, '#ffffff'], count: 22, speed: 1.3, size: 0.028, seconds: 1.3, lift: 1.1 })));
+        if (!this.calmMotion) this.add(new SoftPool(h.feet, hex, 1.15, 1.45, 0.15));
+        this.add(
+          new Wrapped(
+            new Sparkles(h.head.clone().add(new THREE.Vector3(0, 0.2, 0)), null, {
+              colors: [hex, '#ffffff'],
+              count: 14,
+              speed: 1.0,
+              size: 0.022,
+              seconds: 1.35,
+              lift: 0.85,
+            }),
+          ),
+        );
       });
     }
   }
 
   /**
-   * Living 3D switched on (a bright ring racing out from you) or off (a gray ring closing in on
-   * you).
+   * Living 3D switched on (a gentle warm ray descending from the ceiling glyph with rising motes)
+   * or off (a quiet settling glow).
    */
   power(on: boolean, from: THREE.Vector3) {
     if (this.calmMotion) return;
     if (on) {
-      this.add(new Shockwave(from, '#ff7a1a', 0.4, 30, 2, 1.2));
-      this.add(new Shockwave(from, '#ffffff', 0.2, 22, 1.6, 0.6));
+      this.add(new Beam(from, '#ff8a3d', 1.6, 0.55));
+      this.add(
+        new Wrapped(
+          new Sparkles(from.clone().add(new THREE.Vector3(0, 0.95, 0)), null, {
+            colors: ['#ff8a3d', '#ffd7a8', '#ffffff'],
+            count: 16,
+            speed: 0.95,
+            size: 0.022,
+            seconds: 1.4,
+            lift: 0.8,
+          }),
+        ),
+      );
     } else {
-      this.add(new Shockwave(from, '#8c8c8c', 26, 0.3, 1.4, 0.9));
+      this.add(new SoftPool(from, '#94a3b8', 0.95, 1.0, 0.1));
     }
   }
 
@@ -296,7 +485,7 @@ export class VibeFx {
   static standIn(): THREE.Group {
     const fx = new VibeFx();
     fx.setEnabled(true);
-    fx.add(new Shockwave(new THREE.Vector3(), '#ffffff', 1, 2, 1));
+    fx.add(new SoftPool(new THREE.Vector3(), '#ffffff'));
     fx.add(new Beam(new THREE.Vector3(), '#ffffff'));
     fx.add(new Crackle(new THREE.Vector3(), new THREE.Vector3(1, 0, 0), '#ffffff'));
     fx.group.traverse((o) => {

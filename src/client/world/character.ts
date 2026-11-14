@@ -2653,7 +2653,7 @@ export class Worker {
     this.browMeshes[1].rotation.z = s.browTilt;
     if (reactionBulbHex) {
       this.bulb.mat.color.set(reactionBulbHex);
-      this.bulb.mat.emissive.set(reactionBulbHex).multiplyScalar(1.6);
+      this.bulb.mat.emissive.set(reactionBulbHex).multiplyScalar(1.15);
     }
     const chattering = this.speech !== null && act !== 'talk';
     const mw = sleeping ? 0.5 : s.mouthW;
@@ -2688,7 +2688,7 @@ export class Worker {
     this.blink(dt, sleeping ? 0.08 : s.lid);
     let bulbPulse = 1;
     if (this.status === 'needs_input') bulbPulse = 1 + Math.abs(Math.sin(t * 8)) * 0.45;
-    else if (reactionBulbHex) bulbPulse = 1.2 + Math.abs(Math.sin(t * 12)) * 0.7;
+    else if (reactionBulbHex) bulbPulse = 1.05 + Math.abs(Math.sin(t * 9)) * 0.32;
     this.bulbScale(bulbPulse);
     const hopLift = hopping ? hopH * 0.55 : 0;
     if (this.bubble) this.bubble.position.y = (this.bubbleIsCard ? 1.74 : 1.95) + hopLift + Math.sin(t * 3) * 0.03;
