@@ -194,3 +194,19 @@ export function settingsPaneAfter(current: SettingsPane, key: string, surface: S
   if (i < 0) return null;
   return panes[(i + step + panes.length) % panes.length].id;
 }
+
+/**
+ * Resolves the category Settings opens on: `focusCard`'s registered pane when that card is offered
+ * on `surface`, else `first` when offered, else `remembered` when offered, else `surface`'s first pane.
+ */
+export function initialSettingsPane(opts: { surface?: SettingsSurface; first?: SettingsPane; focusCard?: SettingsCardTitle; remembered?: SettingsPane }): SettingsPane {
+  const surface = opts.surface ?? 'office';
+  const panes = settingsPanes(surface);
+  if (opts.focusCard) {
+    const card = settingsCards(surface).find((c) => c.title === opts.focusCard);
+    if (card && panes.some((p) => p.id === card.pane)) return card.pane;
+  }
+  if (opts.first && panes.some((p) => p.id === opts.first)) return opts.first;
+  if (opts.remembered && panes.some((p) => p.id === opts.remembered)) return opts.remembered;
+  return panes[0].id;
+}

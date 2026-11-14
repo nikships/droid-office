@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SETTINGS_CARDS, SETTINGS_PANES, resolveSettingsPane, searchSettings, settingsCards, settingsPaneAfter, settingsPanes, type SettingsPane } from '../src/shared/settings-nav.js';
+import { SETTINGS_CARDS, SETTINGS_PANES, initialSettingsPane, resolveSettingsPane, searchSettings, settingsCards, settingsPaneAfter, settingsPanes, type SettingsPane } from '../src/shared/settings-nav.js';
 
 test('settings has the ten categories, grouped Personal / Workers / Office, in order', () => {
   assert.deepEqual(
@@ -250,4 +250,22 @@ test('a companion’s search and arrow keys stay among its own settings', () => 
   assert.equal(settingsPaneAfter('models', 'End', 'mac-companion'), 'phone');
   assert.equal(settingsPaneAfter('you', 'ArrowDown', 'companion'), null, 'a pane the surface lacks moves nowhere');
   assert.equal(settingsPaneAfter('phone', 'ArrowUp', 'companion'), null);
+});
+
+test('initialSettingsPane selects focusCard’s registered pane before first or remembered panes, respecting surface', () => {
+  // Without first, focusCard opens its own registered pane rather than the remembered pane.
+  assert.equal(initialSettingsPane({ surface: 'office', focusCard: 'Gemini Decisions API', remembered: 'you' }), 'connections');
+  // Even when first names a different pane, focusCard wins so its row is never left in a hidden pane.
+  assert.equal(initialSettingsPane({ surface: 'office', first: 'you', focusCard: 'Gemini Decisions API', remembered: 'sound' }), 'connections');
+  assert.equal(initialSettingsPane({ surface: 'companion', first: 'workers', focusCard: 'Gemini Decisions API', remembered: 'models' }), 'connections');
+
+  // When focusCard is not offered on the surface (e.g. Linear on web companion), falls back cleanly to first -> remembered -> first pane.
+  assert.equal(initialSettingsPane({ surface: 'companion', first: 'models', focusCard: 'Linear', remembered: 'office' }), 'models');
+  assert.equal(initialSettingsPane({ surface: 'companion', focusCard: 'Linear', remembered: 'office' }), 'office');
+  assert.equal(initialSettingsPane({ surface: 'companion', focusCard: 'Linear', remembered: 'you' }), 'workers');
+
+  // Without focusCard, preserves first -> remembered -> surface's first pane.
+  assert.equal(initialSettingsPane({ surface: 'office', first: 'graphics', remembered: 'you' }), 'graphics');
+  assert.equal(initialSettingsPane({ surface: 'office', remembered: 'sound' }), 'sound');
+  assert.equal(initialSettingsPane({ surface: 'office' }), 'you');
 });

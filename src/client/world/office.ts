@@ -49,6 +49,7 @@ import { buildElevator, type Elevator } from './elevator';
 import { buildGong, type Gong } from './gong';
 import { buildJukebox, type JukeboxView } from './jukebox';
 import { buildBookshelf, type ShelfWiki } from './bookshelf';
+import { buildVibesSwitch, type VibesSwitch } from './vibes-switch';
 import { buildStack, type Stack } from './stack';
 import { buildTower } from './tower';
 import { dressFactoryFloor } from './factory-floor';
@@ -68,7 +69,7 @@ export interface Collider {
   fence?: boolean;
 }
 
-export type InteractKind = 'desk' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'decor' | 'elevator' | 'gong' | 'jukebox' | 'seat' | 'ladder' | 'bookshelf' | 'computers' | 'orchestrator' | 'bot';
+export type InteractKind = 'desk' | 'issues' | 'pulls' | 'actions' | 'ci' | 'whiteboard' | 'decor' | 'elevator' | 'gong' | 'vibes' | 'jukebox' | 'seat' | 'ladder' | 'bookshelf' | 'computers' | 'orchestrator' | 'bot';
 
 /** Something you can use. Its scene object carries it as `userData.interact`, for clicking. */
 export interface Interactable {
@@ -136,6 +137,8 @@ export interface Office {
   elevator: Elevator;
   /** The merge gong by the PR board. */
   gong: Gong;
+  /** The Living 3D reactions & mood lighting pedestal switch beneath the ceiling glyph. */
+  vibesSwitch: VibesSwitch;
   jukebox: JukeboxView;
   /** The bookshelf's AutoWiki volumes (world/bookshelf.ts). */
   setShelfWiki(state: ShelfWiki): void;
@@ -1340,6 +1343,12 @@ export function buildOffice(): Office {
   interactables.push(gong.interactable);
   fixture('north', GONG.x, (GONG.height + 0.3) / 2, GONG.width + 1.2, GONG.height + 0.3);
 
+  // The Living 3D reactions & mood lighting pedestal switch, centered directly beneath the ceiling glyph.
+  const vibesSwitch = buildVibesSwitch();
+  group.add(vibesSwitch.group);
+  colliders.push(vibesSwitch.collider);
+  interactables.push(vibesSwitch.interactable);
+
   // Pictures stay clear of the stairs (step by step, so they can hang above them) and of what's on
   // the loft's walls upstairs, as buildLoft places it: the couch and the sign.
   const run = (STAIRS.toX - STAIRS.fromX) / STAIRS.steps;
@@ -1426,6 +1435,7 @@ export function buildOffice(): Office {
     }
     elevator.update(dt);
     gong.update(dt);
+    vibesSwitch.update(t, dt);
     for (const d of dressing) d.update(t, dt);
   };
 
@@ -1439,6 +1449,7 @@ export function buildOffice(): Office {
       tower.group,
       elevator.group,
       gong.group,
+      vibesSwitch.group,
       jukebox.group,
       shelf.group,
       exit.group,
@@ -1478,6 +1489,7 @@ export function buildOffice(): Office {
     mission,
     elevator,
     gong,
+    vibesSwitch,
     jukebox,
     setShelfWiki: shelf.setWiki,
     setShelfModel: shelf.setModel,

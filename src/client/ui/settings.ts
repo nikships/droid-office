@@ -2,7 +2,7 @@ import type { Net } from '../net';
 import { store, type Settings, type Sidearm } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
 import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings } from '../../shared/protocol';
-import { SETTINGS_PANES, searchSettings, settingsCards, settingsPaneAfter, settingsPanes, type SettingsCardTitle, type SettingsPane, type SettingsSurface } from '../../shared/settings-nav';
+import { SETTINGS_PANES, initialSettingsPane, searchSettings, settingsCards, settingsPaneAfter, settingsPanes, type SettingsCardTitle, type SettingsPane, type SettingsSurface } from '../../shared/settings-nav';
 import { claimEscape, h, openModal, timeAgo } from './dom';
 import { onJiraSetup } from './jira';
 import { onLinearSetup } from './linear';
@@ -152,6 +152,8 @@ export interface OfficeSettings {
 export type SettingsOptions = {
   /** Opens on this category instead of the last one, when the surface has it. */
   first?: SettingsPane;
+  /** Scrolls to and highlights a specific setting row by its card title after opening. */
+  focusCard?: SettingsCardTitle;
   /** Opens the hire window with a task to write the repository's worktree setup. */
   hireForSetup?: () => void;
 } & ({ surface: 'office'; office: OfficeSettings } | { surface: 'companion' | 'mac-companion'; office?: undefined });
@@ -1339,6 +1341,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   const flashRow = (title: string) => {
     const hit = rowByTitle.get(title);
     if (!hit) return;
+    if (lastPane !== hit.pane) show(hit.pane);
     let row = hit.row;
     if (!row.getClientRects().length) {
       // The row the nest hangs off is the nearest setting row before it (another nest, like HDR before Classic's, can sit between).
@@ -1473,7 +1476,8 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       workerLabels.dispose();
     },
   });
-  show(first && shown.some((p) => p.id === first) ? first : lastPane);
+  show(initialSettingsPane({ surface, first, focusCard: opts.focusCard, remembered }));
+  if (opts.focusCard) flashRow(opts.focusCard);
   close.addEventListener('click', () => modal.close());
   only?.character.addEventListener('click', () => {
     modal.close();

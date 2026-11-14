@@ -25,6 +25,7 @@ import {
   PARACHUTE,
   ROAD,
   STAIRS,
+  VIBES_SWITCH,
   type DeskDef,
 } from './layout.js';
 
@@ -95,6 +96,7 @@ function obstacles(): { rects: Rect[]; circles: Circle[] } {
     circles.push([cx, cz, 0.3]);
   }
   circles.push([MISSION_HEAD.x, MISSION_HEAD.z, MISSION_HEAD.radius]);
+  circles.push([VIBES_SWITCH.x, VIBES_SWITCH.z, VIBES_SWITCH.colliderRadius]);
   return { rects, circles };
 }
 

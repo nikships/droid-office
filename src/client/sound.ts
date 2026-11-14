@@ -9,7 +9,7 @@
  * Everything goes through one master gain that Settings turns down or mutes, except the jukebox,
  * which has a volume of its own.
  */
-import { FLOOR, GONG, JUKEBOX } from '../shared/layout';
+import { FLOOR, GONG, JUKEBOX, VIBES_SWITCH } from '../shared/layout';
 import type { GongWhy } from '../shared/protocol';
 import { STREAM } from '../shared/jukebox';
 import { soundCloudUrl } from '../shared/soundcloud';
@@ -41,6 +41,8 @@ export interface Listener extends Pos {
 
 /** The middle of the gong's disc. */
 const GONG_AT: Pos = { x: GONG.x, y: GONG.height - 1.36, z: GONG.z };
+/** The circular button atop the Living 3D pedestal beneath the ceiling glyph. */
+const SWITCH_AT: Pos = { x: VIBES_SWITCH.x, y: VIBES_SWITCH.height, z: VIBES_SWITCH.z };
 /** A gong's overtones don't line up like a string's: [ratio to the lowest, loudness, seconds to die away]. */
 const GONG_PARTIALS: [number, number, number][] = [
   [1, 0.8, 7],
@@ -480,6 +482,50 @@ export class OfficeSound {
     out.connect(why === 'hit' ? this.ambience : this.alerts);
     const t0 = ctx.currentTime + 0.03;
     this.strike(out, t0, why === 'merged' ? 1 : rand(0.6, 0.8));
+  }
+
+  /** Tactile pushbutton click on press, plus a two-note confirmation chime once the server confirms `on` or `off`. */
+  vibesSwitch(kind: 'press' | 'on' | 'off' | 'blocked') {
+    this.unlock();
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (ctx.state === 'suspended') void ctx.resume();
+    this.count(`vibesSwitch.${kind}`);
+    const out = this.panner(SWITCH_AT, 3.5, 0.7);
+    out.connect(this.ambience);
+    const t0 = ctx.currentTime + 0.005;
+    if (kind === 'press' || kind === 'blocked') {
+      const click = ctx.createBufferSource();
+      click.buffer = kind === 'blocked' ? this.buf.mouse : pick(this.buf.spaces);
+      click.playbackRate.value = kind === 'blocked' ? 0.72 : 1.04;
+      const clickGain = ctx.createGain();
+      clickGain.gain.value = kind === 'blocked' ? 0.22 : 0.32;
+      click.connect(clickGain).connect(out);
+      click.start(t0);
+      return;
+    }
+    const notes =
+      kind === 'on'
+        ? ([
+            [523.25, 0, 0.075],
+            [783.99, 0.065, 0.11],
+          ] as const)
+        : ([
+            [587.33, 0, 0.075],
+            [392.0, 0.065, 0.11],
+          ] as const);
+    for (const [freq, delay, len] of notes) {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t0 + delay);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0 + delay);
+      g.gain.exponentialRampToValueAtTime(0.14, t0 + delay + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + delay + len);
+      osc.connect(g).connect(out);
+      osc.start(t0 + delay);
+      osc.stop(t0 + delay + len + 0.02);
+    }
   }
 
   /** One stroke of the mallet: a felt thump, the metal ringing, and a bright wash that blooms after. */

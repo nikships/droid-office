@@ -38,7 +38,7 @@ export function geminiSettings(net: Net): { card: { desc: Node; below: Node[] };
 
   const vibesToggle = toggle({
     label: 'Living 3D reactions & mood lighting',
-    description: 'Grades visible desk snapshots in one shared forward pass only while a 3D floor is open and uncovered.',
+    description: 'Grades visible desk snapshots in one shared forward pass only while a 3D floor is open and uncovered. Also toggled by the pedestal button beneath each floor’s ceiling glyph.',
     checked: true,
     onChange: (on) => {
       failure = '';
