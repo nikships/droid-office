@@ -11,15 +11,24 @@ import { buildFloorDecisionsBatch, OfficeVibes, type VibesClientView, type Vibes
 import {
   emptyFloorVibes,
   emptyGeminiState,
+  DESK_MOMENT_FX,
+  FLOOR_EVENT_COOLDOWN_MS,
+  FLOOR_EVENT_FX,
+  FLOOR_EVENTS,
   FLOOR_MOOD_LIGHTING,
   fingerprintGeminiKey,
+  isFloorEvent,
   isFloorMood,
   isMonitorSpillTone,
   isValidGeminiApiKey,
   isWorkerMicroReaction,
   isWorkerVibePosture,
   MICRO_REACTION_COOLDOWN_MS,
+  MICRO_REACTION_FX,
   MONITOR_SPILL_HEX,
+  MONITOR_SPILL_POWER,
+  unitFromScore,
+  WORKER_MICRO_REACTIONS,
 } from '../src/shared/gemini-vibes.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import { ROOF } from '../src/shared/rooftop.js';
@@ -57,16 +66,33 @@ test('shared gemini-vibes validators, key fingerprinting and defaults', () => {
 
   assert.equal(isWorkerVibePosture('flow'), true);
   assert.equal(isWorkerVibePosture('investigating'), true);
-  assert.equal(isWorkerVibePosture('debugging'), true);
-  assert.equal(isWorkerVibePosture('waiting'), true);
+  assert.equal(isWorkerVibePosture('struggling'), true);
+  assert.equal(isWorkerVibePosture('deliberating'), true);
+  assert.equal(isWorkerVibePosture('debugging'), false, 'postures are states of mind, not the tool in use');
   assert.equal(isWorkerVibePosture('steady'), true);
   assert.equal(isWorkerVibePosture('dancing'), false);
 
-  assert.equal(isWorkerMicroReaction('breakthrough'), true);
-  assert.equal(isWorkerMicroReaction('fresh_breakage'), true);
-  assert.equal(isWorkerMicroReaction('puzzled'), true);
-  assert.equal(isWorkerMicroReaction('team_sync'), true);
+  for (const kind of ['eureka', 'breakthrough', 'setback', 'puzzled', 'frustrated', 'pivot', 'rabbit_hole', 'corner_cut', 'risky_move']) assert.equal(isWorkerMicroReaction(kind), true, kind);
+  // Facts the office already knows play as desk moments without asking Gemini.
+  for (const kind of ['shipped', 'team_sync', 'relief']) assert.equal(isWorkerMicroReaction(kind), false, kind);
+  for (const kind of ['hired', 'finished', 'shipped', 'sent_home', 'shot'] as const) assert.ok(DESK_MOMENT_FX[kind].glyph && DESK_MOMENT_FX[kind].hex.startsWith('#'), kind);
   assert.equal(isWorkerMicroReaction('none'), false);
+  for (const kind of WORKER_MICRO_REACTIONS) assert.ok(MICRO_REACTION_FX[kind].glyph && MICRO_REACTION_FX[kind].hex.startsWith('#'), kind);
+  for (const kind of FLOOR_EVENTS) {
+    assert.equal(isFloorEvent(kind), true, kind);
+    assert.ok(FLOOR_EVENT_FX[kind].pulses >= 1, kind);
+  }
+  assert.equal(isFloorEvent('none'), false);
+  assert.equal(isFloorEvent('ship_it'), false, 'a pull request opening is played from worker updates, not graded');
+  assert.ok(FLOOR_EVENT_FX.ship_it.pulses >= 1);
+  assert.equal(unitFromScore(3), 0.75);
+  assert.equal(unitFromScore(9), 1);
+  assert.equal(unitFromScore(-1), 0);
+  assert.equal(unitFromScore(Number.NaN), undefined);
+  assert.equal(FLOOR_MOOD_LIGHTING.calm_planning.pulse, 0, 'the baseline mood holds still');
+  assert.equal(FLOOR_MOOD_LIGHTING.calm_planning.hex, '#383a46', 'the baseline mood is the clear-night fill Remastered bakes against');
+  for (const mood of ['deep_crunch', 'debugging_tension', 'celebration_swell'] as const) assert.ok(FLOOR_MOOD_LIGHTING[mood].pulse > 0, mood);
+  for (const tone of ['emerald', 'amber', 'crimson'] as const) assert.ok(MONITOR_SPILL_POWER[tone] >= 2, tone);
 
   assert.equal(isMonitorSpillTone('emerald'), true);
   assert.equal(isMonitorSpillTone('crimson'), true);
@@ -294,7 +320,7 @@ test('OfficeVibes enforces strict view-aware cost gating, digest deduplication, 
           w0_posture: {
             type: 'choice',
             choice: 'flow',
-            probabilities: { debugging: 0.03, flow: 0.88, investigating: 0.04, steady: 0.03, waiting: 0.02 },
+            probabilities: { struggling: 0.03, flow: 0.88, investigating: 0.04, steady: 0.03, deliberating: 0.02 },
             confidence: 0.88,
           },
           w0_spill: {
@@ -308,10 +334,10 @@ test('OfficeVibes enforces strict view-aware cost gating, digest deduplication, 
             choice: 'breakthrough',
             probabilities: {
               breakthrough: mockBreakthroughProb,
-              fresh_breakage: 0.01,
+              setback: 0.01,
               none: Number((1 - mockBreakthroughProb - 0.03).toFixed(2)),
               puzzled: 0.01,
-              team_sync: 0.01,
+              pivot: 0.01,
             },
             confidence: mockBreakthroughProb,
           },
@@ -385,27 +411,27 @@ test('OfficeVibes enforces strict view-aware cost gating, digest deduplication, 
   await vibes.pulseNow();
   assert.equal(apiCalls, 2, 'unchanged snapshot digest skips API call');
 
-  // 5. Terminal changes within 18s cooldown: updates posture/spill, clears expired one-shot, and does NOT re-fire twitchy reaction!
+  // 5. Terminal changes within the cooldown: updates posture/spill, clears expired one-shot, and does NOT re-fire twitchy reaction!
   tailText = 'Running lint checks...';
-  now += 5000; // 9s elapsed (> 4.5s grace window, < 18s cooldown)
+  now += 2000; // 6s elapsed (> 4.5s grace window, < 9s cooldown)
   await vibes.pulseNow();
   assert.equal(apiCalls, 3);
   assert.equal(floorBroadcasts.at(-1)?.workers['w-alpha']?.reaction, undefined, 'cooldown prevents back-to-back micro-reactions and clears stale reaction');
 
-  // 6. After 18s cooldown with high confidence (>= 0.85): fires seq 2!
+  // 6. After the cooldown with enough confidence (>= 0.6): fires seq 2!
   tailText = 'All 42 suites passed!';
   now += MICRO_REACTION_COOLDOWN_MS + 1000;
   await vibes.pulseNow();
   assert.equal(apiCalls, 4);
   assert.equal(floorBroadcasts.at(-1)?.workers['w-alpha']?.reaction?.seq, 2);
 
-  // 7. Low confidence (< 0.85): does NOT fire new reaction even past cooldown!
-  mockBreakthroughProb = 0.62;
+  // 7. Low confidence (< 0.6): does NOT fire new reaction even past cooldown!
+  mockBreakthroughProb = 0.45;
   tailText = 'Ambiguous log line';
   now += MICRO_REACTION_COOLDOWN_MS + 1000;
   await vibes.pulseNow();
   assert.equal(apiCalls, 5);
-  assert.equal(floorBroadcasts.at(-1)?.workers['w-alpha']?.reaction, undefined, 'sub-0.85 probability does not fire one-shot reaction');
+  assert.equal(floorBroadcasts.at(-1)?.workers['w-alpha']?.reaction, undefined, 'sub-0.6 probability does not fire one-shot reaction');
 
   // 8. 3D window hidden / closed to menu bar: watching3d drops to 0 and pulses stop immediately!
   vibes.setWatching('3d-1', false);
@@ -425,7 +451,20 @@ test('OfficeVibes enforces strict view-aware cost gating, digest deduplication, 
 
   // Batch builder check for multi-worker floor
   const batch = buildFloorDecisionsBatch(floor, [worker, makeWorker({ id: 'w-beta', name: 'Pixel', deskId: 'desk-2' })], []);
-  assert.equal(Object.keys(batch.questions).length, 1 + 2 * 3);
+  assert.equal(Object.keys(batch.questions).length, 3 + 2 * 5, 'floor mood, stakes and event, plus posture, spill, reaction, stakes and progress per worker');
+  assert.equal(batch.questions.floor_stakes?.type, 'score');
+  assert.equal(batch.questions.floor_event?.type, 'choice');
+  assert.equal(batch.questions.w1_stakes?.type, 'score');
+  assert.equal(batch.questions.w1_progress?.type, 'score');
+  for (const key of ['floor_energy', 'w0_energy']) assert.equal(batch.questions[key], undefined, `${key}: output rate is a counter, not a judgment`);
+  // Gemini is asked what output means for the task, never to spot keywords a regex could.
+  for (const key of ['floor_mood', 'w0_spill', 'w0_react']) assert.match(batch.questions[key]?.instructions ?? '', /not keywords/, key);
+  const allCriteria = JSON.stringify(Object.values(batch.questions).map((q) => ('criteria' in q ? q.criteria : null)));
+  for (const counter of ['team_message', 'team_report', 'non-zero exit', 'pull request opened']) assert.ok(!allCriteria.includes(counter), `no criterion hinges on ${counter}`);
+  const reactCriteria = batch.questions.w0_react?.type === 'choice' ? Object.keys(batch.questions.w0_react.criteria) : [];
+  for (const kind of [...WORKER_MICRO_REACTIONS, 'none']) assert.ok(reactCriteria.includes(kind), `reaction question offers ${kind}`);
+  const eventCriteria = batch.questions.floor_event?.type === 'choice' ? Object.keys(batch.questions.floor_event.criteria) : [];
+  for (const kind of [...FLOOR_EVENTS, 'none']) assert.ok(eventCriteria.includes(kind), `floor event question offers ${kind}`);
 });
 
 test('already cancelled Decisions requests never start a fetch', async () => {
@@ -635,7 +674,7 @@ test('3D Worker continuous postures, micro-reaction envelopes and Sky baseline-s
   actor.setSeat('chair');
   actor.setStatus('working');
 
-  for (const posture of ['flow', 'investigating', 'debugging', 'waiting'] as const) {
+  for (const posture of ['flow', 'investigating', 'struggling', 'deliberating'] as const) {
     actor.applyVibe({ posture, spill: 'neutral' }, 1000);
     assert.equal(actor.activeVibePosture, posture);
     actor.update(0.12, 1.5);
@@ -654,7 +693,7 @@ test('3D Worker continuous postures, micro-reaction envelopes and Sky baseline-s
   assert.equal(actor.activeReaction, 'breakthrough');
   actor.update(0.3, 2.0);
   assert.equal(actor.animating, true);
-  actor.update(2.5, 4.5);
+  actor.update(2.7, 4.7);
   assert.equal(actor.activeReaction, null, 'reaction completes cleanly and restores bulb');
 
   // Re-applying same seq=1 does not replay
@@ -668,15 +707,28 @@ test('3D Worker continuous postures, micro-reaction envelopes and Sky baseline-s
   );
   assert.equal(actor.activeReaction, null);
 
-  // Exercise remaining micro-reactions (fresh_breakage, puzzled, team_sync)
-  for (const [i, kind] of (['fresh_breakage', 'puzzled', 'team_sync'] as const).entries()) {
-    actor.applyVibe({ posture: 'debugging', spill: 'crimson', reaction: { kind, seq: i + 2, at: 5000, confidence: 0.91 } }, 5100);
+  // Exercise the remaining micro-reactions with stakes driving the posture clock and progress carried along
+  for (const [i, kind] of (['setback', 'puzzled', 'eureka', 'frustrated', 'pivot', 'rabbit_hole', 'corner_cut', 'risky_move'] as const).entries()) {
+    actor.applyVibe({ posture: 'struggling', spill: 'crimson', stakes: i / 7, progress: 1 - i / 7, reaction: { kind, seq: i + 2, at: 5000, confidence: 0.91 } }, 5100);
     assert.equal(actor.activeReaction, kind);
+    assert.equal(actor.activeVibeStakes, i / 7);
+    assert.equal(actor.activeVibeProgress, 1 - i / 7);
     actor.update(0.2, 5.2);
     actor.update(0.6, 5.8);
-    actor.update(2.0, 7.8);
-    assert.equal(actor.activeReaction, null);
+    assert.ok(Number.isFinite(actor.body.rotation.x) && Number.isFinite(actor.body.position.y), `${kind} keeps the body finite`);
+    actor.update(2.5, 8.3);
+    assert.equal(actor.activeReaction, null, `${kind} ends within its envelope`);
   }
+  // Opening a pull request is acted out from the worker update, with a full chair spin.
+  actor.triggerReaction('shipped');
+  assert.equal(actor.activeReaction, 'shipped');
+  actor.update(0.6, 9);
+  assert.ok(Number.isFinite(actor.body.rotation.y) && actor.body.rotation.y !== 0, 'shipping spins the chair');
+  actor.update(3, 12);
+  assert.equal(actor.activeReaction, null);
+  actor.applyVibe({ posture: 'flow', spill: 'neutral' }, 9000);
+  assert.equal(actor.activeVibeStakes, 0.5, 'a missing stakes grade falls back to a steady pace');
+  assert.equal(actor.activeVibeProgress, 0, 'no progress arc without a grade');
   for (const transition of ['die', 'leave', 'dance'] as const) {
     const interrupted = new Worker('Byte', '#ee6018');
     interrupted.setSeat('chair');
@@ -688,7 +740,7 @@ test('3D Worker continuous postures, micro-reaction envelopes and Sky baseline-s
     assert.equal(interrupted.activeReaction, null, `${transition} cancels the reaction before update's early return`);
     interrupted.dispose();
   }
-  actor.triggerReaction('fresh_breakage');
+  actor.triggerReaction('setback');
   actor.update(0.449, 8.449);
   const beforePhase = actor.body.rotation.x;
   actor.update(0.002, 8.451);
@@ -715,4 +767,110 @@ test('3D Worker continuous postures, micro-reaction envelopes and Sky baseline-s
   assert.equal(ranBake, true);
   sky.setMood('celebration_swell', true);
   assert.equal(sky.moodTransitioning, false);
+});
+
+test('OfficeVibes grades floor stakes, worker stakes and progress, and room-wide floor events with confidence gating and a cooldown', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'vibes-events-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const store = new GeminiDecisionsStore(dir);
+  store.saveKey(TEST_KEY, 'Owner', 0);
+  let now = 50_000;
+  let tail = 'PASS tests/a.test.ts';
+  let eventProb = 0.81;
+  let eventChoice = 'convergence';
+  const bodies: { questions: Record<string, { type: string; criteria?: unknown }> }[] = [];
+  const floor: VibesFloorView = {
+    id: 'f1',
+    name: 'Office',
+    workers: [makeWorker(), makeWorker({ id: 'w-beta', name: 'Pixel', deskId: 'desk-2' })],
+    pulls: [],
+    tail: () => tail,
+  };
+  const emitted: ReturnType<OfficeVibes['floorState']>[] = [];
+  // Answer shapes trimmed from a live gemini-decision-1 response to the same question set.
+  const answers = () => ({
+    floor_mood: { type: 'choice', choice: 'celebration_swell', probabilities: { celebration_swell: 0.8, calm_planning: 0.1, deep_crunch: 0.05, debugging_tension: 0.05 }, confidence: 0.8 },
+    floor_stakes: { type: 'score', score: 3.0022119931211178, legend: { '0': 'Relaxed', '4': 'Critical' }, probabilities: { '2': 0.21, '3': 0.49, '4': 0.27 }, confidence: 0.49 },
+    floor_event: { type: 'choice', choice: eventChoice, probabilities: { [eventChoice]: eventProb, none: 1 - eventProb }, confidence: eventProb },
+    w0_posture: { type: 'choice', choice: 'flow', probabilities: { flow: 0.9 }, confidence: 0.9 },
+    w0_spill: { type: 'choice', choice: 'emerald', probabilities: { emerald: 0.9 }, confidence: 0.9 },
+    w0_react: { type: 'choice', choice: 'eureka', probabilities: { eureka: 0.6283014285833879, breakthrough: 0.27, none: 0.03 }, confidence: 0.6283014285833879 },
+    w0_stakes: { type: 'score', score: 2.9037745884954935, legend: {}, probabilities: { '3': 0.59 }, confidence: 0.59 },
+    w0_progress: { type: 'score', score: 1.0, legend: {}, probabilities: { '1': 0.7 }, confidence: 0.7 },
+    w1_posture: { type: 'choice', choice: 'struggling', probabilities: { struggling: 0.8 }, confidence: 0.8 },
+    w1_spill: { type: 'choice', choice: 'crimson', probabilities: { crimson: 0.88 }, confidence: 0.88 },
+    w1_react: { type: 'choice', choice: 'frustrated', probabilities: { frustrated: 0.9230681059752905, puzzled: 0.03, none: 0.01 }, confidence: 0.9230681059752905 },
+    w1_stakes: { type: 'score', score: 4, legend: {}, probabilities: { '4': 0.6 }, confidence: 0.6 },
+    w1_progress: { type: 'score', score: 3, legend: {}, probabilities: { '3': 0.6 }, confidence: 0.6 },
+  });
+  const vibes = new OfficeVibes({
+    store,
+    airgapped: () => false,
+    clients: () => [{ id: 'view', floor: 'f1', dashboard: false }],
+    floors: () => [floor],
+    floor: () => floor,
+    broadcastGemini: () => {},
+    emitFloorVibes: (_id, s) => emitted.push(s),
+    pulseMs: 1_000_000,
+    quickPulseMs: 1_000_000,
+    now: () => now,
+    fetchImpl: async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body ?? '{}')));
+      return new Response(JSON.stringify({ answers: answers(), usage: { total_input_tokens: 1031, total_output_tokens: 0 } }));
+    },
+  });
+  t.after(() => vibes.stop());
+  vibes.setWatching('view', true);
+
+  await vibes.pulseNow();
+  const q = bodies.at(-1)!.questions;
+  assert.equal(q.floor_stakes?.type, 'score');
+  assert.equal(q.w0_stakes?.type, 'score');
+  assert.equal(q.w0_progress?.type, 'score');
+  assert.equal(q.floor_event?.type, 'choice');
+  let s = emitted.at(-1)!;
+  assert.equal(s.mood, 'celebration_swell');
+  assert.equal(s.stakes, 0.751, 'floor stakes are the expected score over the 0-4 rubric');
+  assert.equal(s.workers['w-alpha']?.stakes, 0.726);
+  assert.equal(s.workers['w-beta']?.stakes, 1);
+  assert.equal(s.workers['w-alpha']?.progress, 0.25);
+  assert.equal(s.workers['w-beta']?.progress, 0.75);
+  assert.equal(s.workers['w-alpha']?.reaction?.kind, 'eureka', 'a 0.63 eureka clears the reaction gate');
+  assert.equal(s.workers['w-beta']?.reaction?.kind, 'frustrated');
+  assert.deepEqual(s.event && { kind: s.event.kind, seq: s.event.seq }, { kind: 'convergence', seq: 1 });
+
+  // A new snapshot inside the grace window carries the same event, so a viewer arriving now still sees it.
+  now += 3000;
+  tail = 'PASS tests/b.test.ts';
+  await vibes.pulseNow();
+  s = emitted.at(-1)!;
+  assert.equal(s.event?.seq, 1);
+
+  // Past the grace window but inside the cooldown, a fresh confident event does not fire again.
+  now += 4000;
+  tail = 'PASS tests/c.test.ts';
+  await vibes.pulseNow();
+  assert.equal(emitted.at(-1)!.event, undefined, 'the cooldown keeps the room from flashing every pulse');
+
+  // After the cooldown, too little confidence fires nothing either.
+  now += FLOOR_EVENT_COOLDOWN_MS;
+  eventProb = 0.4;
+  tail = 'PASS tests/d.test.ts';
+  await vibes.pulseNow();
+  assert.equal(emitted.at(-1)!.event, undefined);
+
+  // A confident different moment fires the next sequence number.
+  eventProb = 0.77;
+  eventChoice = 'collision';
+  tail = 'FAIL tests/e.test.ts';
+  await vibes.pulseNow();
+  s = emitted.at(-1)!;
+  assert.deepEqual(s.event && { kind: s.event.kind, seq: s.event.seq }, { kind: 'collision', seq: 2 });
+
+  // An unknown choice or a missing score degrades cleanly.
+  now += FLOOR_EVENT_COOLDOWN_MS;
+  eventChoice = 'party';
+  tail = 'other';
+  await vibes.pulseNow();
+  assert.equal(emitted.at(-1)!.event, undefined);
 });

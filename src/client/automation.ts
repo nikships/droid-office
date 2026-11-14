@@ -4,7 +4,8 @@
 // targets, picks where to stand, waits for things to finish and builds the state snapshot. It stays
 // loadable in Node (tests/automation.test.ts): no window, document or WebGL at import time.
 
-import type { FloorMood, MonitorSpillTone, VibesSwitchState, WorkerMicroReaction, WorkerVibePosture } from '../shared/gemini-vibes';
+import type { DeskMoment, FloorEvent, FloorMood, MonitorSpillTone, VibesSwitchState, WorkerVibePosture } from '../shared/gemini-vibes';
+import type { ReactionPose } from './world/character';
 import { DESK_BY_ID } from '../shared/layout';
 import type { FloorInfo, WorkerInfo } from '../shared/protocol';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
@@ -235,12 +236,26 @@ export interface RawState {
   vibesSwitch?: VibesSwitchState;
   /** Living 3D Studio telemetry and postures when Gemini Decision 1 is connected. */
   vibes?: {
+    /** The Living 3D setting (Settings, the pedestal switch and the corner switch all flip it). */
     on?: boolean;
+    /** Living 3D is running on this floor right now: on, connected, key accepted, and indoors. */
+    live: boolean;
+    /** What the switch in the corner shows: hidden, on, off or rejected. */
+    badge: string;
     watching3d: number;
     calls: number;
     inputTokens: number;
     mood: FloorMood;
-    workers: { id: string; name: string; posture: WorkerVibePosture; spill: MonitorSpillTone; reaction: WorkerMicroReaction | null }[];
+    /** How much is riding on the floor, 0–1, from the last grade. */
+    stakes: number;
+    /** The last room-wide event this view played, if any (`ship_it` comes from a pull request opening, not Gemini). */
+    event: FloorEvent | 'ship_it' | null;
+    /** The last desk moment the office played without Gemini (hired, finished, shipped, sent home, shot). */
+    moment: { kind: DeskMoment; worker: string } | null;
+    /** Desk rings showing, and how bright the room flash is right now (0–1). */
+    auras: number;
+    roomFlash: number;
+    workers: { id: string; name: string; posture: WorkerVibePosture; spill: MonitorSpillTone; stakes: number; progress: number; reaction: ReactionPose | null }[];
   };
 }
 
@@ -334,11 +349,18 @@ export function buildSnapshot(raw: RawState): Snapshot {
       ? {
           vibes: {
             ...(raw.vibes.on !== undefined ? { on: raw.vibes.on } : {}),
+            live: raw.vibes.live,
+            badge: raw.vibes.badge,
             watching3d: raw.vibes.watching3d,
             calls: raw.vibes.calls,
             inputTokens: raw.vibes.inputTokens,
             mood: raw.vibes.mood,
-            workers: raw.vibes.workers.map((w) => ({ ...w })),
+            stakes: r2(raw.vibes.stakes),
+            event: raw.vibes.event,
+            auras: raw.vibes.auras,
+            roomFlash: r2(raw.vibes.roomFlash),
+            moment: raw.vibes.moment,
+            workers: raw.vibes.workers.map((w) => ({ ...w, stakes: r2(w.stakes), progress: r2(w.progress) })),
           },
         }
       : {}),

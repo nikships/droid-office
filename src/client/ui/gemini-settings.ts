@@ -38,7 +38,8 @@ export function geminiSettings(net: Net): { card: { desc: Node; below: Node[] };
 
   const vibesToggle = toggle({
     label: 'Living 3D reactions & mood lighting',
-    description: 'Grades visible desk snapshots in one shared forward pass only while a 3D floor is open and uncovered. Also toggled by the pedestal button beneath each floor’s ceiling glyph.',
+    description:
+      "Gemini reads what each desk's output means for its task (on track or in trouble, stuck or in flow, how much is riding on it, how close it is to done, corners cut, rabbit holes, desks at cross purposes) and the room answers with glowing desk rings and progress arcs, emoji pops, room-wide flashes, breathing mood light and lively postures. Hires, finished tasks, pull requests, send-offs and shots play their own effects. Graded in one shared forward pass only while a 3D floor is open and uncovered; the pedestal button beneath each floor’s ceiling glyph and the Living 3D switch in the corner of the 3D view flip it too.",
     checked: true,
     onChange: (on) => {
       failure = '';
@@ -123,11 +124,11 @@ export function geminiSettings(net: Net): { card: { desc: Node; below: Node[] };
     liveGate.classList.toggle('good', live);
     liveGate.classList.toggle('info', !live);
     if (!g.vibesOn) {
-      liveGate.textContent = `Paused by toggle ($0.00 active spend) · ${usageTail}`;
+      liveGate.textContent = `Off: the 3D office stays neutral, with no rings, flashes or reactions ($0.00 active spend) · ${usageTail}`;
     } else if (live) {
-      liveGate.textContent = `Active on ${g.watching3d} visible 3D ${g.watching3d === 1 ? 'view' : 'views'}${moodLabel ? ` (${moodLabel})` : ''} · ${usageTail}`;
+      liveGate.textContent = `On: live on ${g.watching3d} visible 3D ${g.watching3d === 1 ? 'view' : 'views'}${moodLabel ? ` (${moodLabel})` : ''} · ${usageTail}`;
     } else {
-      liveGate.textContent = `View-gated pause ($0.00) — no 3D floor is open and visible right now · ${usageTail}`;
+      liveGate.textContent = `On, view-gated pause ($0.00): no 3D floor is open and visible right now · ${usageTail}`;
     }
     if (g.lastError && !g.rejected && !failure) {
       liveGate.textContent += ` · Last note: ${g.lastError}`;
