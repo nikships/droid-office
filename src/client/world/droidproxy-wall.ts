@@ -5,6 +5,8 @@ import { MONO } from '../fonts';
 import { age } from './factory-computers';
 import { SCREEN_BLACK } from './screen';
 import { ANISOTROPY } from './texture-quality';
+import type { FactoryState } from '../../shared/factory';
+import { factoryLimitsActive, factoryOverageWords, factoryWindows } from '../../shared/factory-limits';
 
 const INK = '#eeeeee';
 const MUTED = '#969696';
@@ -32,6 +34,7 @@ export interface QuotaTile {
 }
 
 export interface QuotaView {
+  factory: boolean;
   phase: SubscriptionsState['proxy']['phase'];
   version: string | null;
   accounts: number;
@@ -52,12 +55,44 @@ export function resetWords(w: UsageWindow, now: number): string {
 }
 
 /** All connected accounts, including paused providers and ones without a quota API. Pure, no DOM. */
-export function quotaView(s: SubscriptionsState, now: number): QuotaView {
+export function quotaView(s: SubscriptionsState, now: number, factory?: FactoryState): QuotaView {
   const t = Math.floor(now / 60_000) * 60_000;
   const all: QuotaTile[] = [];
   let accounts = 0;
   let reporting = 0;
   let limited = 0;
+  const limits = factory?.connection.connected && !factory.connection.rejected && factoryLimitsActive(factory.limits) ? factory.limits : undefined;
+  if (limits) {
+    for (const tier of ['standard', 'core'] as const) {
+      if (!limits.limits[tier]) continue;
+      const windows = factoryWindows(limits, tier);
+      const min = Math.min(...windows.map((w) => 100 - w.usedPercent));
+      const due = windows.some((w) => w.resetsAt !== null && w.resetsAt <= t);
+      let status: QuotaStatus = 'reporting';
+      if (limits.error || due) status = 'cached';
+      else if (min <= 0) status = 'limited';
+      else if (min <= 20) status = 'low';
+      accounts++;
+      if (status === 'limited') limited++;
+      if (status === 'reporting' || status === 'low') reporting++;
+      const chunks = Math.ceil(windows.length / 2);
+      for (let i = 0; i < chunks; i++)
+        all.push({
+          id: `factory:${tier}:${i}`,
+          provider: 'Factory',
+          label: tier === 'standard' ? 'Standard' : 'Droid Core',
+          status,
+          detail: factoryOverageWords(limits),
+          windows: windows.slice(i * 2, i * 2 + 2).map((w) => ({
+            name: w.name,
+            remaining: Math.max(0, Math.min(100, 100 - w.usedPercent)),
+            reset: w.resetsAt === null && w.usedPercent === 0 ? 'Window not started' : resetWords(w, t),
+            due: w.resetsAt !== null && w.resetsAt <= t,
+          })),
+          continuation: `WINDOWS ${i * 2 + 1}–${Math.min(windows.length, i * 2 + 2)} OF ${windows.length}`,
+        });
+    }
+  }
   for (const p of s.providers) {
     for (const a of p.accounts) {
       accounts++;
@@ -117,6 +152,7 @@ export function quotaView(s: SubscriptionsState, now: number): QuotaView {
     running: accounts ? 'Usage checked every 5 minutes · bars show quota remaining' : 'Connect an account in Settings → Connections',
   };
   return {
+    factory: !!limits,
     phase: s.proxy.phase,
     version: s.proxy.version,
     accounts,
@@ -125,7 +161,16 @@ export function quotaView(s: SubscriptionsState, now: number): QuotaView {
     pages,
     page,
     tiles: all.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    note: s.proxy.error ? 'DroidProxy could not refresh · last known usage' : notes[s.proxy.phase],
+    note: (() => {
+      if (limits) {
+        let overage = 'No overage selected';
+        if (limits.overagePreference === 'droidCore') overage = 'Droid Core fallback';
+        else if (limits.overagePreference === 'extraUsage') overage = 'Extra Usage overage';
+        return `Factory: ${overage} · Extra Usage $${(limits.extraUsageBalanceCents / 100).toFixed(2)}${limits.error ? ' · cached' : ''}`;
+      }
+      if (s.proxy.error) return 'DroidProxy could not refresh · last known usage';
+      return notes[s.proxy.phase];
+    })(),
   };
 }
 
@@ -161,8 +206,8 @@ export class QuotaWallTexture {
     this.texture.anisotropy = ANISOTROPY;
   }
 
-  render(s: SubscriptionsState, now = Date.now(), force = false): void {
-    const v = quotaView(s, now);
+  render(s: SubscriptionsState, now = Date.now(), force = false, factory?: FactoryState): void {
+    const v = quotaView(s, now, factory);
     const key = JSON.stringify(v);
     if (!force && key === this.drawn) return;
     this.drawn = key;
@@ -190,11 +235,11 @@ export class QuotaWallTexture {
     g.fillRect(0, 0, W, H);
     g.fillStyle = ORANGE;
     g.fillRect(30, 33, 16, 16);
-    this.text('DROIDPROXY', 64, 56, 30, INK, W - 320, 600);
-    const phase = v.phase === 'running' ? 'CONNECTED' : v.phase.toUpperCase();
-    this.pill(phase, W - 30, 22, v.phase === 'running' ? GREEN : AMBER);
+    this.text(v.factory ? 'FACTORY + PLANS' : 'DROIDPROXY', 64, 56, v.factory ? 24 : 30, INK, W - 320, 600);
+    const connected = v.factory || v.phase === 'running';
+    this.pill(connected ? 'CONNECTED' : v.phase.toUpperCase(), W - 30, 22, connected ? GREEN : AMBER);
     this.text('SUBSCRIPTION QUOTAS', 30, 96, 18, MUTED);
-    const summary = `${v.accounts} ACCOUNTS  /  ${v.reporting} REPORTING${v.limited ? `  /  ${v.limited} LIMITED` : ''}`;
+    const summary = v.factory ? `${v.accounts} QUOTAS · ${v.limited} LIMITED` : `${v.accounts} ACCOUNTS  /  ${v.reporting} REPORTING${v.limited ? `  /  ${v.limited} LIMITED` : ''}`;
     g.font = `500 18px ${MONO}`;
     this.text(summary, W - 30 - g.measureText(summary).width, 96, 18, MUTED);
     g.fillStyle = HAIR;

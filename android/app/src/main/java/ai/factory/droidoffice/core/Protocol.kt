@@ -253,7 +253,7 @@ sealed interface ServerMsg {
     data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet(), val workerAnswerMultiSelect: Boolean = false, val factory: FactoryState? = null, val missionControl: MissionControlState? = null, val building: List<FloorRoster>? = null) : ServerMsg
     data class ActionResult(val requestId: String, val ok: Boolean, val error: String?) : ServerMsg
     data class HiddenModels(val ids: Set<String>) : ServerMsg
-    /** The office's Factory state replaced: its connection, computers and Environments. */
+    /** Raw Factory state, including token-limit windows; OfficeJson tolerates newer unknown fields. */
     data class Factory(val state: FactoryState) : ServerMsg
     /** Which Claude, ChatGPT and other plan models can run now. */
     data class Subscriptions(val availability: Map<String, ModelAvailability>, val state: SubscriptionState? = null) : ServerMsg

@@ -8,6 +8,14 @@ Three things stand between a fresh Mac and a first worker, and the office does e
 2. **A Factory account or Airgapped mode**. Sign in through Droid's own device flow, or use local/BYOK models without an account.
 3. **Subscriptions** (optional, macOS on Apple silicon): the owner's Claude, ChatGPT and other plans, served to Droid by [DroidProxy](https://github.com/nikships/droidproxy), a small menu-bar app. The office installs and drives DroidProxy, connects accounts and puts their models into Droid.
 
+## Factory subscription limits
+
+Factory's own Standard and Droid Core token windows are a separate quota source from DroidProxy. The office reads them through its Factory connection on every supported platform, even without DroidProxy installed. See [Factory limits and overage](factory.md#limits-and-overage) for the API and eligibility rules.
+
+Quota rings and subscription sheets show three nested windows (5-hour, Weekly, Monthly) for each Factory tier, reset times, Extra Usage balance and the active overage preference. Settings → Connections → Factory and Thread `/limits` open the same limits controls; Android's subscription sheet mirrors them. Hosted model pickers and all hire paths explain exhausted tiers or inactive subscriptions with countdowns and runnable alternatives. BYOK and DroidProxy models keep their existing eligibility. Unreadable/unconnected limits never refuse a hire.
+
+`team_models` and `models_list` prepend Factory Standard and Factory Droid Core to `Subscription quotas:` (including `only: "quotas"`), with remaining windows, overage mode, balance and cooldowns. Hosted models expose `factoryUsage`, `cannotRun` and `cooldown`. Worker inspections combine the same limits with live retries, rate limits and 402 exhaustion into `modelStatus`, including reset timestamps/countdowns and an overage hint. Lead and Orchestrator guidance weighs both Factory tiers alongside DroidProxy quotas and credit multipliers.
+
 ## The owner's decisions
 
 - The office's word for it is **Subscriptions**: the welcome step and the ⚙️ Settings pane are called that, and DroidProxy is named underneath as the app that does it.

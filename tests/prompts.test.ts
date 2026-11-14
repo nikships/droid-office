@@ -349,10 +349,18 @@ test("each audience is told once to send workers home and to weigh a subscriptio
     [1, 1, 1],
   );
   assert.deepEqual(
-    [orchestrator, bot, lead].map((text) => count(text, /nearly spent one off long tasks/g)),
+    [orchestrator, bot, lead].map((text) => count(text, /nearly spent (?:one|tiers) off long tasks/g)),
     [1, 1, 1],
     'the quota guidance reaches every audience once',
   );
+  for (const text of [orchestrator, bot, lead]) {
+    assert.match(text, /Factory Standard/);
+    assert.match(text, /Droid Core/);
+    assert.match(text, /monthly/);
+    assert.match(text, /overage/);
+    assert.match(text, /Extra Usage balance/);
+    assert.match(text, /DroidProxy/);
+  }
   for (const text of [orchestrator, bot]) {
     assert.equal(count(text, /never prompt, interrupt, answer or send home/g), 1, 'the rule about building agents is kept once');
     assert.equal(count(text, /worktrees, branches and cloud sessions/g), 1, 'the rule about keeping worktrees is kept once');

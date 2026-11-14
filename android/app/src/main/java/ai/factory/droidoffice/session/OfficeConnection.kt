@@ -56,6 +56,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -218,8 +220,6 @@ class OfficeConnection(
 
     private val _availability = MutableStateFlow<Map<String, ModelAvailability>>(emptyMap())
 
-    /** Whether each subscription model can run now, by model id; empty from an office that doesn't say. */
-    val availability: StateFlow<Map<String, ModelAvailability>> = _availability.asStateFlow()
     private val _hiddenModels = MutableStateFlow<Set<String>>(emptySet())
     val hiddenModels = _hiddenModels.asStateFlow()
     private val _subscriptions = MutableStateFlow<ai.factory.droidoffice.core.SubscriptionState?>(null)
@@ -228,6 +228,21 @@ class OfficeConnection(
 
     /** The office's Factory connection, computers and Environments; null from an office that doesn't send it. */
     val factory = _factory.asStateFlow()
+    private val _catalogue = MutableStateFlow<ModelCatalogue?>(null)
+
+    /** Subscription and Factory gates share one live map for every existing model-picker caller. */
+    private val availabilityClock = _link.transformLatest { link ->
+        emit(System.currentTimeMillis())
+        // A window can expire between server polls. Stop the clock while disconnected.
+        if (link.phase != Phase.Connected) return@transformLatest
+        while (true) {
+            delay(30_000)
+            emit(System.currentTimeMillis())
+        }
+    }
+    val availability: StateFlow<Map<String, ModelAvailability>> = combine(_availability, _factory, _catalogue, availabilityClock) { proxy, factoryState, catalogue, now ->
+        ai.factory.droidoffice.core.FactoryLimits.mergeAvailability(proxy, factoryState, catalogue?.models.orEmpty().map { it.id to it.custom }, now)
+    }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private val _screens = MutableStateFlow<Map<String, ScreenState>>(emptyMap())
     val screens: StateFlow<Map<String, ScreenState>> = _screens.asStateFlow()
@@ -389,8 +404,6 @@ class OfficeConnection(
         return send(ClientMsg.spawn(desk, prompt, worktree, kind, model, effort, cloud, repos))
     }
 
-    private val _catalogue = MutableStateFlow<ModelCatalogue?>(null)
-
     /** The last model catalogue the office sent, for model names on cards; null until [models] has loaded one. */
     val catalogue: StateFlow<ModelCatalogue?> = _catalogue.asStateFlow()
 
@@ -411,10 +424,19 @@ class OfficeConnection(
     }
 
     suspend fun hostUpdate(officeId: String, action: HostUpdateAction? = null, version: String? = null): Result<HostUpdateState> {
-        val endpoint = current ?: return Result.failure(IllegalStateException("Not connected to the office"))
-        val target = endpoint.forOffice(officeId, store.snapshot.value.active?.id)
-            ?: return Result.failure(IllegalStateException("The active office changed. Open its host update view again."))
+        val target = targetForOffice(officeId, "Open its host update view again.").getOrElse { return Result.failure(it) }
         return api.hostUpdate(target.base, target.auth, action, version)
+    }
+
+    suspend fun factoryOverage(officeId: String, preference: String): Result<Unit> {
+        val target = targetForOffice(officeId, "Open Subscriptions again.").getOrElse { return Result.failure(it) }
+        return api.factoryOverage(target.base, target.auth, preference)
+    }
+
+    private fun targetForOffice(officeId: String, reopenHint: String): Result<OfficeEndpoint<OfficeAuth>> {
+        val endpoint = current ?: return Result.failure(IllegalStateException("Not connected to the office"))
+        return endpoint.forOffice(officeId, store.snapshot.value.active?.id)?.let { Result.success(it) }
+            ?: Result.failure(IllegalStateException("The active office changed. $reopenHint"))
     }
 
     /** Stages a picture for a prompt to [workerId]: the Orchestrator keeps its own, whatever floor the phone is on. */

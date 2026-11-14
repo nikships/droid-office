@@ -2,7 +2,7 @@ import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
 import { ORCHESTRATOR_ID } from '../../shared/mission-control';
 import { PROMPT_MAX } from '../../shared/prompts';
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
-import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
+import { nativeLimits, slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { isAsleep, isBusy, needsOwnerInput } from '../../shared/status';
 import { latestThreadPlan, type ActivePlan, type ThreadBlock, type ThreadRow, type ThreadToolGroup } from '../../shared/thread-presentation';
 import { ThreadQueue } from '../../shared/thread-queue';
@@ -16,6 +16,7 @@ import { cloudStarting, threadSnapshotError, threadStarting } from '../thread-st
 import { withToken } from '../token';
 import { syncHorizontalScrollCue } from './code-highlight';
 import { h, STATUS_LABEL } from './dom';
+import { openFactoryLimits } from './factory-limits';
 import { openFilePreviewModal } from './file-preview';
 import { icon } from './icons';
 import { promptImages } from './images';
@@ -251,6 +252,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (stick) follow();
   };
   const notice = h('p.wt-notice', { role: 'status' });
+  const limitsBar = h('div.wt-limits.row', { hidden: true }, h('button.btn.sm.ghost', { type: 'button', onclick: () => openFactoryLimits() }, 'Factory limits'));
   const retry = h(
     'button.btn.sm.hidden',
     {
@@ -571,7 +573,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
           },
           h('span.wt-slash-name', {}, `/${command.name}`),
           h('span.wt-slash-desc', { title: command.argumentHint ? `${command.description}\n/${command.name} ${command.argumentHint}` : command.description }, command.description),
-          command.kind === 'tty' ? h('span.wt-slash-tag', { title: 'Opens one of Droid’s dialogs, in Raw TTY' }, 'Raw TTY') : null,
+          command.kind === 'tty' && !nativeLimits(`/${command.name}`, store.factory.connection.connected && !store.factory.connection.rejected)
+            ? h('span.wt-slash-tag', { title: 'Opens one of Droid’s dialogs, in Raw TTY' }, 'Raw TTY')
+            : null,
           command.source ? h('span.wt-slash-tag', { title: command.source === 'skill' ? 'One of this worker’s skills' : 'A custom command' }, command.source === 'skill' ? 'Skill' : 'Command') : null,
         ),
       ),
@@ -685,7 +689,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const blockedNote = h('div.wt-blocked.note.warn', { role: 'status', hidden: true }, icon('lock', 15), blockedText, opts.blockedAction ?? null);
   // Quote: text selected in the conversation goes into the draft at its cursor as Markdown quote lines.
   const quote = h('button.btn.sm.wt-quote', { type: 'button', hidden: true, onmousedown: (event: Event) => event.preventDefault(), onclick: () => quoteSelection() }, 'Quote');
-  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, progress, h('div.wt-feedback', {}, notice, retry, raw, resume), blockedNote, planBar, form, quote);
+  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, progress, h('div.wt-feedback', {}, notice, retry, raw, resume), limitsBar, blockedNote, planBar, form, quote);
   images.dropZone(form);
   const quotable = () => {
     if (input.disabled || !form.checkVisibility()) return undefined;
@@ -1371,6 +1375,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const blocked = opts.blocked?.();
     const allowed = active && connected && !disposed && (opts.promptWakes || !isAsleep(worker.status)) && !worker.lost && !broken && !blocked;
     const waiting = worker.status === 'needs_input';
+    const factoryOnline = store.factory.connection.connected && !store.factory.connection.rejected;
+    limitsBar.hidden = !waiting || !active || disposed || !connected || !!worker.lost || !!broken || !!blocked || !factoryOnline;
     form.hidden = waiting || !!blocked;
     blockedNote.hidden = !blocked;
     blockedText.textContent = blocked ?? '';
@@ -1492,9 +1498,23 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     updateControls();
   };
 
+  const clearDraft = () => {
+    input.value = '';
+    paintPastes();
+    opts.onDraft('');
+    told = '';
+    paintSlash();
+    closeMention();
+  };
   const submit = async (queueSend = false) => {
     if ((queueSend ? queue.disabled || queue.hidden : send.disabled) || sending) return;
     const text = draftText().trim();
+    if (active && !disposed && !queueSend && nativeLimits(text, store.factory.connection.connected && !store.factory.connection.rejected)) {
+      openFactoryLimits();
+      clearDraft();
+      updateControls();
+      return;
+    }
     const refused = cloud ? undefined : slashRefusal(text, worker.name, isBusy(worker.status));
     if (refused) {
       told = refused;
@@ -1523,12 +1543,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (!result) {
       if (queueReceipt) queued.sent(text, hasImage, after);
       images.take();
-      input.value = '';
-      paintPastes();
-      opts.onDraft('');
-      told = '';
-      paintSlash();
-      closeMention();
+      clearDraft();
       if (history.historical) history.clear(worker.sessionId);
       follow();
       read(undefined, 0);
@@ -1614,6 +1629,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   });
 
   const off = net.onMessage(receive);
+  const offFactory = store.on('factory', () => {
+    paintSlash();
+    updateControls();
+  });
   const timer = setInterval(() => {
     if (!active || !connected || document.hidden) return;
     readTeam();
@@ -1707,6 +1726,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       document.removeEventListener('selectionchange', scheduleQuote);
       cancelAnimationFrame(quoteFrame);
       off();
+      offFactory();
       resize.disconnect();
       questionChanges.disconnect();
       images.discard();

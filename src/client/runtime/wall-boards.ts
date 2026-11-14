@@ -67,14 +67,14 @@ export function mountWallBoards(host: WallBoardsHost) {
   // The compute wall: this machine, Factory Droid Computers, and DroidProxy account quotas.
   const computeWall = new ComputeWallTextures();
   const quotaWall = new QuotaWallTexture();
-  const renderQuotaBoard = (force = false) => quotaWall.render(store.subscriptions, Date.now(), force);
+  const renderQuotaBoard = (force = false) => quotaWall.render(store.subscriptions, Date.now(), force, store.setup.airgapped ? undefined : store.factory);
   const renderMachineBoard = () => {
     computeWall.render(store.machine, store.factory);
     setRackCubes(rackCubesOf(store.factory));
   };
   mountBoard(office.fleetScreen, computeWall.fleet, () => {}, []);
   mountBoard(office.machineScreen, computeWall.machine, renderMachineBoard, ['machine', 'factory']);
-  mountBoard(office.proxyScreen, quotaWall.texture, () => renderQuotaBoard(), ['subscriptions']);
+  mountBoard(office.proxyScreen, quotaWall.texture, () => renderQuotaBoard(), ['subscriptions', 'factory', 'setup']);
   setInterval(() => renderQuotaBoard(), 10_000);
   // Ages and asleep-ness move on by themselves; the wall paints only when what it says changed.
   setInterval(renderMachineBoard, 30_000);
@@ -82,8 +82,14 @@ export function mountWallBoards(host: WallBoardsHost) {
   let stopWatchingWall: (() => void) | undefined;
   setInterval(() => {
     const near = !host.upTop && !!store.floor && Math.hypot(host.player.pos.x - COMPUTE_WALL.x, host.player.pos.z - COMPUTE_WALL.z) < 12;
-    if (near && !stopWatchingWall) stopWatchingWall = watchFactory('computers');
-    else if (!near && stopWatchingWall) {
+    if (near && !stopWatchingWall) {
+      const computers = watchFactory('computers');
+      const limits = watchFactory('limits');
+      stopWatchingWall = () => {
+        computers();
+        limits();
+      };
+    } else if (!near && stopWatchingWall) {
       stopWatchingWall();
       stopWatchingWall = undefined;
     }

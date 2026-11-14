@@ -90,6 +90,7 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
     var query by rememberSaveable { mutableStateOf("") }
     var scope by rememberSaveable { mutableStateOf("") }
     val current = catalogue?.models?.find { it.id == selected }
+    val now = rememberNow(30_000)
     Row(
         Modifier.fillMaxWidth().panel(RoundedCornerShape(10.dp), Palette.SurfaceRaised, Palette.BorderStrong)
             .selectable(open, enabled = catalogue != null, role = Role.Button) { query = ""; scope = ""; open = true }.tagged(Tags.Hire.MODEL).padding(horizontal = 14.dp, vertical = 12.dp),
@@ -100,7 +101,7 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
         else ModelLogo(selected, current?.displayName, current?.provider, Modifier.size(22.dp))
         Column(Modifier.weight(1f)) {
             Text(current?.pick()?.title ?: selected?.let { catalogue.nameOf(it) } ?: "The office's default", style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            val why = Availability.reason(availability[selected], System.currentTimeMillis())
+            val why = Availability.reason(availability[selected], now)
             if (why != null) Text(why, style = MaterialTheme.typography.bodySmall, color = Palette.Warning, maxLines = 1, overflow = TextOverflow.Ellipsis)
             else if (current != null) Text(current.pick().group, style = MaterialTheme.typography.bodySmall)
         }
@@ -112,7 +113,6 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
     val recent = stored.settings.recentModels.filter { !Availability.cannotRun(availability[it]) }
     val sections = remember(models, query, scope, recent) { ModelSearch.sections(models, query, scope, recent) }
     val listState = rememberLazyListState()
-    val now = rememberNow(30_000)
     LaunchedEffect(query, scope) { listState.scrollToItem(0) }
     fun choose(option: ModelOption) {
         if (catalogue.customOnly && catalogue.models.none { it.custom && it.id == option.id }) return

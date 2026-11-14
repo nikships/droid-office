@@ -13,6 +13,8 @@ import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type GhPull, type Subag
 import type { PipelinesState } from '../shared/pipelines.js';
 import { isAsleep } from '../shared/status.js';
 import type { DroidModelCatalogue, DroidModelOption } from './droid-models.js';
+import type { FactoryState } from '../shared/factory.js';
+import { factoryModelAvailability, factoryModelTier } from '../shared/factory-limits.js';
 import { availabilityWords, cannotRun, durationWords, isSubscriptionModel, type ModelAvailability, type ModelUsage, type SubscriptionProviderKey } from '../shared/subscriptions.js';
 import { restoreStoredImages, type StoredImageMeta } from './office-images.js';
 import { officePrompt, type PromptSource } from './prompts.js';
@@ -28,6 +30,9 @@ import {
   buildWorkerInspection,
   inspectTerminalRetry,
   summarizeProviderQuotas,
+  summarizeFactoryQuotas,
+  factoryModelUsage,
+  type FactoryModelUsage,
   type ProviderQuotaSummary,
   type WorkerInspection,
   type WorkerModelCooldown,
@@ -97,6 +102,8 @@ export interface TeamOptions {
   usage?: (model: string, now: number) => ModelUsage | undefined;
   /** Throttled DroidProxy `/models` recheck so recently exhausted subscription windows show up without waiting 60s. */
   recheckModels?: () => Promise<void>;
+  factory?: () => FactoryState;
+  recheckFactoryLimits?: () => Promise<void>;
   prompts?: PromptSource;
   toast(text: string, level: 'info' | 'warn', workerId?: string): void;
   /** How long news waits before a lead at rest is told, so a report and the turn ending with it go as one. */
@@ -332,6 +339,7 @@ export interface TeamModel {
   cooldown?: { until: string | null; window: string; remainingMs?: number; resetsIn?: string };
   /** A subscription model: what its plan has left, so a lead can weigh a nearly spent plan against a full one. */
   usage?: ModelUsage;
+  factoryUsage?: FactoryModelUsage;
   enabled?: boolean;
 }
 
@@ -871,11 +879,7 @@ export class Team {
   private async models(caller: WorkerInfo, includeDisabled = false): Promise<TeamReply> {
     const why = this.cannotHire(caller);
     if (why) return no(403, why);
-    try {
-      await this.opts.recheckModels?.();
-    } catch {
-      // Fall back to cached subscription availability and usage.
-    }
+    await Promise.allSettled([this.opts.recheckModels?.(), this.opts.recheckFactoryLimits?.()]);
     const now = this.now();
     const s = this.opts.settings();
     const catalogue = await this.catalogue();
@@ -884,25 +888,31 @@ export class Team {
     const eligible = (id: string) => !catalogue?.customOnly || known.get(id)?.custom === true;
     const allowed = modelList(s);
     const fallback = preferred && eligible(preferred) && !outsideModelList(allowed, preferred) ? preferred : undefined;
+    const factory = this.opts.factory?.();
     const describe = (id: string, m: DroidModelOption | undefined, note?: string): TeamModel => {
       const avail = this.opts.availability?.(id);
-      const stuck = m?.disabled ? 'Switched off in Droid.' : this.whyNot(id);
+      const factoryAvailability = factory ? factoryModelAvailability(factory, m ?? { id }, now) : undefined;
+      const blockedAvail = cannotRun(avail) ? avail : undefined;
+      let stuck: string | undefined;
+      if (m?.disabled) stuck = 'Switched off in Droid.';
+      else if (blockedAvail) stuck = availabilityWords(blockedAvail, now);
+      else if (factoryAvailability && factoryAvailability.state !== 'ok') stuck = factoryAvailability.reason;
       const usage = this.opts.usage?.(id, now);
+      const factoryUsage = factoryModelUsage(factory, m ?? { id }, now);
       const subscriptionProvider = usage?.provider ?? (avail && 'provider' in avail ? avail.provider : undefined);
       const emptyWin = usage?.windows.find((w) => w.leftPercent <= 0);
+      const cooldownFor = (until: number | null, window: string): NonNullable<TeamModel['cooldown']> => ({
+        until: until === null ? null : new Date(until).toISOString(),
+        window,
+        ...(until !== null && until > now ? { remainingMs: until - now, resetsIn: durationWords(until - now) } : {}),
+      });
       let cooldown: TeamModel['cooldown'];
-      if (avail?.state === 'exhausted') {
-        cooldown = {
-          until: avail.until !== null ? new Date(avail.until).toISOString() : null,
-          window: avail.window || emptyWin?.name || 'quota',
-          ...(avail.until !== null && avail.until > now ? { remainingMs: avail.until - now, resetsIn: durationWords(avail.until - now) } : {}),
-        };
+      if (factoryAvailability?.state === 'exhausted') {
+        cooldown = cooldownFor(factoryAvailability.until, factoryAvailability.window);
+      } else if (avail?.state === 'exhausted') {
+        cooldown = cooldownFor(avail.until, avail.window || emptyWin?.name || 'quota');
       } else if (emptyWin) {
-        cooldown = {
-          until: emptyWin.resetsAt !== null ? new Date(emptyWin.resetsAt).toISOString() : null,
-          window: emptyWin.name,
-          ...(emptyWin.resetsAt !== null && emptyWin.resetsAt > now ? { remainingMs: emptyWin.resetsAt - now, resetsIn: durationWords(emptyWin.resetsAt - now) } : {}),
-        };
+        cooldown = cooldownFor(emptyWin.resetsAt, emptyWin.name);
       }
       return {
         id,
@@ -922,6 +932,7 @@ export class Team {
         ...(subscriptionProvider ? { subscriptionProvider } : {}),
         ...(cooldown ? { cooldown } : {}),
         ...(usage ? { usage } : {}),
+        ...(factoryUsage ? { factoryUsage } : {}),
       };
     };
     const models = includeDisabled
@@ -937,7 +948,7 @@ export class Team {
       const model = describe(fallback, known.get(fallback));
       models.unshift({ ...model, ...(includeDisabled ? { enabled: !model.cannotRun } : {}) });
     }
-    const quotas = summarizeProviderQuotas(models, now);
+    const quotas = [...summarizeFactoryQuotas(factory, models, now), ...summarizeProviderQuotas(models, now)];
     return ok({
       restricted: !!allowed,
       models,
@@ -981,9 +992,12 @@ export class Team {
   }
 
   /** Why a worker on `model` can't run now, as team_models says it; undefined when it can. */
-  private whyNot(model: string): string | undefined {
+  private whyNot(model: string, descriptor?: DroidModelOption): string | undefined {
     const a = this.blocked(model);
-    return a ? availabilityWords(a, this.now()) : undefined;
+    if (a) return availabilityWords(a, this.now());
+    const factory = this.opts.factory?.();
+    const f = factory ? factoryModelAvailability(factory, descriptor ?? { id: model }, this.now()) : undefined;
+    return f && f.state !== 'ok' ? f.reason : undefined;
   }
 
   /**
@@ -991,17 +1005,28 @@ export class Team {
    * may pick that can run; undefined when it can. `named`: the lead asked for it with --model.
    */
   private async refuseModel(model: string | undefined, named: boolean, list: readonly SubagentModel[] | undefined): Promise<string | undefined> {
-    if (!this.opts.availability) return undefined;
+    if (!this.opts.availability && !this.opts.factory) return undefined;
+    try {
+      await this.opts.recheckFactoryLimits?.();
+    } catch {
+      // An unreadable Factory state must not prevent hiring.
+    }
     const picked = model ?? this.defaultModel();
-    const catalogue = picked && !this.blocked(picked) ? undefined : await this.catalogue();
+    const catalogue = !picked || this.whyNot(picked) ? await this.catalogue() : undefined;
     const id = picked ?? catalogue?.defaultModel;
-    const a = this.blocked(id);
-    if (!a || !id) return undefined;
+    if (!id) return undefined;
     const known = new Map((catalogue?.models ?? []).map((m) => [m.id, m]));
+    const reason = this.whyNot(id, known.get(id));
+    if (!reason) return undefined;
     const name = (x: string) => known.get(x)?.displayName?.replace(/^DroidProxy:\s*/i, '') ?? x;
     const pool = list ? list.map((m) => m.id) : (catalogue?.models ?? []).filter((m) => !m.legacy).map((m) => m.id);
-    const fine = pool.filter((x) => x !== id && !this.blocked(x));
-    const head = hireRefusal(name(id), a, this.now());
+    const fine = pool.filter((x) => {
+      if (x === id) return false;
+      const descriptor = known.get(x);
+      return !descriptor?.disabled && !this.whyNot(x, descriptor);
+    });
+    const a = this.blocked(id);
+    const head = a ? hireRefusal(name(id), a, this.now()) : `${name(id)} cannot run: ${reason}.`;
     const which = named ? '' : ' It is the default subagent model, so set model in team_hire.';
     if (!fine.length) return `${head}${which} No other model a subagent may run can run now either: tell whoever asked you.`;
     const shown = fine.slice(0, 8);
@@ -1238,6 +1263,7 @@ export class Team {
       runtime: this.workers.runtime?.(w.id),
       availability: model ? this.opts.availability?.(model) : undefined,
       usage: model ? this.opts.usage?.(model, now) : undefined,
+      factory: this.opts.factory?.(),
       pulls: this.opts.pullItems?.(),
       pipelines: this.opts.pipelineState?.(),
       labelsOn: this.opts.labelsOn?.() ?? true,
@@ -1256,24 +1282,23 @@ export class Team {
     });
   }
 
-  /** Triggers a throttled DroidProxy `/models` recheck when an inspected worker is retrying a subscription model. */
+  /** Recheck both providers for live retries and terminal quota failures, using each poller's throttle. */
   async recheckIfRetrying(workers: readonly WorkerInfo[]): Promise<void> {
-    if (!this.opts.recheckModels) return;
+    const checks = new Set<() => Promise<void>>();
+    let known: Map<string, DroidModelOption> | undefined;
     for (const w of workers) {
-      if (w.status !== 'working') continue;
       const model = w.activeModel ?? w.model;
-      if (!model || !isSubscriptionModel(model)) continue;
-      if (this.opts.availability?.(model)?.state === 'exhausted') continue;
+      if (!model) continue;
       const rt = this.workers.runtime?.(w.id);
-      if (inspectTerminalRetry(rt?.screenRows, w.status, Boolean(rt?.currentTool))?.retrying) {
-        try {
-          await this.opts.recheckModels();
-        } catch {
-          // Fall back to cached availability.
-        }
-        return;
+      if (!inspectTerminalRetry(rt?.screenRows, w.status, Boolean(rt?.currentTool))) continue;
+      if (isSubscriptionModel(model) && this.opts.recheckModels) checks.add(this.opts.recheckModels);
+      if (this.opts.recheckFactoryLimits && factoryModelTier({ id: model })) {
+        known ??= new Map((await this.catalogue())?.models.map((m) => [m.id, m]));
+        const descriptor = known.get(model);
+        if (!descriptor?.custom) checks.add(this.opts.recheckFactoryLimits);
       }
     }
+    await Promise.allSettled([...checks].map((check) => check()));
   }
 
   private member(w: WorkerInfo, leadId?: string, warnings?: readonly string[]): TeamMember {

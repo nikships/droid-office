@@ -43,6 +43,8 @@ class TagsTest {
         assertEquals("board.filter/markdown", Tags.Board.filter("markdown"))
         assertEquals("board.message.edit/m1", Tags.Board.editMessage("m1"))
         assertEquals("board.seek/@01:24", Tags.Board.seek("@01:24"))
+        assertEquals("subscriptions.factory.overage/extraUsage", Tags.Subscriptions.overage("extraUsage"))
+        assertEquals("subscriptions.factory.window/core/Weekly", Tags.Subscriptions.factoryWindow("core", "Weekly"))
     }
 
     @Test

@@ -5,6 +5,7 @@ import type { Net } from '../net';
 import { store } from '../state';
 import { h, timeAgo } from './dom';
 import { disclosure } from './kit';
+import { factoryLimitsPanel } from './factory-limits';
 
 const MARK: Record<FactoryCapability['status'], string> = { ok: '✓', denied: '✗', checking: '…', error: '!' };
 
@@ -50,6 +51,7 @@ export function factoryKeySettings(net: Net): { key: { desc: Node; below: Node[]
   const caps = h('ul.group.factory-caps', { 'aria-label': 'What the key can reach' });
   const reach = disclosure('What the key reaches', caps);
   const modeNote = h('p.note.info', {}, AIRGAPPED_REASON, ' Existing credentials are kept.');
+  const limits = factoryLimitsPanel();
 
   let busy = false;
   let replacing = false;
@@ -130,12 +132,13 @@ export function factoryKeySettings(net: Net): { key: { desc: Node; below: Node[]
   const timer = setInterval(paint, 30_000);
   paint();
   return {
-    key: { desc: h('span.stack.tight', {}, intro, summary), below: [modeNote, form, error, rejected, actions, reach] },
+    key: { desc: h('span.stack.tight', {}, intro, summary), below: [modeNote, form, error, rejected, actions, reach, limits.element] },
     dispose: () => {
       offSetup();
       offState();
       offMode();
       clearInterval(timer);
+      limits.dispose();
     },
   };
 }
