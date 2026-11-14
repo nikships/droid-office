@@ -87,6 +87,7 @@
     "electron": "^44.11.1",
     "electron-builder": "^26.18.0",
     "husky": "^9.1.7",
+    "katex": "^0.19.1",
     "lint-staged": "^16.4.0",
     "marked": "^18.2.0",
     "node-addon-api": "^8.9.2",
