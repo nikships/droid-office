@@ -17,8 +17,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -41,6 +39,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -64,6 +64,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -90,7 +91,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.EffortDial
 import ai.factory.droidoffice.core.FloorOrder
-import ai.factory.droidoffice.core.FloorSwipe
+import ai.factory.droidoffice.core.FloorPager
+import ai.factory.droidoffice.core.GhPull
 import ai.factory.droidoffice.core.MissionControl
 import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
@@ -216,10 +218,9 @@ private fun WorkerList(
     onScan: () -> Unit,
     onHire: () -> Unit,
     onRetry: () -> Unit,
-    onFloor: (String) -> Unit,
+    onFloor: (String) -> Boolean,
 ) {
     val now = rememberNow()
-    val rows = remember(data.workers) { Workers.arrange(data.workers.values) }
     var refreshing by remember { mutableStateOf(false) }
     LaunchedEffect(refreshing, link.phase) {
         if (refreshing && link.phase == Phase.Connected) {
@@ -231,14 +232,47 @@ private fun WorkerList(
         }
     }
 
-    Column(Modifier.fillMaxSize().floorSwipe(data.floors.map { it.id }, data.floorId, onFloor)) {
+    val ids = remember(data.floors) { data.floors.map { it.id } }
+    val pager = rememberPagerState(initialPage = FloorPager.page(ids, data.floorId) ?: 0) { ids.size }
+    val scope = rememberCoroutineScope()
+    // The floor this phone asked the office for and hasn't seen arrive yet.
+    var requested by remember(data.officeId) { mutableStateOf<String?>(null) }
+    val office by rememberUpdatedState(data.floorId)
+    val ask by rememberUpdatedState(onFloor)
+
+    LaunchedEffect(pager, ids) {
+        // A floor added, removed or reordered shifts the pages, so put the pager back on its floor first.
+        FloorPager.page(ids, requested ?: office)?.let { if (it != pager.currentPage) pager.scrollToPage(it) }
+        snapshotFlow { pager.settledPage }.collect { page ->
+            val id = FloorPager.request(ids, page, office, requested) ?: return@collect
+            if (ask(id)) requested = id else FloorPager.page(ids, requested ?: office)?.let { pager.animateScrollToPage(it) }
+        }
+    }
+    LaunchedEffect(data.floorId, requested, ids) {
+        if (!FloorPager.follows(data.floorId, requested)) return@LaunchedEffect
+        requested = null
+        val at = FloorPager.page(ids, data.floorId) ?: return@LaunchedEffect
+        if (at != pager.settledPage && !pager.isScrollInProgress) pager.animateScrollToPage(at)
+    }
+    LaunchedEffect(requested) {
+        if (requested == null) return@LaunchedEffect
+        delay(5_000)
+        // The office never moved there (the floor closed, or the message was lost): slide back to where it is.
+        requested = null
+    }
+    val slideTo: (String) -> Unit = { id ->
+        val at = FloorPager.page(ids, id)
+        if (at == null) onFloor(id) else scope.launch { pager.animateScrollToPage(at) }
+    }
+
+    Column(Modifier.fillMaxSize()) {
         TopBar(officeName, data, link, onOffices)
         ConnectionBanner(link, legacy, data.synced, onRetry, onScan)
         if (link.phase == Phase.Unauthorized) {
             Repair(officeName, legacy, onScan)
             return@Column
         }
-        if (data.floors.size > 1) FloorChips(data, onFloor)
+        if (data.floors.size > 1) FloorChips(data, slideTo, highlight = ids.getOrNull(pager.currentPage) ?: data.floorId)
         PullToRefreshBox(
             isRefreshing = refreshing,
             onRefresh = {
@@ -247,31 +281,20 @@ private fun WorkerList(
             },
             modifier = Modifier.fillMaxSize(),
         ) {
-            val missionShown = MissionControl.shown(data.mission)
-            if (data.synced && rows.isEmpty() && !missionShown) {
-                EmptyFloor(onHire, Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(28.dp))
-            } else if (!data.synced) {
+            if (!data.synced) {
                 Box(Modifier.fillMaxSize().tagged(Tags.Home.LOADING).semantics { contentDescription = "Loading the office" }, contentAlignment = Alignment.Center) {
                     if (link.phase == Phase.Connecting || link.phase == Phase.Idle) Spinner(Modifier.size(26.dp))
                 }
+            } else if (ids.size < 2) {
+                FloorPage(data.floor, data, now, selected, onOpen, onActions, onHire)
             } else {
-                LazyColumn(
-                    Modifier.fillMaxSize().tagged(Tags.Home.LIST),
-                    contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 110.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    if (missionShown) item(key = "mission") {
-                        MissionControlSection(data.mission, now, selected, onOpen, Modifier.animateItem())
-                    }
-                    if (missionShown) item(key = "floor") {
-                        Eyebrow(data.floor?.name?.ifBlank { null } ?: "This floor", Modifier.padding(start = 4.dp, top = 6.dp))
-                    }
-                    if (rows.isEmpty()) item(key = "empty") {
-                        EmptyFloor(onHire, Modifier.fillMaxWidth().padding(vertical = 36.dp, horizontal = 14.dp))
-                    }
-                    items(rows, key = { it.worker.id }) { row ->
-                        WorkerCard(row, data, now, row.worker.id == selected, onOpen, onActions, Modifier.animateItem())
-                    }
+                HorizontalPager(
+                    state = pager,
+                    modifier = Modifier.fillMaxSize().tagged(Tags.Home.PAGER),
+                    pageSpacing = 16.dp,
+                    key = { ids[it] },
+                ) { page ->
+                    FloorPage(data.floors[page], data, now, selected, onOpen, onActions, onHire)
                 }
             }
         }
@@ -279,30 +302,55 @@ private fun WorkerList(
 }
 
 /**
- * Swiping sideways anywhere on the tab steps to the next or previous floor, as tapping its chip does.
- * A drag a child already took (the list scrolling, a chip dragged after a long press) is left alone,
- * and a swipe once claimed is consumed so the card or chip under the finger doesn't also take a tap.
+ * One floor's workers. [floor] is null for an office without floors, whose workers are the phone's own;
+ * another floor's come from the building roster, so a slide shows them before the office moves the phone.
  */
-private fun Modifier.floorSwipe(floors: List<String>, current: String?, onFloor: (String) -> Unit): Modifier =
-    if (floors.size < 2) this else pointerInput(floors, current) {
-        val distance = 72.dp.toPx()
-        awaitEachGesture {
-            val down = awaitFirstDown(requireUnconsumed = false)
-            var swiping = false
-            while (true) {
-                val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
-                val dx = change.position.x - down.position.x
-                val dy = change.position.y - down.position.y
-                if (!change.pressed) {
-                    if (swiping) FloorSwipe.target(floors, current, dx, dy, distance)?.let(onFloor)
-                    break
+@Composable
+private fun FloorPage(
+    floor: FloorInfo?,
+    data: OfficeData,
+    now: Long,
+    selected: String?,
+    onOpen: (String) -> Unit,
+    onActions: (String) -> Unit,
+    onHire: () -> Unit,
+) {
+    val rows = remember(floor?.id, floor?.workers, data.floorId, data.workers, data.buildingWorkers) {
+        val workers = if (floor == null) data.workers.values else FloorPager.workers(floor, data.floorId, data.workers, data.buildingWorkers)
+        workers?.let(Workers::arrange)
+    }
+    val pulls = if (floor == null) data.pulls else FloorPager.pulls(floor, data.floorId, data.pulls, data.buildingPulls)
+    val name = floor?.name?.ifBlank { null } ?: "This floor"
+    val missionShown = MissionControl.shown(data.mission)
+    Box(Modifier.fillMaxSize().then(if (floor != null) Modifier.tagged(Tags.Home.floorPage(floor.id)) else Modifier)) {
+        if (rows == null) {
+            Box(Modifier.fillMaxSize().tagged(Tags.Home.LOADING).semantics { contentDescription = "Loading $name" }, contentAlignment = Alignment.Center) {
+                Spinner(Modifier.size(26.dp))
+            }
+        } else if (rows.isEmpty() && !missionShown) {
+            EmptyFloor(onHire, Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(28.dp))
+        } else {
+            LazyColumn(
+                Modifier.fillMaxSize().tagged(Tags.Home.LIST),
+                contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 110.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (missionShown) item(key = "mission") {
+                    MissionControlSection(data.mission, now, selected, onOpen, Modifier.animateItem())
                 }
-                if (!swiping && change.isConsumed) break
-                if (!swiping && FloorSwipe.claims(dx, dy, viewConfiguration.touchSlop)) swiping = true
-                if (swiping) change.consume()
+                if (missionShown) item(key = "floor") {
+                    Eyebrow(name, Modifier.padding(start = 4.dp, top = 6.dp))
+                }
+                if (rows.isEmpty()) item(key = "empty") {
+                    EmptyFloor(onHire, Modifier.fillMaxWidth().padding(vertical = 36.dp, horizontal = 14.dp))
+                }
+                items(rows, key = { it.worker.id }) { row ->
+                    WorkerCard(row, pulls, now, row.worker.id == selected, onOpen, onActions, Modifier.animateItem())
+                }
             }
         }
     }
+}
 
 @Composable
 private fun TopBar(officeName: String, data: OfficeData, link: Link, onOffices: () -> Unit) {
@@ -376,9 +424,11 @@ private object NarrowSlot
  * The floor chips, which never scroll: the current floor always has one, the others get one most
  * relevant first (core/FloorRelevance.kt, as on the web) until the next would not fit, and the rest
  * wait under "+N more". Chips keep the building's order, and long-pressing one drags it to a new place.
+ * [highlight] is the floor the Office tab is showing or sliding to, which the office may not have moved
+ * the phone to yet.
  */
 @Composable
-internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
+internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit, highlight: String? = data.floorId) {
     val connection = LocalGraph.current.connection
     val link by connection.link.collectAsStateWithLifecycle()
     val latestFloors by rememberUpdatedState(data.floors)
@@ -466,10 +516,10 @@ internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit) {
         ) {
             Chip(
                 text = "${index + 1} · ${f.name.ifBlank { f.id }}",
-                selected = f.id == data.floorId,
-                onClick = { if (dragging == null && f.id != data.floorId) onFloor(f.id) },
+                selected = f.id == highlight,
+                onClick = { if (dragging == null && f.id != highlight) onFloor(f.id) },
                 icon = if (live) OfficeIcons.Grip else OfficeIcons.Layers,
-                badge = if (f.id == data.floorId) 0 else f.waiting,
+                badge = if (f.id == highlight) 0 else f.waiting,
                 modifier = Modifier.tagged(Tags.Home.floor(f.id))
                     .semantics {
                         customActions = listOf(
@@ -565,7 +615,7 @@ private fun MoreFloors(hidden: List<FloorInfo>, numbers: Map<String, Int>, onFlo
     }
 }
 @Composable
-internal fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: Boolean, onOpen: (String) -> Unit, onActions: (String) -> Unit, modifier: Modifier = Modifier) {
+internal fun WorkerCard(row: WorkerRow, pulls: List<GhPull>, now: Long, selected: Boolean, onOpen: (String) -> Unit, onActions: (String) -> Unit, modifier: Modifier = Modifier) {
     val w = row.worker
     val graph = LocalGraph.current
     val catalogue by graph.connection.catalogue.collectAsStateWithLifecycle()
@@ -656,7 +706,7 @@ internal fun WorkerCard(row: WorkerRow, data: OfficeData, now: Long, selected: B
                     }
                 }
             }
-            val pr = Workers.pr(w, data.pulls)
+            val pr = Workers.pr(w, pulls)
             val branch = w.worktree?.branch?.takeIf { it.isNotBlank() }
             if (pr != null || branch != null) {
                 Row(Modifier.padding(start = 26.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {

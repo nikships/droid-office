@@ -32,12 +32,19 @@ for (const [tab, source, call] of [
   });
 }
 
-test('swiping the Office tab changes floors the same way a floor chip tap does', () => {
-  assert.match(home, /Column\(Modifier\.fillMaxSize\(\)\.floorSwipe\(data\.floors\.map \{ it\.id \}, data\.floorId, onFloor\)\)/);
+test('the Office tab slides between floors on a pager that follows the finger', () => {
+  assert.doesNotMatch(home, /floorSwipe|FloorSwipe/, 'the release-only swipe is gone');
+  const pager = home.match(/HorizontalPager\(\n([\s\S]*?)\n {16}\) \{ page ->\n([\s\S]*?)\n {16}\}/);
+  assert.ok(pager, 'HomeScreen lays the floors out on a HorizontalPager');
+  const [, args, page] = pager;
+  assert.match(args, /state = pager/);
+  assert.match(args, /\.tagged\(Tags\.Home\.PAGER\)/);
+  assert.match(args, /key = \{ ids\[it\] \}/);
+  // Each page draws its own floor, so the neighbour under the finger shows that floor's workers.
+  assert.match(page, /FloorPage\(data\.floors\[page\], data,/);
   assert.match(home, /onFloor = connection::goFloor/);
-  const swipe = home.match(/private fun Modifier\.floorSwipe\([\s\S]*?\n {4}\}\n/)?.[0];
-  assert.ok(swipe, 'floorSwipe is defined');
-  assert.match(swipe, /FloorSwipe\.target\(floors, current, dx, dy, distance\)\?\.let\(onFloor\)/);
-  assert.match(swipe, /if \(!swiping && change\.isConsumed\) break/);
-  assert.match(swipe, /FloorSwipe\.claims\(dx, dy, viewConfiguration\.touchSlop\)/);
+  // The office is asked to move only once the pager settles, and chips slide the same pager.
+  assert.match(home, /snapshotFlow \{ pager\.settledPage \}\.collect \{ page ->\n\s*val id = FloorPager\.request\(ids, page, office, requested\)/);
+  assert.match(home, /FloorChips\(data, slideTo, highlight = ids\.getOrNull\(pager\.currentPage\) \?: data\.floorId\)/);
+  assert.match(home, /if \(at == null\) onFloor\(id\) else scope\.launch \{ pager\.animateScrollToPage\(at\) \}/);
 });
