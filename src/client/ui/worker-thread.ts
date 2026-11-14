@@ -1,5 +1,6 @@
 import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
 import { ORCHESTRATOR_ID } from '../../shared/mission-control';
+import { PROMPT_MAX } from '../../shared/prompts';
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { isAsleep, isBusy, needsOwnerInput } from '../../shared/status';
@@ -18,6 +19,7 @@ import { h, STATUS_LABEL } from './dom';
 import { openFilePreviewModal } from './file-preview';
 import { icon } from './icons';
 import { promptImages } from './images';
+import { expandPastes, insertQuote, isLargePaste, livePastes, type PastedText, pastedText, replacePaste } from './thread-compose';
 import { viewPicture } from './picture-viewer';
 import { renderCommandCard, renderDelegationCard, renderFileChangeCard, renderToolDisclosure, setDisclosureOpen, summarizeExplorationBlocks, type ThreadCardRenderContext } from './thread-diff-view';
 import { threadMarkdown, threadUserMarkdown, type WorkspacePathRef } from './thread-markdown';
@@ -450,7 +452,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (!queryNow) return;
     const next = applyMention(input.value, queryNow.start, queryNow.end, item.path);
     input.value = next.value;
-    opts.onDraft(input.value);
+    opts.onDraft(draftText());
     told = '';
     mentionDismissedKey = '';
     mentionCursor = 0;
@@ -571,8 +573,58 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     );
   };
 
-  input.addEventListener('input', () => {
-    opts.onDraft(input.value);
+  // Large pastes wait in the draft as tokens shown as chips; the draft and the message carry their text.
+  const pastes: PastedText[] = [];
+  let pasteSeq = 0;
+  let pastesKey = '';
+  const draftText = () => expandPastes(input.value, pastes);
+  const pasteChips = h('div.wt-pastes', { role: 'list', 'aria-label': 'Pasted text', hidden: true });
+  const editPaste = (paste: PastedText, replacement: string) => {
+    const next = replacePaste(input.value, paste, replacement);
+    if (!next) return;
+    input.value = next.value;
+    input.focus();
+    input.setSelectionRange(next.cursor, next.cursor);
+    edited();
+  };
+  const paintPastes = () => {
+    const live = livePastes(input.value, pastes);
+    if (live.length !== pastes.length) pastes.splice(0, pastes.length, ...live);
+    const key = pastes.map((paste) => paste.id).join();
+    if (key === pastesKey) return;
+    pastesKey = key;
+    pasteChips.hidden = !pastes.length;
+    pasteChips.replaceChildren(
+      ...pastes.map((paste) => {
+        const size = paste.lines > 1 ? `${paste.lines.toLocaleString('en-US')} lines` : `${paste.text.length.toLocaleString('en-US')} characters`;
+        return h(
+          'div.wt-paste-chip',
+          { role: 'listitem' },
+          h(
+            'button.wt-paste-open',
+            { type: 'button', title: `${paste.text.slice(0, 400)}${paste.text.length > 400 ? '…' : ''}`, 'aria-label': `Pasted text #${paste.id}, ${size}. Expand it into the message`, onclick: () => editPaste(paste, paste.text) },
+            icon('file', 14),
+            h('span.wt-paste-name', {}, `Pasted text #${paste.id}`),
+            h('span.wt-paste-size', {}, size),
+          ),
+          h('button.wt-paste-x', { type: 'button', title: 'Remove', 'aria-label': `Remove pasted text #${paste.id}`, onclick: () => editPaste(paste, '') }, icon('x', 12)),
+        );
+      }),
+    );
+  };
+  input.addEventListener('paste', (event) => {
+    const text = event.clipboardData?.getData('text/plain') ?? '';
+    if (input.disabled || !isLargePaste(text)) return;
+    event.preventDefault();
+    const paste = pastedText(++pasteSeq, text);
+    pastes.push(paste);
+    input.setRangeText(paste.token, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, 'end');
+    edited();
+  });
+
+  const edited = () => {
+    paintPastes();
+    opts.onDraft(draftText());
     told = '';
     slashClosed = false;
     slashCursor = 0;
@@ -584,7 +636,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     slashMenu.scrollTop = 0;
     mentionMenu.scrollTop = 0;
     updateControls();
-  });
+  };
+  input.addEventListener('input', edited);
   input.addEventListener('click', () => paintMention());
   input.addEventListener('keyup', (event) => {
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') {
@@ -605,7 +658,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const send = h('button.btn.sm.primary.wt-send', { type: 'submit' }, sendLabel, icon('arrowUp', 14));
   const stop = h('button.btn.sm.wt-stop', { type: 'button', 'aria-label': 'Stop turn', title: 'Stop turn', onclick: () => stopTurn() }, h('span.wt-stop-symbol', { 'aria-hidden': true }), h('span.wt-stop-label', {}, 'Stop'));
   const hint = h('span.wt-send-hint');
-  const box = h('div.wt-compose-box', {}, images.element, input, h('div.wt-compose-bar', {}, attach, hint, h('div.wt-send-buttons', {}, stop, queue, send)));
+  const box = h('div.wt-compose-box', {}, images.element, pasteChips, input, h('div.wt-compose-bar', {}, attach, hint, h('div.wt-send-buttons', {}, stop, queue, send)));
   box.addEventListener('click', (event) => {
     if (!input.disabled && event.target instanceof Element && !event.target.closest('button, .pimgs, textarea')) input.focus();
   });
@@ -625,8 +678,58 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   );
   const blockedText = h('p.wt-blocked-text');
   const blockedNote = h('div.wt-blocked.note.warn', { role: 'status', hidden: true }, icon('lock', 15), blockedText, opts.blockedAction ?? null);
-  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, progress, h('div.wt-feedback', {}, notice, retry, raw, resume), blockedNote, planBar, form);
+  // Quote: text selected in the conversation goes into the draft at its cursor as Markdown quote lines.
+  const quote = h('button.btn.sm.wt-quote', { type: 'button', hidden: true, onmousedown: (event: Event) => event.preventDefault(), onclick: () => quoteSelection() }, 'Quote');
+  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, progress, h('div.wt-feedback', {}, notice, retry, raw, resume), blockedNote, planBar, form, quote);
   images.dropZone(form);
+  const quotable = () => {
+    if (input.disabled || !form.checkVisibility()) return undefined;
+    const selection = document.getSelection();
+    if (!selection?.rangeCount || selection.isCollapsed) return undefined;
+    const inTranscript = (node: Node | null) => {
+      const el = node instanceof Element ? node : node?.parentElement;
+      return !!el?.closest('.wt-entry') && (list.contains(el) || teamBody.contains(el));
+    };
+    if (!inTranscript(selection.anchorNode) || !inTranscript(selection.focusNode)) return undefined;
+    const text = selection.toString();
+    if (!text.trim()) return undefined;
+    const range = selection.getRangeAt(0);
+    const rects = range.getClientRects();
+    return { text, rect: rects[rects.length - 1] ?? range.getBoundingClientRect() };
+  };
+  let quoteFrame = 0;
+  const placeQuote = () => {
+    quoteFrame = 0;
+    const found = quotable();
+    const view = scroll.getBoundingClientRect();
+    if (!found || found.rect.bottom < view.top || found.rect.top > view.bottom) {
+      quote.hidden = true;
+      return;
+    }
+    quote.hidden = false;
+    const frame = element.getBoundingClientRect();
+    const x = Math.min(Math.max(found.rect.right - frame.left - quote.offsetWidth / 2, 8), frame.width - quote.offsetWidth - 8);
+    const y = Math.min(Math.max(found.rect.bottom - frame.top + 6, view.top - frame.top + 4), view.bottom - frame.top - quote.offsetHeight - 4);
+    quote.style.setProperty('--quote-x', `${Math.round(x)}px`);
+    quote.style.setProperty('--quote-y', `${Math.round(y)}px`);
+  };
+  const scheduleQuote = () => {
+    if (!quoteFrame) quoteFrame = requestAnimationFrame(placeQuote);
+  };
+  const quoteSelection = () => {
+    const found = quotable();
+    quote.hidden = true;
+    if (!found) return;
+    const next = insertQuote(input.value, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, found.text);
+    if (!next) return;
+    input.value = next.value;
+    document.getSelection()?.removeAllRanges();
+    input.focus();
+    input.setSelectionRange(next.cursor, next.cursor);
+    edited();
+  };
+  document.addEventListener('selectionchange', scheduleQuote);
+  scroll.addEventListener('scroll', scheduleQuote, { passive: true });
 
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
   const expandedMessages = new Set<string>();
@@ -1368,7 +1471,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
 
   const submit = async (queueSend = false) => {
     if ((queueSend ? queue.disabled || queue.hidden : send.disabled) || sending) return;
-    const text = input.value.trim();
+    const text = draftText().trim();
     const refused = cloud ? undefined : slashRefusal(text, worker.name, isBusy(worker.status));
     if (refused) {
       told = refused;
@@ -1376,6 +1479,11 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       return;
     }
     if (!text && !images.ids().length && !images.busy()) return input.focus();
+    if (text.length > PROMPT_MAX) {
+      told = `This message is ${text.length.toLocaleString('en-US')} characters, over the ${PROMPT_MAX.toLocaleString('en-US')}-character limit. Remove some pasted text.`;
+      updateControls();
+      return;
+    }
     sending = true;
     updateControls();
     await images.settled();
@@ -1393,6 +1501,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       if (queueReceipt) queued.sent(text, hasImage, after);
       images.take();
       input.value = '';
+      paintPastes();
       opts.onDraft('');
       told = '';
       paintSlash();
@@ -1572,6 +1681,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       teamSection.removeEventListener('toggle', teamDisclosure, true);
       teamSection.removeEventListener('focusout', teamFocus);
       document.removeEventListener('selectionchange', teamSelection);
+      document.removeEventListener('selectionchange', scheduleQuote);
+      cancelAnimationFrame(quoteFrame);
       off();
       resize.disconnect();
       questionChanges.disconnect();

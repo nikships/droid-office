@@ -3213,6 +3213,16 @@ button.wt-change-path:hover { color: var(--accent); text-decoration: underline; 
 .wt-input::placeholder { color: #7a7a7a; }
 .wt-input:disabled { cursor: default; opacity: .6; }
 .wt-compose-box .pimgs { flex: none; padding: var(--space-3) var(--space-3) 0; }
+.wt-pastes { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3) var(--space-3) 0; cursor: default; }
+.wt-paste-chip { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); }
+.wt-paste-open { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; height: var(--control-h-sm); padding: 0 var(--space-2); border: 0; border-radius: var(--radius) 0 0 var(--radius); background: none; color: var(--text); font: 500 var(--text-small)/1 var(--font-sans); cursor: pointer; }
+.wt-paste-open:hover { background: var(--surface-hover); }
+.wt-paste-name { white-space: nowrap; }
+.wt-paste-size { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; }
+.wt-paste-x { display: grid; place-items: center; flex-shrink: 0; width: var(--control-h-sm); height: var(--control-h-sm); padding: 0; border: 0; border-left: 1px solid var(--border); border-radius: 0 var(--radius) var(--radius) 0; background: none; color: var(--text-secondary); cursor: pointer; }
+.wt-paste-x:hover { background: var(--surface-hover); color: var(--danger); }
+/* Floats under the end of a selection in the conversation; worker-thread.ts sets its offsets. */
+.wt-quote { position: absolute; top: 0; left: 0; z-index: 3; transform: translate(var(--quote-x, 0), var(--quote-y, 0)); box-shadow: var(--shadow-pop); }
 .wt-compose-bar { display: flex; align-items: center; gap: var(--space-2); min-width: 0; padding: var(--space-1) var(--space-2) var(--space-2); cursor: default; }
 .wt-send-buttons { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; flex-shrink: 0; }
 .dashboard :is(.wt-explore.working > summary .wt-activity-mark, .wt-activity.working > summary .wt-activity-mark, .wt-progress-glyph > span) { background: var(--warning); }
