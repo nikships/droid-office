@@ -36,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -83,6 +84,7 @@ import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.core.JsonWidget
 import ai.factory.droidoffice.core.Markdown
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.WorkspacePaths
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.tagged
@@ -96,7 +98,8 @@ private const val COPY_FEEDBACK_MS = 1_500L
 
 /**
  * A message's Markdown, laid out with the office's type. Links open in the browser. [surface] is
- * what the message sits on, which a table's overflow fade blends into.
+ * what the message sits on, which a table's overflow fade blends into. With [onOpenPath], the
+ * workspace files the text names (`src/a.ts:12`) are links that open them.
  */
 @Composable
 internal fun MarkdownText(
@@ -106,22 +109,26 @@ internal fun MarkdownText(
     surface: Color = Palette.Bg,
     breaks: Boolean = false,
     streaming: Boolean = false,
+    onOpenPath: ((WorkspacePaths.Ref) -> Unit)? = null,
 ) {
-    val blocks = remember(source, breaks) { Markdown.parse(source, breaks) }
+    val paths = onOpenPath != null
+    val blocks = remember(source, breaks, paths) { Markdown.parse(source, breaks, paths) }
+    val open = rememberUpdatedState(onOpenPath)
+    val opener: ((WorkspacePaths.Ref) -> Unit)? = if (paths) remember { { ref: WorkspacePaths.Ref -> open.value?.invoke(ref) } } else null
     val mono = LocalOfficeType.current.mono
     val body = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, lineHeight = 22.sp)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 8.dp)) {
         for (b in blocks) {
             when (b) {
                 is Markdown.Block.Heading -> Text(
-                    styled(b.spans, mono),
+                    styled(b.spans, mono, opener),
                     style = when (b.level) {
                         1 -> MaterialTheme.typography.titleLarge
                         2 -> MaterialTheme.typography.titleMedium
                         else -> MaterialTheme.typography.titleSmall
                     },
                 )
-                is Markdown.Block.Paragraph -> Text(styled(b.spans, mono), style = body)
+                is Markdown.Block.Paragraph -> Text(styled(b.spans, mono, opener), style = body)
                 is Markdown.Block.Item -> Row(Modifier.padding(start = (b.depth * 14).dp)) {
                     val marker = when (b.checked) {
                         true -> "☑"
@@ -130,19 +137,19 @@ internal fun MarkdownText(
                     }
                     Text(marker, style = body.copy(color = if (b.checked == true) Palette.Success else Palette.TextSecondary), modifier = Modifier.width(if (b.marker.length > 2) 30.dp else 20.dp))
                     Text(
-                        styled(b.spans, mono),
+                        styled(b.spans, mono, opener),
                         style = if (b.checked == true) body.copy(color = Palette.TextSecondary, textDecoration = TextDecoration.LineThrough) else body,
                     )
                 }
                 is Markdown.Block.Quote -> Row(Modifier.height(IntrinsicSize.Min)) {
                     Box(Modifier.width(2.dp).fillMaxHeight().background(Palette.BorderStrong))
-                    Text(styled(b.spans, mono), style = body.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 10.dp))
+                    Text(styled(b.spans, mono, opener), style = body.copy(color = Palette.TextSecondary), modifier = Modifier.padding(start = 10.dp))
                 }
                 is Markdown.Block.Code -> CodeBlockCard(b, mono)
                 is Markdown.Block.Email -> EmailDraftCard(b, body)
                 is Markdown.Block.Widget -> WidgetBlock(b, streaming, mono)
                 Markdown.Block.Rule -> Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(Palette.Border))
-                is Markdown.Block.Table -> Table(b, body.copy(fontSize = 13.5.sp, lineHeight = 19.sp), mono, surface)
+                is Markdown.Block.Table -> Table(b, body.copy(fontSize = 13.5.sp, lineHeight = 19.sp), mono, surface, opener)
             }
         }
     }
@@ -647,7 +654,7 @@ private fun resolveToneColor(tone: JsonWidget.ToneColor): Color = when (tone) {
     is JsonWidget.ToneColor.Hex -> Color(tone.argb)
 }
 
-private fun highlightedCode(text: String, language: String?): AnnotatedString {
+internal fun highlightedCode(text: String, language: String?): AnnotatedString {
     val tokens = Markdown.tokenizeCode(text, language)
     if (tokens.size <= 1 && tokens.firstOrNull()?.kind == Markdown.TokenKind.Plain) return AnnotatedString(text)
     return buildAnnotatedString {
@@ -714,7 +721,7 @@ private val CELL_MIN = 48.dp
  * the message, with the same edge cue as code.
  */
 @Composable
-private fun Table(t: Markdown.Block.Table, style: TextStyle, mono: FontFamily, surface: Color) {
+private fun Table(t: Markdown.Block.Table, style: TextStyle, mono: FontFamily, surface: Color, opener: ((WorkspacePaths.Ref) -> Unit)?) {
     val scroll = rememberScrollState()
     val grid = remember(t) { Grid() }
     val head = style.copy(fontWeight = FontWeight.SemiBold)
@@ -722,7 +729,7 @@ private fun Table(t: Markdown.Block.Table, style: TextStyle, mono: FontFamily, s
         Layout(
             content = {
                 for (row in listOf(t.header) + t.rows) {
-                    row.forEachIndexed { c, cell -> Cell(cell, if (row === t.header) head else style, t.align.getOrNull(c), mono) }
+                    row.forEachIndexed { c, cell -> Cell(cell, if (row === t.header) head else style, t.align.getOrNull(c), mono, opener) }
                 }
             },
             modifier = Modifier.horizontalScroll(scroll).drawBehind { grid.draw(this) },
@@ -765,11 +772,11 @@ private fun Table(t: Markdown.Block.Table, style: TextStyle, mono: FontFamily, s
  * ([Markdown.unbroken]): Android's line breaker would otherwise split a path at its slashes.
  */
 @Composable
-private fun Cell(spans: List<Markdown.Span>, style: TextStyle, align: Markdown.Align?, mono: FontFamily) {
+private fun Cell(spans: List<Markdown.Span>, style: TextStyle, align: Markdown.Align?, mono: FontFamily, opener: ((WorkspacePaths.Ref) -> Unit)?) {
     val pad = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
     if (spans.none { it.code }) {
         Text(
-            styled(spans, mono), style = style, modifier = pad,
+            styled(spans, mono, opener), style = style, modifier = pad,
             textAlign = when (align) {
                 Markdown.Align.Center -> TextAlign.Center
                 Markdown.Align.Right -> TextAlign.End
@@ -787,7 +794,7 @@ private fun Cell(spans: List<Markdown.Span>, style: TextStyle, align: Markdown.A
             else -> Arrangement.Start
         },
     ) {
-        for (p in pieces) Text(styled(p, mono), style = style, softWrap = false, maxLines = 1)
+        for (p in pieces) Text(styled(p, mono, opener), style = style, softWrap = false, maxLines = 1)
     }
 }
 
@@ -818,8 +825,9 @@ private class Grid {
 }
 
 private val linkStyles = TextLinkStyles(SpanStyle(color = Palette.Accent, textDecoration = TextDecoration.Underline))
+private val fileLinkStyles = TextLinkStyles(SpanStyle(color = Palette.Accent))
 
-private fun styled(spans: List<Markdown.Span>, mono: FontFamily): AnnotatedString = buildAnnotatedString {
+private fun styled(spans: List<Markdown.Span>, mono: FontFamily, opener: ((WorkspacePaths.Ref) -> Unit)? = null): AnnotatedString = buildAnnotatedString {
     for (s in spans) {
         val style = SpanStyle(
             fontWeight = if (s.bold) FontWeight.SemiBold else null,
@@ -830,7 +838,11 @@ private fun styled(spans: List<Markdown.Span>, mono: FontFamily): AnnotatedStrin
             textDecoration = if (s.strike) TextDecoration.LineThrough else null,
         )
         val link = s.link
-        if (link != null) withLink(LinkAnnotation.Url(link, linkStyles)) { withStyle(style) { append(s.text) } }
-        else withStyle(style) { append(s.text) }
+        val file = s.file
+        when {
+            link != null -> withLink(LinkAnnotation.Url(link, linkStyles)) { withStyle(style) { append(s.text) } }
+            file != null && opener != null -> withLink(LinkAnnotation.Clickable("file:${file.label}", fileLinkStyles) { opener(file) }) { withStyle(style) { append(s.text) } }
+            else -> withStyle(style) { append(s.text) }
+        }
     }
 }

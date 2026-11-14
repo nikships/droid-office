@@ -27,6 +27,8 @@ object Markdown {
         val code: Boolean = false,
         val strike: Boolean = false,
         val link: String? = null,
+        /** A workspace file this text names, which the Thread opens in its file preview. */
+        val file: WorkspacePaths.Ref? = null,
     )
 
     sealed interface Block {
@@ -109,16 +111,62 @@ object Markdown {
         data class Widget(val rawJson: String, val complete: Boolean) : Chunk
     }
 
-    /** With [breaks], a line break inside a paragraph stays one, as the owner typed it, rather than joining the lines with a space. */
-    fun parse(source: String, breaks: Boolean = false): List<Block> {
+    /**
+     * With [breaks], a line break inside a paragraph stays one, as the owner typed it, rather than
+     * joining the lines with a space. With [paths], workspace file references in the prose and whole
+     * inline code spans (`src/a.ts:12`) carry [Span.file], as the web Thread links them.
+     */
+    fun parse(source: String, breaks: Boolean = false, paths: Boolean = false): List<Block> {
         val normalized = source.replace("\r\n", "\n")
-        if (JSON_RENDER_OPEN !in normalized) return parseChunk(normalized, breaks)
         val out = ArrayList<Block>()
-        for (chunk in splitJsonRenderChunks(normalized)) {
+        if (JSON_RENDER_OPEN !in normalized) out += parseChunk(normalized, breaks)
+        else for (chunk in splitJsonRenderChunks(normalized)) {
             when (chunk) {
                 is Chunk.MarkdownText -> if (chunk.text.isNotBlank()) out += parseChunk(chunk.text, breaks)
                 is Chunk.Widget -> out += Block.Widget(chunk.rawJson, chunk.complete)
             }
+        }
+        return if (paths) out.map { mapSpans(it, ::linkPaths) } else out
+    }
+
+    private fun mapSpans(b: Block, f: (List<Span>) -> List<Span>): Block = when (b) {
+        is Block.Heading -> b.copy(spans = f(b.spans))
+        is Block.Paragraph -> b.copy(spans = f(b.spans))
+        is Block.Item -> b.copy(spans = f(b.spans))
+        is Block.Quote -> b.copy(spans = f(b.spans))
+        is Block.Table -> b.copy(header = b.header.map(f), rows = b.rows.map { r -> r.map(f) })
+        else -> b
+    }
+
+    /**
+     * Marks the workspace files [spans] name: an inline code span that is one path as a whole, and
+     * each path in plain text ([WorkspacePaths.find]). Links keep their own target.
+     */
+    fun linkPaths(spans: List<Span>): List<Span> {
+        val out = ArrayList<Span>(spans.size)
+        for (s in spans) {
+            if (s.link != null || s.file != null) {
+                out += s
+                continue
+            }
+            if (s.code) {
+                val raw = s.text.trim()
+                val ref = if (raw.isNotEmpty() && raw.none { it.isWhitespace() }) WorkspacePaths.validate(raw, true) else null
+                out += if (ref != null) s.copy(file = ref) else s
+                continue
+            }
+            val found = WorkspacePaths.find(s.text)
+            if (found.isEmpty()) {
+                out += s
+                continue
+            }
+            var at = 0
+            for (m in found) {
+                if (m.start > at) out += s.copy(text = s.text.substring(at, m.start))
+                out += s.copy(text = m.raw, file = m.ref)
+                at = m.end
+            }
+            if (at < s.text.length) out += s.copy(text = s.text.substring(at))
         }
         return out
     }

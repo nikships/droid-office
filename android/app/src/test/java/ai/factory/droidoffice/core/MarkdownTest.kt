@@ -7,6 +7,28 @@ import org.junit.Test
 
 class MarkdownTest {
     @Test
+    fun linksWorkspacePathsOnlyWhenAsked() {
+        val src = "Fixed `src/app.ts:12` and android/app/build.gradle.kts:4, see [docs](https://x.dev/src/a.ts) and `package.json`."
+        assertEquals(null, Markdown.parse(src).flatMap { (it as Block.Paragraph).spans }.firstOrNull { it.file != null })
+        val spans = (Markdown.parse(src, paths = true).single() as Block.Paragraph).spans
+        val files = spans.filter { it.file != null }
+        assertEquals(listOf("src/app.ts:12", "android/app/build.gradle.kts:4", "package.json"), files.map { it.text })
+        assertEquals(WorkspacePaths.Ref("src/app.ts", 12), files[0].file)
+        assertEquals(true, files[0].code)
+        assertEquals(WorkspacePaths.Ref("package.json"), files[2].file)
+        assertEquals(null, spans.first { it.link != null }.file)
+        assertEquals(src.replace("`", "").replace("[docs](https://x.dev/src/a.ts)", "docs"), spans.joinToString("") { it.text })
+    }
+
+    @Test
+    fun linksPathsInListsQuotesHeadingsAndTables() {
+        val blocks = Markdown.parse("# src/a.ts\n- src/b.ts:3\n> src/c.ts\n\n| f |\n|---|\n| src/d.ts |", paths = true)
+        assertEquals("src/a.ts", (blocks[0] as Block.Heading).spans.single().file?.path)
+        assertEquals(WorkspacePaths.Ref("src/b.ts", 3), (blocks[1] as Block.Item).spans.single().file)
+        assertEquals("src/c.ts", (blocks[2] as Block.Quote).spans.single().file?.path)
+        assertEquals("src/d.ts", (blocks[3] as Block.Table).rows[0][0].single().file?.path)
+    }
+    @Test
     fun blocks() {
         val md = """
             # Title

@@ -480,6 +480,16 @@ object Tags {
         const val THREAD_EMAIL_OPEN = "worker.thread.email.open"
         /** A `<json-render>` widget rendered in a message. */
         const val THREAD_WIDGET = "worker.thread.widget"
+        /** A workspace file opened from a `path:line` link: its sheet, path, line note, copy buttons and readable state. */
+        const val THREAD_FILE = "worker.thread.file_preview"
+        const val THREAD_FILE_PATH = "worker.thread.file_preview.path"
+        const val THREAD_FILE_COPY_PATH = "worker.thread.file_preview.copy_path"
+        const val THREAD_FILE_COPY = "worker.thread.file_preview.copy_file"
+        /** Loading, an error, a binary or empty file, or the truncation notice. */
+        const val THREAD_FILE_STATUS = "worker.thread.file_preview.status"
+        /** The lines of the file, a lazy list scrolled to the line the link named. */
+        const val THREAD_FILE_LINES = "worker.thread.file_preview.lines"
+        const val THREAD_FILE_META = "worker.thread.file_preview.meta"
         /** Sticky collapsible TodoWrite plan progress bar above the composer, and its header toggle (`checked` is open). */
         const val THREAD_PLAN = "worker.thread.plan"
         const val THREAD_PLAN_TOGGLE = "worker.thread.plan.toggle"
@@ -493,6 +503,8 @@ object Tags {
         fun slash(name: String) = "composer.slash/$name"
         /** A file or folder in [MENTION_MENU], by its workspace path (folders end in `/`): `composer.mention/src/app.ts`. */
         fun mention(path: String) = "composer.mention/$path"
+        /** A line of the open file in [THREAD_FILE_LINES], by its number from 1; the line the link named is `selected`. */
+        fun threadFileLine(n: Int) = "worker.thread.file_preview.line/$n"
         /** A message waiting in Droid's queue, by its place in it from 1. */
         fun threadQueued(n: Int) = "worker.thread.queued/$n"
         /** A message, tool call, thought or notice in the thread, by its entry id. */

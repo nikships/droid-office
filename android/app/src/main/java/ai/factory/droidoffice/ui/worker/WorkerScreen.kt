@@ -404,16 +404,21 @@ fun WorkerScreen(
                     else open(targetId)
                 }
             }
-            Thread(
-                worker, screen, live && link.phase == Phase.Connected, link.phase == Phase.Connected,
-                Modifier.weight(1f).fillMaxWidth(),
-                queued = queueState, queueRevision = queueRevision, queueReady = queueReady,
-                onQueueChanged = { queueRevision++ },
-                onTty = { ttyChoice = true },
-                followRequest = sent,
-                rawTty = !cloud,
-                onOpenWorker = openSubagent,
-            )
+            // Paths in messages and File Change cards open the worker's files over the Thread.
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                ProvideFilePreview(worker) {
+                    Thread(
+                        worker, screen, live && link.phase == Phase.Connected, link.phase == Phase.Connected,
+                        Modifier.fillMaxSize(),
+                        queued = queueState, queueRevision = queueRevision, queueReady = queueReady,
+                        onQueueChanged = { queueRevision++ },
+                        onTty = { ttyChoice = true },
+                        followRequest = sent,
+                        rawTty = !cloud,
+                        onOpenWorker = openSubagent,
+                    )
+                }
+            }
         } else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
             Terminal(
                 workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,
