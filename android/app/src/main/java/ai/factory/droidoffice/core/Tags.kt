@@ -254,6 +254,7 @@ object Tags {
     /** The pinned Mission Control section at the top of Home: the Orchestrator's card and a row per external bot. */
     object Mission {
         const val SECTION = "mission.section"
+        const val TOGGLE = "mission.toggle"
         const val ORCHESTRATOR = "mission.orchestrator"
         const val ORCHESTRATOR_STATUS = "mission.orchestrator.status"
         const val ORCHESTRATOR_META = "mission.orchestrator.meta"

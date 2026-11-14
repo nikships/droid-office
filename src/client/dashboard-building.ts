@@ -90,6 +90,10 @@ export function buildingRoster(input: { floors: readonly FloorInfo[]; building: 
       }
     }
   }
+  // A building agent with no team has nothing to show here; Mission Control in the sidebar still lists it.
+  const teams = new Set<string>([...(mission?.orchestrator.team.length ? [ORCHESTRATOR_ID] : []), ...(mission?.bots ?? []).filter((bot) => bot.team.length).map((bot) => bot.worker.id)]);
+  for (const row of rows.values()) if (row.worker.lead) teams.add(row.worker.lead);
+  for (const [id, row] of rows) if (row.kind !== 'desk' && !teams.has(id)) rows.delete(id);
   for (const row of rows.values()) {
     if (row.worker.lead) row.leadName = rows.get(row.worker.lead)?.worker.name.trim() || row.worker.team?.leadName.trim() || undefined;
   }

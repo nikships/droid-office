@@ -2544,8 +2544,16 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-side-foot { flex: none; display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3); }
 .dash-side-hire { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2); }
 /* Mission Control: the building's agents, pinned above the floor's list on every floor. */
-.dash-mission { flex: none; max-height: 42%; overflow: auto; padding: var(--space-2) var(--space-2) var(--space-1); border-bottom: 1px solid var(--border); background: linear-gradient(180deg, rgba(238, 96, 24, .05), transparent 64px); }
-.dash-mission-head { display: flex; align-items: center; gap: var(--space-2); min-height: 24px; padding: 0 var(--space-2) var(--space-1); }
+.dash-mission { flex: none; display: flex; flex-direction: column; max-height: 42%; overflow: hidden; padding: var(--space-2) var(--space-2) var(--space-1); border-bottom: 1px solid var(--border); background: linear-gradient(180deg, rgba(238, 96, 24, .05), transparent 64px); }
+.dash-mission-head { flex: none; display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 24px; padding: 0 var(--space-2) var(--space-1); border: 0; background: transparent; text-align: left; cursor: pointer; }
+.dash-mission-head:hover .dash-mission-chevron { color: var(--accent); }
+.dash-mission-head:focus-visible { outline-offset: -2px; }
+.dash-mission-chevron { display: grid; flex: none; color: var(--text-tertiary); transform: rotate(90deg); transition: transform .22s var(--ease); }
+.dash-mission-head[aria-expanded=false] .dash-mission-chevron { transform: rotate(0); }
+.dash-mission-body { display: grid; grid-template-rows: 1fr; min-height: 0; transition: grid-template-rows .22s var(--ease), opacity .22s var(--ease); }
+.dash-mission-body.collapsed { grid-template-rows: 0fr; opacity: 0; }
+.dash-mission-content { min-height: 0; overflow: auto; }
+@media (prefers-reduced-motion: reduce) { .dash-mission-body, .dash-mission-chevron { transition: none; } }
 .dash-mission-title { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--accent); font: 500 var(--text-label)/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
 .dash-mission-caption { margin-left: auto; color: var(--text-tertiary); font: 400 10px/16px var(--font-mono); }
 .dash-mission-agent { position: relative; margin-bottom: 2px; border: 1px solid transparent; border-radius: var(--radius-lg); }

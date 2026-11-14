@@ -65,14 +65,46 @@ class BuildingRosterTest {
         assertEquals(1, view.asks.size)
         assertEquals("sub-1", view.asks.single().worker.id)
 
-        // Lead + urgent cross-floor subagent group rises above Nova (working) and idle Orchestrator.
-        assertEquals(listOf("lead-1", "sub-1", "w-2", ORCHESTRATOR_ID), view.rows.map { it.worker.id })
+        // Lead + urgent cross-floor subagent group rises above Nova (working); the Orchestrator has no team, so it isn't listed.
+        assertEquals(listOf("lead-1", "sub-1", "w-2"), view.rows.map { it.worker.id })
         val subRow = view.rows[1]
         assertEquals(1, subRow.depth)
         assertEquals("Grokbot", subRow.leadName)
         assertTrue(subRow.crossFloorLead)
         assertEquals("api", subRow.floorId)
         assertEquals(42, Workers.pr(subRow.worker, subRow.pulls)?.second?.number)
+    }
+
+    @Test
+    fun buildingAgentsAreListedOnlyWithSubagentsWhileTheirAsksStayPinned() {
+        val asking = WorkerInfo(
+            id = ORCHESTRATOR_ID,
+            name = ORCHESTRATOR_NAME,
+            status = "needs_input",
+            waitingSince = 5L,
+            ask = WorkerAsk(kind = "question", questions = listOf(AskedQuestion(question = "Which floor?", options = listOf("Web", "Api")))),
+        )
+        val lone = MissionAgent(worker = WorkerInfo(id = "bot-lone", name = "Lone", remote = true, status = "idle"))
+        val led = MissionAgent(worker = WorkerInfo(id = "bot-led", name = "Led", remote = true, status = "idle"))
+        val botSub = WorkerInfo(id = "bot-sub", name = "Byte", status = "working", lead = "bot-led", deskId = "desk-3")
+        fun build(orchTeam: List<MissionTeamMember>) = BuildingRoster.build(
+            floors = listOf(floorOffice),
+            workersByFloor = mapOf("office" to listOf(botSub)),
+            pullsByFloor = emptyMap(),
+            mission = MissionControlState(
+                orchestrator = OrchestratorState(settings = OrchestratorSettings(on = true), agent = MissionAgent(worker = asking), team = orchTeam),
+                bots = listOf(lone, led),
+            ),
+            screens = emptyMap(),
+        )
+
+        val alone = build(emptyList())
+        assertEquals(listOf("bot-led", "bot-sub"), alone.rows.map { it.worker.id })
+        assertEquals(2, alone.totalSummary.total)
+        assertEquals(listOf(ORCHESTRATOR_ID), alone.asks.map { it.worker.id })
+
+        val withTeam = build(listOf(MissionTeamMember(id = "far", name = "Far", floor = "api", floorName = "api", status = "working")))
+        assertEquals(listOf(ORCHESTRATOR_ID, "bot-led", "bot-sub"), withTeam.rows.map { it.worker.id })
     }
 
     @Test

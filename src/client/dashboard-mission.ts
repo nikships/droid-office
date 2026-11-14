@@ -71,8 +71,29 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
   const rows = new Map<string, Row>();
   const blocks = new Map<string, Block>();
   const collapsed = new Set<string>();
+  let sectionOpen = true;
   const caption = h('span.dash-mission-caption');
-  const head = h('div.dash-mission-head', {}, h('span.dash-mission-title', {}, icon('satellite', 12), h('span', {}, 'Mission Control')), caption);
+  const content = h('div.dash-mission-content', { id: 'dash-mission-content' });
+  const body = h('div.dash-mission-body', {}, content);
+  const head = h(
+    'button.dash-mission-head',
+    {
+      type: 'button',
+      'aria-expanded': 'true',
+      'aria-controls': content.id,
+      'aria-label': 'Collapse Mission Control',
+      onclick: () => {
+        sectionOpen = !sectionOpen;
+        head.setAttribute('aria-expanded', String(sectionOpen));
+        head.setAttribute('aria-label', `${sectionOpen ? 'Collapse' : 'Expand'} Mission Control`);
+        body.classList.toggle('collapsed', !sectionOpen);
+        body.inert = !sectionOpen;
+      },
+    },
+    h('span.dash-mission-title', {}, icon('satellite', 12), h('span', {}, 'Mission Control')),
+    caption,
+    h('span.dash-mission-chevron', { 'aria-hidden': 'true' }, icon('chevron', 12)),
+  );
   const off = h(
     'button.dash-mission-off',
     { type: 'button', onclick: () => host.settings() },
@@ -260,18 +281,18 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
       return;
     }
     const focused = document.activeElement instanceof HTMLElement && el.contains(document.activeElement) ? document.activeElement : undefined;
-    const content: HTMLElement[] = [head];
+    const children: HTMLElement[] = [];
     const seen = new Set<string>();
     const orchestrator = buildingAgent(mc, ORCHESTRATOR_ID);
     if (orchestrator) {
-      content.push(paintAgent(orchestrator, next));
+      children.push(paintAgent(orchestrator, next));
       seen.add(ORCHESTRATOR_ID);
     } else {
       off.disabled = !next.live;
-      content.push(off);
+      children.push(off);
     }
     for (const bot of mc.bots) {
-      content.push(paintAgent(bot, next));
+      children.push(paintAgent(bot, next));
       seen.add(bot.worker.id);
     }
     const agents = [...(orchestrator ? [orchestrator] : []), ...mc.bots];
@@ -287,19 +308,21 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     const working = agents.filter((a) => isBusy(a.worker.status)).length + team.filter((m) => isBusy(m.status) && m.status !== 'needs_input').length;
     caption.classList.toggle('dash-team-attention', !!attention);
     caption.textContent = attention ? `${attention} need${attention === 1 ? 's' : ''} you` : working ? `${working} working` : 'Every floor';
-    reconcileChildren(el, content);
+    reconcileChildren(content, children);
+    reconcileChildren(el, [head, body]);
     if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
   }
 
   return {
     update,
     /** Each building agent, followed by its expanded team, in display order. */
-    visible: () => visible,
+    visible: () => (sectionOpen ? visible : []),
     button(id: string) {
+      if (!sectionOpen) return head;
       return rows.get(id)?.open ?? rows.get(`member:${id}`)?.open;
     },
     scrollTo(id: string) {
-      (rows.get(id) ?? rows.get(`member:${id}`))?.wrap.scrollIntoView({ block: 'nearest' });
+      if (sectionOpen) (rows.get(id) ?? rows.get(`member:${id}`))?.wrap.scrollIntoView({ block: 'nearest' });
     },
   };
 }
