@@ -61,6 +61,7 @@ object Subscriptions {
         "grok" -> "Grok"
         "copilot" -> "GitHub Copilot"
         "meta" -> "Meta"
+        "factory" -> "Factory"
         else -> key
     }
 

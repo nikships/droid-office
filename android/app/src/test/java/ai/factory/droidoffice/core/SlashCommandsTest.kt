@@ -24,6 +24,15 @@ class SlashCommandsTest {
     }
 
     @Test
+    fun connectedFactoryLimitsOpenNativelyWithoutChangingDisconnectedTtyFallback() {
+        assertEquals(true, SlashCommands.nativeLimits(" /LIMITS ", true))
+        assertEquals(false, SlashCommands.nativeLimits("/limits", false))
+        assertEquals(false, SlashCommands.nativeLimits("/limits-other", true))
+        assertEquals(false, SlashCommands.nativeLimits("show /limits", true))
+        assertEquals(SlashCommands.Kind.Tty, SlashCommands.kind("/limits"))
+    }
+
+    @Test
     fun theWorkersSkillsAndCommandsFollowTheBuiltInOnes() {
         val all = SlashCommands.all(
             listOf(

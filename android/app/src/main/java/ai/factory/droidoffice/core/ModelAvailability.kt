@@ -19,6 +19,7 @@ sealed interface ModelAvailability {
     data class Exhausted(val until: Long?, val window: String) : ModelAvailability
     data class SignedOut(val provider: String) : ModelAvailability
     data class Disabled(val provider: String) : ModelAvailability
+    data class FactoryUnavailable(val reason: String, val until: Long? = null) : ModelAvailability
 
     /** DroidProxy isn't answering. When it is [installed] the office starts it on a hire. */
     data class ProxyDown(val installed: Boolean) : ModelAvailability
@@ -82,6 +83,7 @@ object Availability {
         is ModelAvailability.Disabled -> "${provider(a.provider)} is switched off in Subscriptions"
         is ModelAvailability.ProxyDown -> if (a.installed) "DroidProxy isn't running: the office starts it" else "DroidProxy isn't installed"
         ModelAvailability.NotInCloud -> "Your own models can't run on a Factory computer"
+        is ModelAvailability.FactoryUnavailable -> a.reason + if (a.until != null && a.until > now) " · Resets in ${duration(a.until - now)}" else ""
     }
 
     private fun provider(key: String) = PROVIDERS[key] ?: key
