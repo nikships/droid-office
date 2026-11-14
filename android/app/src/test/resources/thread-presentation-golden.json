@@ -2104,17 +2104,15 @@
                       "lines": [
                         {
                           "kind": "hunk",
-                          "text": "@@ -1,1 +1,1 @@"
+                          "text": "@@"
                         },
                         {
                           "kind": "del",
-                          "text": "a",
-                          "oldLine": 1
+                          "text": "a"
                         },
                         {
                           "kind": "add",
-                          "text": "b",
-                          "newLine": 1
+                          "text": "b"
                         }
                       ]
                     }

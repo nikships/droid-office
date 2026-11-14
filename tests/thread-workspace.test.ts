@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { createFloorHttp, isFloorHttpPath } from '../src/server/server-runtime/floor-http.js';
-import { isEnvSecretPath, ThreadWorkspace } from '../src/server/thread-workspace.js';
+import { isEnvSecretPath, ThreadWorkspace, WorkspaceTexts } from '../src/server/thread-workspace.js';
 import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 
 async function tempDir(t: TestContext, prefix: string): Promise<string> {
@@ -220,4 +220,30 @@ test('floor-http serves /api/thread/files and /api/thread/file for local and orc
     const r = await get(`/api/thread/files?floor=f1&worker=${unsupported}`);
     assert.equal(r.status, 404, unsupported);
   }
+});
+
+test('WorkspaceTexts reads edited files only inside the workspace and re-keys when one changes', async (t) => {
+  const root = await tempDir(t, 'office-thread-anchor-');
+  const outside = await tempDir(t, 'office-thread-anchor-out-');
+  await mkdir(path.join(root, 'src'), { recursive: true });
+  await writeFile(path.join(root, 'src/a.ts'), 'one\ntwo\n');
+  await writeFile(path.join(root, '.env'), 'SECRET=1\n');
+  await writeFile(path.join(root, 'src/bin.dat'), Buffer.from([0, 1, 2, 0, 3]));
+  await writeFile(path.join(outside, 'secret.ts'), 'outside\n');
+  await symlink(path.join(outside, 'secret.ts'), path.join(root, 'src/escaped.ts'));
+
+  const texts = new WorkspaceTexts();
+  const abs = path.join(root, 'src/a.ts');
+  const named = [abs, 'src/a.ts', path.join(root, '.env'), path.join(outside, 'secret.ts'), 'src/escaped.ts', '../outside.ts', 'src/bin.dat', 'src/missing.ts'];
+  const first = await texts.read(root, named);
+  assert.equal(first.text(abs), 'one\ntwo\n');
+  assert.equal(first.text('src/a.ts'), 'one\ntwo\n');
+  for (const refused of named.slice(2)) assert.equal(first.text(refused), undefined, refused);
+
+  const again = await texts.read(root, named);
+  assert.equal(again.key, first.key, 'an unchanged file keeps its key');
+  await writeFile(abs, 'one\ntwo\nthree\n');
+  const changed = await texts.read(root, named);
+  assert.notEqual(changed.key, first.key);
+  assert.equal(changed.text(abs), 'one\ntwo\nthree\n');
 });

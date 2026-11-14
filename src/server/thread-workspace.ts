@@ -188,6 +188,134 @@ function countLines(buf: Buffer): number {
   return buf[buf.length - 1] === 10 ? newlines : newlines + 1;
 }
 
+/**
+ * Where a workspace-relative path really is: inside the worker's folder, not through a symlink leading
+ * out of it, and not a secret or repository-internal file.
+ */
+async function resolveWorkspaceFile(cwd: string, rawPath: string): Promise<{ abs: string; rel: string } | ThreadWorkspaceFailure> {
+  const trimmed = rawPath.trim();
+  if (!trimmed) return { status: 400, error: 'Missing file path.' };
+
+  const cleanRelPath = trimmed.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (cleanRelPath.startsWith('/') || cleanRelPath.includes('\0') || /^[a-zA-Z]:/.test(cleanRelPath) || /(^|\/)\.\.(\/|$)/.test(cleanRelPath) || /(^|\/)\.(git|droid-office)(\/|$)/.test(cleanRelPath)) {
+    return { status: 403, error: 'Path is outside the worker workspace.' };
+  }
+
+  if (isEnvSecretPath(cleanRelPath)) {
+    return { status: 403, error: 'Environment secret files cannot be previewed.' };
+  }
+
+  let root: string;
+  try {
+    root = await realpath(cwd);
+  } catch {
+    return { status: 404, error: 'Workspace folder is unavailable.' };
+  }
+
+  const candidate = path.resolve(root, cleanRelPath);
+  let linkStat: Awaited<ReturnType<typeof lstat>>;
+  try {
+    linkStat = await lstat(candidate);
+  } catch {
+    return { status: 404, error: 'File not found in workspace.' };
+  }
+
+  const abs = await insideCheckout(root, cleanRelPath);
+  if (!abs) {
+    if (linkStat.isSymbolicLink()) {
+      return { status: 403, error: 'Symlink points outside the worker workspace.' };
+    }
+    // Also check whether an ancestor directory in cleanRelPath was a symlink pointing outside root.
+    try {
+      const resolved = await realpath(candidate);
+      const rel = path.relative(root, resolved);
+      if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+        return { status: 403, error: 'Symlink points outside the worker workspace.' };
+      }
+    } catch {
+      return { status: 404, error: 'File not found in workspace.' };
+    }
+    return { status: 403, error: 'Path is outside the worker workspace.' };
+  }
+
+  const resolvedRel = path.relative(root, abs).split(path.sep).join('/');
+  if (isEnvSecretPath(resolvedRel) || /(^|\/)\.(git|droid-office)(\/|$)/.test(resolvedRel)) {
+    return { status: 403, error: 'Environment secret files cannot be previewed.' };
+  }
+  return { abs, rel: cleanRelPath };
+}
+
+/** A path a tool named (absolute, or relative to the worker's folder) as a workspace-relative path, or undefined outside it. */
+async function workspaceRelative(cwd: string, filePath: string): Promise<string | undefined> {
+  const raw = filePath.trim();
+  if (!raw) return undefined;
+  if (!path.isAbsolute(raw)) return raw;
+  const roots = [...new Set([path.resolve(cwd), await realpath(cwd).catch(() => path.resolve(cwd))])];
+  const target = path.resolve(raw);
+  for (const root of roots) {
+    const rel = path.relative(root, target);
+    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return rel.split(path.sep).join('/');
+  }
+  return undefined;
+}
+
+const ANCHOR_FILES = 64;
+const ANCHOR_CACHE_BYTES = 32 * 1024 * 1024;
+
+/**
+ * The current text of files a worker's Thread edited, read under the same confinement as the file
+ * preview, so Edit and MultiEdit diffs can be numbered from the real file. Texts are cached by file
+ * stamp; `key` changes whenever any of them does.
+ */
+export class WorkspaceTexts {
+  private cache = new Map<string, { stamp: string; text: string | undefined }>();
+  private bytes = 0;
+
+  async read(cwd: string, filePaths: readonly string[]): Promise<{ key: string; text: (filePath: string) => string | undefined }> {
+    const wanted = [...new Set(filePaths.map((p) => p.trim()).filter(Boolean))].slice(-ANCHOR_FILES);
+    const texts = new Map<string, string>();
+    const stamps: string[] = [];
+    await Promise.all(
+      wanted.map(async (filePath) => {
+        const rel = await workspaceRelative(cwd, filePath);
+        if (!rel) return;
+        const resolved = await resolveWorkspaceFile(cwd, rel);
+        if ('error' in resolved) return;
+        const info = await stat(resolved.abs).catch(() => undefined);
+        if (!info?.isFile() || info.size > MAX_STAT_BYTES) return;
+        const stamp = `${info.ino}:${info.size}:${info.mtimeMs}`;
+        stamps.push(`${filePath}@${stamp}`);
+        const hit = this.cache.get(resolved.abs);
+        let text = hit?.stamp === stamp ? hit.text : undefined;
+        if (hit?.stamp !== stamp) {
+          const raw = await readFile(resolved.abs).catch(() => undefined);
+          text = raw && !isBinaryBuffer(raw) ? raw.toString('utf8') : undefined;
+          this.remember(resolved.abs, stamp, text);
+        }
+        if (text !== undefined) texts.set(filePath, text);
+      }),
+    );
+    stamps.sort();
+    return { key: stamps.join('|'), text: (filePath) => texts.get(filePath.trim()) };
+  }
+
+  private remember(abs: string, stamp: string, text: string | undefined): void {
+    const old = this.cache.get(abs);
+    if (old) {
+      this.bytes -= old.text?.length ?? 0;
+      this.cache.delete(abs);
+    }
+    this.cache.set(abs, { stamp, text });
+    this.bytes += text?.length ?? 0;
+    while (this.bytes > ANCHOR_CACHE_BYTES || this.cache.size > ANCHOR_FILES * 4) {
+      const [oldest, value] = this.cache.entries().next().value ?? [];
+      if (!oldest || !value) break;
+      this.cache.delete(oldest);
+      this.bytes -= value.text?.length ?? 0;
+    }
+  }
+}
+
 interface CachedWorkspace {
   at: number;
   files: string[];
@@ -241,55 +369,9 @@ export class ThreadWorkspace {
   }
 
   async readPreview(cwd: string, rawPath: string): Promise<ThreadFilePreview | ThreadWorkspaceFailure> {
-    const trimmed = rawPath.trim();
-    if (!trimmed) return { status: 400, error: 'Missing file path.' };
-
-    const cleanRelPath = trimmed.replace(/\\/g, '/').replace(/^\.\//, '');
-    if (cleanRelPath.startsWith('/') || cleanRelPath.includes('\0') || /^[a-zA-Z]:/.test(cleanRelPath) || /(^|\/)\.\.(\/|$)/.test(cleanRelPath) || /(^|\/)\.(git|droid-office)(\/|$)/.test(cleanRelPath)) {
-      return { status: 403, error: 'Path is outside the worker workspace.' };
-    }
-
-    if (isEnvSecretPath(cleanRelPath)) {
-      return { status: 403, error: 'Environment secret files cannot be previewed.' };
-    }
-
-    let root: string;
-    try {
-      root = await realpath(cwd);
-    } catch {
-      return { status: 404, error: 'Workspace folder is unavailable.' };
-    }
-
-    const candidate = path.resolve(root, cleanRelPath);
-    let linkStat: Awaited<ReturnType<typeof lstat>>;
-    try {
-      linkStat = await lstat(candidate);
-    } catch {
-      return { status: 404, error: 'File not found in workspace.' };
-    }
-
-    const abs = await insideCheckout(root, cleanRelPath);
-    if (!abs) {
-      if (linkStat.isSymbolicLink()) {
-        return { status: 403, error: 'Symlink points outside the worker workspace.' };
-      }
-      // Also check whether an ancestor directory in cleanRelPath was a symlink pointing outside root.
-      try {
-        const resolved = await realpath(candidate);
-        const rel = path.relative(root, resolved);
-        if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
-          return { status: 403, error: 'Symlink points outside the worker workspace.' };
-        }
-      } catch {
-        return { status: 404, error: 'File not found in workspace.' };
-      }
-      return { status: 403, error: 'Path is outside the worker workspace.' };
-    }
-
-    const resolvedRel = path.relative(root, abs).split(path.sep).join('/');
-    if (isEnvSecretPath(resolvedRel) || /(^|\/)\.(git|droid-office)(\/|$)/.test(resolvedRel)) {
-      return { status: 403, error: 'Environment secret files cannot be previewed.' };
-    }
+    const resolved = await resolveWorkspaceFile(cwd, rawPath);
+    if ('error' in resolved) return resolved;
+    const { abs, rel: cleanRelPath } = resolved;
 
     try {
       const info = await stat(abs);

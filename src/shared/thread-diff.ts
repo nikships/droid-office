@@ -194,7 +194,31 @@ function myersOps<T>(a: readonly T[], b: readonly T[]): DiffOp[] {
   return out;
 }
 
-function diffSnippet(oldRaw: string, newRaw: string): { additions: number; deletions: number; lines: ThreadDiffLine[] } {
+/** Reads the text of the file an Edit or MultiEdit changed, as it is now, or undefined when it can't be read. */
+export type ThreadFileText = (path: string) => string | undefined;
+
+/**
+ * The 1-based line where an edit's snippet starts in `fileText`: where its new text is now, or where its
+ * old text still is when the new text is empty or gone. Undefined unless exactly one place matches, so a
+ * diff never claims a line it can't prove.
+ */
+export function anchorSnippetLine(fileText: string, newRaw: string, oldRaw: string): number | undefined {
+  const text = normalizeLf(fileText);
+  for (const raw of [newRaw, oldRaw]) {
+    const needle = normalizeLf(raw);
+    if (!needle.trim()) continue;
+    const at = text.indexOf(needle);
+    if (at < 0) continue;
+    if (text.indexOf(needle, at + 1) >= 0) return undefined;
+    let line = 1;
+    for (let i = text.indexOf('\n'); i >= 0 && i < at; i = text.indexOf('\n', i + 1)) line++;
+    return line;
+  }
+  return undefined;
+}
+
+/** `anchor` is the file line the snippet starts on; without one the lines carry no numbers. */
+function diffSnippet(oldRaw: string, newRaw: string, anchor?: number): { additions: number; deletions: number; lines: ThreadDiffLine[] } {
   const [oldLines, newLines] = splitPairLines(oldRaw, newRaw);
   const ops = myersOps(oldLines, newLines);
   const full: ThreadDiffLine[] = [];
@@ -236,12 +260,29 @@ function diffSnippet(oldRaw: string, newRaw: string): { additions: number; delet
   const lines: ThreadDiffLine[] = [];
   for (const [start, end] of ranges) {
     const slice = full.slice(start, end + 1);
-    const oldCount = slice.filter((l) => l.kind === 'ctx' || l.kind === 'del').length;
-    const newCount = slice.filter((l) => l.kind === 'ctx' || l.kind === 'add').length;
-    const oldStart = oldCount === 0 ? 0 : (slice.find((l) => l.oldLine !== undefined)?.oldLine ?? 1);
-    const newStart = newCount === 0 ? 0 : (slice.find((l) => l.newLine !== undefined)?.newLine ?? 1);
+    if (anchor === undefined) {
+      lines.push({ kind: 'hunk', text: '@@' });
+      lines.push(...slice.map(({ kind, text }): ThreadDiffLine => ({ kind, text })));
+      continue;
+    }
+    const shift = anchor - 1;
+    const placed = slice.map(
+      (l): ThreadDiffLine => ({
+        kind: l.kind,
+        text: l.text,
+        ...(l.oldLine !== undefined ? { oldLine: l.oldLine + shift } : {}),
+        ...(l.newLine !== undefined ? { newLine: l.newLine + shift } : {}),
+      }),
+    );
+    const oldCount = placed.filter((l) => l.kind === 'ctx' || l.kind === 'del').length;
+    const newCount = placed.filter((l) => l.kind === 'ctx' || l.kind === 'add').length;
+    // An empty side starts on the line before the change, as in a unified diff.
+    const firstOld = placed.find((l) => l.oldLine !== undefined)?.oldLine;
+    const firstNew = placed.find((l) => l.newLine !== undefined)?.newLine;
+    const oldStart = oldCount === 0 ? (firstNew ?? anchor) - 1 : (firstOld ?? anchor);
+    const newStart = newCount === 0 ? (firstOld ?? anchor) - 1 : (firstNew ?? anchor);
     lines.push({ kind: 'hunk', text: `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@` });
-    lines.push(...slice);
+    lines.push(...placed);
   }
 
   return { additions, deletions, lines };
@@ -527,7 +568,25 @@ function parseUnifiedDiff(patch: string): ThreadFileChange[] {
   return mergeFileChanges(out);
 }
 
-export function extractThreadChanges(entry: ThreadEntry): ThreadFileChange[] | undefined {
+/** The files Edit and MultiEdit calls in `entries` changed, as they named them: the ones whose text numbers their diffs. */
+export function editedFilePaths(entries: readonly ThreadEntry[]): string[] {
+  const out = new Set<string>();
+  for (const entry of entries) {
+    if (entry.kind !== 'tool') continue;
+    const name = toolLeaf(entry.name);
+    if (name !== 'edit' && name !== 'multiedit') continue;
+    const args = parseObject(entry.input);
+    const filePath = str(args.file_path ?? args.path)?.trim();
+    if (filePath) out.add(filePath);
+  }
+  return [...out];
+}
+
+/**
+ * An Edit or MultiEdit records only the strings it swapped, so its line numbers come from finding them in
+ * the file (`fileText`); without the file, or without a single match, its lines carry no numbers.
+ */
+export function extractThreadChanges(entry: ThreadEntry, fileText?: ThreadFileText): ThreadFileChange[] | undefined {
   if (entry.kind !== 'tool') return undefined;
   const name = toolLeaf(entry.name);
   const args = parseObject(entry.input);
@@ -537,7 +596,9 @@ export function extractThreadChanges(entry: ThreadEntry): ThreadFileChange[] | u
     const oldStr = str(args.old_str ?? args.old_string);
     const newStr = str(args.new_str ?? args.new_string);
     if (!filePath || (oldStr === undefined && newStr === undefined)) return undefined;
-    const { additions, deletions, lines } = diffSnippet(oldStr ?? '', newStr ?? '');
+    const text = fileText?.(filePath);
+    const anchor = text === undefined ? undefined : anchorSnippetLine(text, newStr ?? '', oldStr ?? '');
+    const { additions, deletions, lines } = diffSnippet(oldStr ?? '', newStr ?? '', anchor);
     return [buildFileChange(filePath, 'modified', additions, deletions, lines)];
   }
 
@@ -545,6 +606,7 @@ export function extractThreadChanges(entry: ThreadEntry): ThreadFileChange[] | u
     const filePath = str(args.file_path ?? args.path)?.trim();
     const rawEdits = Array.isArray(args.edits) ? args.edits : [];
     if (!filePath || !rawEdits.length) return undefined;
+    const text = fileText?.(filePath);
     let totalAdd = 0;
     let totalDel = 0;
     const allLines: ThreadDiffLine[] = [];
@@ -556,7 +618,8 @@ export function extractThreadChanges(entry: ThreadEntry): ThreadFileChange[] | u
       const newStr = str(edit.new_str ?? edit.new_string);
       if (oldStr === undefined && newStr === undefined) continue;
       anyValid = true;
-      const { additions, deletions, lines } = diffSnippet(oldStr ?? '', newStr ?? '');
+      const anchor = text === undefined ? undefined : anchorSnippetLine(text, newStr ?? '', oldStr ?? '');
+      const { additions, deletions, lines } = diffSnippet(oldStr ?? '', newStr ?? '', anchor);
       totalAdd += additions;
       totalDel += deletions;
       allLines.push(...lines);

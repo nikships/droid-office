@@ -44,6 +44,40 @@ class ThreadViewTest {
 
     private fun tool(input: String?, output: String? = "ok") = ThreadEntry("tool:1", 1, ThreadRole.Assistant, ThreadKind.Tool, name = "Execute", input = input, output = output)
 
+    private fun change(vararg lines: ThreadDiffLine) =
+        ThreadFileChange(path = "src/a.ts", shortPath = "src/a.ts", kind = FileChangeKind.Modified, additions = 1, deletions = 1, generated = false, lines = lines.toList())
+
+    @Test
+    fun anAnchoredEditOpensAtItsRealLineAndAnUnanchoredOneOpensWithoutALine() {
+        val anchored = change(
+            ThreadDiffLine(DiffLineKind.Hunk, "@@ -900,2 +900,2 @@"),
+            ThreadDiffLine(DiffLineKind.Ctx, "fun target() {", oldLine = 900, newLine = 900),
+            ThreadDiffLine(DiffLineKind.Del, "  1", oldLine = 901),
+            ThreadDiffLine(DiffLineKind.Add, "  2", newLine = 901),
+        )
+        assertTrue(ThreadView.numbered(anchored))
+        assertEquals(900, ThreadView.targetLine(anchored))
+        val deletionOnly = change(ThreadDiffLine(DiffLineKind.Hunk, "@@ -12,1 +11,0 @@"), ThreadDiffLine(DiffLineKind.Del, "gone", oldLine = 12))
+        assertEquals(12, ThreadView.targetLine(deletionOnly))
+        assertEquals(42, ThreadView.targetLine(change(ThreadDiffLine(DiffLineKind.Hunk, "@@ -0,0 +42,5 @@"))))
+
+        val unanchored = change(ThreadDiffLine(DiffLineKind.Hunk, "@@"), ThreadDiffLine(DiffLineKind.Del, "  1"), ThreadDiffLine(DiffLineKind.Add, "  2"))
+        assertFalse(ThreadView.numbered(unanchored))
+        assertNull(ThreadView.targetLine(unanchored))
+    }
+
+    @Test
+    fun changedPathsOpenOnlyInsideTheWorkersWorkspace() {
+        assertEquals("src/a.ts", ThreadView.workspacePath("src/a.ts", null))
+        assertEquals("src/client/style.css", ThreadView.workspacePath("/Users/nik/repos/droid-office/.droid-office/worktrees/pixel-1662/src/client/style.css", null))
+        assertEquals("src/server/server.ts", ThreadView.workspacePath("/Users/nik/repos/droid-office/src/server/server.ts", "/Users/nik/repos/droid-office/"))
+        assertNull(ThreadView.workspacePath("/etc/hosts", "/Users/nik/repos/droid-office"))
+        assertNull(ThreadView.workspacePath("/Users/nik/repos/droid-office/src/a.ts", null))
+        assertNull(ThreadView.workspacePath("../outside.ts", null))
+        assertNull(ThreadView.workspacePath(".git/config", null))
+        assertNull(ThreadView.workspacePath("  ", null))
+    }
+
     @Test
     fun anActivityIsFoundByAnyEntryItStandsFor() {
         val rows = listOf(

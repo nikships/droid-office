@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { extractThreadChanges, intralineDiffSpans, looksGeneratedPath, MAX_WIRE_DIFF_LINES } from '../src/shared/thread-diff.js';
+import { anchorSnippetLine, editedFilePaths, extractThreadChanges, intralineDiffSpans, looksGeneratedPath, MAX_WIRE_DIFF_LINES } from '../src/shared/thread-diff.js';
 import type { ThreadEntry } from '../src/shared/worker-thread.js';
 
 const toolEntry = (name: string, input: unknown, extra: Partial<ThreadEntry> = {}): ThreadEntry => ({
@@ -44,14 +44,22 @@ test('looksGeneratedPath flags lockfiles, minified bundles, snapshots and dist o
 test('extractThreadChanges computes Myers unified hunks with 3 context lines for Edit', () => {
   const before = ['line 1', 'line 2', 'line 3', 'line 4', 'old A', 'line 6', 'line 7', 'line 8', 'line 9', 'line 10', 'line 11', 'line 12', 'old B', 'line 14'].join('\n');
   const after = ['line 1', 'line 2', 'line 3', 'line 4', 'new A1', 'new A2', 'line 6', 'line 7', 'line 8', 'line 9', 'line 10', 'line 11', 'line 12', 'line 14'].join('\n');
+  const filePath = '/Users/nik/repos/droid-office/.droid-office/worktrees/byte-f670/src/shared/example.ts';
+  const entry = toolEntry('Edit', { file_path: filePath, old_str: before, new_str: after });
 
-  const changes = extractThreadChanges(
-    toolEntry('Edit', {
-      file_path: '/Users/nik/repos/droid-office/.droid-office/worktrees/byte-f670/src/shared/example.ts',
-      old_str: before,
-      new_str: after,
-    }),
+  // Without the file the snippet's position is unknown, so no line is numbered.
+  const unanchored = extractThreadChanges(entry)![0];
+  assert.deepEqual(
+    unanchored.lines.filter((l) => l.kind === 'hunk').map((l) => l.text),
+    ['@@', '@@'],
   );
+  assert.equal(
+    unanchored.lines.some((l) => l.oldLine !== undefined || l.newLine !== undefined),
+    false,
+  );
+
+  // The file as it is now begins with the snippet, so its lines are the snippet's own.
+  const changes = extractThreadChanges(entry, (p) => (p === filePath ? `${after}\nline 15\n` : undefined));
 
   assert.ok(changes);
   assert.equal(changes.length, 1);
@@ -78,6 +86,66 @@ test('extractThreadChanges computes Myers unified hunks with 3 context lines for
       [5, 'new A1'],
       [6, 'new A2'],
     ],
+  );
+});
+
+test('Edit diffs carry the real file lines where the snippet sits, deep in the file', () => {
+  const head = Array.from({ length: 899 }, (_, i) => `row ${i + 1}`);
+  const file = [...head, 'function target() {', '  return 2;', '}', 'tail'].join('\n');
+  const entry = toolEntry('Edit', { file_path: 'src/deep.ts', old_str: 'function target() {\n  return 1;\n}', new_str: 'function target() {\n  return 2;\n}' });
+  const [change] = extractThreadChanges(entry, () => file)!;
+  assert.deepEqual(
+    change.lines.map((l) => [l.kind, l.oldLine, l.newLine, l.text]),
+    [
+      ['hunk', undefined, undefined, '@@ -900,3 +900,3 @@'],
+      ['ctx', 900, 900, 'function target() {'],
+      ['del', 901, undefined, '  return 1;'],
+      ['add', undefined, 901, '  return 2;'],
+      ['ctx', 902, 902, '}'],
+    ],
+  );
+
+  // A snippet that appears twice, or not at all, is never given a guessed line.
+  for (const text of [`${file}\nfunction target() {\n  return 2;\n}`, head.join('\n')]) {
+    const [unknown] = extractThreadChanges(entry, () => text)!;
+    assert.equal(
+      unknown.lines.some((l) => l.oldLine !== undefined || l.newLine !== undefined),
+      false,
+    );
+    assert.equal(unknown.lines[0].text, '@@');
+  }
+});
+
+test('anchorSnippetLine finds the new text, falls back to the old text and refuses ambiguity', () => {
+  const file = 'a\r\nb\r\nc\r\nd\n';
+  assert.equal(anchorSnippetLine(file, 'c\nd', ''), 3, 'CRLF files match LF snippets');
+  assert.equal(anchorSnippetLine(file, '', 'b'), 2, 'a deletion is found by what it removed when that is still there');
+  assert.equal(anchorSnippetLine(file, 'gone', 'd'), 4, 'old text when the new text is no longer there');
+  assert.equal(anchorSnippetLine('x\nx\n', 'x', ''), undefined);
+  assert.equal(anchorSnippetLine('x\ny\n', '   ', 'y'), 2, 'blank new text cannot anchor');
+  assert.equal(anchorSnippetLine('x\ny\n', '', ''), undefined);
+  assert.equal(anchorSnippetLine('x\ny\n', 'mid', 'none'), undefined);
+});
+
+test('MultiEdit numbers each edit on its own and editedFilePaths names the edited files', () => {
+  const file = ['import a;', 'const a = 1;', 'const b = 20;', '', 'export { a, b };', 'export default a;'].join('\n');
+  const entry = toolEntry('MultiEdit', {
+    file_path: 'src/x.ts',
+    edits: [
+      { old_str: 'const b = 2;', new_str: 'const b = 20;' },
+      { old_str: 'export default a;', new_str: 'export { a, b };\nexport default a;' },
+      { old_str: 'x', new_str: 'a' },
+    ],
+  });
+  const [change] = extractThreadChanges(entry, () => file)!;
+  assert.deepEqual(
+    change.lines.filter((l) => l.kind === 'hunk').map((l) => l.text),
+    ['@@ -3,1 +3,1 @@', '@@ -5,1 +5,2 @@', '@@'],
+  );
+  assert.deepEqual(change.lines.find((l) => l.kind === 'add' && l.text === 'export { a, b };')?.newLine, 5);
+  assert.deepEqual(
+    editedFilePaths([entry, toolEntry('Edit', { file_path: ' src/y.ts ', old_str: 'a', new_str: 'b' }, { id: 'tool:2' }), toolEntry('Create', { file_path: 'src/z.ts', content: '' }), toolEntry('Edit', { file_path: 'src/x.ts' })]),
+    ['src/x.ts', 'src/y.ts'],
   );
 });
 

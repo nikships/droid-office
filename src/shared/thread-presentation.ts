@@ -1,9 +1,9 @@
-import { extractThreadChanges, threadShortPath, toolLeaf, type ThreadFileChange } from './thread-diff.js';
+import { extractThreadChanges, threadShortPath, toolLeaf, type ThreadFileChange, type ThreadFileText } from './thread-diff.js';
 import { todoItems } from './todos.js';
 import type { ThreadEntry } from './worker-thread.js';
 
 export { threadShortPath };
-export type { ThreadDiffLine, ThreadDiffSpan, ThreadFileChange } from './thread-diff.js';
+export type { ThreadDiffLine, ThreadDiffSpan, ThreadFileChange, ThreadFileText } from './thread-diff.js';
 
 export type ActivityState = 'working' | 'complete' | 'incomplete' | 'failed' | 'cancelled';
 export type ActionKind =
@@ -543,11 +543,11 @@ function cardKindFor(category: ActionKind): ThreadCardKind | undefined {
   return undefined;
 }
 
-function modelAction(action: ThreadAction): ThreadModelAction {
+function modelAction(action: ThreadAction, fileText?: ThreadFileText): ThreadModelAction {
   // A Read that returned a picture shows just the picture: its path is already in the title.
   const args = leaf(action.entry.name) === 'read' && action.entry.images?.length ? undefined : threadArguments(action.entry);
   const card = cardKindFor(action.category);
-  const changes = card === 'change' ? extractThreadChanges(action.entry) : undefined;
+  const changes = card === 'change' ? extractThreadChanges(action.entry, fileText) : undefined;
   let command: ThreadCommandMeta | undefined;
   if (card === 'command') {
     const parsed = argumentsOf(action.entry);
@@ -581,12 +581,17 @@ export function activityState(actions: readonly ThreadModelAction[], live = fals
   return count('failed') ? 'failed' : live ? 'working' : count('incomplete') ? 'incomplete' : count('cancelled') ? 'cancelled' : 'complete';
 }
 
+export interface PresentOptions {
+  /** The worker's files as they are now, so Edit and MultiEdit diffs can carry real line numbers. */
+  fileText?: ThreadFileText;
+}
+
 /**
  * The model the clients render; session entries, positions, paging and the wire entries stay intact.
  * Messages and notices are rows. Everything between them is one Activity row, collapsed, holding
  * its thoughts and tool runs in order, each with its own disclosure.
  */
-export function presentThread(entries: readonly ThreadEntry[], busy: boolean): ThreadRow[] {
+export function presentThread(entries: readonly ThreadEntry[], busy: boolean, options: PresentOptions = {}): ThreadRow[] {
   const rows: ThreadRow[] = [];
   let section: ThreadEntry[] = [];
   let blocks: ThreadBlock[] = [];
@@ -627,7 +632,7 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
     const groups: { card?: ThreadCardKind; items: ThreadAction[]; wired: ThreadModelAction[] }[] = [];
     let exploration: { items: ThreadAction[]; wired: ThreadModelAction[] } | undefined;
     for (const item of items) {
-      const wiredItem = modelAction(item);
+      const wiredItem = modelAction(item, options.fileText);
       if (wiredItem.card) {
         exploration = undefined;
         groups.push({ card: wiredItem.card, items: [item], wired: [wiredItem] });
@@ -683,7 +688,10 @@ export function presentThread(entries: readonly ThreadEntry[], busy: boolean): T
       to: Math.max(...source.map((e) => e.seq)),
       sourceIds: source.map((e) => e.id),
       label: activityLabel(all),
-      state: activityState(all.map(modelAction), live),
+      state: activityState(
+        all.map((a) => modelAction(a)),
+        live,
+      ),
       live,
       open: false,
       ...(status ? { status } : {}),

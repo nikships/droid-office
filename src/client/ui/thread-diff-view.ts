@@ -414,7 +414,9 @@ export function renderFileChangeCard(action: ThreadModelAction, entry: ThreadEnt
       };
       renderRows();
 
-      const table = h('table.wt-diff-table', {}, tbody);
+      // Snippets that couldn't be placed in the file show no gutter rather than made-up numbers.
+      const numbered = change.lines.some((l) => l.oldLine !== undefined || l.newLine !== undefined);
+      const table = h('table.wt-diff-table', { class: numbered ? '' : 'is-unnumbered' }, tbody);
       const scroller = h('div.wt-diff-scroll.wt-horizontal-content', { tabindex: 0, 'aria-label': `Diff for ${change.shortPath}, scroll horizontally` }, table);
       const cue = h('span.wt-code-cue', { hidden: true }, 'Scroll horizontally ↔');
       const scrollWrap = h('div.wt-code-scroll', {}, scroller, cue);

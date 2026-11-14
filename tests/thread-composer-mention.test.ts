@@ -129,6 +129,18 @@ test('toWorkspaceRelPath, firstDiffTargetLine, pairIntralineSpans, and mergeSynt
   };
   assert.equal(firstDiffTargetLine(change), 14);
   assert.equal(firstDiffTargetLine({ ...change, lines: [{ kind: 'hunk', text: '@@ -0,0 +42,5 @@' }] }), 42);
+  // An Edit the office couldn't place in its file opens without a line rather than at line 1.
+  assert.equal(
+    firstDiffTargetLine({
+      ...change,
+      lines: [
+        { kind: 'hunk', text: '@@' },
+        { kind: 'del', text: 'a' },
+        { kind: 'add', text: 'b' },
+      ],
+    }),
+    undefined,
+  );
 
   const paired = pairIntralineSpans(lines);
   assert.equal(paired.has(1), false);

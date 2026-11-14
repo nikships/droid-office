@@ -135,6 +135,46 @@ object ThreadView {
         return out
     }
 
+    private val hunkStart = Regex("""^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@""")
+
+    /** Whether [change]'s lines carry file line numbers: an Edit the office couldn't place in its file has none. */
+    fun numbered(change: ThreadFileChange): Boolean = change.lines.any { it.oldLine != null || it.newLine != null }
+
+    /** The file line [change] starts on, to open its file there (firstDiffTargetLine); null when its lines aren't numbered. */
+    fun targetLine(change: ThreadFileChange): Int? {
+        change.lines.firstOrNull { it.newLine != null || it.oldLine != null }?.let { return it.newLine ?: it.oldLine }
+        for (line in change.lines) {
+            if (line.kind != DiffLineKind.Hunk) continue
+            val m = hunkStart.find(line.text) ?: continue
+            val new = m.groupValues[2].toInt()
+            val old = m.groupValues[1].toInt()
+            if (new > 0) return new
+            if (old > 0) return old
+        }
+        return null
+    }
+
+    private val worktreePath = Regex("""^.*?/\.droid-office/worktrees/[^/]+/(.+)$""")
+    private val insideRepoInternals = Regex("""(^|/)\.(git|droid-office)(/|$)""")
+    private val parentStep = Regex("""(^|/)\.\.(/|$)""")
+
+    /**
+     * A changed file's path relative to the worker's workspace, for the office's file preview
+     * (toWorkspaceRelPath): a worktree path, or an absolute path inside [floorDir]. Null outside it.
+     */
+    fun workspacePath(raw: String, floorDir: String?): String? {
+        val norm = raw.trim().replace('\\', '/')
+        if (norm.isEmpty()) return null
+        val candidate = worktreePath.find(norm)?.groupValues?.get(1) ?: if (norm.startsWith("/")) {
+            val floor = floorDir?.trim()?.replace('\\', '/')?.trimEnd('/')
+            if (!floor.isNullOrEmpty() && norm.startsWith("$floor/")) norm.substring(floor.length + 1) else return null
+        } else norm
+        val rel = candidate.removePrefix("./").trimEnd('/')
+        if (rel.isEmpty() || rel.startsWith("/") || Regex("^[a-zA-Z]:").containsMatchIn(rel)) return null
+        if (parentStep.containsMatchIn(rel) || insideRepoInternals.containsMatchIn(rel)) return null
+        return rel
+    }
+
     /** Mirrors `latestThreadPlan` in `src/shared/thread-presentation.ts`. */
     fun latestPlan(entries: List<ThreadEntry>, busy: Boolean): ActivePlan? {
         var steps: List<PlanStep>? = null

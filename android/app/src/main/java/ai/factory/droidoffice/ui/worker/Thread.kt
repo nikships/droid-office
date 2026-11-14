@@ -445,6 +445,7 @@ internal fun Thread(
         if (fromEntries != null) fromEntries.takeUnless { it.stale } else ThreadView.fallbackPlan(w.todos)
     }
     val pictures = remember(effectiveFloor, w.id) { effectiveFloor?.let { PictureSource(it, w.id) } }
+    val floorDir = remember(data.floors, effectiveFloor) { data.floors.firstOrNull { it.id == effectiveFloor }?.dir }
     Column(modifier.tagged(Tags.Worker.THREAD)) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
             // On a wide screen the conversation keeps a reading width, centred, rather than lines across the whole window.
@@ -473,6 +474,7 @@ internal fun Thread(
                                     allWorkers = allWorkers,
                                     deskWorker = data::deskWorker,
                                     onOpenWorker = onOpenWorker,
+                                    floorDir = floorDir,
                                     onToggleExploration = ::toggleExploration,
                                     onFlip = ::flip,
                                 )
@@ -901,6 +903,7 @@ private fun Activity(
     allWorkers: List<WorkerInfo>,
     deskWorker: (String) -> WorkerInfo?,
     onOpenWorker: ((String) -> Unit)?,
+    floorDir: String?,
     onToggleExploration: (ThreadView.Segment.Exploration, Boolean) -> Unit,
     onFlip: (String, Boolean) -> Unit,
 ) {
@@ -932,6 +935,7 @@ private fun Activity(
                         allWorkers = allWorkers,
                         deskWorker = deskWorker,
                         onOpenWorker = onOpenWorker,
+                        floorDir = floorDir,
                         onFlip = onFlip,
                     )
                 }
@@ -1018,6 +1022,7 @@ private fun CardSegment(
     allWorkers: List<WorkerInfo>,
     deskWorker: (String) -> WorkerInfo?,
     onOpenWorker: ((String) -> Unit)?,
+    floorDir: String?,
     onFlip: (String, Boolean) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1040,6 +1045,7 @@ private fun CardSegment(
                                     change = change,
                                     changeKey = changeKey,
                                     entry = loaded[action.id],
+                                    floorDir = floorDir,
                                     isOpen = isOpen,
                                     showFull = showFull,
                                     onToggle = { onFlip(changeKey, isOpen) },
@@ -1076,12 +1082,18 @@ private fun FileChangeCard(
     change: ThreadFileChange,
     changeKey: String,
     entry: ThreadEntry?,
+    floorDir: String?,
     isOpen: Boolean,
     showFull: Boolean,
     onToggle: () -> Unit,
     onToggleFull: () -> Unit,
 ) {
     val reveal = rememberReveal()
+    val preview = LocalFilePreview.current
+    val relPath = remember(change.path, floorDir) { ThreadView.workspacePath(change.path, floorDir) }
+    val openFile: (() -> Unit)? = if (preview != null && relPath != null) {
+        { preview.openFilePreview(relPath, ThreadView.targetLine(change)) }
+    } else null
     val borderColor = if (action.state == ActivityState.Failed) Palette.Danger.copy(alpha = 0.35f) else Palette.Border
     Column(
         Modifier.fillMaxWidth()
@@ -1109,10 +1121,17 @@ private fun FileChangeCard(
             }
             Text(
                 change.shortPath,
-                style = LocalOfficeType.current.monoBody.copy(fontSize = 12.5.sp, lineHeight = 17.sp, color = Palette.Text),
+                style = LocalOfficeType.current.monoBody.copy(
+                    fontSize = 12.5.sp, lineHeight = 17.sp, color = Palette.Text,
+                    textDecoration = if (openFile != null) TextDecoration.Underline else null,
+                ),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).then(
+                    if (openFile != null) {
+                        Modifier.clickable(onClickLabel = "Open file", role = Role.Button, onClick = openFile).tagged(Tags.Worker.threadChangeOpen(changeKey))
+                    } else Modifier,
+                ),
             )
             when (change.kind) {
                 FileChangeKind.Added -> MiniBadge("ADDED", Palette.Success)
@@ -1203,12 +1222,32 @@ private fun FileChangeCard(
 }
 
 private fun formatDiffLines(lines: List<ThreadDiffLine>): AnnotatedString {
+    // An Edit the office couldn't place in its file has no line numbers: no gutter rather than made-up ones.
+    val numbered = lines.any { it.oldLine != null || it.newLine != null }
     val maxLine = lines.maxOfOrNull { maxOf(it.oldLine ?: 0, it.newLine ?: 0) } ?: 0
     val digits = maxLine.toString().length.coerceAtLeast(2)
     val blankNum = " ".repeat(digits)
     return buildAnnotatedString {
         lines.forEachIndexed { idx, line ->
             val clean = line.text.replace('\n', ' ').replace('\r', ' ')
+            if (!numbered) {
+                val (sign, color) = when (line.kind) {
+                    DiffLineKind.Add -> "+ " to Palette.Success.copy(alpha = 0.75f)
+                    DiffLineKind.Del -> "- " to Palette.Danger.copy(alpha = 0.75f)
+                    DiffLineKind.Ctx -> "  " to Palette.TextTertiary
+                    DiffLineKind.Hunk -> "" to Palette.Info
+                    DiffLineKind.Note -> "" to Palette.TextSecondary
+                }
+                withStyle(SpanStyle(color = color)) { append(sign) }
+                val body = when (line.kind) {
+                    DiffLineKind.Hunk -> Palette.Info
+                    DiffLineKind.Note, DiffLineKind.Ctx -> Palette.TextSecondary
+                    else -> Palette.Text
+                }
+                withStyle(SpanStyle(color = body)) { append(clean) }
+                if (idx < lines.lastIndex) append('\n')
+                return@forEachIndexed
+            }
             when (line.kind) {
                 DiffLineKind.Hunk -> {
                     withStyle(SpanStyle(color = Palette.Info)) {

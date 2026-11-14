@@ -528,6 +528,10 @@ object Tags {
         /** Opens the delegated subagent's own worker Thread from a Delegation card. */
         fun threadDelegateOpen(id: String) = "worker.thread.delegate.open/$id"
 
+        // File Change card actions and turn grouping.
+        /** Opens a File Change card's file in the preview sheet, at its first changed line when the diff is numbered. */
+        fun threadChangeOpen(id: String) = "worker.thread.change.open/$id"
+
         /** A quick key, by what TalkBack calls it: "Shift Tab" is `key.shift_tab`. */
         fun key(spoken: String) = "key." + spoken.lowercase().replace(' ', '_')
 

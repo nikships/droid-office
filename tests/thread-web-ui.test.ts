@@ -359,7 +359,11 @@ test('renders V3 1-level exploration disclosures and top-level File Change, Comm
         presentation: { version: 1, rows },
       });
     },
-    { entries, rows: presentThread(entries, false) },
+    {
+      entries,
+      // style.css as it is now, with the edited rule at line 30: its diff carries that file's lines.
+      rows: presentThread(entries, false, { fileText: (p) => (p.endsWith('/style.css') ? `${Array.from({ length: 29 }, (_, i) => `.rule-${i + 1} {}`).join('\n')}\n.btn {\n  color: #eee;\n}\n` : undefined) }),
+    },
   );
 
   // User message rendered with threadUserMarkdown
@@ -388,13 +392,17 @@ test('renders V3 1-level exploration disclosures and top-level File Change, Comm
   const previewModal = page.locator('.modal.wt-file-modal');
   await previewModal.locator('.wt-file-lines').waitFor();
   assert.equal(await styleCard.evaluate((el) => (el as HTMLDetailsElement).open), true);
-  assert.ok(await previewModal.locator('.wt-file-line.is-target').count());
+  assert.equal(await previewModal.locator('.wt-file-line.is-target').getAttribute('data-line'), '30');
+  assert.deepEqual(await styleCard.locator('.wt-diff-num.is-new').allTextContents(), ['30', '', '31', '32']);
   await page.keyboard.press('Escape');
   assert.equal(await previewModal.count(), 0);
 
   // 80-line diff clamping + Show full diff toggle
   const bigCard = page.locator('details.wt-change-file[data-disclosure*="src/big.ts"]');
   assert.equal(await bigCard.locator('.wt-diff-row').count(), 80);
+  // Its file isn't readable here, so it has no gutter rather than numbers counted from 1.
+  assert.equal(await bigCard.locator('table.wt-diff-table.is-unnumbered').count(), 1);
+  assert.equal(await bigCard.locator('.wt-diff-num').first().isVisible(), false);
   const moreBtn = bigCard.locator('.wt-diff-more');
   assert.match((await moreBtn.textContent()) ?? '', /Show full diff \(111 more lines\)/);
   await moreBtn.click();
@@ -414,6 +422,8 @@ test('renders V3 1-level exploration disclosures and top-level File Change, Comm
   // User manually closes styleCard and failCmd -> preserved across re-render when new message arrives!
   await styleCard.locator('> summary').click();
   await failCmd.locator('> summary').click();
+  // The thread records a toggle when its (asynchronous) toggle event arrives; the rows below re-render the cards.
+  await page.waitForFunction(() => [...document.querySelectorAll<HTMLElement>('details.wt-change-file[data-disclosure*="style.css"], details.wt-command[data-disclosure="cmd-fail"]')].every((el) => el.dataset.expectedOpen === 'false'));
   assert.equal(await styleCard.evaluate((el) => (el as HTMLDetailsElement).open), false);
   assert.equal(await failCmd.evaluate((el) => (el as HTMLDetailsElement).open), false);
 
