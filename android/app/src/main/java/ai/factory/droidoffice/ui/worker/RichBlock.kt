@@ -13,7 +13,6 @@ import android.content.Context
 import android.graphics.Color
 import android.view.View
 import android.view.ViewGroup
-import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -61,6 +60,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -68,14 +71,16 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import java.io.ByteArrayInputStream
 
-/** A diagram the page drew: its sanitized SVG, and the height (dp) it took at the Thread's width. */
-private data class Drawing(val svg: String, val height: Int)
+/** What the page drew: a diagram's sanitized SVG (null for an equation), and the height (dp) it took at the Thread's width. */
+private data class Drawing(val svg: String?, val height: Int)
 
 /**
- * Drawn diagrams by source, so a block scrolled back into view, switched back from its source or
- * opened full screen shows again without Mermaid. Touched only on the main thread.
+ * Drawings by kind and source, so a block scrolled back into view, switched back from its source
+ * or opened full screen shows again at its size, and a diagram without Mermaid. Touched only on the main thread.
  */
 private object Drawings {
     private const val MAX = 64
@@ -83,17 +88,18 @@ private object Drawings {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Drawing>?) = size > MAX
     }
 
-    operator fun get(source: String): Drawing? = cache[source]
+    operator fun get(kind: RichPage.Kind, source: String): Drawing? = cache["${kind.wire}/$source"]
 
-    operator fun set(source: String, d: Drawing) {
-        cache[source] = d
+    operator fun set(kind: RichPage.Kind, source: String, d: Drawing) {
+        cache["${kind.wire}/$source"] = d
     }
 }
 
 /**
  * The WebView running the rich block page (assets/richblock/, messages in core/RichPage.kt): one
- * drawing, offline. The page and its libraries load from the app itself and every other request is
- * refused, so a message's diagram can't reach the network, the office or a token.
+ * drawing, offline. The page and its libraries load from the app itself, network loads are blocked
+ * and every other request is refused, so a message's diagram can't reach the network, the office
+ * or a token. Its only way back to the app is a web message listener for the page's own origin.
  */
 private class RichBlockPage(context: Context, zoom: Boolean, private val onMessage: (RichPage.Msg) -> Unit) {
     val view = WebView(context)
@@ -115,6 +121,7 @@ private class RichBlockPage(context: Context, zoom: Boolean, private val onMessa
             builtInZoomControls = zoom
             displayZoomControls = false
             cacheMode = WebSettings.LOAD_NO_CACHE
+            blockNetworkLoads = true
         }
         view.setBackgroundColor(Color.TRANSPARENT)
         view.isVerticalScrollBarEnabled = zoom
@@ -123,8 +130,28 @@ private class RichBlockPage(context: Context, zoom: Boolean, private val onMessa
         // The card reads as "Mermaid diagram"; the SVG's text isn't the content.
         view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         view.webViewClient = Client(loader)
-        view.addJavascriptInterface(Bridge(), "OfficeBridge")
-        view.loadUrl(PAGE)
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+            WebViewCompat.addWebMessageListener(view, "OfficeBridge", setOf(ORIGIN)) { _, message, origin, isMainFrame, _ ->
+                if (!isMainFrame || origin.toString().trimEnd('/') != ORIGIN) return@addWebMessageListener
+                received(RichPage.decode(message.data ?: return@addWebMessageListener) ?: return@addWebMessageListener)
+            }
+            view.loadUrl(PAGE)
+        } else {
+            // Without the listener the page can't answer: the block stays as its text.
+            view.post { if (!destroyed) onMessage(RichPage.Msg.Drawn(-1, false, 0, null, "This WebView can't draw it")) }
+        }
+    }
+
+    private fun received(msg: RichPage.Msg) {
+        if (destroyed) return
+        if (msg == RichPage.Msg.Ready) {
+            ready = true
+            pending?.let {
+                pending = null
+                view.evaluateJavascript(it, null)
+            }
+        }
+        onMessage(msg)
     }
 
     /** Runs [script] now, or once the page is ready; a later one replaces one still waiting. */
@@ -153,46 +180,31 @@ private class RichBlockPage(context: Context, zoom: Boolean, private val onMessa
         }
     }
 
-    private inner class Bridge {
-        // Called on a WebView thread; the app handles it on the main thread.
-        @JavascriptInterface
-        fun post(json: String) {
-            val msg = RichPage.decode(json) ?: return
-            view.post {
-                if (destroyed) return@post
-                if (msg == RichPage.Msg.Ready) {
-                    ready = true
-                    pending?.let {
-                        pending = null
-                        view.evaluateJavascript(it, null)
-                    }
-                }
-                onMessage(msg)
-            }
-        }
-    }
-
     private class FontHandler(private val context: Context) : WebViewAssetLoader.PathHandler {
         override fun handle(path: String): WebResourceResponse? {
-            if (path != "geist.ttf") return null
-            return WebResourceResponse("font/ttf", null, context.resources.openRawResource(R.font.geist))
+            val id = when (path) {
+                "geist.ttf" -> R.font.geist
+                else -> return null
+            }
+            return WebResourceResponse("font/ttf", null, context.resources.openRawResource(id))
         }
     }
 
     companion object {
-        const val PAGE = "https://${WebViewAssetLoader.DEFAULT_DOMAIN}/assets/richblock/index.html"
+        const val ORIGIN = "https://${WebViewAssetLoader.DEFAULT_DOMAIN}"
+        const val PAGE = "$ORIGIN/assets/richblock/index.html"
 
         fun refused() = WebResourceResponse("text/plain", "utf-8", 404, "Not found", emptyMap(), ByteArrayInputStream(ByteArray(0)))
     }
 }
 
 /**
- * One drawing of [source] in its own rich block page. [cached] shows a drawing made before without
- * Mermaid. Drawn, it is as tall as the drawing ([fill] fills its space instead); until then it is
- * a line tall, under the source the card shows.
+ * One drawing of [source] in its own rich block page. [cached] shows a diagram drawn before without
+ * Mermaid. Drawn, it is as tall as the drawing ([zoom] fills its space instead); until then it is
+ * a line tall, under the text the block shows meanwhile.
  */
 @Composable
-private fun DiagramView(source: String, cached: Drawing?, zoom: Boolean, modifier: Modifier, onDrawn: (Drawing) -> Unit, onFailed: () -> Unit) {
+private fun RichView(kind: RichPage.Kind, source: String, cached: Drawing?, zoom: Boolean, modifier: Modifier, onDrawn: (Drawing) -> Unit, onFailed: () -> Unit) {
     val context = LocalContext.current
     val drawn = rememberUpdatedState(onDrawn)
     val failed = rememberUpdatedState(onFailed)
@@ -202,7 +214,7 @@ private fun DiagramView(source: String, cached: Drawing?, zoom: Boolean, modifie
         RichBlockPage(context, zoom) { msg ->
             if (msg !is RichPage.Msg.Drawn || (msg.id != latest[0] && msg.id != -1)) return@RichBlockPage
             val svg = msg.svg
-            if (msg.ok && svg != null) {
+            if (msg.ok && (svg != null || kind != RichPage.Kind.Mermaid)) {
                 height = msg.height
                 drawn.value(Drawing(svg, msg.height))
             } else {
@@ -213,7 +225,7 @@ private fun DiagramView(source: String, cached: Drawing?, zoom: Boolean, modifie
     DisposableEffect(page) { onDispose { page.destroy() } }
     LaunchedEffect(page, source) {
         latest[0] += 1
-        page.run(RichPage.draw(latest[0], RichPage.Kind.Mermaid, source, cached?.svg, zoom))
+        page.run(RichPage.draw(latest[0], kind, source, cached?.svg, zoom))
     }
     key(page) {
         AndroidView(factory = { page.view }, modifier = if (zoom) modifier else modifier.height(height.coerceAtLeast(1).dp))
@@ -228,7 +240,7 @@ private fun DiagramView(source: String, cached: Drawing?, zoom: Boolean, modifie
 @Composable
 internal fun MermaidBlock(b: Markdown.Block.Code, streaming: Boolean, mono: FontFamily) {
     val source = remember(b.text) { b.text.trim() }
-    var drawing by remember(source) { mutableStateOf(Drawings[source]) }
+    var drawing by remember(source) { mutableStateOf(Drawings[RichPage.Kind.Mermaid, source]) }
     var failed by remember(source) { mutableStateOf(false) }
     var showSource by rememberSaveable { mutableStateOf(false) }
     var zoomed by rememberSaveable { mutableStateOf(false) }
@@ -265,10 +277,10 @@ internal fun MermaidBlock(b: Markdown.Block.Code, streaming: Boolean, mono: Font
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
         if (source.isNotEmpty() && !streaming && !failed && !(showSource && shown != null)) {
             Box(Modifier.fillMaxWidth()) {
-                DiagramView(
-                    source, shown, zoom = false, Modifier.fillMaxWidth(),
+                RichView(
+                    RichPage.Kind.Mermaid, source, shown, zoom = false, Modifier.fillMaxWidth(),
                     onDrawn = {
-                        Drawings[source] = it
+                        Drawings[RichPage.Kind.Mermaid, source] = it
                         drawing = it
                     },
                     onFailed = {
@@ -311,7 +323,43 @@ private fun DiagramViewer(source: String, drawing: Drawing, raw: String, onClose
                 }
             }
             if (failed) CodeBody(raw, "mermaid", LocalOfficeType.current.mono)
-            else DiagramView(source, drawing, zoom = true, Modifier.weight(1f).fillMaxWidth().semantics { contentDescription = "Mermaid diagram" }, onDrawn = {}, onFailed = { failed = true })
+            else RichView(RichPage.Kind.Mermaid, source, drawing, zoom = true, Modifier.weight(1f).fillMaxWidth().semantics { contentDescription = "Mermaid diagram" }, onDrawn = {}, onFailed = { failed = true })
+        }
+    }
+}
+
+/**
+ * A `$$…$$` equation on its own line in an assistant message: typeset offline by KaTeX in the rich
+ * block page, centred, shrunk to fit the width. Until it draws, and when KaTeX can't draw it, the
+ * equation shows as text ([mathText]), or as its TeX when even that can't lay it out.
+ */
+@Composable
+internal fun MathBlock(b: Markdown.Block.Math, style: TextStyle) {
+    var drawing by remember(b.tex) { mutableStateOf(Drawings[RichPage.Kind.Math, b.tex]) }
+    var failed by remember(b.tex) { mutableStateOf(false) }
+    val fallback = remember(b.tex) { mathText(b.tex) }
+    Box(
+        Modifier.fillMaxWidth().tagged(Tags.Worker.THREAD_MATH).semantics { contentDescription = b.tex },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (!failed) {
+            RichView(
+                RichPage.Kind.Math, b.tex, drawing, zoom = false, Modifier.fillMaxWidth(),
+                onDrawn = {
+                    Drawings[RichPage.Kind.Math, b.tex] = it
+                    drawing = it
+                },
+                onFailed = { failed = true },
+            )
+            // Drags on the equation scroll the Thread rather than the page.
+            Box(Modifier.matchParentSize().pointerInput(Unit) {})
+        }
+        if (failed || drawing == null) {
+            Text(
+                fallback ?: AnnotatedString(b.raw),
+                style = style.copy(textAlign = TextAlign.Center),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            )
         }
     }
 }

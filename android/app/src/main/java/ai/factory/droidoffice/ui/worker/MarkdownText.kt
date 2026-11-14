@@ -71,6 +71,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -84,6 +85,7 @@ import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.core.JsonWidget
 import ai.factory.droidoffice.core.Markdown
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.TexMath
 import ai.factory.droidoffice.core.WorkspacePaths
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.panel
@@ -100,7 +102,8 @@ private const val COPY_FEEDBACK_MS = 1_500L
  * A message's Markdown, laid out with the office's type. Links open in the browser. [surface] is
  * what the message sits on, which a table's overflow fade blends into. With [onOpenPath], the
  * workspace files the text names (`src/a.ts:12`) are links that open them. With [rich] (an
- * assistant's reply, as the web Thread draws them), ```mermaid blocks are drawn as diagrams.
+ * assistant's reply, as the web Thread draws them), ```mermaid blocks are drawn as diagrams and
+ * TeX math (`$…$`, `$$…$$`) is typeset.
  */
 @Composable
 internal fun MarkdownText(
@@ -114,7 +117,7 @@ internal fun MarkdownText(
     rich: Boolean = false,
 ) {
     val paths = onOpenPath != null
-    val blocks = remember(source, breaks, paths) { Markdown.parse(source, breaks, paths) }
+    val blocks = remember(source, breaks, paths, rich) { Markdown.parse(source, breaks, paths, math = rich) }
     val open = rememberUpdatedState(onOpenPath)
     val opener: ((WorkspacePaths.Ref) -> Unit)? = if (paths) remember { { ref: WorkspacePaths.Ref -> open.value?.invoke(ref) } } else null
     val mono = LocalOfficeType.current.mono
@@ -150,6 +153,7 @@ internal fun MarkdownText(
                 is Markdown.Block.Code -> if (rich && b.language.equals("mermaid", ignoreCase = true)) MermaidBlock(b, streaming, mono) else CodeBlockCard(b, mono)
                 is Markdown.Block.Email -> EmailDraftCard(b, body)
                 is Markdown.Block.Widget -> WidgetBlock(b, streaming, mono)
+                is Markdown.Block.Math -> MathBlock(b, body)
                 Markdown.Block.Rule -> Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(Palette.Border))
                 is Markdown.Block.Table -> Table(b, body.copy(fontSize = 13.5.sp, lineHeight = 19.sp), mono, surface, opener)
             }
@@ -847,10 +851,32 @@ private fun styled(spans: List<Markdown.Span>, mono: FontFamily, opener: ((Works
         )
         val link = s.link
         val file = s.file
+        val math = s.math?.let(TexMath::inline)
+        val body: AnnotatedString.Builder.() -> Unit = { withStyle(style) { if (math != null) appendMath(math) else append(s.text) } }
         when {
-            link != null -> withLink(LinkAnnotation.Url(link, linkStyles)) { withStyle(style) { append(s.text) } }
-            file != null && opener != null -> withLink(LinkAnnotation.Clickable("file:${file.label}", fileLinkStyles) { opener(file) }) { withStyle(style) { append(s.text) } }
-            else -> withStyle(style) { append(s.text) }
+            link != null -> withLink(LinkAnnotation.Url(link, linkStyles), body)
+            file != null && opener != null -> withLink(LinkAnnotation.Clickable("file:${file.label}", fileLinkStyles) { opener(file) }, body)
+            else -> body()
         }
+    }
+}
+
+/** [tex] laid out as text ([TexMath.inline]), or null when it is more than simple TeX. */
+internal fun mathText(tex: String): AnnotatedString? = TexMath.inline(tex)?.let { runs -> buildAnnotatedString { appendMath(runs) } }
+
+private fun AnnotatedString.Builder.appendMath(runs: List<TexMath.Run>) {
+    for (r in runs) {
+        val style = SpanStyle(
+            fontFamily = FontFamily.Serif,
+            fontStyle = if (r.italic) FontStyle.Italic else FontStyle.Normal,
+            fontWeight = if (r.bold) FontWeight.Bold else null,
+            baselineShift = when (r.shift) {
+                TexMath.Shift.Super -> BaselineShift.Superscript
+                TexMath.Shift.Sub -> BaselineShift.Subscript
+                TexMath.Shift.None -> null
+            },
+            fontSize = if (r.shift == TexMath.Shift.None) TextUnit.Unspecified else 0.72.em,
+        )
+        withStyle(style) { append(r.text) }
     }
 }

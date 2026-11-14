@@ -29,6 +29,8 @@ object Markdown {
         val link: String? = null,
         /** A workspace file this text names, which the Thread opens in its file preview. */
         val file: WorkspacePaths.Ref? = null,
+        /** TeX this text (`$…$`, with its dollars) stands for. */
+        val math: String? = null,
     )
 
     sealed interface Block {
@@ -49,6 +51,8 @@ object Markdown {
             fun mailtoUri(): String = buildMailtoUri(this)
         }
         data class Widget(val rawJson: String, val complete: Boolean) : Block
+        /** A `$$…$$` equation on its own line: [tex] without the dollars, [raw] as written. */
+        data class Math(val tex: String, val raw: String) : Block
         data object Rule : Block
         /** Every row has [align]'s number of cells; a short row is padded with empty ones, a long one widens the table. */
         data class Table(val align: List<Align>, val header: List<List<Span>>, val rows: List<List<List<Span>>>) : Block
@@ -73,7 +77,7 @@ object Markdown {
             piece = ArrayList()
         }
         for (s in spans) {
-            if (s.code) {
+            if (s.code || s.math != null) {
                 piece += s
                 continue
             }
@@ -114,19 +118,53 @@ object Markdown {
     /**
      * With [breaks], a line break inside a paragraph stays one, as the owner typed it, rather than
      * joining the lines with a space. With [paths], workspace file references in the prose and whole
-     * inline code spans (`src/a.ts:12`) carry [Span.file], as the web Thread links them.
+     * inline code spans (`src/a.ts:12`) carry [Span.file], as the web Thread links them. With
+     * [math], TeX math ([TexMath.extract]) is [Span.math], and a `$$…$$` line of its own is [Block.Math].
      */
-    fun parse(source: String, breaks: Boolean = false, paths: Boolean = false): List<Block> {
+    fun parse(source: String, breaks: Boolean = false, paths: Boolean = false, math: Boolean = false): List<Block> {
         val normalized = source.replace("\r\n", "\n")
         val out = ArrayList<Block>()
-        if (JSON_RENDER_OPEN !in normalized) out += parseChunk(normalized, breaks)
-        else for (chunk in splitJsonRenderChunks(normalized)) {
-            when (chunk) {
-                is Chunk.MarkdownText -> if (chunk.text.isNotBlank()) out += parseChunk(chunk.text, breaks)
-                is Chunk.Widget -> out += Block.Widget(chunk.rawJson, chunk.complete)
+        fun chunk(text: String) = if (math) parseMath(text, breaks) else parseChunk(text, breaks)
+        if (JSON_RENDER_OPEN !in normalized) out += chunk(normalized)
+        else for (c in splitJsonRenderChunks(normalized)) {
+            when (c) {
+                is Chunk.MarkdownText -> if (c.text.isNotBlank()) out += chunk(c.text)
+                is Chunk.Widget -> out += Block.Widget(c.rawJson, c.complete)
             }
         }
         return if (paths) out.map { mapSpans(it, ::linkPaths) } else out
+    }
+
+    private fun parseMath(source: String, breaks: Boolean): List<Block> {
+        val found = TexMath.extract(source)
+        if (found.segments.isEmpty()) return parseChunk(source, breaks)
+        val segs = found.segments.associateBy { it.placeholder }
+        val placeholder = Regex(found.segments.joinToString("|") { Regex.escape(it.placeholder) })
+        fun restore(s: String) = TexMath.restore(s, found.segments)
+        fun spans(list: List<Span>): List<Span> = list.flatMap { s ->
+            if (s.code) return@flatMap listOf(s.copy(text = restore(s.text)))
+            val out = ArrayList<Span>()
+            var at = 0
+            for (m in placeholder.findAll(s.text)) {
+                if (m.range.first > at) out += s.copy(text = s.text.substring(at, m.range.first))
+                val seg = segs.getValue(m.value)
+                out += s.copy(text = seg.raw, math = seg.tex)
+                at = m.range.last + 1
+            }
+            if (at < s.text.length) out += s.copy(text = s.text.substring(at))
+            out
+        }
+        return parseChunk(found.text, breaks).map { b ->
+            val only = (b as? Block.Paragraph)?.spans?.singleOrNull()
+            val display = only?.takeIf { !it.code && it.link == null }?.let { segs[it.text.trim()] }?.takeIf { it.display }
+            when {
+                display != null -> Block.Math(display.tex, display.raw)
+                // The fence rules here and in [parseChunk] differ at the edges; code shows as written.
+                b is Block.Code -> b.copy(text = restore(b.text))
+                b is Block.Email -> b.copy(to = restore(b.to), cc = b.cc?.let(::restore), bcc = b.bcc?.let(::restore), subject = restore(b.subject), body = restore(b.body), raw = restore(b.raw))
+                else -> mapSpans(b, ::spans)
+            }
+        }
     }
 
     private fun mapSpans(b: Block, f: (List<Span>) -> List<Span>): Block = when (b) {
@@ -145,7 +183,7 @@ object Markdown {
     fun linkPaths(spans: List<Span>): List<Span> {
         val out = ArrayList<Span>(spans.size)
         for (s in spans) {
-            if (s.link != null || s.file != null) {
+            if (s.link != null || s.file != null || s.math != null) {
                 out += s
                 continue
             }
@@ -666,7 +704,7 @@ object Markdown {
         return out
     }
 
-    private const val ESCAPABLE = "\\`*_{}[]()#+-.!|~>"
+    private const val ESCAPABLE = "\\`*_{}[]()#+-.!|~>$"
     private const val MAX_HIGHLIGHT_CHARS = 40_000
 
     private val plainLanguages = setOf("plain", "plaintext", "text", "txt", "none", "raw", "output")

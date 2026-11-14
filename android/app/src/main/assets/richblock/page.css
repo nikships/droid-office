@@ -22,6 +22,19 @@ html, body {
   max-width: 100%;
   height: auto;
 }
+/* An equation: KaTeX's type at the Thread's body size, its display margins left to the Thread. */
+body.math {
+  font-size: 15px;
+}
+body.math #stage {
+  padding: 2px 0;
+}
+.math {
+  white-space: nowrap;
+}
+.math .katex-display {
+  margin: 0;
+}
 /* Full screen, the drawing sits in the middle of the screen and the WebView's pinch zooms it. */
 body.zoom #stage {
   box-sizing: border-box;

@@ -12,13 +12,16 @@ import kotlinx.serialization.json.intOrNull
  * draw a block, and it answers once with the drawing's height and sanitized SVG, or why not.
  */
 object RichPage {
-    /** What the page draws: a ```mermaid diagram. */
-    enum class Kind(val wire: String) { Mermaid("mermaid") }
+    /** What the page draws: a ```mermaid diagram, or a `$$…$$` equation (KaTeX). */
+    enum class Kind(val wire: String) { Mermaid("mermaid"), Math("math") }
 
     sealed interface Msg {
         data object Ready : Msg
 
-        /** [id] is the [draw] it answers; [height] is in CSS pixels, which are dp at the page's scale. */
+        /**
+         * [id] is the [draw] it answers; [height] is in CSS pixels, which are dp at the page's scale.
+         * [svg] is a diagram's drawing, and null for an equation.
+         */
         data class Drawn(val id: Int, val ok: Boolean, val height: Int, val svg: String?, val error: String?) : Msg
     }
 

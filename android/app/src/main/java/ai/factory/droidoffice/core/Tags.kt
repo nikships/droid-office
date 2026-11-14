@@ -489,6 +489,8 @@ object Tags {
         /** A diagram full screen, opened by [THREAD_DIAGRAM_ZOOM]: pinch to zoom; Back or [THREAD_DIAGRAM_VIEWER_CLOSE] closes it. */
         const val THREAD_DIAGRAM_VIEWER = "worker.thread.diagram_viewer"
         const val THREAD_DIAGRAM_VIEWER_CLOSE = "worker.thread.diagram_viewer.close"
+        /** A `$$…$$` display equation on its own line (content-desc is its TeX). */
+        const val THREAD_MATH = "worker.thread.math"
         /** A workspace file opened from a `path:line` link: its sheet, path, line note, copy buttons and readable state. */
         const val THREAD_FILE = "worker.thread.file_preview"
         const val THREAD_FILE_PATH = "worker.thread.file_preview.path"

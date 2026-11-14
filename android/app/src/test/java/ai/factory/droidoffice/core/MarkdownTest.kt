@@ -275,4 +275,26 @@ class MarkdownTest {
         org.junit.Assert.assertTrue(Markdown.TokenKind.Number in kinds)
         org.junit.Assert.assertTrue(Markdown.TokenKind.String in kinds)
     }
+
+    @Test
+    fun mathOnlyWhenAskedAsSpansAndDisplayBlocks() {
+        val src = "Given \$x_1^2 + y^2\$ for **\$a\$** at \$100,\n\n\$\$\n\\sum_{i=1}^{n} i\n\$\$\n\n| \$k\$ | v |\n|---|---|\n| \$n^2\$ | 1 |\n\n`\$x\$` stays code, \\\$5 is a price."
+        val plain = Markdown.parse(src)
+        assertEquals(null, plain.filterIsInstance<Block.Paragraph>().flatMap { it.spans }.firstOrNull { it.math != null })
+        assertEquals(0, plain.filterIsInstance<Block.Math>().size)
+
+        val blocks = Markdown.parse(src, paths = true, math = true)
+        val first = (blocks[0] as Block.Paragraph).spans
+        assertEquals(listOf("x_1^2 + y^2", "a"), first.mapNotNull { it.math })
+        assertEquals(Span("\$x_1^2 + y^2\$", math = "x_1^2 + y^2"), first[1])
+        assertEquals(true, first.single { it.math == "a" }.bold)
+        assertEquals("Given \$x_1^2 + y^2\$ for \$a\$ at \$100,", first.joinToString("") { it.text })
+        assertEquals(Block.Math("\\sum_{i=1}^{n} i", "\$\$\n\\sum_{i=1}^{n} i\n\$\$"), blocks[1])
+        val table = blocks[2] as Block.Table
+        assertEquals("k", table.header[0].single().math)
+        assertEquals(listOf(listOf(Span("\$n^2\$", math = "n^2"))), Markdown.unbroken(table.rows[0][0]))
+        val last = (blocks[3] as Block.Paragraph).spans
+        assertEquals(Span("\$x\$", code = true), last[0])
+        assertEquals(" stays code, \$5 is a price.", last[1].text)
+    }
 }

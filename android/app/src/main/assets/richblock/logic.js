@@ -23,6 +23,15 @@ export function naturalWidth(viewBox) {
   return Number.isFinite(w) && w > 0 ? w : 0;
 }
 
+/** How much an equation `width` wide shrinks to fit `available`: never grown, and never below 0.4. */
+export function fitScale(available, width) {
+  if (!(available > 0) || !(width > available)) return 1;
+  return Math.max(0.4, available / width);
+}
+
+/** KaTeX's options for a reply's display equation: no \href, \url or HTML from the TeX, bounded expansion. */
+export const KATEX_OPTIONS = Object.freeze({ displayMode: true, throwOnError: true, trust: false, strict: 'ignore', output: 'html', maxSize: 50, maxExpand: 1000 });
+
 /** The answer to the app's draw request `id`. */
 export function doneMessage(id, height, svg) {
   return { type: 'done', id, ok: true, height: Math.ceil(height), svg };

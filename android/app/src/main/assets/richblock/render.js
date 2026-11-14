@@ -1,12 +1,14 @@
-// The rich block page: draws one ```mermaid block of a Thread message, offline, for the Android app
-// (ui/worker/RichBlock.kt via core/RichPage.kt). The app calls richDraw(); the page answers through
-// OfficeBridge.post with the drawing's height and its sanitized SVG, which the app keeps so the same
-// diagram shows again without loading Mermaid. Mermaid loads only the first time a page draws.
+// The rich block page: draws one ```mermaid block or `$$…$$` equation of a Thread message, offline,
+// for the Android app (ui/worker/RichBlock.kt via core/RichPage.kt). The app calls richDraw(); the
+// page answers through OfficeBridge.postMessage with the drawing's height and a diagram's sanitized SVG,
+// which the app keeps so the same diagram shows again without loading Mermaid. Mermaid and KaTeX
+// load only the first time a page draws with them.
 
-import { BAD_ELEMENTS, doneMessage, failedMessage, isUnsafeAttr, naturalWidth } from './logic.js';
+import { BAD_ELEMENTS, doneMessage, failedMessage, fitScale, isUnsafeAttr, KATEX_OPTIONS, naturalWidth } from './logic.js';
 
 const stage = document.getElementById('stage');
-const post = (msg) => globalThis.OfficeBridge?.post(JSON.stringify(msg));
+// The app's web message listener, injected for this page's origin only.
+const post = (msg) => globalThis.OfficeBridge?.postMessage(JSON.stringify(msg));
 
 const scripts = new Map();
 function load(src) {
@@ -22,6 +24,38 @@ function load(src) {
     scripts.set(src, p);
   }
   return p;
+}
+
+function stylesheet(href) {
+  return new Promise((resolve, reject) => {
+    const l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.href = href;
+    l.onload = () => resolve();
+    l.onerror = () => reject(new Error(`couldn't load ${href}`));
+    document.head.append(l);
+  });
+}
+
+let katexReady;
+function katex() {
+  katexReady ??= Promise.all([load('vendor/katex.min.js'), stylesheet('vendor/katex.min.css')]).then(() => globalThis.katex);
+  return katexReady;
+}
+
+async function drawMath(tex) {
+  const k = await katex();
+  const box = document.createElement('div');
+  box.className = 'math';
+  k.render(tex, box, KATEX_OPTIONS);
+  stage.replaceChildren(box);
+  // KaTeX's fonts load as its glyphs are laid out; measure once they are in.
+  void box.offsetWidth;
+  await document.fonts.ready;
+  const style = getComputedStyle(stage);
+  const available = stage.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  const scale = fitScale(available, box.scrollWidth);
+  if (scale < 1) box.style.fontSize = `${scale}em`;
 }
 
 let mermaidReady;
@@ -78,7 +112,14 @@ const painted = () => new Promise((resolve) => requestAnimationFrame(() => reque
 
 globalThis.richDraw = async (id, kind, source, svg, zoom) => {
   document.body.classList.toggle('zoom', zoom === true);
+  document.body.classList.toggle('math', kind === 'math');
   try {
+    if (kind === 'math') {
+      await drawMath(String(source ?? ''));
+      await painted();
+      post(doneMessage(id, stage.getBoundingClientRect().height));
+      return;
+    }
     if (kind !== 'mermaid') throw new Error(`can't draw ${kind}`);
     const drawing = sanitized(typeof svg === 'string' ? svg : await drawMermaid(String(source ?? '')));
     stage.replaceChildren(drawing);
