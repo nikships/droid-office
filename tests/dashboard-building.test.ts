@@ -74,9 +74,11 @@ test('deduplicates workers by floor order and handles a current floor without it
   assert.equal(rows[1].floorName, 'new');
 });
 
-test('shows one Orchestrator stand-in while on and never resurrects it from a stale floor while off', () => {
+test('shows one Orchestrator stand-in while on with a team and never resurrects it from a stale floor while off', () => {
+  const sub = { id: 'w-sub', name: 'Sub', floor: 'web', floorName: 'web', status: 'working' as const };
   const input = { floors: [floor('web')], building: building(['web', [worker(ORCHESTRATOR_ID)]]), currentFloor: null, workers: [] };
-  const rows = buildingRoster({ ...input, mission: mission() });
+  assert.deepEqual(buildingRoster({ ...input, mission: mission() }), [], 'an Orchestrator without subagents stays out of the list');
+  const rows = buildingRoster({ ...input, mission: mission(true, { orchestrator: { settings: { on: true }, team: [sub] } }) });
   assert.deepEqual(ids(rows), [ORCHESTRATOR_ID]);
   assert.equal(rows[0].kind, 'orchestrator');
   assert.equal(rows[0].floorId, MISSION_FLOOR);
@@ -85,28 +87,33 @@ test('shows one Orchestrator stand-in while on and never resurrects it from a st
   assert.deepEqual(buildingRoster({ ...input, mission: mission(false) }), []);
   assert.deepEqual(buildingRoster(input), []);
   const active = worker(ORCHESTRATOR_ID, { status: 'working' });
-  const state = mission(true, { orchestrator: { settings: { on: true }, team: [], agent: { worker: active, team: [] } } });
+  const state = mission(true, { orchestrator: { settings: { on: true }, team: [sub], agent: { worker: active, team: [sub] } } });
   assert.equal(buildingRoster({ ...input, mission: state })[0].worker, active);
+  const lead = worker('w-sub', { lead: ORCHESTRATOR_ID });
+  assert.deepEqual(ids(buildingRoster({ ...input, building: building(['web', [lead]]), mission: mission() })), [ORCHESTRATOR_ID, 'w-sub'], 'a subagent seen on a floor counts as its team');
 });
 
-test('bots appear once from Mission Control and fall back to remote floor workers without mission state', () => {
+test('bots with a team appear once from Mission Control and fall back to remote floor workers without mission state', () => {
   const bot = worker('bot', { remote: true, status: 'working' });
-  const input = { floors: [floor('web'), floor('android')], building: building(['web', [bot]], ['android', [bot]]), currentFloor: null, workers: [] };
+  const sub = worker('bot-sub', { lead: 'bot' });
+  const input = { floors: [floor('web'), floor('android')], building: building(['web', [bot, sub]], ['android', [bot]]), currentFloor: null, workers: [] };
   const state = mission(false, {
     bots: [
       { worker: bot, team: [] },
       { worker: bot, team: [] },
     ],
   });
+  assert.deepEqual(ids(buildingRoster({ ...input, building: building(['web', [bot]]) })), [], 'a lone legacy bot stays out of the list');
+  assert.deepEqual(ids(buildingRoster({ ...input, building: new Map(), mission: state })), [], 'a lone bot stays out of the list');
   for (const rows of [buildingRoster(input), buildingRoster({ ...input, mission: state })]) {
-    assert.deepEqual(ids(rows), ['bot']);
+    assert.deepEqual(ids(rows), ['bot', 'bot-sub']);
     assert.equal(rows[0].kind, 'bot');
     assert.equal(rows[0].floorId, MISSION_FLOOR);
   }
   assert.equal(buildingRoster(input)[0].navigationFloor, 'web', 'legacy floor bots must retain their navigation destination');
   assert.equal(buildingRoster({ ...input, mission: state })[0].navigationFloor, undefined, 'real Mission Control agents open globally');
-  assert.equal(buildingRoster({ ...input, currentFloor: 'android', workers: [bot] })[0].navigationFloor, 'android', 'the live floor wins over an old duplicate');
-  assert.deepEqual(buildingRoster({ ...input, mission: mission(false) }), []);
+  assert.equal(buildingRoster({ ...input, building: building(['web', [bot]], ['android', [bot, sub]]), currentFloor: 'android', workers: [bot, sub] })[0].navigationFloor, 'android', 'the live floor wins over an old duplicate');
+  assert.deepEqual(ids(buildingRoster({ ...input, mission: mission(false) })), ['bot-sub']);
 });
 
 test('links cross-floor teams and resolves Mission Control and departed lead names', () => {
@@ -205,23 +212,24 @@ test('counts and status filters distinguish actionable input, all done, startup,
         worker('done-sub', { status: 'done', acked: false, lead: 'lead' }),
         worker('exited', { status: 'exited' }),
         worker('offline', { status: 'offline' }),
+        worker('bot-sub', { status: 'done', lead: 'bot-done' }),
       ],
     ]),
     currentFloor: null,
     workers: [],
     mission: mission(false, {
       bots: [
-        { worker: worker('bot-ask', { status: 'needs_input', remote: true }), team: [] },
+        { worker: worker('bot-ask', { status: 'needs_input', remote: true }), team: [{ id: 'bot-ask-sub', name: 'Sub', floor: 'elsewhere', floorName: 'elsewhere', status: 'idle' }] },
         { worker: worker('bot-done', { status: 'done', remote: true, acked: false }), team: [] },
       ],
     }),
   });
-  assert.deepEqual(buildingCounts(rows), { all: 11, needs_input: 1, working: 2, done: 4, asleep: 2 });
+  assert.deepEqual(buildingCounts(rows), { all: 12, needs_input: 1, working: 2, done: 5, asleep: 2 });
   const expected: Record<BuildingFilter, string[]> = {
     all: ids(rows).sort(),
     needs_input: ['ask'],
     working: ['starting', 'working'],
-    done: ['bot-done', 'done-new', 'done-read', 'done-sub'],
+    done: ['bot-done', 'bot-sub', 'done-new', 'done-read', 'done-sub'],
     asleep: ['exited', 'offline'],
   };
   for (const filter of Object.keys(expected) as BuildingFilter[]) assert.deepEqual(ids(filterBuildingRows(rows, '', '', filter)).sort(), expected[filter]);

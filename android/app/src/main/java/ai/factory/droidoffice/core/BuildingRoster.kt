@@ -140,9 +140,13 @@ object BuildingRoster {
             row.copy(leadName = resolvedLeadName, crossFloorLead = crossFloor)
         }
 
-        val totalSummary = summarize(enriched)
+        // A building agent with no team has nothing to list; Office's Mission Control section still shows it, and its asks stay pinned.
+        val leads = enriched.mapNotNullTo(HashSet()) { it.worker.lead }
+        val listed = enriched.filter { it.kind == RosterKind.Desk || it.teamCount > 0 || it.worker.id in leads }
 
-        val arranged = arrangeRows(enriched, floorRank)
+        val totalSummary = summarize(listed)
+
+        val arranged = arrangeRows(listed, floorRank)
 
         val askCandidates = enriched
             .filter { it.kind != RosterKind.Bot && !it.worker.remote && it.worker.state == WorkerStatus.NeedsInput }

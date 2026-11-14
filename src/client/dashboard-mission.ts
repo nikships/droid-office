@@ -71,7 +71,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
   const rows = new Map<string, Row>();
   const blocks = new Map<string, Block>();
   const collapsed = new Set<string>();
-  let expanded = true;
+  let sectionOpen = true;
   const caption = h('span.dash-mission-caption');
   const content = h('div.dash-mission-content', { id: 'dash-mission-content' });
   const body = h('div.dash-mission-body', {}, content);
@@ -83,11 +83,11 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
       'aria-controls': content.id,
       'aria-label': 'Collapse Mission Control',
       onclick: () => {
-        expanded = !expanded;
-        head.setAttribute('aria-expanded', String(expanded));
-        head.setAttribute('aria-label', `${expanded ? 'Collapse' : 'Expand'} Mission Control`);
-        body.classList.toggle('collapsed', !expanded);
-        body.inert = !expanded;
+        sectionOpen = !sectionOpen;
+        head.setAttribute('aria-expanded', String(sectionOpen));
+        head.setAttribute('aria-label', `${sectionOpen ? 'Collapse' : 'Expand'} Mission Control`);
+        body.classList.toggle('collapsed', !sectionOpen);
+        body.inert = !sectionOpen;
       },
     },
     h('span.dash-mission-title', {}, icon('satellite', 12), h('span', {}, 'Mission Control')),
@@ -316,12 +316,13 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
   return {
     update,
     /** Each building agent, followed by its expanded team, in display order. */
-    visible: () => (expanded ? visible : []),
+    visible: () => (sectionOpen ? visible : []),
     button(id: string) {
-      return expanded ? (rows.get(id)?.open ?? rows.get(`member:${id}`)?.open) : head;
+      if (!sectionOpen) return head;
+      return rows.get(id)?.open ?? rows.get(`member:${id}`)?.open;
     },
     scrollTo(id: string) {
-      if (expanded) (rows.get(id) ?? rows.get(`member:${id}`))?.wrap.scrollIntoView({ block: 'nearest' });
+      if (sectionOpen) (rows.get(id) ?? rows.get(`member:${id}`))?.wrap.scrollIntoView({ block: 'nearest' });
     },
   };
 }
