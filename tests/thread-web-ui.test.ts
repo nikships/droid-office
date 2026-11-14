@@ -721,12 +721,15 @@ test('a created Markdown, HTML or picture file offers Preview and Send to Whiteb
   await page.keyboard.press('Escape');
 
   // A picture previews as itself, read as bytes from the workspace.
+  await page.route('http://office.test/api/thread/file?**', (route) => route.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>' }));
+  await page.evaluate(() => document.head.append(Object.assign(document.createElement('base'), { href: 'http://office.test/' })));
   await page
     .locator('.wt-change-deliverable', { has: page.locator('details[data-disclosure*="docs/chart.svg"]') })
     .locator('.wt-change-preview')
     .click();
   const src = await page.locator('.modal.wt-file-modal img.wt-file-image').getAttribute('src');
   assert.match(src ?? '', /\/api\/thread\/file\?.*path=docs%2Fchart\.svg.*raw=image/);
+  await page.locator('.modal.wt-file-modal').getByText('4 × 4').waitFor();
   await page.keyboard.press('Escape');
 
   await page.evaluate(() => (window as any).thread.dispose());
