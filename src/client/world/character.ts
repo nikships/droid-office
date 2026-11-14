@@ -4,10 +4,6 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
 import { DESK_MOMENT_FX, isWorkerMicroReaction, isWorkerVibePosture, MICRO_REACTION_FX, type WorkerMicroReaction, type WorkerVibePosture, type WorkerVibeState } from '../../shared/gemini-vibes';
-
-/** A one-shot reaction a worker acts out: one Gemini judged, or opening a pull request (which the office knows for itself). */
-export type ReactionPose = WorkerMicroReaction | 'shipped';
-const reactionHex = (kind: ReactionPose) => (kind === 'shipped' ? DESK_MOMENT_FX.shipped.hex : MICRO_REACTION_FX[kind].hex);
 import type { CarriedIssue, TeamBadge, TodoProgress, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
 import { isAsleep, type WorkerPr } from '../../shared/status';
 import { todoCount, todoFraction, todoLine } from '../../shared/todos';
@@ -21,6 +17,11 @@ import { isTeamKitGeometry, setTeamKitModel, TeamKit } from './team-kit';
 import { ANISOTROPY } from './texture-quality';
 import { beveledBox, cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, toon, toonUnique } from './toon';
 import { mergeWorkerPaint, type WorkerPart } from './worker-parts';
+
+/** A one-shot reaction a worker acts out: one Gemini judged, or opening a pull request (which the office knows for itself). */
+export type ReactionPose = WorkerMicroReaction | 'shipped';
+const REACTION_SECONDS: Partial<Record<ReactionPose, number>> = { breakthrough: 2.8, shipped: 2.8, puzzled: 2.6, eureka: 2.6, frustrated: 2.6, rabbit_hole: 2.6, risky_move: 2.5, corner_cut: 2.5 };
+const reactionHex = (kind: ReactionPose) => (kind === 'shipped' ? DESK_MOMENT_FX.shipped.hex : MICRO_REACTION_FX[kind].hex);
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
 
@@ -1995,10 +1996,7 @@ export class Worker {
   /** Triggers a one-shot micro-reaction over a smooth ~2.5s envelope without snapping limbs. */
   triggerReaction(kind: ReactionPose) {
     if (this.dead || this.leaving || this.dancing) return;
-    let duration = 2.4;
-    if (kind === 'breakthrough' || kind === 'shipped') duration = 2.8;
-    else if (kind === 'puzzled' || kind === 'eureka' || kind === 'frustrated' || kind === 'rabbit_hole') duration = 2.6;
-    else if (kind === 'risky_move' || kind === 'corner_cut') duration = 2.5;
+    const duration = REACTION_SECONDS[kind] ?? 2.4;
     this.microReaction = { kind, t: 0, duration };
     // Shipping is a full spin in the chair.
     if (kind === 'shipped') this.twirlT = 0;
@@ -2601,8 +2599,10 @@ export class Worker {
           s.lean = THREE.MathUtils.lerp(s.lean, 0.26, env);
           s.drop += 0.03 * env;
           s.headX = THREE.MathUtils.lerp(s.headX, 0.18, env);
-          s.headY = THREE.MathUtils.lerp(s.headY, Math.sign(Math.sin(r.t * 4)) * 0.22, env);
-          s.lookX = THREE.MathUtils.lerp(s.lookX, Math.sign(Math.sin(r.t * 4)) * 0.018, env);
+          // A soft square wave: the eyes snap to each side and hold there, without a one-frame jump.
+          const dart = Math.tanh(Math.sin(r.t * 4) * 6);
+          s.headY = THREE.MathUtils.lerp(s.headY, dart * 0.22, env);
+          s.lookX = THREE.MathUtils.lerp(s.lookX, dart * 0.018, env);
           s.lid = THREE.MathUtils.lerp(s.lid, 0.62, env);
           s.forearmLx = THREE.MathUtils.lerp(s.forearmLx, -0.7 + Math.sin(r.t * 30) * 0.12, env);
           s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -0.7 + Math.sin(r.t * 30 + 1.6) * 0.12, env);

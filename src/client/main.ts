@@ -4464,6 +4464,7 @@ async function startWhenReady() {
 }
 
 /** Strict view-aware cost gating for Gemini Decision 1: active only while this 3D canvas is open, visible, and on an indoor floor. */
+const indoorHere = () => !upTop && Boolean(store.floor && store.floor !== ROOF);
 let vibesWatching = false;
 function syncVibesWatch() {
   paintVibesBadge();
@@ -4471,13 +4472,11 @@ function syncVibesWatch() {
     vibesWatching = false;
     return;
   }
-  const want = document.visibilityState === 'visible' && !upTop && Boolean(store.floor && store.floor !== ROOF);
+  const want = document.visibilityState === 'visible' && indoorHere();
   if (want === vibesWatching) return;
   vibesWatching = want;
   net.send({ t: 'vibes.watch', active: want });
 }
-
-const indoorHere = () => !upTop && Boolean(store.floor && store.floor !== ROOF);
 /** Living 3D runs here: connected, switched on, key accepted, and standing on an indoor floor. */
 function vibesLiveHere(): boolean {
   const g = store.gemini;
@@ -4655,17 +4654,17 @@ function syncFloorVibes(snap = false) {
 function syncVibesPower() {
   const g = store.gemini;
   const on = g.connected && g.vibesOn && !g.rejected && !store.setup.airgapped;
+  vibeFx.setEnabled(on && indoorHere());
   if (vibesWasOn !== null && on !== vibesWasOn && g.connected && indoorHere()) {
     const from = new THREE.Vector3(player.pos.x, groundAt(office.colliders, player.pos.x, player.pos.z, player.pos.y + 0.5, false), player.pos.z);
     if (!Number.isFinite(from.y)) from.y = player.pos.y;
-    vibeFx.setEnabled(on);
     vibeFx.power(on, from);
     sky.flashRoom(on ? '#ff7a1a' : '#9aa3b2', on ? 1.8 : 1, 1, on ? 1.8 : 0.7);
     // The pedestal switch toasts its own press once the server confirms it.
     if (vibesToggle.pendingTarget === null) toast(on ? 'Living 3D on: the room now reacts to your workers' : 'Living 3D off: lighting and postures are back to neutral');
     activeAt = performance.now();
     renderWake();
-  } else vibeFx.setEnabled(vibesLiveHere());
+  }
   vibesWasOn = on;
   paintVibesBadge();
 }

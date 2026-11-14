@@ -116,8 +116,8 @@ class Aura {
   setLook(tone: MonitorSpillTone, posture: WorkerVibePosture, stakes: number, progress: number) {
     this.tone = tone;
     this.target.set(tone === 'neutral' ? POSTURE_AURA_HEX[posture] : MONITOR_SPILL_HEX[tone]);
-    this.stakes = stakes;
-    this.progress = progress;
+    this.stakes = Number.isFinite(stakes) ? Math.min(1, Math.max(0, stakes)) : 0.5;
+    this.progress = Number.isFinite(progress) ? Math.min(1, Math.max(0, progress)) : 0;
   }
 
   /** How far round its progress arc is drawn right now, 0–1. */
@@ -471,10 +471,10 @@ export class VibeFx {
 
   /** Crackling links of light between pairs of heads, for desks at cross purposes. */
   links(pairs: [THREE.Vector3, THREE.Vector3][], hex: string) {
+    if (this.calmMotion) return;
     for (const [a, b] of pairs) {
       const from = a.clone().add(new THREE.Vector3(0, 0.35, 0));
       const to = b.clone().add(new THREE.Vector3(0, 0.35, 0));
-      if (this.calmMotion) continue;
       this.add(new Crackle(from, to, hex));
       this.add(new Crackle(from, to, '#ffffff', 1.6));
     }
@@ -530,8 +530,10 @@ export class VibeFx {
   update(dt: number): boolean {
     this.clock += dt;
     if (this.queued.length) {
-      const due = this.queued.filter((q) => q.at <= this.clock);
-      this.queued = this.queued.filter((q) => q.at > this.clock);
+      const due: typeof this.queued = [];
+      const pending: typeof this.queued = [];
+      for (const q of this.queued) (q.at <= this.clock ? due : pending).push(q);
+      this.queued = pending;
       for (const q of due) q.run();
     }
     let moving = this.queued.length > 0;

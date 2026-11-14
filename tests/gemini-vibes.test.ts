@@ -873,4 +873,23 @@ test('OfficeVibes grades floor stakes, worker stakes and progress, and room-wide
   tail = 'other';
   await vibes.pulseNow();
   assert.equal(emitted.at(-1)!.event, undefined);
+
+  // Turning Living 3D off and straight back on drops carried moments instead of replaying them.
+  now += FLOOR_EVENT_COOLDOWN_MS;
+  eventChoice = 'convergence';
+  eventProb = 0.9;
+  tail = 'PASS tests/f.test.ts';
+  await vibes.pulseNow();
+  s = emitted.at(-1)!;
+  assert.equal(s.event?.seq, 3);
+  assert.ok(s.workers['w-alpha']?.reaction, 'a reaction fired alongside the event');
+  assert.equal(vibes.setVibesOn(false), undefined);
+  assert.equal(emitted.at(-1)!.event, undefined, 'the neutral snapshot has no event');
+  assert.equal(vibes.setVibesOn(true), undefined);
+  now += 1000;
+  await vibes.pulseNow();
+  s = emitted.at(-1)!;
+  assert.equal(s.event, undefined, 'the event from before the reset is not carried into the fresh snapshot');
+  assert.equal(s.workers['w-alpha']?.reaction, undefined, 'nor is the reaction');
+  assert.equal(s.workers['w-beta']?.reaction, undefined);
 });

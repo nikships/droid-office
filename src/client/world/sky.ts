@@ -758,9 +758,9 @@ export class Sky {
    */
   flashRoom(hex: string, seconds = 2.4, pulses = 1, gain = 1.6) {
     this.flashColor.set(hex);
-    this.flashSeconds = Math.max(0.2, seconds);
-    this.flashPulses = Math.max(1, Math.round(pulses));
-    this.flashGain = gain;
+    this.flashSeconds = Number.isFinite(seconds) ? Math.max(0.2, seconds) : 2.4;
+    this.flashPulses = Number.isFinite(pulses) ? Math.max(1, Math.round(pulses)) : 1;
+    this.flashGain = Number.isFinite(gain) ? Math.max(0, gain) : 1.6;
     this.flashT = 0;
   }
 
@@ -796,7 +796,9 @@ export class Sky {
     let changed = false;
     this.moodT += dt;
     const breathe = !this.calmMotion && !this.roof && this.moodPulse > 0;
-    const pulseK = breathe ? 1 + this.moodPulse * (0.45 + this.moodStakes * 0.9) * Math.sin(this.moodT * Math.PI * 2 * this.moodPulseHz * (0.7 + this.moodStakes * 0.8)) : 1;
+    const depth = this.moodPulse * (0.45 + this.moodStakes * 0.9);
+    const rateHz = this.moodPulseHz * (0.7 + this.moodStakes * 0.8);
+    const pulseK = breathe ? 1 + depth * Math.sin(this.moodT * Math.PI * 2 * rateHz) : 1;
     if (pulseK !== this.moodPulseK) {
       this.moodPulseK = pulseK;
       changed = true;

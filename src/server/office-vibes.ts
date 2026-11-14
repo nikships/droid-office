@@ -96,6 +96,12 @@ interface FloorTrack {
   lastEvent?: TriggeredFloorEvent;
 }
 
+/** Drops carried moments so a neutral snapshot cannot replay them; cooldowns stay so they cannot refire at once. */
+function clearCarriedMoments(track: FloorTrack): void {
+  track.lastEvent = undefined;
+  for (const w of track.workers.values()) w.lastReaction = undefined;
+}
+
 /**
  * Every question below asks for a judgment a regex, exit code, tool name or status field cannot
  * make: what the output means for the worker's task. Facts the office already knows (a pull request
@@ -201,13 +207,13 @@ export function buildFloorDecisionsBatch(floor: VibesFloorView, activeWorkers: W
   const mergedPulls = floor.pulls.filter((p) => p.state === 'MERGED').length;
   const failingRuns = floor.pipelines?.runs.filter((r) => r.state === 'failure').length ?? 0;
 
+  const floorName = redactGeminiSecrets(floor.name, extraSecrets);
   const lines: string[] = [
-    `Floor "${redactGeminiSecrets(floor.name, extraSecrets)}" snapshot:`,
+    `Floor "${floorName}" snapshot:`,
     `Summary: ${activeWorkers.length} active/recent desk workers (${Math.min(activeWorkers.length, MAX_VIBES_WORKERS)} shown, ${Math.max(0, activeWorkers.length - MAX_VIBES_WORKERS)} omitted), ${openPulls} open PRs, ${mergedPulls} merged PRs, ${failingRuns} failing CI runs.`,
     '',
   ];
 
-  const floorName = redactGeminiSecrets(floor.name, extraSecrets);
   const questions: Record<string, DecisionQuestion> = {
     floor_mood: {
       type: 'choice',
@@ -632,6 +638,7 @@ export class OfficeVibes {
         track.retryAt = 0;
         track.retryDelay = 0;
         track.state = neutral;
+        clearCarriedMoments(track);
       }
       this.opts.emitFloorVibes(floor.id, neutral);
     }
@@ -680,6 +687,7 @@ export class OfficeVibes {
       if (track.state.mood !== 'calm_planning' || Object.keys(track.state.workers).length > 0) {
         track.lastDigest = 'empty';
         track.state = emptyFloorVibes(floorId, now);
+        clearCarriedMoments(track);
         this.opts.emitFloorVibes(floorId, track.state);
       }
       return;
