@@ -26,7 +26,7 @@ class FactoryLimitsTest {
     """.trimIndent()
     private val state = OfficeJson.decodeFromString<FactoryState>(capture)
     private val now = 1794630000000L
-    private fun gate(s: FactoryState? = state, id: String = "gpt-6.1-sol", custom: Boolean = false) = FactoryLimits.availability(s, id, custom)
+    private fun gate(s: FactoryState? = state, id: String = "gpt-6.1-sol", custom: Boolean = false, at: Long = now) = FactoryLimits.availability(s, id, custom, at)
     private fun exhausted(): FactoryState {
         val standard = requireNotNull(state.limits.limits.standard)
         return state.copy(limits = state.limits.copy(limits = state.limits.limits.copy(
@@ -70,7 +70,7 @@ class FactoryLimitsTest {
 
     @Test fun standardExhaustionExplainsEveryWindowAndUsesEarliestReset() {
         val g = gate(exhausted()) as ModelAvailability.FactoryUnavailable
-        assertEquals(state.limits.limits.standard!!.fiveHour.resetsAt, g.until)
+        assertEquals(state.limits.limits.standard!!.fiveHour.resetsAt(), g.until)
         val words = Availability.reason(g, now)!!
         assertTrue(words.contains("5-hour, Weekly"))
         assertTrue(words.contains("Droid Core fallback is active"))
@@ -101,7 +101,7 @@ class FactoryLimitsTest {
     }
 
     @Test fun coreClassificationMirrorsFactoryCatalogNotNamesOrMultipliers() {
-        listOf("kimi-k3", "glm-5.3-flash", "deepseek-v4.1-flash", "beam-1.0", "oss-latest-fast").forEach { assertTrue(FactoryLimits.isCore(it)) }
+        listOf("kimi-k3", "glm-5.3-flash", "glm-5p2-fast", "deepseek-v4.1-flash", "beam-1.0", "oss-latest-fast").forEach { assertTrue(FactoryLimits.isCore(it)) }
         listOf("auto", "auto-fast", "gpt-6.1-sol", "claude-opus-5-5", "droid-core", "custom:droidproxy:kimi-k3").forEach { assertFalse(FactoryLimits.isCore(it)) }
     }
 
@@ -111,5 +111,67 @@ class FactoryLimitsTest {
         assertEquals(state, live.state)
         assertEquals(state, welcome.factory)
         assertEquals(FactoryLimitsState(), (Protocol.decode("""{"t":"factory","state":{}}""") as ServerMsg.Factory).state.limits)
+    }
+
+    @Test fun resetTimePrefersValidEndAndFallsBackToFetchedAtPlusSeconds() {
+        val valid = FactoryLimitWindow(100.0, "2026-11-14T06:06:30.724Z", 1251.5)
+        assertEquals(1_794_636_390_724L, valid.resetsAt(now))
+        for (end in listOf(null, "", "not-a-date")) {
+            val w = valid.copy(windowEnd = end)
+            assertEquals(now + 1_251_500, w.resetsAt(now))
+            assertNull(w.resetsAt(null))
+        }
+        assertNull(FactoryLimitWindow().resetsAt(now))
+        assertEquals(now, FactoryLimitWindow(secondsRemaining = 0.0).resetsAt(now))
+        val windows = FactoryLimitWindows(fiveHour = valid.copy(windowEnd = null))
+        val s = state.copy(limits = state.limits.copy(limits = FactoryLimitTiers(standard = windows)))
+        val g = gate(s) as ModelAvailability.FactoryUnavailable
+        assertEquals(now + 1_251_500, g.until)
+        assertEquals(g.until, FactoryLimits.account("standard", windows, now).windows.first().resetsAt)
+        // Moving the device clock must not slide a fallback reset anchored to fetchedAt.
+        assertEquals(ModelAvailability.Ok, gate(s, at = now + 1_251_500))
+    }
+
+    @Test fun expiredWindowsNeverBlockIncludingTheExactResetBoundary() {
+        val windows = FactoryLimitWindows(
+            fiveHour = FactoryLimitWindow(100.0, secondsRemaining = 60.0),
+            weekly = FactoryLimitWindow(105.0, "2026-11-13T00:00:00Z"),
+        )
+        val s = state.copy(limits = state.limits.copy(limits = FactoryLimitTiers(standard = windows, core = windows)))
+        assertTrue(Availability.cannotRun(gate(s, at = now + 59_999)))
+        assertEquals(ModelAvailability.Ok, gate(s, at = now + 60_000))
+        assertEquals(ModelAvailability.Ok, gate(s, "kimi-k3", at = now + 60_001))
+    }
+
+    @Test fun overlappingWindowsRemainBlockedUntilEveryKnownResetExpires() {
+        val windows = FactoryLimitWindows(
+            fiveHour = FactoryLimitWindow(100.0, secondsRemaining = 300.0),
+            weekly = FactoryLimitWindow(100.0, secondsRemaining = 60.0),
+            monthly = FactoryLimitWindow(101.0, secondsRemaining = 180.0),
+        )
+        val s = state.copy(limits = state.limits.copy(limits = FactoryLimitTiers(standard = windows)))
+        val first = gate(s) as ModelAvailability.FactoryUnavailable
+        assertEquals(now + 60_000, first.until)
+        assertTrue(first.reason.contains("Weekly, Monthly, 5-hour"))
+        val next = gate(s, at = now + 60_000) as ModelAvailability.FactoryUnavailable
+        assertEquals(now + 180_000, next.until)
+        assertTrue(next.reason.contains("Monthly, 5-hour"))
+        assertFalse(next.reason.contains("Weekly"))
+        val last = gate(s, at = now + 180_000) as ModelAvailability.FactoryUnavailable
+        assertEquals(now + 300_000, last.until)
+        assertTrue(last.reason.contains("(5-hour)"))
+        assertEquals(ModelAvailability.Ok, gate(s, at = now + 300_000))
+    }
+
+    @Test fun unknownResetKeepsBlockingAfterKnownOverlappingWindowsExpire() {
+        val windows = FactoryLimitWindows(
+            fiveHour = FactoryLimitWindow(100.0),
+            weekly = FactoryLimitWindow(100.0, secondsRemaining = 60.0),
+        )
+        val s = state.copy(limits = state.limits.copy(limits = FactoryLimitTiers(standard = windows)))
+        assertEquals(now + 60_000, (gate(s) as ModelAvailability.FactoryUnavailable).until)
+        val later = gate(s, at = now + 60_000) as ModelAvailability.FactoryUnavailable
+        assertNull(later.until)
+        assertTrue(later.reason.contains("(5-hour)"))
     }
 }

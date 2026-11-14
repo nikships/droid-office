@@ -66,7 +66,7 @@ internal fun FactorySubscriptions(now: Long) {
             if (l.hasActiveSubscription == false) Text("Factory subscription is inactive", color = Palette.Warning, modifier = Modifier.tagged(Tags.Subscriptions.FACTORY_STATUS))
             listOf("standard" to l.limits.standard, "core" to l.limits.core).forEach { (tier, windows) ->
                 if (windows != null) {
-                    val account = FactoryLimits.account(tier, windows)
+                    val account = FactoryLimits.account(tier, windows, l.fetchedAt)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
                         QuotaRing(SubscriptionProvider(key = "factory", name = "Factory"), account, pickedTier == tier) { pickedTier = if (pickedTier == tier) null else tier }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {

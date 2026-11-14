@@ -230,9 +230,17 @@ class OfficeConnection(
     private val _catalogue = MutableStateFlow<ModelCatalogue?>(null)
 
     /** Subscription and Factory gates share one live map for every existing model-picker caller. */
-    val availability: StateFlow<Map<String, ModelAvailability>> = combine(_availability, _factory, _catalogue) { proxy, factory, catalogue ->
+    private val availabilityClock = _link.transformLatest { link ->
+        emit(System.currentTimeMillis())
+        // A window can expire between server polls. Stop the clock while disconnected.
+        while (link.phase == Phase.Connected) {
+            delay(30_000)
+            emit(System.currentTimeMillis())
+        }
+    }
+    val availability: StateFlow<Map<String, ModelAvailability>> = combine(_availability, _factory, _catalogue, availabilityClock) { proxy, factory, catalogue, now ->
         proxy + catalogue?.models.orEmpty().mapNotNull { model ->
-            ai.factory.droidoffice.core.FactoryLimits.availability(factory, model.id, model.custom)?.let { model.id to it }
+            ai.factory.droidoffice.core.FactoryLimits.availability(factory, model.id, model.custom, now)?.let { model.id to it }
         }
     }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
