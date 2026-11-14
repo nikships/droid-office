@@ -1792,7 +1792,6 @@ export class Worker {
   private lastReactionSeq = 0;
   /** How much is riding on its work (0–1, from Gemini Decision 1), and the clock its posture moves to: faster the higher the stakes. */
   private vibeStakes = 0.5;
-  private vibeProgress = 0;
   private vibeClock = 0;
   /** How much of each act is in its stance right now, blending from one to the next. */
   private acts = new Map<Act, number>();
@@ -1985,7 +1984,6 @@ export class Worker {
   applyVibe(vibe: WorkerVibeState | undefined, nowMs = Date.now()) {
     this.vibePosture = vibe && isWorkerVibePosture(vibe.posture) ? vibe.posture : 'steady';
     this.vibeStakes = typeof vibe?.stakes === 'number' && Number.isFinite(vibe.stakes) ? Math.max(0, Math.min(1, vibe.stakes)) : 0.5;
-    this.vibeProgress = typeof vibe?.progress === 'number' && Number.isFinite(vibe.progress) ? Math.max(0, Math.min(1, vibe.progress)) : 0;
     const r = vibe?.reaction;
     if (r && r.seq > 0 && r.seq !== this.lastReactionSeq && isWorkerMicroReaction(r.kind)) {
       this.lastReactionSeq = r.seq;
@@ -2005,11 +2003,6 @@ export class Worker {
   /** How much is riding on its work right now, 0–1. */
   get activeVibeStakes(): number {
     return this.vibeStakes;
-  }
-
-  /** How close it is to finishing its task, 0–1 (0 when ungraded). */
-  get activeVibeProgress(): number {
-    return this.vibeProgress;
   }
 
   get activeVibePosture(): WorkerVibePosture {

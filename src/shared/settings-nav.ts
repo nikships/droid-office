@@ -128,7 +128,7 @@ export const SETTINGS_CARDS = [
   {
     pane: 'connections',
     title: 'Gemini Decisions API',
-    keywords: 'gemini decision decisions api key google aistudio living 3d reactions postures mood lighting aura vibes noise gate wakeup wake filter inter-agent chatter batch hold lead nudge',
+    keywords: 'gemini decision decisions api key google aistudio living 3d reactions postures mood lighting vibes noise gate wakeup wake filter inter-agent chatter batch hold lead nudge',
   },
   { pane: 'connections', title: 'Linear', keywords: 'linear connect api key workspace tickets issues issue board', on: OFFICE },
   { pane: 'connections', title: "This floor's Linear team", keywords: 'linear team project floor issue board tickets', on: OFFICE },

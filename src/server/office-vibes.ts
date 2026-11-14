@@ -168,14 +168,6 @@ const WORKER_STAKES_RUBRIC = [
   'Critical: destructive or hard-to-undo operations, production or release actions, or a mistake here would be expensive.',
 ];
 
-const WORKER_PROGRESS_RUBRIC = [
-  'Just started, or still working out what the task needs.',
-  'Understands the problem and has a plan, but little is built yet.',
-  'Partway: the core change is underway but not working yet.',
-  'Mostly there: the main change works and it is verifying, polishing or fixing edge cases.',
-  'Essentially done: the goal is met and it is wrapping up.',
-];
-
 function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
@@ -281,11 +273,6 @@ export function buildFloorDecisionsBatch(floor: VibesFloorView, activeWorkers: W
       type: 'score',
       instructions: `For worker [${keyPrefix}] ("${safeName}"), score how much is riding on what [${keyPrefix}] is doing right now: the blast radius if it goes wrong, not how busy it looks.`,
       criteria: WORKER_STAKES_RUBRIC,
-    };
-    questions[`${keyPrefix}_progress`] = {
-      type: 'score',
-      instructions: `For worker [${keyPrefix}] ("${safeName}"), compare [${keyPrefix}]'s task with the evidence in its output and score how close it is to actually finishing that task.`,
-      criteria: WORKER_PROGRESS_RUBRIC,
     };
   });
 
@@ -764,8 +751,6 @@ export class OfficeVibes {
         const rAns = choiceProb(res.answers[`${keyPrefix}_react`]);
         const stakesAns = res.answers[`${keyPrefix}_stakes`];
         const stakes = stakesAns?.type === 'score' ? unitFromScore(stakesAns.score, WORKER_STAKES_RUBRIC.length - 1) : undefined;
-        const progressAns = res.answers[`${keyPrefix}_progress`];
-        const progress = progressAns?.type === 'score' ? unitFromScore(progressAns.score, WORKER_PROGRESS_RUBRIC.length - 1) : undefined;
 
         const posture: WorkerVibePosture = isBusy(currentWorker.status) && pAns && isWorkerVibePosture(pAns.choice) && pAns.prob >= POSTURE_CONFIDENCE_MIN ? pAns.choice : 'steady';
 
@@ -795,7 +780,6 @@ export class OfficeVibes {
           posture,
           spill,
           ...(stakes !== undefined ? { stakes: Number(stakes.toFixed(3)) } : {}),
-          ...(progress !== undefined ? { progress: Number(progress.toFixed(3)) } : {}),
           ...(reaction ? { reaction } : {}),
         };
       }

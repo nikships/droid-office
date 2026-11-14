@@ -476,7 +476,7 @@ store.on('decor', () => gallery.sync(store.decor));
 const confetti = new Confetti((x, z, y) => groundAt(office.colliders, x, z, y, false));
 scene.add(confetti.mesh);
 
-// Living 3D's desk rings, emoji pops and shockwaves (Gemini Decision 1).
+// Living 3D's shockwaves, beams and sparks (Gemini Decision 1).
 const vibeFx = new VibeFx();
 scene.add(vibeFx.group);
 let vibeFxMoving = false;
@@ -1761,9 +1761,6 @@ function syncWorkers() {
     }
     sound.removeTypist(id);
     lastWandShip.delete(id);
-    // Its ring fades out at the desk it left; a floor change clears every ring at once anyway.
-    if (shotWorkers.has(id) || sentHome.has(id)) vibeFx.release(id);
-    else vibeFx.dropAura(id);
     workerViews.delete(id);
   }
   arrangeSeats();
@@ -3937,7 +3934,6 @@ resize();
 let spotSavedAt = 0;
 const lookDir = new THREE.Vector3();
 const workerPos = new THREE.Vector3();
-const feetScratch = new THREE.Vector3();
 const deskFloor = new THREE.Vector3();
 
 const fpsEl = $('fps');
@@ -4304,8 +4300,6 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     }
     const d = workerPos.distanceTo(player.pos);
     v.model.held = d < (v.model.held ? HOLD_LEAVE : HOLD_NEAR);
-    const deskView = office.desks.get(v.deskId);
-    if (deskView) vibeFx.follow(id, feetScratch.set(workerPos.x, deskFloor.setFromMatrixPosition(deskView.group.matrixWorld).y, workerPos.z));
     workerPos.y += WORKER_HEAD;
     v.model.seenFrom(workerPos.distanceTo(camPos));
     v.model.update(dt, t);
@@ -4491,13 +4485,13 @@ function deskPoints(v: WorkerView): { head: THREE.Vector3; feet: THREE.Vector3 }
   return { head, feet };
 }
 
-/** A worker's micro-reaction, around it: its emoji, sparks, its desk ring flaring, and confetti, smoke or a warning strobe. */
-function vibeReactionFx(id: string, v: WorkerView, kind: WorkerMicroReaction) {
+/** A worker's micro-reaction, around it: sparks, and confetti, smoke or a warning strobe. */
+function vibeReactionFx(_id: string, v: WorkerView, kind: WorkerMicroReaction) {
   if (!vibeFx.enabled) return;
   const { head, feet } = deskPoints(v);
   const fx = MICRO_REACTION_FX[kind];
   const down = kind === 'setback' || kind === 'frustrated' || kind === 'corner_cut';
-  vibeFx.react(id, fx.glyph, fx.hex, head, feet, { sparks: kind === 'breakthrough' || kind === 'eureka' ? 56 : 32, lift: down ? -0.6 : 1 });
+  vibeFx.react(fx.hex, head, feet, { sparks: kind === 'breakthrough' || kind === 'eureka' ? 56 : 32, lift: down ? -0.6 : 1 });
   if (kind === 'breakthrough') burstOver(v.deskId, 90);
   else if (kind === 'risky_move') sky.flashRoom(fx.hex, 1.4, 2, 3.2);
   else if (down && !reduceMotion.matches) addEffect(new Puff(head, new THREE.Vector3(0, 1, 0)));
@@ -4511,7 +4505,7 @@ function deskMomentFx(id: string, v: WorkerView, kind: DeskMoment) {
   if (!vibeFx.enabled) return;
   const { head, feet } = deskPoints(v);
   const fx = DESK_MOMENT_FX[kind];
-  vibeFx.deskMoment(id, fx.glyph, fx.hex, head, feet, { beam: kind === 'hired' || kind === 'shipped', implode: kind === 'sent_home' || kind === 'shot', sparks: kind === 'shot' ? 70 : 40 });
+  vibeFx.deskMoment(fx.hex, head, feet, { beam: kind === 'hired' || kind === 'shipped', implode: kind === 'sent_home' || kind === 'shot', sparks: kind === 'shot' ? 70 : 40 });
   if (kind === 'shot') sky.flashRoom(fx.hex, 2.4, 1, 2.6);
   else if (kind === 'sent_home') sky.flashRoom(fx.hex, 0.9, 1, 1.4);
   lastDeskMoment = { kind, worker: id };
@@ -4559,9 +4553,9 @@ function playFloorEvent(kind: FloorEvent | 'ship_it') {
     if (kind === 'crisis' && anyTroubled && !troubled(id)) continue;
     heads.push({ id, ...deskPoints(v) });
   }
-  vibeFx.roomWave(center, fx.hex, heads, fx.glyph);
+  vibeFx.roomWave(center, fx.hex, heads);
   if (kind === 'collision') vibeFx.links(collisionPairs(heads), fx.hex);
-  if (kind === 'convergence') for (const h of heads) vibeFx.deskMoment(h.id, fx.glyph, fx.hex, h.head, h.feet, { beam: true, sparks: 20 });
+  if (kind === 'convergence') for (const h of heads) vibeFx.deskMoment(fx.hex, h.head, h.feet, { beam: true, sparks: 20 });
   if (kind === 'ship_it') confetti.rain(FLOOR, floorArea(FLOOR) * 1.2, 2.5, ceilingOver);
   lastRoomEvent = kind;
 }
@@ -4589,7 +4583,6 @@ function syncFloorVibes(snap = false) {
     const prevPosture = v.model.activeVibePosture;
     const prevReaction = v.model.activeReaction;
     v.model.applyVibe(wVibe, nowMs);
-    vibeFx.setAura(wid, Boolean(wVibe), tone, v.model.activeVibePosture, v.model.activeVibeStakes, v.model.activeVibeProgress);
     const reaction = v.model.activeReaction;
     if (reaction && reaction !== prevReaction && isWorkerMicroReaction(reaction)) vibeReactionFx(wid, v, reaction);
     if (v.model.activeVibePosture !== prevPosture || reaction !== prevReaction) changed = true;
@@ -4838,7 +4831,6 @@ const automation = createAutomation({
             stakes: store.vibes?.stakes ?? 0.5,
             event: lastRoomEvent,
             moment: lastDeskMoment,
-            auras: vibeFx.auraCount,
             roomFlash: sky.roomFlash,
             workers: [...store.workers.values()].map((w) => {
               const v = workerViews.get(w.id);
@@ -4848,7 +4840,6 @@ const automation = createAutomation({
                 posture: v?.model.activeVibePosture ?? 'steady',
                 spill: v?.spillTone ?? 'neutral',
                 stakes: v?.model.activeVibeStakes ?? 0.5,
-                progress: vibeFx.progressOf(w.id),
                 reaction: v?.model.activeReaction ?? null,
               };
             }),

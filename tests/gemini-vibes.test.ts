@@ -451,11 +451,10 @@ test('OfficeVibes enforces strict view-aware cost gating, digest deduplication, 
 
   // Batch builder check for multi-worker floor
   const batch = buildFloorDecisionsBatch(floor, [worker, makeWorker({ id: 'w-beta', name: 'Pixel', deskId: 'desk-2' })], []);
-  assert.equal(Object.keys(batch.questions).length, 3 + 2 * 5, 'floor mood, stakes and event, plus posture, spill, reaction, stakes and progress per worker');
+  assert.equal(Object.keys(batch.questions).length, 3 + 2 * 4, 'floor mood, stakes and event, plus posture, spill, reaction and stakes per worker');
   assert.equal(batch.questions.floor_stakes?.type, 'score');
   assert.equal(batch.questions.floor_event?.type, 'choice');
   assert.equal(batch.questions.w1_stakes?.type, 'score');
-  assert.equal(batch.questions.w1_progress?.type, 'score');
   for (const key of ['floor_energy', 'w0_energy']) assert.equal(batch.questions[key], undefined, `${key}: output rate is a counter, not a judgment`);
   // Gemini is asked what output means for the task, never to spot keywords a regex could.
   for (const key of ['floor_mood', 'w0_spill', 'w0_react']) assert.match(batch.questions[key]?.instructions ?? '', /not keywords/, key);
@@ -707,12 +706,11 @@ test('3D Worker continuous postures, micro-reaction envelopes and Sky baseline-s
   );
   assert.equal(actor.activeReaction, null);
 
-  // Exercise the remaining micro-reactions with stakes driving the posture clock and progress carried along
+  // Exercise the remaining micro-reactions with stakes driving the posture clock
   for (const [i, kind] of (['setback', 'puzzled', 'eureka', 'frustrated', 'pivot', 'rabbit_hole', 'corner_cut', 'risky_move'] as const).entries()) {
-    actor.applyVibe({ posture: 'struggling', spill: 'crimson', stakes: i / 7, progress: 1 - i / 7, reaction: { kind, seq: i + 2, at: 5000, confidence: 0.91 } }, 5100);
+    actor.applyVibe({ posture: 'struggling', spill: 'crimson', stakes: i / 7, reaction: { kind, seq: i + 2, at: 5000, confidence: 0.91 } }, 5100);
     assert.equal(actor.activeReaction, kind);
     assert.equal(actor.activeVibeStakes, i / 7);
-    assert.equal(actor.activeVibeProgress, 1 - i / 7);
     actor.update(0.2, 5.2);
     actor.update(0.6, 5.8);
     assert.ok(Number.isFinite(actor.body.rotation.x) && Number.isFinite(actor.body.position.y), `${kind} keeps the body finite`);
@@ -728,7 +726,6 @@ test('3D Worker continuous postures, micro-reaction envelopes and Sky baseline-s
   assert.equal(actor.activeReaction, null);
   actor.applyVibe({ posture: 'flow', spill: 'neutral' }, 9000);
   assert.equal(actor.activeVibeStakes, 0.5, 'a missing stakes grade falls back to a steady pace');
-  assert.equal(actor.activeVibeProgress, 0, 'no progress arc without a grade');
   for (const transition of ['die', 'leave', 'dance'] as const) {
     const interrupted = new Worker('Byte', '#ee6018');
     interrupted.setSeat('chair');
@@ -769,7 +766,7 @@ test('3D Worker continuous postures, micro-reaction envelopes and Sky baseline-s
   assert.equal(sky.moodTransitioning, false);
 });
 
-test('OfficeVibes grades floor stakes, worker stakes and progress, and room-wide floor events with confidence gating and a cooldown', async (t) => {
+test('OfficeVibes grades floor stakes, worker stakes, and room-wide floor events with confidence gating and a cooldown', async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'vibes-events-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const store = new GeminiDecisionsStore(dir);
@@ -796,12 +793,10 @@ test('OfficeVibes grades floor stakes, worker stakes and progress, and room-wide
     w0_spill: { type: 'choice', choice: 'emerald', probabilities: { emerald: 0.9 }, confidence: 0.9 },
     w0_react: { type: 'choice', choice: 'eureka', probabilities: { eureka: 0.6283014285833879, breakthrough: 0.27, none: 0.03 }, confidence: 0.6283014285833879 },
     w0_stakes: { type: 'score', score: 2.9037745884954935, legend: {}, probabilities: { '3': 0.59 }, confidence: 0.59 },
-    w0_progress: { type: 'score', score: 1.0, legend: {}, probabilities: { '1': 0.7 }, confidence: 0.7 },
     w1_posture: { type: 'choice', choice: 'struggling', probabilities: { struggling: 0.8 }, confidence: 0.8 },
     w1_spill: { type: 'choice', choice: 'crimson', probabilities: { crimson: 0.88 }, confidence: 0.88 },
     w1_react: { type: 'choice', choice: 'frustrated', probabilities: { frustrated: 0.9230681059752905, puzzled: 0.03, none: 0.01 }, confidence: 0.9230681059752905 },
     w1_stakes: { type: 'score', score: 4, legend: {}, probabilities: { '4': 0.6 }, confidence: 0.6 },
-    w1_progress: { type: 'score', score: 3, legend: {}, probabilities: { '3': 0.6 }, confidence: 0.6 },
   });
   const vibes = new OfficeVibes({
     store,
@@ -826,15 +821,12 @@ test('OfficeVibes grades floor stakes, worker stakes and progress, and room-wide
   const q = bodies.at(-1)!.questions;
   assert.equal(q.floor_stakes?.type, 'score');
   assert.equal(q.w0_stakes?.type, 'score');
-  assert.equal(q.w0_progress?.type, 'score');
   assert.equal(q.floor_event?.type, 'choice');
   let s = emitted.at(-1)!;
   assert.equal(s.mood, 'celebration_swell');
   assert.equal(s.stakes, 0.751, 'floor stakes are the expected score over the 0-4 rubric');
   assert.equal(s.workers['w-alpha']?.stakes, 0.726);
   assert.equal(s.workers['w-beta']?.stakes, 1);
-  assert.equal(s.workers['w-alpha']?.progress, 0.25);
-  assert.equal(s.workers['w-beta']?.progress, 0.75);
   assert.equal(s.workers['w-alpha']?.reaction?.kind, 'eureka', 'a 0.63 eureka clears the reaction gate');
   assert.equal(s.workers['w-beta']?.reaction?.kind, 'frustrated');
   assert.deepEqual(s.event && { kind: s.event.kind, seq: s.event.seq }, { kind: 'convergence', seq: 1 });

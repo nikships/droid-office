@@ -22,7 +22,7 @@ export function isWorkerMicroReaction(value: unknown): value is WorkerMicroReact
   return (WORKER_MICRO_REACTIONS as readonly unknown[]).includes(value);
 }
 
-/** The emoji that pops over a worker's head and the color its sparks, desk ring and beacon flash in for each micro-reaction. */
+/** The badge icon, label, and color its sparks and beacon flash in for each micro-reaction. */
 export const MICRO_REACTION_FX: Record<WorkerMicroReaction, { glyph: string; hex: string; label: string }> = {
   eureka: { glyph: '💡', hex: '#facc15', label: 'Eureka' },
   breakthrough: { glyph: '🏆', hex: '#34d399', label: 'Breakthrough' },
@@ -116,15 +116,6 @@ export const MONITOR_SPILL_POWER: Record<MonitorSpillTone, number> = {
   crimson: 2.8,
 };
 
-/** Desk ring color for each posture when the monitor spill is neutral. */
-export const POSTURE_AURA_HEX: Record<WorkerVibePosture, string> = {
-  flow: '#ff7a1a',
-  investigating: '#38bdf8',
-  struggling: '#f59e0b',
-  deliberating: '#a78bfa',
-  steady: '#8c8c8c',
-};
-
 /**
  * Studio fill tint, intensity multiplier, and a slow breathing pulse (amplitude as a fraction of the
  * fill, rate in Hz), scaled by the owner's Overhead lights slider and never altering GI bake keys.
@@ -148,10 +139,8 @@ export interface TriggeredMicroReaction {
 export interface WorkerVibeState {
   posture: WorkerVibePosture;
   spill: MonitorSpillTone;
-  /** How much is riding on what it is doing, 0 (nothing) to 1 (critical): speeds its posture and its desk ring. */
+  /** How much is riding on what it is doing, 0 (nothing) to 1 (critical): speeds its posture. */
   stakes?: number;
-  /** How close it is to finishing its task, 0 (just started) to 1 (done): how far its desk's progress arc fills. */
-  progress?: number;
   reaction?: TriggeredMicroReaction;
 }
 

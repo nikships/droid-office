@@ -250,10 +250,9 @@ export interface RawState {
     event: FloorEvent | 'ship_it' | null;
     /** The last desk moment the office played without Gemini (hired, finished, shipped, sent home, shot). */
     moment: { kind: DeskMoment; worker: string } | null;
-    /** Desk rings showing, and how bright the room flash is right now (0–1). */
-    auras: number;
+    /** How bright the room flash is right now (0–1). */
     roomFlash: number;
-    workers: { id: string; name: string; posture: WorkerVibePosture; spill: MonitorSpillTone; stakes: number; progress: number; reaction: ReactionPose | null }[];
+    workers: { id: string; name: string; posture: WorkerVibePosture; spill: MonitorSpillTone; stakes: number; reaction: ReactionPose | null }[];
   };
 }
 
@@ -354,10 +353,9 @@ export function buildSnapshot(raw: RawState): Snapshot {
             mood: raw.vibes.mood,
             stakes: r2(raw.vibes.stakes),
             event: raw.vibes.event,
-            auras: raw.vibes.auras,
             roomFlash: r2(raw.vibes.roomFlash),
             moment: raw.vibes.moment,
-            workers: raw.vibes.workers.map((w) => ({ ...w, stakes: r2(w.stakes), progress: r2(w.progress) })),
+            workers: raw.vibes.workers.map((w) => ({ ...w, stakes: r2(w.stakes) })),
           },
         }
       : {}),
