@@ -1,6 +1,6 @@
 import type * as THREE from 'three';
 import { floorPalette } from '../../shared/floors';
-import { SLAB, STOREY, inElevator } from '../../shared/layout';
+import { SLAB, STOREY, inElevator, roofDrop } from '../../shared/layout';
 import { ROOF, ROOF_NAME } from '../../shared/rooftop';
 import type { Arrival, Climber, Grip } from '../climb';
 import type { Hanger } from '../hanging';
@@ -12,7 +12,6 @@ import { $, closeAllModals, modalOpen, toast } from '../ui/dom';
 import type { buildOffice, Collider } from '../world/office';
 import type { Rooftop } from '../world/rooftop';
 import type { Sky } from '../world/sky';
-import { roofDrop } from '../../shared/layout';
 
 /** Live accessors preserve dependencies that are wired later by the composition root. */
 export interface FloorTravelHost {
