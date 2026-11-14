@@ -4,7 +4,7 @@
 // targets, picks where to stand, waits for things to finish and builds the state snapshot. It stays
 // loadable in Node (tests/automation.test.ts): no window, document or WebGL at import time.
 
-import type { FloorMood, MonitorSpillTone, WorkerMicroReaction, WorkerVibePosture } from '../shared/gemini-vibes';
+import type { FloorMood, MonitorSpillTone, VibesSwitchState, WorkerMicroReaction, WorkerVibePosture } from '../shared/gemini-vibes';
 import { DESK_BY_ID } from '../shared/layout';
 import type { FloorInfo, WorkerInfo } from '../shared/protocol';
 import { ROOF, ROOF_NAME } from '../shared/rooftop';
@@ -43,6 +43,7 @@ const PLACE_LABEL: Partial<Record<InteractKind, string>> = {
   computers: 'Compute wall',
   elevator: 'Elevator',
   gong: 'Merge gong',
+  vibes: 'Living 3D switch',
   jukebox: 'Jukebox',
   ladder: 'Ladder',
   bookshelf: 'Bookshelf',
@@ -230,8 +231,11 @@ export interface RawState {
   gunMove: string | null;
   /** What `7` puts in your hand (Settings → You). */
   sidearm: 'wand' | 'magnum';
+  /** In-world Living 3D pedestal switch state on indoor floors. */
+  vibesSwitch?: VibesSwitchState;
   /** Living 3D Studio telemetry and postures when Gemini Decision 1 is connected. */
   vibes?: {
+    on?: boolean;
     watching3d: number;
     calls: number;
     inputTokens: number;
@@ -272,6 +276,8 @@ export interface Snapshot {
   floors: { id: string; name: string; waiting: number; here: boolean }[];
   /** Mission Control's building agents, the same on every floor; absent from an office without Mission Control. */
   agents?: { id: string; name: string; remote: boolean; status: string; waiting: boolean; task?: string }[];
+  /** In-world Living 3D pedestal switch state on indoor floors. */
+  vibesSwitch?: VibesSwitchState;
   /** Living 3D Studio state when Gemini Decision 1 is connected. */
   vibes?: NonNullable<RawState['vibes']>;
 }
@@ -323,9 +329,11 @@ export function buildSnapshot(raw: RawState): Snapshot {
     })),
     floors: raw.floors.map((f) => ({ id: f.id, name: f.name, waiting: f.waiting, here: f.id === raw.floor })),
     ...(raw.agents ? { agents: raw.agents.map((w) => ({ id: w.id, name: w.name, remote: !!w.remote, status: w.status, waiting: !w.remote && waitingOnSomeone(w), ...(w.task?.name ? { task: w.task.name } : {}) })) } : {}),
+    ...(raw.vibesSwitch ? { vibesSwitch: raw.vibesSwitch } : {}),
     ...(raw.vibes
       ? {
           vibes: {
+            ...(raw.vibes.on !== undefined ? { on: raw.vibes.on } : {}),
             watching3d: raw.vibes.watching3d,
             calls: raw.vibes.calls,
             inputTokens: raw.vibes.inputTokens,

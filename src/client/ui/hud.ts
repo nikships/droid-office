@@ -130,6 +130,7 @@ export function openHelp(sidearm: Sidearm = 'wand') {
         ],
         seven,
         ['The gong', 'Rings when a pull request merges: confetti, and every worker dances on its desk. E bangs it yourself', ['E']],
+        ['Living 3D switch', 'Beneath the ceiling glyph on every floor: green when Living 3D reactions & mood lighting is on, red when off. E toggles it; O opens Gemini settings', ['E']],
         ['Rooftop', 'Up the elevator: an empty deck, and the city all around', ['E']],
       ],
     ],

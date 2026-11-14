@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { screenMaterial } from './screen';
 import type { WallId } from '../../shared/decor';
-import { FLOOR, WALL_HEIGHT } from '../../shared/layout';
+import { CEILING_GLYPH, FLOOR, WALL_HEIGHT } from '../../shared/layout';
 import { eyebrow, GREEN, HAIR, INK, LED_ROWS, LIGHT, MUTED, mergeFaces, mono, ORANGE, ORANGE_BRIGHT, paintedTexture, plateFace, sans, SignAtlas, tickerTexture, tracked, type AtlasRegion } from './factory-paint';
 import { glyphFlat, glyphGeometry } from './glyph3d';
 import type { NightParts } from './outside';
@@ -26,7 +26,7 @@ export interface Dressing {
  * The fan over the open floor between the desks and the lounge: the pinwheel turning in a steel
  * ring, hung from the ceiling clear over everyone's heads (its ring's foot is over 3.2 m up).
  */
-const FAN = { x: 4.2, y: 4.95, z: -2, size: 2.9, ring: 1.62, spin: 0.32 } as const;
+const FAN = CEILING_GLYPH;
 /** The four work cells, LINE A to D: the desk clusters' pads, in desk order. */
 const LINES = [
   { name: 'A', x: -10.5, z: -4 },

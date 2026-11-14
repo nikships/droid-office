@@ -152,6 +152,8 @@ export interface OfficeSettings {
 export type SettingsOptions = {
   /** Opens on this category instead of the last one, when the surface has it. */
   first?: SettingsPane;
+  /** Scrolls to and highlights a specific setting row by its card title after opening. */
+  focusCard?: SettingsCardTitle;
   /** Opens the hire window with a task to write the repository's worktree setup. */
   hireForSetup?: () => void;
 } & ({ surface: 'office'; office: OfficeSettings } | { surface: 'companion' | 'mac-companion'; office?: undefined });
@@ -1474,6 +1476,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     },
   });
   show(first && shown.some((p) => p.id === first) ? first : lastPane);
+  if (opts.focusCard) flashRow(opts.focusCard);
   close.addEventListener('click', () => modal.close());
   only?.character.addEventListener('click', () => {
     modal.close();

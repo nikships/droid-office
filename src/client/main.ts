@@ -33,7 +33,7 @@ import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME } from '../shared/mission-control';
 import { botLine, missionWaiting, missionWorker, orchestratorLine, orchestratorWorker } from './mission';
 import { ORCHESTRATOR_SPOT, PHASE_WORD, missionBadge, missionLinks, missionStand, missionTeamBadge, missionTeamLine, missionView, orchestratorAwake, orchestratorPhase, orchestratorWaiting } from './mission-office';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, ServerMsg, WorkerInfo } from '../shared/protocol';
-import { isFloorMood, isMonitorSpillTone, MONITOR_SPILL_HEX, type MonitorSpillTone } from '../shared/gemini-vibes';
+import { FLOOR_MOOD_LIGHTING, isFloorMood, isMonitorSpillTone, MONITOR_SPILL_HEX, resolveVibesSwitchState, type MonitorSpillTone } from '../shared/gemini-vibes';
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
 import { isPaletteKey } from '../shared/palette';
@@ -141,7 +141,7 @@ import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
 import { openWelcome, watchWelcome } from './ui/welcome';
 import { OPEN_SETTINGS_EVENT } from './ui/model-picker';
-import { resolveSettingsPane } from '../shared/settings-nav';
+import { resolveSettingsPane, type SettingsCardTitle } from '../shared/settings-nav';
 import { officePrompt } from './ui/prompts';
 import { forgeVars } from '../shared/prompts';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
@@ -2471,6 +2471,29 @@ function paletteEntries(): PaletteEntry[] {
   out.push(
     atSpot('bookshelf', 'the bookshelf', { icon: '🏭', kind: 'Board', title: 'AutoWiki', detail: "Factory's wiki of this repository, on the bookshelf", keywords: ['wiki', 'factory', 'documentation'], open: () => showBookshelf('wiki') }),
   );
+  {
+    const sw = vibesSwitchStateNow();
+    const detail =
+      sw === 'on'
+        ? `On${store.vibes ? ` · ${FLOOR_MOOD_LIGHTING[store.vibes.mood]?.label ?? 'active'}` : ''}`
+        : sw === 'off'
+          ? 'Off · paused ($0.00)'
+          : sw === 'rejected'
+            ? 'Key rejected · fix in Settings'
+            : sw === 'airgapped'
+              ? 'Unavailable in airgapped mode'
+              : 'Connect Gemini Decisions API in Settings';
+    out.push(
+      atSpot('vibes', 'the Living 3D switch', {
+        icon: sw === 'on' ? '🟢' : sw === 'off' ? '🔴' : '✨',
+        kind: 'Action',
+        title: 'Living 3D reactions & mood lighting',
+        detail,
+        keywords: ['gemini', 'decisions', 'mood', 'lighting', 'vibes', 'switch', 'button', 'pedestal'],
+        open: () => useVibesSwitch('E'),
+      }),
+    );
+  }
 
   for (const pr of store.pulls.items) {
     out.push(
@@ -2609,6 +2632,7 @@ function interact(target: Interactable | null, key: DeskKey, note = aimedNote, s
     return;
   }
   if (target.kind === 'orchestrator') return useOrchestrator(key);
+  if (target.kind === 'vibes') return useVibesSwitch(key);
   if (target.kind === 'bot' && target.agentId) {
     if (key === 'E') showBot(target.agentId);
     return;
@@ -2788,6 +2812,55 @@ function hitGong() {
   net.send({ t: 'gong' });
 }
 
+// ---- The Living 3D reactions & mood lighting pedestal switch --------------------------------------
+let lastVibesPress = 0;
+
+function vibesSwitchStateNow() {
+  return resolveVibesSwitchState(store.gemini, { airgapped: store.setup.airgapped });
+}
+
+function syncVibesSwitch() {
+  office.vibesSwitch.setState(vibesSwitchStateNow());
+  hintKey = '';
+  activeAt = performance.now();
+  renderWake();
+}
+
+function useVibesSwitch(key: DeskKey) {
+  if (key === 'O') {
+    showSettings('connections', 'Gemini Decisions API');
+    return;
+  }
+  if (key !== 'E') return;
+  const now = performance.now();
+  if (now - lastVibesPress < 180) return;
+  lastVibesPress = now;
+  const state = vibesSwitchStateNow();
+  if (state === 'disconnected' || state === 'rejected' || state === 'airgapped') {
+    office.vibesSwitch.press('blocked');
+    sound.vibesSwitch('blocked');
+    activeAt = now;
+    renderWake();
+    showSettings('connections', 'Gemini Decisions API');
+    return;
+  }
+  if (!net.up) {
+    office.vibesSwitch.press('blocked');
+    sound.vibesSwitch('blocked');
+    activeAt = now;
+    renderWake();
+    toast('Reconnecting to the office — try again in a moment', 'warn');
+    return;
+  }
+  const next = state !== 'on';
+  office.vibesSwitch.press(next ? 'on' : 'off');
+  sound.vibesSwitch(next ? 'on' : 'off');
+  activeAt = now;
+  renderWake();
+  net.send({ t: 'gemini.vibes', on: next });
+  toast(next ? '🟢 Living 3D reactions & mood lighting on' : '🔴 Living 3D reactions & mood lighting off');
+}
+
 /** Where confetti comes from over a desk: above the worker's head. */
 function burstOver(deskId: string, n: number) {
   const d = DESK_BY_ID.get(deskId);
@@ -2959,6 +3032,24 @@ function hintFor(it: Interactable): Hint {
     }
     case 'gong':
       return { k: '', parts: [title('🎉 Merge gong'), aside('rings when a PR merges'), key('E', 'Bang it')] };
+    case 'vibes': {
+      const state = vibesSwitchStateNow();
+      if (state === 'airgapped') {
+        return { k: 'airgapped', parts: [title('✨ Living 3D · unavailable'), aside('airgapped mode is on'), key('E', 'Settings')] };
+      }
+      if (state === 'disconnected') {
+        return { k: 'disconnected', parts: [title('✨ Living 3D · not connected'), aside('needs Gemini Decisions API'), key('E', 'Connect in Settings')] };
+      }
+      if (state === 'rejected') {
+        return { k: `rejected|${store.gemini.rejected}`, parts: [title('⚠️ Living 3D · key rejected'), aside('paused until key is fixed'), key('E', 'Fix in Settings')] };
+      }
+      if (state === 'on') {
+        const mood = store.vibes ? FLOOR_MOOD_LIGHTING[store.vibes.mood]?.label : undefined;
+        const about = mood ?? 'reactions & mood lighting';
+        return { k: `on|${about}`, parts: [title('🟢 Living 3D · ON'), aside(about), key('E', 'Turn off'), key('O', 'Settings')] };
+      }
+      return { k: 'off', parts: [title('🔴 Living 3D · OFF'), aside('paused ($0.00)'), key('E', 'Turn on'), key('O', 'Settings')] };
+    }
     case 'jukebox': {
       const j = store.jukebox;
       const what = j.on ? trackTitle(j) : '';
@@ -3442,6 +3533,7 @@ const REACH: Record<InteractKind, number> = {
   decor: 9,
   elevator: 4.5,
   gong: 3.5,
+  vibes: 3.5,
   jukebox: 4,
   seat: 3,
   ladder: 3,
@@ -3701,10 +3793,11 @@ function startHanging() {
   if (upTop) return toast('No walls to hang pictures on up here — take the elevator down to a floor', 'warn');
   hanger.start();
 }
-function showSettings(pane?: SettingsPane) {
+function showSettings(pane?: SettingsPane, focusCard?: SettingsCardTitle) {
   openSettings(net, {
     surface: 'office',
     first: pane,
+    focusCard,
     hireForSetup: hireForWorktreeSetup,
     office: {
       settings,
@@ -3881,7 +3974,7 @@ const remaster = new Remaster(
 );
 // Who is on this floor (the workers, their laptops, the free-seat signs, the bean bags and team lines) changes from
 // floor to floor; the room around them doesn't, so the bounce light is baked without them and fits every floor.
-remaster.gi.hideWhileBaking = () => [...office.occupants, teamLines.group, mission.group];
+remaster.gi.hideWhileBaking = () => [...office.occupants, teamLines.group, mission.group, ...office.vibesSwitch.bakeHidden];
 let remasterSavedAt = 0;
 let remasterSaveTimer = 0;
 /** A new outline effect has empty caches. Compile them before the next frame, for the draw that's on now. */
@@ -4324,8 +4417,15 @@ net.onStatus((up) => {
 store.on('floor', () => {
   syncFloorVibes(true);
   syncVibesWatch();
+  syncVibesSwitch();
 });
-store.on('vibes', () => syncFloorVibes(false));
+store.on('vibes', () => {
+  syncFloorVibes(false);
+  if (target?.kind === 'vibes') hintKey = '';
+});
+store.on('gemini', syncVibesSwitch);
+store.on('setup', syncVibesSwitch);
+syncVibesSwitch();
 
 // A background tab and a fully covered window both show up as visibilityState "hidden".
 document.addEventListener('visibilitychange', () => {
@@ -4502,9 +4602,11 @@ const automation = createAutomation({
     gun: gunOut,
     gunMove: drawnArm === 'wand' ? wandMotion.doing : gunMotion.doing,
     sidearm: settings.sidearm,
+    ...(upTop || !store.floor ? {} : { vibesSwitch: office.vibesSwitch.state }),
     ...(store.gemini.connected
       ? {
           vibes: {
+            on: store.gemini.vibesOn,
             watching3d: store.gemini.watching3d,
             calls: store.gemini.calls,
             inputTokens: store.gemini.inputTokens,

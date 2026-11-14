@@ -215,6 +215,26 @@ export const SPAWN = { x: 8, z: 7 } as const;
 export const GONG = { x: 11.8, z: FLOOR.minZ + 0.75, width: 1.9, height: 2.45 } as const;
 
 /**
+ * The spinning Factory pinwheel hung from the ceiling over the open floor between the desks and the
+ * lounge (its steel ring clears everyone's head by over 3.2 m).
+ */
+export const CEILING_GLYPH = { x: 4.2, y: 4.95, z: -2, size: 2.9, ring: 1.62, spin: 0.32 } as const;
+
+/**
+ * The Living 3D reactions & mood lighting pedestal switch: a circular button atop a thin vertical
+ * column rising to the player character's abdomen, centered directly beneath `CEILING_GLYPH`.
+ */
+export const VIBES_SWITCH = {
+  x: CEILING_GLYPH.x,
+  z: CEILING_GLYPH.z,
+  height: 0.68,
+  columnRadius: 0.04,
+  buttonRadius: 0.135,
+  baseRadius: 0.2,
+  colliderRadius: 0.22,
+} as const;
+
+/**
  * The bottom floor of the building is its second storey: the street, and the open garage under the
  * office, are this far below its floor. Each floor stands one STOREY higher than the one below it,
  * so from floor `i` the street is `streetBelow(i)` down.

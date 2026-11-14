@@ -133,6 +133,21 @@ export interface GeminiConnectionState {
   lastError?: string;
 }
 
+/** Visual and interactive state of the in-world Living 3D pedestal switch beneath the ceiling glyph. */
+export type VibesSwitchState = 'on' | 'off' | 'disconnected' | 'rejected' | 'airgapped';
+
+/**
+ * Resolves the honest in-world switch state from the shared Gemini connection and airgapped mode.
+ * Never reports `on` or `off` when Gemini Decisions is disconnected, rejected or airgapped, even
+ * though `vibesOn` defaults to `true` before a key is connected.
+ */
+export function resolveVibesSwitchState(gemini: Pick<GeminiConnectionState, 'connected' | 'vibesOn' | 'rejected'>, opts: { airgapped?: boolean } = {}): VibesSwitchState {
+  if (opts.airgapped) return 'airgapped';
+  if (!gemini.connected) return 'disconnected';
+  if (gemini.rejected) return 'rejected';
+  return gemini.vibesOn ? 'on' : 'off';
+}
+
 export function emptyGeminiState(): GeminiConnectionState {
   return {
     connected: false,
