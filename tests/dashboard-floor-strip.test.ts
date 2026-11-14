@@ -90,7 +90,7 @@ function floorStrip(page: Page) {
     return {
       shown: shown.map((c) => c.querySelector('.dash-floor-name')?.textContent ?? ''),
       more: more.hidden ? '' : (more.querySelector('.dash-quiet-label')?.textContent ?? ''),
-      clipped: shown.some((c) => c.getBoundingClientRect().right > navRight + 0.5 || [c, ...c.querySelectorAll<HTMLElement>('.dash-floor-name, .dash-floor-branch')].some((el) => el.scrollWidth > el.clientWidth + 0.5)),
+      clipped: shown.some((c) => c.getBoundingClientRect().right > navRight + 0.5 || [c, ...c.querySelectorAll<HTMLElement>('.dash-floor-name')].some((el) => el.scrollWidth > el.clientWidth + 0.5)),
       scrolls: nav.scrollWidth > nav.clientWidth + 0.5 || deck.scrollWidth > deck.clientWidth + 0.5,
       offscreen: [...deck.children].some((el) => !(el as HTMLElement).hidden && !el.classList.contains('dash-quiet-pop') && el.getBoundingClientRect().right > deckRight + 0.5),
     };

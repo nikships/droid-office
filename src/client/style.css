@@ -2356,7 +2356,6 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-floor-chip.on .dash-floor-number { color: var(--accent); }
 .dash-floor-chip[data-triage=needs]:not(.on) .dash-floor-number { color: #ff8080; }
 .dash-floor-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dash-floor-branch { min-width: 0; overflow: hidden; padding-left: 6px; border-left: 1px solid var(--border); font: 400 10px/1 var(--font-mono); color: var(--text-tertiary); text-overflow: ellipsis; white-space: nowrap; }
 .dash-floor-stat { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); margin-left: 2px; font: 600 9.5px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
 .dash-stat-needs { padding: 2px var(--space-1); border-radius: var(--radius-xs); background: rgba(239, 68, 68, .2); color: #ff8080; }
 .dash-stat-done { padding: 2px var(--space-1); border-radius: var(--radius-xs); background: rgba(60, 207, 145, .16); color: var(--success); }
