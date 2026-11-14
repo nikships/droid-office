@@ -3,23 +3,76 @@
 export const GEMINI_DECISIONS_MODEL = 'gemini-decision-1';
 export const GEMINI_AI_STUDIO_KEYS_URL = 'https://aistudio.google.com/apikey';
 
-/** Continuous desk postures smoothly blended while a worker is actively working. */
-export type WorkerVibePosture = 'flow' | 'investigating' | 'debugging' | 'waiting' | 'steady';
-export const WORKER_VIBE_POSTURES: readonly WorkerVibePosture[] = ['flow', 'investigating', 'debugging', 'waiting', 'steady'];
+/**
+ * Continuous desk postures smoothly blended while a worker is actively working: its state of mind,
+ * read from its reasoning against its task (a tool name or exit code alone never decides one).
+ */
+export type WorkerVibePosture = 'flow' | 'investigating' | 'struggling' | 'deliberating' | 'steady';
+export const WORKER_VIBE_POSTURES: readonly WorkerVibePosture[] = ['flow', 'investigating', 'struggling', 'deliberating', 'steady'];
 
 export function isWorkerVibePosture(value: unknown): value is WorkerVibePosture {
-  return value === 'flow' || value === 'investigating' || value === 'debugging' || value === 'waiting' || value === 'steady';
+  return (WORKER_VIBE_POSTURES as readonly unknown[]).includes(value);
 }
 
-/** High-confidence one-shot micro-reactions triggered on unmistakable visible snapshots. */
-export type WorkerMicroReaction = 'breakthrough' | 'fresh_breakage' | 'puzzled' | 'team_sync';
-export const WORKER_MICRO_REACTIONS: readonly WorkerMicroReaction[] = ['breakthrough', 'fresh_breakage', 'puzzled', 'team_sync'];
+/** High-confidence one-shot micro-reactions Gemini judges from what a worker's output means for its task. */
+export type WorkerMicroReaction = 'eureka' | 'breakthrough' | 'setback' | 'puzzled' | 'frustrated' | 'pivot' | 'rabbit_hole' | 'corner_cut' | 'risky_move';
+export const WORKER_MICRO_REACTIONS: readonly WorkerMicroReaction[] = ['eureka', 'breakthrough', 'setback', 'puzzled', 'frustrated', 'pivot', 'rabbit_hole', 'corner_cut', 'risky_move'];
 
 export function isWorkerMicroReaction(value: unknown): value is WorkerMicroReaction {
-  return value === 'breakthrough' || value === 'fresh_breakage' || value === 'puzzled' || value === 'team_sync';
+  return (WORKER_MICRO_REACTIONS as readonly unknown[]).includes(value);
 }
 
-/** Per-desk laptop bounce-light tint cast across the desk and worker. */
+/** The emoji that pops over a worker's head and the color its sparks, desk ring and beacon flash in for each micro-reaction. */
+export const MICRO_REACTION_FX: Record<WorkerMicroReaction, { glyph: string; hex: string; label: string }> = {
+  eureka: { glyph: '💡', hex: '#facc15', label: 'Eureka' },
+  breakthrough: { glyph: '🏆', hex: '#34d399', label: 'Breakthrough' },
+  setback: { glyph: '💥', hex: '#f43f5e', label: 'Setback' },
+  puzzled: { glyph: '❓', hex: '#f59e0b', label: 'Puzzled' },
+  frustrated: { glyph: '💢', hex: '#ef4444', label: 'Going in circles' },
+  pivot: { glyph: '🔀', hex: '#38bdf8', label: 'Pivot' },
+  rabbit_hole: { glyph: '🌀', hex: '#c084fc', label: 'Rabbit hole' },
+  corner_cut: { glyph: '🩹', hex: '#fb923c', label: 'Cutting a corner' },
+  risky_move: { glyph: '⚠️', hex: '#ff3b1f', label: 'Risky move' },
+};
+
+/**
+ * Desk moments the office already knows for certain, so they play straight from worker updates with
+ * no Gemini call: hired, finished, opened a pull request, sent home, or shot. Living 3D plays them
+ * only while it is on.
+ */
+export type DeskMoment = 'hired' | 'finished' | 'shipped' | 'sent_home' | 'shot';
+export const DESK_MOMENT_FX: Record<DeskMoment, { glyph: string; hex: string; label: string }> = {
+  hired: { glyph: '👋', hex: '#7dd3fc', label: 'Hired' },
+  finished: { glyph: '✅', hex: '#34d399', label: 'Finished' },
+  shipped: { glyph: '🚀', hex: '#ff7a1a', label: 'Pull request opened' },
+  sent_home: { glyph: '🏠', hex: '#a78bfa', label: 'Sent home' },
+  shot: { glyph: '💀', hex: '#ff1f4b', label: 'Shot' },
+};
+
+/** One-shot room-wide moments Gemini judges across desks: how the workers' efforts relate to each other. */
+export type FloorEvent = 'convergence' | 'collision' | 'crisis' | 'brainstorm';
+export const FLOOR_EVENTS: readonly FloorEvent[] = ['convergence', 'collision', 'crisis', 'brainstorm'];
+
+export function isFloorEvent(value: unknown): value is FloorEvent {
+  return (FLOOR_EVENTS as readonly unknown[]).includes(value);
+}
+
+/**
+ * The room flash color, how many times it pulses, and the emoji over the room for each floor event,
+ * plus `ship_it`, played without Gemini when a worker on the floor opens a pull request.
+ */
+export const FLOOR_EVENT_FX: Record<FloorEvent | 'ship_it', { hex: string; pulses: number; glyph: string; label: string }> = {
+  convergence: { hex: '#22c55e', pulses: 2, glyph: '🧩', label: 'Coming together' },
+  collision: { hex: '#ff9f1c', pulses: 3, glyph: '⚔️', label: 'Collision' },
+  crisis: { hex: '#ef4444', pulses: 3, glyph: '🚨', label: 'Crisis' },
+  brainstorm: { hex: '#8b5cf6', pulses: 1, glyph: '🧠', label: 'Brainstorm' },
+  ship_it: { hex: '#ffb020', pulses: 2, glyph: '🚀', label: 'Ship it' },
+};
+
+/**
+ * Per-desk laptop bounce-light tint cast across the desk and worker: how it is going for that worker
+ * (on track, drifting, in trouble), judged from meaning rather than from error text appearing.
+ */
 export type MonitorSpillTone = 'neutral' | 'emerald' | 'amber' | 'crimson';
 export const MONITOR_SPILL_TONES: readonly MonitorSpillTone[] = ['neutral', 'emerald', 'amber', 'crimson'];
 
@@ -36,9 +89,12 @@ export function isFloorMood(value: unknown): value is FloorMood {
 }
 
 /** Calibrated probability threshold required before firing a one-shot micro-reaction. */
-export const MICRO_REACTION_CONFIDENCE_MIN = 0.85;
+export const MICRO_REACTION_CONFIDENCE_MIN = 0.6;
 /** Minimum milliseconds between one-shot micro-reactions on the same worker so avatars never twitch. */
-export const MICRO_REACTION_COOLDOWN_MS = 18_000;
+export const MICRO_REACTION_COOLDOWN_MS = 9_000;
+/** Calibrated probability required before a room-wide floor event fires, and the gap between two on one floor. */
+export const FLOOR_EVENT_CONFIDENCE_MIN = 0.6;
+export const FLOOR_EVENT_COOLDOWN_MS = 20_000;
 /** Minimum confidence required to adopt a non-steady posture or non-neutral spill. */
 export const POSTURE_CONFIDENCE_MIN = 0.55;
 export const SPILL_CONFIDENCE_MIN = 0.65;
@@ -47,17 +103,39 @@ export const MOOD_CONFIDENCE_MIN = 0.52;
 /** Hex color for each desk laptop bounce-light spill tone. */
 export const MONITOR_SPILL_HEX: Record<MonitorSpillTone, string> = {
   neutral: '#ee6018',
-  emerald: '#2dd4a8',
-  amber: '#f59e0b',
-  crimson: '#f43f5e',
+  emerald: '#10f0a0',
+  amber: '#ffa908',
+  crimson: '#ff1f4b',
 };
 
-/** Studio fill tint and intensity multiplier (scaled by the owner's Overhead lights slider, never altering GI bake keys). */
-export const FLOOR_MOOD_LIGHTING: Record<FloorMood, { hex: string; fillScale: number; label: string }> = {
-  calm_planning: { hex: '#383a46', fillScale: 1, label: 'Calm planning' },
-  deep_crunch: { hex: '#2c344d', fillScale: 0.82, label: 'Deep crunch' },
-  debugging_tension: { hex: '#483633', fillScale: 0.92, label: 'Debugging tension' },
-  celebration_swell: { hex: '#4f4130', fillScale: 1.22, label: 'Celebration swell' },
+/** How much brighter than a plain screen each spill tone throws its light across the desk and worker. */
+export const MONITOR_SPILL_POWER: Record<MonitorSpillTone, number> = {
+  neutral: 1,
+  emerald: 2.6,
+  amber: 2.2,
+  crimson: 2.8,
+};
+
+/** Desk ring color for each posture when the monitor spill is neutral. */
+export const POSTURE_AURA_HEX: Record<WorkerVibePosture, string> = {
+  flow: '#ff7a1a',
+  investigating: '#38bdf8',
+  struggling: '#f59e0b',
+  deliberating: '#a78bfa',
+  steady: '#8c8c8c',
+};
+
+/**
+ * Studio fill tint, intensity multiplier, and a slow breathing pulse (amplitude as a fraction of the
+ * fill, rate in Hz), scaled by the owner's Overhead lights slider and never altering GI bake keys.
+ * `calm_planning` stays the baseline clear-night fill that Remastered bakes against. `accent` is the
+ * bright version the Living 3D badge and Settings show.
+ */
+export const FLOOR_MOOD_LIGHTING: Record<FloorMood, { hex: string; fillScale: number; pulse: number; pulseHz: number; label: string; accent: string }> = {
+  calm_planning: { hex: '#383a46', fillScale: 1, pulse: 0, pulseHz: 0, label: 'Calm planning', accent: '#ee6018' },
+  deep_crunch: { hex: '#1d3c8f', fillScale: 0.9, pulse: 0.14, pulseHz: 0.22, label: 'Deep crunch', accent: '#4f7dff' },
+  debugging_tension: { hex: '#8f2418', fillScale: 0.95, pulse: 0.38, pulseHz: 0.7, label: 'Debugging tension', accent: '#ff4d3d' },
+  celebration_swell: { hex: '#a06a12', fillScale: 1.5, pulse: 0.24, pulseHz: 1.1, label: 'Celebration swell', accent: '#ffc233' },
 };
 
 export interface TriggeredMicroReaction {
@@ -71,15 +149,36 @@ export interface TriggeredMicroReaction {
 export interface WorkerVibeState {
   posture: WorkerVibePosture;
   spill: MonitorSpillTone;
+  /** How much is riding on what it is doing, 0 (nothing) to 1 (critical): speeds its posture and its desk ring. */
+  stakes?: number;
+  /** How close it is to finishing its task, 0 (just started) to 1 (done): how far its desk's progress arc fills. */
+  progress?: number;
   reaction?: TriggeredMicroReaction;
+}
+
+export interface TriggeredFloorEvent {
+  kind: FloorEvent;
+  /** Monotonic per floor so clients play each event at most once. */
+  seq: number;
+  at: number;
+  confidence: number;
 }
 
 export interface FloorVibesState {
   floor: string;
   mood: FloorMood;
   moodConfidence: number;
+  /** How much is riding on the floor right now, 0 (relaxed) to 1 (critical): how hard the room's mood light breathes. */
+  stakes?: number;
+  event?: TriggeredFloorEvent;
   workers: Record<string, WorkerVibeState>;
   updatedAt: number;
+}
+
+/** Maps a Gemini Decisions `score` answer on a 0..`max` rubric to 0..1. */
+export function unitFromScore(score: number | undefined, max = 4): number | undefined {
+  if (typeof score !== 'number' || !Number.isFinite(score) || max <= 0) return undefined;
+  return Math.max(0, Math.min(1, score / max));
 }
 
 /** How the inter-agent noise gate routes one message to a lead (docs/office-mcp.md#inter-agent-noise-gate). */

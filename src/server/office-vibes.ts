@@ -2,9 +2,13 @@ import { createHash } from 'node:crypto';
 import {
   emptyFloorVibes,
   emptyGeminiState,
+  FLOOR_EVENT_CONFIDENCE_MIN,
+  FLOOR_EVENT_COOLDOWN_MS,
+  type FloorEvent,
   type FloorMood,
   type FloorVibesState,
   type GeminiConnectionState,
+  isFloorEvent,
   isFloorMood,
   isMonitorSpillTone,
   isValidGeminiApiKey,
@@ -17,8 +21,11 @@ import {
   type MonitorSpillTone,
   POSTURE_CONFIDENCE_MIN,
   SPILL_CONFIDENCE_MIN,
+  type TriggeredFloorEvent,
   type TriggeredMicroReaction,
+  unitFromScore,
   type WakeFilterTelemetry,
+  type WorkerMicroReaction,
   type WorkerVibePosture,
   type WorkerVibeState,
 } from '../shared/gemini-vibes.js';
@@ -37,6 +44,9 @@ const TAIL_LINES = 14;
 const MAX_TAIL_CHARS = 900;
 const RETRY_INITIAL_MS = 10_000;
 const RETRY_MAX_MS = 60_000;
+/** How long a fired reaction or floor event keeps riding along in later snapshots, so a viewer arriving mid-moment still sees it. */
+const REACTION_GRACE_MS = 4500;
+const EVENT_GRACE_MS = 6000;
 
 export interface VibesClientView {
   id: string;
@@ -81,37 +91,90 @@ interface FloorTrack {
   retryDelay: number;
   state: FloorVibesState;
   workers: Map<string, WorkerTrack>;
+  lastEventAt: number;
+  lastEventDigest: string;
+  lastEvent?: TriggeredFloorEvent;
 }
 
+/** Drops carried moments so a neutral snapshot cannot replay them; cooldowns stay so they cannot refire at once. */
+function clearCarriedMoments(track: FloorTrack): void {
+  track.lastEvent = undefined;
+  for (const w of track.workers.values()) w.lastReaction = undefined;
+}
+
+/**
+ * Every question below asks for a judgment a regex, exit code, tool name or status field cannot
+ * make: what the output means for the worker's task. Facts the office already knows (a pull request
+ * opened, a worker hired, finished, sent home or shot) play as Living 3D desk moments without Gemini.
+ */
+const JUDGE_MEANING = 'Judge what the output means for its task and plan, not keywords: errors it expected, wrote on purpose or is calmly working through are not trouble, and a green run of unrelated checks is not progress.';
+
 const MOOD_CRITERIA: Record<FloorMood, string> = {
-  calm_planning: 'Quiet floor, planning, reading docs/specs, idle desks, or light low-urgency exploration with no active crunch or errors.',
-  deep_crunch: 'Focused multi-file coding, brisk implementation, or active feature building across one or more desks without widespread breakage.',
-  debugging_tension: 'Visible failing tests, compiler/type errors, stack traces, merge conflicts, or blocked debugging right now.',
-  celebration_swell: 'Tests and checks just passed green, build succeeded cleanly, pull request opened or merged, or task completed cleanly.',
+  calm_planning: 'Nobody is under pressure: workers are reading, designing or tidying, and nothing important is in doubt.',
+  deep_crunch: "Heads-down progress: workers are confidently executing clear plans and the floor's work is converging.",
+  debugging_tension: 'Things are going wrong in ways the workers have not figured out yet: they are struggling, contradicting their own assumptions or going in circles.',
+  celebration_swell: 'The floor just achieved something that matters for its tasks: a hard problem cracked, or a goal genuinely met.',
 };
 
 const POSTURE_CRITERIA: Record<WorkerVibePosture, string> = {
-  flow: 'Actively writing or editing code/files, brisk implementation or refactoring in steady momentum.',
-  investigating: 'Reading files, grepping/searching code, inspecting architecture, or reviewing specs/PRs thoughtfully.',
-  debugging: 'Inspecting a test failure, compiler error, stack trace, or diagnosing broken output right now.',
-  waiting: 'Waiting on a running build, test suite, package install, CI check, or user question/permission.',
-  steady: 'Neutral seated posture when idle, finished, or when none of the more specific working postures clearly apply.',
+  flow: 'Knows exactly what it is doing: each step follows its plan and lands the way it intended.',
+  investigating: "Doesn't know the answer yet: forming, testing or ruling out hypotheses, with reasoning that hedges.",
+  struggling: 'Its approach is not working and it has not understood why: backtracking, contradicting earlier assumptions or patching symptoms.',
+  deliberating: 'Weighing trade-offs or choosing between approaches before acting, or asking the owner a genuine judgment call (not routine permission).',
+  steady: 'Routine mechanical work with no particular weight, or no clear read of its state of mind.',
 };
 
 const SPILL_CRITERIA: Record<MonitorSpillTone, string> = {
-  neutral: 'Normal terminal editing, reading, searching, or neutral output with no fresh win or error.',
-  emerald: 'Passing test suite, clean build/lint/typecheck success, PR opened/merged, or green completion visible right now.',
-  amber: 'Warnings, lint notices, merge conflict markers, slow retry, or active investigation of a tricky trace.',
-  crimson: 'Fresh command failure, failing test assertion, uncaught exception, or non-zero exit error visible right now.',
+  neutral: 'Too early to tell, or nothing about its task is in doubt right now.',
+  emerald: "On track: its latest results move it toward its task's goal, including a failure it expected, such as a new test written to fail before the fix.",
+  amber: 'Drifting: effort is going into work unrelated to its task, or it keeps changing things without converging.',
+  crimson: 'In trouble: its latest results undercut its plan, it has caused a regression, or it has misread a problem and is heading the wrong way.',
 };
 
-const REACTION_CRITERIA: Record<string, string> = {
-  breakthrough: 'Unmistakable fresh win visible right now: test suite passed, build/typecheck succeeded cleanly, or PR just opened/merged.',
-  fresh_breakage: 'Unmistakable fresh failure visible right now: test failed, build/compile broke, or command exited with an error.',
-  puzzled: 'Unexpected merge conflict, confusing compiler mismatch, missing file/symbol error, or ambiguous blocker visible right now.',
-  team_sync: 'Actively coordinating with a lead, subagent, or peer worker (team_report, team_hire, team_message, visit) right now.',
-  none: 'Ordinary steady work, reading, editing, or no high-certainty moment requiring a special one-shot reaction.',
+const REACTION_CRITERIA: Record<WorkerMicroReaction | 'none', string> = {
+  eureka: 'Its reasoning just went from guessing to a specific, convincing explanation of the problem (saying "found it" while still guessing does not count).',
+  breakthrough: 'The result that was the point of its task just came through: the fix verified or the hard part working, not a routine green run.',
+  setback: 'A new result invalidates its plan or undoes earlier progress (not an expected failure, a probe, or a test written to fail first).',
+  puzzled: 'A result just contradicted what it expected, and it shows it does not understand why.',
+  frustrated: 'Going in circles: retrying an approach that already failed without meaningfully changing it.',
+  pivot: 'Deliberately abandoning its current approach for a different strategy.',
+  rabbit_hole: 'Wandered off its task into unrelated work, tangents or yak-shaving.',
+  corner_cut: 'Making checks pass the wrong way: skipping or disabling tests, loosening assertions, adding suppressions, hard-coding expected values or swallowing errors.',
+  risky_move: 'Just did or is about to do something destructive or hard to undo: force-pushing, rewriting history, deleting data or many files, or touching production.',
+  none: 'No such moment in this snapshot.',
 };
+
+const FLOOR_EVENT_CRITERIA: Record<FloorEvent | 'none', string> = {
+  convergence: "Separate desks' pieces are visibly fitting together toward one shared goal right now.",
+  collision: 'Two or more desks are working at cross purposes: changing the same area, undoing each other, or taking contradictory approaches to one problem.',
+  crisis: 'One problem is spreading across desks or blocking several workers, and nobody has a handle on it yet.',
+  brainstorm: 'Workers are genuinely exchanging ideas or debating a design with each other, beyond routine status messages.',
+  none: 'Desks are working on their own, or only one desk has anything notable.',
+};
+
+const FLOOR_STAKES_RUBRIC = [
+  'Relaxed: nothing important is in doubt anywhere on the floor.',
+  'Low: routine work, and any problems are small and understood.',
+  'Engaged: meaningful work is underway and some outcomes are still uncertain.',
+  'Tense: important work is at risk, workers are struggling, or a key result is about to land.',
+  'Critical: a serious problem is unfolding, or a risky high-impact operation is in progress.',
+];
+
+const WORKER_STAKES_RUBRIC = [
+  'Nothing riding on it: reading, chatting, or trivial edits such as comments, typos or formatting.',
+  'Low: small, easily reverted changes in leaf code, tests or docs.',
+  'Moderate: real feature or bug-fix work in code other parts depend on.',
+  'High: shared core paths, data models, migrations, auth, payments or concurrency, or the fix the whole task hinges on.',
+  'Critical: destructive or hard-to-undo operations, production or release actions, or a mistake here would be expensive.',
+];
+
+const WORKER_PROGRESS_RUBRIC = [
+  'Just started, or still working out what the task needs.',
+  'Understands the problem and has a plan, but little is built yet.',
+  'Partway: the core change is underway but not working yet.',
+  'Mostly there: the main change works and it is verifying, polishing or fixing edge cases.',
+  'Essentially done: the goal is met and it is wrapping up.',
+];
 
 function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
@@ -144,8 +207,9 @@ export function buildFloorDecisionsBatch(floor: VibesFloorView, activeWorkers: W
   const mergedPulls = floor.pulls.filter((p) => p.state === 'MERGED').length;
   const failingRuns = floor.pipelines?.runs.filter((r) => r.state === 'failure').length ?? 0;
 
+  const floorName = redactGeminiSecrets(floor.name, extraSecrets);
   const lines: string[] = [
-    `Floor "${redactGeminiSecrets(floor.name, extraSecrets)}" snapshot:`,
+    `Floor "${floorName}" snapshot:`,
     `Summary: ${activeWorkers.length} active/recent desk workers (${Math.min(activeWorkers.length, MAX_VIBES_WORKERS)} shown, ${Math.max(0, activeWorkers.length - MAX_VIBES_WORKERS)} omitted), ${openPulls} open PRs, ${mergedPulls} merged PRs, ${failingRuns} failing CI runs.`,
     '',
   ];
@@ -153,8 +217,18 @@ export function buildFloorDecisionsBatch(floor: VibesFloorView, activeWorkers: W
   const questions: Record<string, DecisionQuestion> = {
     floor_mood: {
       type: 'choice',
-      instructions: `For floor "${redactGeminiSecrets(floor.name, extraSecrets)}", classify the overall studio lighting mood right now based strictly on this single snapshot.`,
+      instructions: `For floor "${floorName}", classify the emotional story of the floor right now from this snapshot. ${JUDGE_MEANING}`,
       criteria: MOOD_CRITERIA,
+    },
+    floor_stakes: {
+      type: 'score',
+      instructions: `For floor "${floorName}", score how much is riding on the floor's work right now, judged from what the workers are doing and what could go wrong, not from how much output scrolls by.`,
+      criteria: FLOOR_STAKES_RUBRIC,
+    },
+    floor_event: {
+      type: 'choice',
+      instructions: `For floor "${floorName}", compare the desks' tasks and output with each other and decide whether their efforts relate in one of these ways right now, or choose "none".`,
+      criteria: FLOOR_EVENT_CRITERIA,
     },
   };
 
@@ -190,18 +264,28 @@ export function buildFloorDecisionsBatch(floor: VibesFloorView, activeWorkers: W
 
     questions[`${keyPrefix}_posture`] = {
       type: 'choice',
-      instructions: `For worker [${keyPrefix}] ("${safeName}"), choose the continuous 3D desk posture that best matches what [${keyPrefix}] is visibly doing right now.`,
+      instructions: `For worker [${keyPrefix}] ("${safeName}"), choose the state of mind [${keyPrefix}]'s reasoning and results show right now, read against its task (its latest tool alone does not decide this).`,
       criteria: POSTURE_CRITERIA,
     };
     questions[`${keyPrefix}_spill`] = {
       type: 'choice',
-      instructions: `For worker [${keyPrefix}] ("${safeName}"), choose the monitor bounce-light color cast onto [${keyPrefix}]'s desk based strictly on [${keyPrefix}]'s visible terminal output and status right now.`,
+      instructions: `For worker [${keyPrefix}] ("${safeName}"), judge how it is going for [${keyPrefix}] against its task right now. ${JUDGE_MEANING}`,
       criteria: SPILL_CRITERIA,
     };
     questions[`${keyPrefix}_react`] = {
       type: 'choice',
-      instructions: `For worker [${keyPrefix}] ("${safeName}"), decide whether [${keyPrefix}]'s current snapshot shows an unmistakable right-now moment for a one-shot 3D micro-reaction, or choose "none".`,
+      instructions: `For worker [${keyPrefix}] ("${safeName}"), decide whether [${keyPrefix}]'s snapshot shows one of these moments happening right now, or choose "none". ${JUDGE_MEANING}`,
       criteria: REACTION_CRITERIA,
+    };
+    questions[`${keyPrefix}_stakes`] = {
+      type: 'score',
+      instructions: `For worker [${keyPrefix}] ("${safeName}"), score how much is riding on what [${keyPrefix}] is doing right now: the blast radius if it goes wrong, not how busy it looks.`,
+      criteria: WORKER_STAKES_RUBRIC,
+    };
+    questions[`${keyPrefix}_progress`] = {
+      type: 'score',
+      instructions: `For worker [${keyPrefix}] ("${safeName}"), compare [${keyPrefix}]'s task with the evidence in its output and score how close it is to actually finishing that task.`,
+      criteria: WORKER_PROGRESS_RUBRIC,
     };
   });
 
@@ -228,6 +312,7 @@ export class OfficeVibes {
   private stopped = false;
   private checking = false;
   private reactionSeq = 0;
+  private eventSeq = 0;
   private calls = 0;
   private inputTokens = 0;
   private lastLatencyMs?: number;
@@ -553,6 +638,7 @@ export class OfficeVibes {
         track.retryAt = 0;
         track.retryDelay = 0;
         track.state = neutral;
+        clearCarriedMoments(track);
       }
       this.opts.emitFloorVibes(floor.id, neutral);
     }
@@ -567,6 +653,8 @@ export class OfficeVibes {
         retryDelay: 0,
         state: emptyFloorVibes(floorId, this.now()),
         workers: new Map(),
+        lastEventAt: -Infinity,
+        lastEventDigest: '',
       };
       this.floorTracks.set(floorId, track);
     }
@@ -599,6 +687,7 @@ export class OfficeVibes {
       if (track.state.mood !== 'calm_planning' || Object.keys(track.state.workers).length > 0) {
         track.lastDigest = 'empty';
         track.state = emptyFloorVibes(floorId, now);
+        clearCarriedMoments(track);
         this.opts.emitFloorVibes(floorId, track.state);
       }
       return;
@@ -651,6 +740,18 @@ export class OfficeVibes {
       const moodConfident = Boolean(moodAns && isFloorMood(moodAns.choice) && moodAns.prob >= MOOD_CONFIDENCE_MIN);
       const mood: FloorMood = moodConfident && moodAns ? (moodAns.choice as FloorMood) : 'calm_planning';
       const moodConfidence = moodConfident && moodAns ? moodAns.prob : 0;
+      const floorStakesAns = res.answers.floor_stakes;
+      const floorStakes = floorStakesAns?.type === 'score' ? unitFromScore(floorStakesAns.score, FLOOR_STAKES_RUBRIC.length - 1) : undefined;
+
+      let event = track.lastEvent && doneAt - track.lastEvent.at <= EVENT_GRACE_MS ? track.lastEvent : undefined;
+      const eAns = choiceProb(res.answers.floor_event);
+      if (eAns && isFloorEvent(eAns.choice) && eAns.prob >= FLOOR_EVENT_CONFIDENCE_MIN && track.lastEventDigest !== batch.digest && doneAt - track.lastEventAt >= FLOOR_EVENT_COOLDOWN_MS) {
+        this.eventSeq += 1;
+        event = { kind: eAns.choice, seq: this.eventSeq, at: doneAt, confidence: Number(eAns.prob.toFixed(3)) };
+        track.lastEventAt = doneAt;
+        track.lastEventDigest = batch.digest;
+        track.lastEvent = event;
+      }
 
       const workersOut: Record<string, WorkerVibeState> = {};
       const currentFloor = this.opts.floor(floorId);
@@ -661,6 +762,10 @@ export class OfficeVibes {
         const pAns = choiceProb(res.answers[`${keyPrefix}_posture`]);
         const sAns = choiceProb(res.answers[`${keyPrefix}_spill`]);
         const rAns = choiceProb(res.answers[`${keyPrefix}_react`]);
+        const stakesAns = res.answers[`${keyPrefix}_stakes`];
+        const stakes = stakesAns?.type === 'score' ? unitFromScore(stakesAns.score, WORKER_STAKES_RUBRIC.length - 1) : undefined;
+        const progressAns = res.answers[`${keyPrefix}_progress`];
+        const progress = progressAns?.type === 'score' ? unitFromScore(progressAns.score, WORKER_PROGRESS_RUBRIC.length - 1) : undefined;
 
         const posture: WorkerVibePosture = isBusy(currentWorker.status) && pAns && isWorkerVibePosture(pAns.choice) && pAns.prob >= POSTURE_CONFIDENCE_MIN ? pAns.choice : 'steady';
 
@@ -672,7 +777,7 @@ export class OfficeVibes {
           track.workers.set(currentWorker.id, wTrack);
         }
 
-        let reaction = wTrack.lastReaction && doneAt - wTrack.lastReaction.at <= 4500 ? wTrack.lastReaction : undefined;
+        let reaction = wTrack.lastReaction && doneAt - wTrack.lastReaction.at <= REACTION_GRACE_MS ? wTrack.lastReaction : undefined;
         if (rAns && isWorkerMicroReaction(rAns.choice) && rAns.prob >= MICRO_REACTION_CONFIDENCE_MIN && wTrack.lastReactDigest !== workerDigest && doneAt - wTrack.lastReactionAt >= MICRO_REACTION_COOLDOWN_MS) {
           this.reactionSeq += 1;
           reaction = {
@@ -689,6 +794,8 @@ export class OfficeVibes {
         workersOut[currentWorker.id] = {
           posture,
           spill,
+          ...(stakes !== undefined ? { stakes: Number(stakes.toFixed(3)) } : {}),
+          ...(progress !== undefined ? { progress: Number(progress.toFixed(3)) } : {}),
           ...(reaction ? { reaction } : {}),
         };
       }
@@ -697,6 +804,8 @@ export class OfficeVibes {
         floor: floorId,
         mood,
         moodConfidence: Number(moodConfidence.toFixed(3)),
+        ...(floorStakes !== undefined ? { stakes: Number(floorStakes.toFixed(3)) } : {}),
+        ...(event ? { event } : {}),
         workers: workersOut,
         updatedAt: doneAt,
       };

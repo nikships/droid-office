@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HAIR_COLORS, HAIR_STYLES, SKIN_TONES, type Look } from '../../shared/avatar';
 import { EMOTE_BY_ID, type Emote, type EmoteId } from '../../shared/emotes';
-import { isWorkerMicroReaction, isWorkerVibePosture, type WorkerMicroReaction, type WorkerVibePosture, type WorkerVibeState } from '../../shared/gemini-vibes';
+import { DESK_MOMENT_FX, isWorkerMicroReaction, isWorkerVibePosture, MICRO_REACTION_FX, type WorkerMicroReaction, type WorkerVibePosture, type WorkerVibeState } from '../../shared/gemini-vibes';
 import type { CarriedIssue, TeamBadge, TodoProgress, WorkerAction, WorkerStatus, WorkerTask } from '../../shared/protocol';
 import { isAsleep, type WorkerPr } from '../../shared/status';
 import { todoCount, todoFraction, todoLine } from '../../shared/todos';
@@ -17,6 +17,11 @@ import { isTeamKitGeometry, setTeamKitModel, TeamKit } from './team-kit';
 import { ANISOTROPY } from './texture-quality';
 import { beveledBox, cardSprite, disposeSprite, mesh, plainLabel, roundedBox, textSprite, toon, toonUnique } from './toon';
 import { mergeWorkerPaint, type WorkerPart } from './worker-parts';
+
+/** A one-shot reaction a worker acts out: one Gemini judged, or opening a pull request (which the office knows for itself). */
+export type ReactionPose = WorkerMicroReaction | 'shipped';
+const REACTION_SECONDS: Partial<Record<ReactionPose, number>> = { breakthrough: 2.8, shipped: 2.8, puzzled: 2.6, eureka: 2.6, frustrated: 2.6, rabbit_hole: 2.6, risky_move: 2.5, corner_cut: 2.5 };
+const reactionHex = (kind: ReactionPose) => (kind === 'shipped' ? DESK_MOMENT_FX.shipped.hex : MICRO_REACTION_FX[kind].hex);
 
 export type Pose = 'stand' | 'walk' | 'sit' | 'type';
 
@@ -880,7 +885,7 @@ function cardChip(status: WorkerStatus, pr: PrBadge | undefined, lost: boolean):
  * What a worker's body is doing: resting, arms up for joy, arms crossed waiting on you, typing,
  * acting out its latest tool call, or holding a continuous Gemini Decision 1 desk posture.
  */
-type VibeAct = 'vibe_flow' | 'vibe_investigating' | 'vibe_debugging' | 'vibe_waiting';
+type VibeAct = 'vibe_flow' | 'vibe_investigating' | 'vibe_struggling' | 'vibe_deliberating';
 type Act = 'rest' | 'up' | 'waiting' | 'type' | WorkerAction | VisitPose | VibeAct;
 
 /** How it holds itself on a visit to another worker's desk (see visitors.ts): on its feet, or talking with a hand out. */
@@ -1217,17 +1222,17 @@ function stanceOf(act: Act, t: number, seated: boolean, s: Stance): Stance {
       s.mouthH = 0.68;
       break;
     }
-    case 'vibe_debugging': {
-      // Focused trace inspection: leaning in close with a quizzical head-tilt and restless finger/foot tap.
+    case 'vibe_struggling': {
+      // Its approach isn't working: hunched in close, one hand raking the back of its head, foot jittering.
       const tap = Math.max(0, Math.sin(t * 18));
       s.armLx = -1.2;
       s.armLz = -0.02;
       s.forearmLx = -0.68;
       s.forearmLz = 0.34;
-      s.armRx = -1.22;
-      s.armRz = 0.04;
-      s.forearmRx = -0.68 + Math.max(0, Math.sin(t * 24)) * 0.16;
-      s.forearmRz = -0.34;
+      s.armRx = -2.2 + Math.sin(t * 5) * 0.08;
+      s.armRz = 0.2;
+      s.forearmRx = -1.85 + Math.sin(t * 10) * 0.14;
+      s.forearmRz = -0.5;
       s.reach = 0.42;
       s.lean = 0.19;
       s.headX = 0.12;
@@ -1245,8 +1250,8 @@ function stanceOf(act: Act, t: number, seated: boolean, s: Stance): Stance {
       s.lift = tap * 0.008;
       break;
     }
-    case 'vibe_waiting': {
-      // Relaxed build/test wait: easy shoulder roll, leaning back and glancing up toward Pipelines / windows.
+    case 'vibe_deliberating': {
+      // Weighing options: leaning back, gaze up and away, head tipping from one side to the other.
       s.armLx = seated ? -0.88 : -0.22;
       s.armRx = seated ? -0.88 : -0.22;
       s.armLz = -0.14 + Math.sin(t * 1.6) * 0.04;
@@ -1259,8 +1264,8 @@ function stanceOf(act: Act, t: number, seated: boolean, s: Stance): Stance {
       s.lean = -0.15;
       s.roll = Math.sin(t * 1.3) * 0.04;
       s.headX = -0.15;
-      s.headY = 0.22 + Math.sin(t * 0.85) * 0.1;
-      s.headZ = Math.sin(t * 1.3) * 0.05;
+      s.headY = Math.sin(t * 0.7) * 0.24;
+      s.headZ = Math.sin(t * 0.7) * 0.12;
       s.kick = 0.65;
       s.look = 0.012;
       s.lookX = 0.008;
@@ -1783,8 +1788,12 @@ export class Worker {
   private actionT = 0;
   /** Continuous posture and one-shot micro-reaction driven by Gemini Decision 1 on visible 3D floors. */
   private vibePosture: WorkerVibePosture = 'steady';
-  private microReaction: { kind: WorkerMicroReaction; t: number; duration: number } | null = null;
+  private microReaction: { kind: ReactionPose; t: number; duration: number } | null = null;
   private lastReactionSeq = 0;
+  /** How much is riding on its work (0–1, from Gemini Decision 1), and the clock its posture moves to: faster the higher the stakes. */
+  private vibeStakes = 0.5;
+  private vibeProgress = 0;
+  private vibeClock = 0;
   /** How much of each act is in its stance right now, blending from one to the next. */
   private acts = new Map<Act, number>();
   private stance = {} as Stance;
@@ -1975,6 +1984,8 @@ export class Worker {
   /** Applies continuous desk posture and any newly sequenced high-confidence micro-reaction. */
   applyVibe(vibe: WorkerVibeState | undefined, nowMs = Date.now()) {
     this.vibePosture = vibe && isWorkerVibePosture(vibe.posture) ? vibe.posture : 'steady';
+    this.vibeStakes = typeof vibe?.stakes === 'number' && Number.isFinite(vibe.stakes) ? Math.max(0, Math.min(1, vibe.stakes)) : 0.5;
+    this.vibeProgress = typeof vibe?.progress === 'number' && Number.isFinite(vibe.progress) ? Math.max(0, Math.min(1, vibe.progress)) : 0;
     const r = vibe?.reaction;
     if (r && r.seq > 0 && r.seq !== this.lastReactionSeq && isWorkerMicroReaction(r.kind)) {
       this.lastReactionSeq = r.seq;
@@ -1982,20 +1993,30 @@ export class Worker {
     }
   }
 
-  /** Triggers a one-shot micro-reaction over a smooth ~2s envelope without snapping limbs. */
-  triggerReaction(kind: WorkerMicroReaction) {
+  /** Triggers a one-shot micro-reaction over a smooth ~2.5s envelope without snapping limbs. */
+  triggerReaction(kind: ReactionPose) {
     if (this.dead || this.leaving || this.dancing) return;
-    let duration = 2.0;
-    if (kind === 'breakthrough' || kind === 'puzzled') duration = 2.2;
-    else if (kind === 'fresh_breakage') duration = 2.1;
+    const duration = REACTION_SECONDS[kind] ?? 2.4;
     this.microReaction = { kind, t: 0, duration };
+    // Shipping is a full spin in the chair.
+    if (kind === 'shipped') this.twirlT = 0;
+  }
+
+  /** How much is riding on its work right now, 0–1. */
+  get activeVibeStakes(): number {
+    return this.vibeStakes;
+  }
+
+  /** How close it is to finishing its task, 0–1 (0 when ungraded). */
+  get activeVibeProgress(): number {
+    return this.vibeProgress;
   }
 
   get activeVibePosture(): WorkerVibePosture {
     return this.vibePosture;
   }
 
-  get activeReaction(): WorkerMicroReaction | null {
+  get activeReaction(): ReactionPose | null {
     return this.microReaction?.kind ?? null;
   }
 
@@ -2441,6 +2462,7 @@ export class Worker {
       this.actionT = 0;
     }
     const sleeping = isAsleep(this.status);
+    this.vibeClock += dt * (0.7 + this.vibeStakes * 1.1);
     let workingAct: Act = this.action ?? 'type';
     if (this.vibePosture !== 'steady') {
       const propCameo = (this.action === 'web' || this.action === 'read') && this.actionT < 3.2;
@@ -2458,28 +2480,30 @@ export class Worker {
         this.paintBulb();
       } else {
         const env = emoteEnvelope(r.t, r.duration);
+        reactionBulbHex = reactionHex(r.kind);
         if (r.kind === 'breakthrough') {
-          const pump = Math.sin(r.t * 14) * 0.24;
+          const pump = Math.sin(r.t * 14) * 0.34;
           s.armLx = THREE.MathUtils.lerp(s.armLx, -2.36 - pump, env);
           s.armRx = THREE.MathUtils.lerp(s.armRx, -2.36 + pump, env);
           s.armLz = THREE.MathUtils.lerp(s.armLz, -0.24, env);
           s.armRz = THREE.MathUtils.lerp(s.armRz, 0.24, env);
           s.forearmLx = THREE.MathUtils.lerp(s.forearmLx, -0.78, env);
           s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -0.78, env);
-          s.lean -= 0.09 * env;
-          s.lift += Math.abs(Math.sin(r.t * 8.5)) * 0.14 * env;
-          s.headX = THREE.MathUtils.lerp(s.headX, -0.12, env);
-          s.browLift = THREE.MathUtils.lerp(s.browLift, 0.009, env);
-          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 1.38, env);
-          s.mouthH = THREE.MathUtils.lerp(s.mouthH, 1.48, env);
+          s.lean -= 0.14 * env;
+          s.lift += Math.abs(Math.sin(r.t * 8.5)) * 0.24 * env;
+          s.roll = THREE.MathUtils.lerp(s.roll, Math.sin(r.t * 8.5) * 0.12, env);
+          s.headX = THREE.MathUtils.lerp(s.headX, -0.16, env);
+          s.browLift = THREE.MathUtils.lerp(s.browLift, 0.011, env);
+          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 1.45, env);
+          s.mouthH = THREE.MathUtils.lerp(s.mouthH, 1.6, env);
           s.frown = THREE.MathUtils.lerp(s.frown, 0, env);
-          reactionBulbHex = '#34d399';
-        } else if (r.kind === 'fresh_breakage') {
+        } else if (r.kind === 'setback') {
           // Blend the double-take flinch into the facepalm instead of snapping at the phase boundary.
           const slump = THREE.MathUtils.smoothstep(r.t, 0.35, 0.55);
-          s.lean = THREE.MathUtils.lerp(s.lean, THREE.MathUtils.lerp(-0.18, 0.24, slump), env);
-          s.lid = THREE.MathUtils.lerp(s.lid, THREE.MathUtils.lerp(1.22, 0.64, slump), env);
-          s.headY = THREE.MathUtils.lerp(s.headY, THREE.MathUtils.lerp(Math.sin(r.t * 26) * 0.18, Math.sin(r.t * 14) * 0.14, slump), env);
+          s.lean = THREE.MathUtils.lerp(s.lean, THREE.MathUtils.lerp(-0.26, 0.3, slump), env);
+          s.lid = THREE.MathUtils.lerp(s.lid, THREE.MathUtils.lerp(1.3, 0.6, slump), env);
+          s.headY = THREE.MathUtils.lerp(s.headY, THREE.MathUtils.lerp(Math.sin(r.t * 26) * 0.24, Math.sin(r.t * 14) * 0.18, slump), env);
+          s.lift += (1 - slump) * Math.exp(-r.t * 6) * 0.12 * env;
           s.armRx = THREE.MathUtils.lerp(s.armRx, -1.84, env * slump);
           s.armRz = THREE.MathUtils.lerp(s.armRz, -0.12, env * slump);
           s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -1.9, env * slump);
@@ -2487,9 +2511,8 @@ export class Worker {
           s.headX = THREE.MathUtils.lerp(s.headX, 0.2, env * slump);
           s.browTilt = THREE.MathUtils.lerp(s.browTilt, -0.34, env);
           s.frown = THREE.MathUtils.lerp(s.frown, 1, env);
-          reactionBulbHex = '#f43f5e';
         } else if (r.kind === 'puzzled') {
-          s.headZ = THREE.MathUtils.lerp(s.headZ, 0.24, env);
+          s.headZ = THREE.MathUtils.lerp(s.headZ, 0.34 + Math.sin(r.t * 3) * 0.06, env);
           s.headY = THREE.MathUtils.lerp(s.headY, -0.1, env);
           s.armRx = THREE.MathUtils.lerp(s.armRx, -1.96, env);
           s.armRz = THREE.MathUtils.lerp(s.armRz, 0.18, env);
@@ -2497,18 +2520,112 @@ export class Worker {
           s.forearmRz = THREE.MathUtils.lerp(s.forearmRz, -0.36, env);
           s.mouthW = THREE.MathUtils.lerp(s.mouthW, 0.68, env);
           s.mouthH = THREE.MathUtils.lerp(s.mouthH, 0.55, env);
-          asymBrow = 0.008 * env;
-          reactionBulbHex = '#f59e0b';
-        } else if (r.kind === 'team_sync') {
-          s.turn = THREE.MathUtils.lerp(s.turn, 0.28, env);
-          s.headY = THREE.MathUtils.lerp(s.headY, 0.2, env);
-          s.headX = THREE.MathUtils.lerp(s.headX, Math.sin(r.t * 9) * 0.09, env);
-          s.armRx = THREE.MathUtils.lerp(s.armRx, -1.66, env);
-          s.armRz = THREE.MathUtils.lerp(s.armRz, 0.24, env);
-          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -0.76 + Math.sin(r.t * 12) * 0.22, env);
-          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 1.22, env);
-          s.mouthH = THREE.MathUtils.lerp(s.mouthH, 1.25, env);
-          reactionBulbHex = '#38bdf8';
+          asymBrow = 0.011 * env;
+        } else if (r.kind === 'pivot') {
+          // Changing tack: a sharp swivel away and back, head snapping round, one hand flicking aside.
+          const swing = Math.sin(Math.min(1, r.t / 1.1) * Math.PI);
+          s.turn = THREE.MathUtils.lerp(s.turn, 0.7 * swing, env);
+          s.headY = THREE.MathUtils.lerp(s.headY, -0.3 * swing, env);
+          s.armRx = THREE.MathUtils.lerp(s.armRx, -1.5, env);
+          s.armRz = THREE.MathUtils.lerp(s.armRz, 0.7 * swing, env);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -0.5, env);
+          s.lean = THREE.MathUtils.lerp(s.lean, -0.08, env);
+          s.browLift = THREE.MathUtils.lerp(s.browLift, 0.008, env);
+          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 1.1, env);
+          s.frown = THREE.MathUtils.lerp(s.frown, 0, env);
+        } else if (r.kind === 'eureka') {
+          // Aha: one hand shoots straight up, eyes wide, a jolt upright.
+          s.armRx = THREE.MathUtils.lerp(s.armRx, -2.62 + Math.sin(r.t * 10) * 0.06, env);
+          s.armRz = THREE.MathUtils.lerp(s.armRz, 0.1, env);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -0.12, env);
+          s.forearmRz = THREE.MathUtils.lerp(s.forearmRz, 0, env);
+          s.headX = THREE.MathUtils.lerp(s.headX, -0.2, env);
+          s.headY = THREE.MathUtils.lerp(s.headY, 0, env);
+          s.lean = THREE.MathUtils.lerp(s.lean, -0.12, env);
+          s.lift += Math.exp(-r.t * 4) * 0.2 * env;
+          s.lid = THREE.MathUtils.lerp(s.lid, 1.32, env);
+          s.browLift = THREE.MathUtils.lerp(s.browLift, 0.013, env);
+          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 0.9, env);
+          s.mouthH = THREE.MathUtils.lerp(s.mouthH, 1.6, env);
+          s.frown = THREE.MathUtils.lerp(s.frown, 0, env);
+        } else if (r.kind === 'shipped') {
+          // Both arms up in a V, bouncing through the spin.
+          s.armLx = THREE.MathUtils.lerp(s.armLx, -2.5 + Math.sin(r.t * 12) * 0.12, env);
+          s.armRx = THREE.MathUtils.lerp(s.armRx, -2.5 - Math.sin(r.t * 12) * 0.12, env);
+          s.armLz = THREE.MathUtils.lerp(s.armLz, -0.52, env);
+          s.armRz = THREE.MathUtils.lerp(s.armRz, 0.52, env);
+          s.forearmLx = THREE.MathUtils.lerp(s.forearmLx, -0.2, env);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -0.2, env);
+          s.lift += Math.abs(Math.sin(r.t * 7)) * 0.22 * env;
+          s.headX = THREE.MathUtils.lerp(s.headX, -0.18, env);
+          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 1.5, env);
+          s.mouthH = THREE.MathUtils.lerp(s.mouthH, 1.55, env);
+          s.frown = THREE.MathUtils.lerp(s.frown, 0, env);
+          s.browLift = THREE.MathUtils.lerp(s.browLift, 0.01, env);
+        } else if (r.kind === 'frustrated') {
+          // Hands to the head, shaking it, brows down hard.
+          s.armLx = THREE.MathUtils.lerp(s.armLx, -2.15, env);
+          s.armRx = THREE.MathUtils.lerp(s.armRx, -2.15, env);
+          s.armLz = THREE.MathUtils.lerp(s.armLz, -0.3, env);
+          s.armRz = THREE.MathUtils.lerp(s.armRz, 0.3, env);
+          s.forearmLx = THREE.MathUtils.lerp(s.forearmLx, -1.95, env);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -1.95, env);
+          s.forearmLz = THREE.MathUtils.lerp(s.forearmLz, 0.55, env);
+          s.forearmRz = THREE.MathUtils.lerp(s.forearmRz, -0.55, env);
+          s.headY = THREE.MathUtils.lerp(s.headY, Math.sin(r.t * 19) * 0.26, env);
+          s.headX = THREE.MathUtils.lerp(s.headX, 0.14, env);
+          s.lean = THREE.MathUtils.lerp(s.lean, 0.18, env);
+          s.browTilt = THREE.MathUtils.lerp(s.browTilt, 0.42, env);
+          s.browLift = THREE.MathUtils.lerp(s.browLift, -0.006, env);
+          s.lid = THREE.MathUtils.lerp(s.lid, 0.66, env);
+          s.frown = THREE.MathUtils.lerp(s.frown, 1, env);
+          s.tap = Math.max(s.tap, Math.max(0, Math.sin(r.t * 22)) * env);
+        } else if (r.kind === 'rabbit_hole') {
+          // Wandering off: leaning back, gaze drifting round in a slow loop, head lolling with it.
+          s.lean = THREE.MathUtils.lerp(s.lean, -0.2, env);
+          s.headY = THREE.MathUtils.lerp(s.headY, Math.sin(r.t * 2.4) * 0.3, env);
+          s.headZ = THREE.MathUtils.lerp(s.headZ, Math.cos(r.t * 2.4) * 0.16, env);
+          s.lookX = THREE.MathUtils.lerp(s.lookX, Math.sin(r.t * 2.4) * 0.016, env);
+          s.look = THREE.MathUtils.lerp(s.look, 0.006 + Math.cos(r.t * 2.4) * 0.008, env);
+          s.armLx = THREE.MathUtils.lerp(s.armLx, -0.4, env);
+          s.armRx = THREE.MathUtils.lerp(s.armRx, -0.4, env);
+          s.forearmLx = THREE.MathUtils.lerp(s.forearmLx, -0.3, env);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -0.3, env);
+          s.lid = THREE.MathUtils.lerp(s.lid, 0.8, env);
+          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 0.8, env);
+          s.mouthH = THREE.MathUtils.lerp(s.mouthH, 0.7, env);
+        } else if (r.kind === 'corner_cut') {
+          // Sneaky: hunched in over the keyboard, eyes darting left and right, a quick shifty grin.
+          s.lean = THREE.MathUtils.lerp(s.lean, 0.26, env);
+          s.drop += 0.03 * env;
+          s.headX = THREE.MathUtils.lerp(s.headX, 0.18, env);
+          // A soft square wave: the eyes snap to each side and hold there, without a one-frame jump.
+          const dart = Math.tanh(Math.sin(r.t * 4) * 6);
+          s.headY = THREE.MathUtils.lerp(s.headY, dart * 0.22, env);
+          s.lookX = THREE.MathUtils.lerp(s.lookX, dart * 0.018, env);
+          s.lid = THREE.MathUtils.lerp(s.lid, 0.62, env);
+          s.forearmLx = THREE.MathUtils.lerp(s.forearmLx, -0.7 + Math.sin(r.t * 30) * 0.12, env);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -0.7 + Math.sin(r.t * 30 + 1.6) * 0.12, env);
+          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 1.3, env);
+          s.mouthH = THREE.MathUtils.lerp(s.mouthH, 0.5, env);
+          s.browTilt = THREE.MathUtils.lerp(s.browTilt, -0.2, env);
+          asymBrow = 0.009 * env;
+        } else if (r.kind === 'risky_move') {
+          // Bracing for impact: recoiling back, both hands up guarding its face, eyes wide.
+          s.lean = THREE.MathUtils.lerp(s.lean, -0.3, env);
+          s.lift += Math.exp(-r.t * 5) * 0.16 * env;
+          s.armLx = THREE.MathUtils.lerp(s.armLx, -2.1, env);
+          s.armRx = THREE.MathUtils.lerp(s.armRx, -2.1, env);
+          s.armLz = THREE.MathUtils.lerp(s.armLz, -0.18, env);
+          s.armRz = THREE.MathUtils.lerp(s.armRz, 0.18, env);
+          s.forearmLx = THREE.MathUtils.lerp(s.forearmLx, -1.5 + Math.sin(r.t * 20) * 0.05, env);
+          s.forearmRx = THREE.MathUtils.lerp(s.forearmRx, -1.5 - Math.sin(r.t * 20) * 0.05, env);
+          s.headX = THREE.MathUtils.lerp(s.headX, -0.1, env);
+          s.lid = THREE.MathUtils.lerp(s.lid, 1.35, env);
+          s.browLift = THREE.MathUtils.lerp(s.browLift, 0.014, env);
+          s.mouthW = THREE.MathUtils.lerp(s.mouthW, 0.7, env);
+          s.mouthH = THREE.MathUtils.lerp(s.mouthH, 1.4, env);
+          s.frown = THREE.MathUtils.lerp(s.frown, 0, env);
         }
       }
     }
@@ -2543,7 +2660,7 @@ export class Worker {
     this.browMeshes[1].rotation.z = s.browTilt;
     if (reactionBulbHex) {
       this.bulb.mat.color.set(reactionBulbHex);
-      this.bulb.mat.emissive.set(reactionBulbHex).multiplyScalar(0.85);
+      this.bulb.mat.emissive.set(reactionBulbHex).multiplyScalar(1.6);
     }
     const chattering = this.speech !== null && act !== 'talk';
     const mw = sleeping ? 0.5 : s.mouthW;
@@ -2578,7 +2695,7 @@ export class Worker {
     this.blink(dt, sleeping ? 0.08 : s.lid);
     let bulbPulse = 1;
     if (this.status === 'needs_input') bulbPulse = 1 + Math.abs(Math.sin(t * 8)) * 0.45;
-    else if (reactionBulbHex) bulbPulse = 1 + Math.abs(Math.sin(t * 12)) * 0.32;
+    else if (reactionBulbHex) bulbPulse = 1.2 + Math.abs(Math.sin(t * 12)) * 0.7;
     this.bulbScale(bulbPulse);
     const hopLift = hopping ? hopH * 0.55 : 0;
     if (this.bubble) this.bubble.position.y = (this.bubbleIsCard ? 1.74 : 1.95) + hopLift + Math.sin(t * 3) * 0.03;
@@ -2618,7 +2735,7 @@ export class Worker {
         continue;
       }
       this.acts.set(a, w);
-      const s = stanceOf(a, t, seated, this.stance);
+      const s = stanceOf(a, a.startsWith('vibe_') ? this.vibeClock : t, seated, this.stance);
       for (const key of STANCE_KEYS) out[key] += s[key] * w;
       total += w;
     }

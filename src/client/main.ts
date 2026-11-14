@@ -33,7 +33,24 @@ import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME } from '../shared/mission-control';
 import { botLine, missionWaiting, missionWorker, orchestratorLine, orchestratorWorker } from './mission';
 import { ORCHESTRATOR_SPOT, PHASE_WORD, missionBadge, missionLinks, missionStand, missionTeamBadge, missionTeamLine, missionView, orchestratorAwake, orchestratorPhase, orchestratorWaiting } from './mission-office';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, ServerMsg, WorkerInfo } from '../shared/protocol';
-import { FLOOR_MOOD_LIGHTING, isFloorMood, isMonitorSpillTone, MONITOR_SPILL_HEX, resolveVibesSwitchState, VibesSwitchToggle, type MonitorSpillTone } from '../shared/gemini-vibes';
+import {
+  DESK_MOMENT_FX,
+  type DeskMoment,
+  FLOOR_EVENT_FX,
+  FLOOR_MOOD_LIGHTING,
+  type FloorEvent,
+  isFloorEvent,
+  isFloorMood,
+  isMonitorSpillTone,
+  isWorkerMicroReaction,
+  MICRO_REACTION_FX,
+  MONITOR_SPILL_HEX,
+  MONITOR_SPILL_POWER,
+  type MonitorSpillTone,
+  resolveVibesSwitchState,
+  VibesSwitchToggle,
+  type WorkerMicroReaction,
+} from '../shared/gemini-vibes';
 import { ciForFloor } from '../shared/factory-ci';
 import { wikiShelfLine } from '../shared/factory-wiki';
 import { isPaletteKey } from '../shared/palette';
@@ -106,6 +123,8 @@ import { wandShipRequest, wandWorker, WAND_SHIP_COOLDOWN, WAND_SHIP_REACH } from
 import { SidearmCharge, SHOT_CHARGE_PREVIEW_MS } from './sidearm-charge';
 import { ChargeHaptics } from './haptics';
 import { Confetti, type Area } from './world/confetti';
+import { VibeFx } from './world/vibe-fx';
+import { vibesBadge } from './ui/vibes-badge';
 import { Hanger } from './hanging';
 import { plainLabel, redrawText } from './world/toon';
 import { OfficeSound } from './sound';
@@ -458,6 +477,21 @@ store.on('decor', () => gallery.sync(store.decor));
 const confetti = new Confetti((x, z, y) => groundAt(office.colliders, x, z, y, false));
 scene.add(confetti.mesh);
 
+// Living 3D's desk rings, emoji pops and shockwaves (Gemini Decision 1), and the switch in the corner.
+const vibeFx = new VibeFx();
+scene.add(vibeFx.group);
+let vibeFxMoving = false;
+let lastFloorEventSeq = 0;
+/** The last room-wide event and desk moment this view played (for automation). */
+let lastRoomEvent: FloorEvent | 'ship_it' | null = null;
+let lastDeskMoment: { kind: DeskMoment; worker: string } | null = null;
+/** A line the Living 3D switch shows for a few seconds in place of the mood (a reaction or floor event). */
+let badgeNote = '';
+let badgeNoteUntil = 0;
+let livingBadge: ReturnType<typeof vibesBadge> | null = null;
+/** Whether Living 3D was on at the last `gemini` update, to play the switch-on and switch-off sweeps; null before the first. */
+let vibesWasOn: boolean | null = null;
+
 // The lounge TV: the Factory sessions dashboard while the office is connected to Factory, else its
 // standby screen (world/factory-tv.ts). It is a board only: nothing opens from it. The same slice
 // puts each worker's credits in the Workers panel, its desk hint and its terminal's header.
@@ -647,6 +681,8 @@ function showMyProfile(p: Profile) {
 
 interface WorkerView {
   model: Worker;
+  /** Its name, still there for a send-off after the store has dropped it. */
+  name: string;
   laptop: Laptop;
   deskId: string;
   status: string;
@@ -656,10 +692,14 @@ interface WorkerView {
   /** False until the first sync, so a failure already on screen doesn't ding when the page opens. */
   heard: boolean;
   worldReady?: boolean;
-  /** Current and target monitor bounce-light spill color from Gemini Decision 1. */
+  /** Current and target monitor bounce-light spill color and brightness from Gemini Decision 1. */
   spillTone: MonitorSpillTone;
   spillColor: THREE.Color;
   spillTarget: THREE.Color;
+  spillPower: number;
+  spillPowerTarget: number;
+  /** The pull request number last seen, so a newly opened one plays once. */
+  pr?: number;
 }
 const workerViews = new Map<string, WorkerView>();
 /** Workers a `worker.remove` is taking out of the store right now. They walk out of the building; a worker that's gone because you changed floors just vanishes. */
@@ -1650,6 +1690,7 @@ function syncWorkers() {
       const initialTone: MonitorSpillTone = wVibe && isMonitorSpillTone(wVibe.spill) ? wVibe.spill : 'neutral';
       v = {
         model,
+        name: w.name,
         laptop,
         deskId: w.deskId,
         status: '',
@@ -1658,9 +1699,13 @@ function syncWorkers() {
         spillTone: initialTone,
         spillColor: new THREE.Color(MONITOR_SPILL_HEX[initialTone]),
         spillTarget: new THREE.Color(MONITOR_SPILL_HEX[initialTone]),
+        spillPower: MONITOR_SPILL_POWER[initialTone],
+        spillPowerTarget: MONITOR_SPILL_POWER[initialTone],
       };
       model.applyVibe(wVibe, store.officeNow());
+      v.pr = w.pr?.number;
       workerViews.set(w.id, v);
+      if (store.officeNow() - w.createdAt < 8000) deskMomentFx(w.id, v, 'hired');
     }
     if (v.status !== w.status || v.acked !== w.acked) {
       // It just finished or started waiting on you (not already so when this page first saw it): ding, and notify if you're away.
@@ -1672,18 +1717,22 @@ function syncWorkers() {
       if (w.status === 'done' && (v.status === 'working' || v.status === 'needs_input')) {
         v.model.celebrate();
         burstOver(w.deskId, 40);
+        deskMomentFx(w.id, v, 'finished');
       }
       v.status = w.status;
       v.acked = w.acked;
       v.model.setStatus(w.status, waitingOnSomeone(w));
       noOutline(v.model.root);
     }
+    v.name = w.name;
     v.model.setAction(w.action);
     v.model.setTeam(missionTeamBadge(w));
     if (v.heard && w.action === 'failing' && v.action !== 'failing') sound.ding('error');
     v.action = w.action;
     v.heard = true;
     v.model.setPr(prBadge(w));
+    if (w.pr && w.pr.number !== v.pr && v.heard) shippedFx(w.id, v);
+    v.pr = w.pr?.number;
     v.model.setLost(!!w.lost);
     v.model.setTodos(w.kind === 'shell' ? undefined : w.todos);
     const engineBadge = engineOf(w);
@@ -1703,6 +1752,8 @@ function syncWorkers() {
     // Out on a visit: back in its seat first, where walking out (or the beam) starts from.
     visitors.release(id);
     const desk = office.desks.get(v.deskId);
+    if (shotWorkers.has(id)) deskMomentFx(id, v, 'shot');
+    else if (desk && sentHome.has(id)) deskMomentFx(id, v, 'sent_home');
     // A shot worker: the body ascends instead of the send-home walk-out.
     if (shotWorkers.has(id)) {
       casualties.ascend(id, v.model, v.laptop, wandOut() ? 'spell' : 'blood');
@@ -1715,6 +1766,9 @@ function syncWorkers() {
     }
     sound.removeTypist(id);
     lastWandShip.delete(id);
+    // Its ring fades out at the desk it left; a floor change clears every ring at once anyway.
+    if (shotWorkers.has(id) || sentHome.has(id)) vibeFx.release(id);
+    else vibeFx.dropAura(id);
     workerViews.delete(id);
   }
   arrangeSeats();
@@ -3888,6 +3942,8 @@ resize();
 let spotSavedAt = 0;
 const lookDir = new THREE.Vector3();
 const workerPos = new THREE.Vector3();
+const feetScratch = new THREE.Vector3();
+const deskFloor = new THREE.Vector3();
 
 const fpsEl = $('fps');
 let fpsFrames = 0;
@@ -4001,7 +4057,7 @@ const remaster = new Remaster(
 );
 // Who is on this floor (the workers, their laptops, the free-seat signs, the bean bags and team lines) changes from
 // floor to floor; the room around them doesn't, so the bounce light is baked without them and fits every floor.
-remaster.gi.hideWhileBaking = () => [...office.occupants, teamLines.group, mission.group, ...office.vibesSwitch.bakeHidden];
+remaster.gi.hideWhileBaking = () => [...office.occupants, teamLines.group, mission.group, vibeFx.group, ...office.vibesSwitch.bakeHidden];
 let remasterSavedAt = 0;
 let remasterSaveTimer = 0;
 /** A new outline effect has empty caches. Compile them before the next frame, for the draw that's on now. */
@@ -4054,10 +4110,11 @@ function gpuRendererName(): string {
 
 /** A worker walking, hopping, mid-turn, leaving, or being carried out, or room/desk mood lighting crossfading. */
 function workerMoving(): boolean {
-  if (sky.moodTransitioning) return true;
+  if (sky.moodAnimating || vibeFxMoving) return true;
   for (const v of workerViews.values()) {
     if (v.model.animating) return true;
     if (Math.abs(v.spillColor.r - v.spillTarget.r) + Math.abs(v.spillColor.g - v.spillTarget.g) + Math.abs(v.spillColor.b - v.spillTarget.b) > 1e-3) return true;
+    if (Math.abs(v.spillPower - v.spillPowerTarget) > 1e-3 || (v.spillTone === 'crimson' && !reduceMotion.matches)) return true;
   }
   return departures.hasLeavers || casualties.active || visitors.moving || mission.animating;
 }
@@ -4252,13 +4309,18 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
     }
     const d = workerPos.distanceTo(player.pos);
     v.model.held = d < (v.model.held ? HOLD_LEAVE : HOLD_NEAR);
+    const deskView = office.desks.get(v.deskId);
+    if (deskView) vibeFx.follow(id, feetScratch.set(workerPos.x, deskFloor.setFromMatrixPosition(deskView.group.matrixWorld).y, workerPos.z));
     workerPos.y += WORKER_HEAD;
     v.model.seenFrom(workerPos.distanceTo(camPos));
     v.model.update(dt, t);
     v.laptop.update(dt, store.screens.get(id), Math.hypot(desk.x - camPos.x, desk.z - camPos.z));
-    v.spillColor.lerp(v.spillTarget, 1 - Math.exp(-dt / 0.9));
+    v.spillColor.lerp(v.spillTarget, 1 - Math.exp(-dt / 0.6));
+    v.spillPower += (v.spillPowerTarget - v.spillPower) * (1 - Math.exp(-dt / 0.6));
+    // A fresh failure makes the screen light stutter like an alarm.
+    const stutter = v.spillTone === 'crimson' && !reduceMotion.matches ? 0.78 + 0.22 * Math.abs(Math.sin(t * 23) * Math.sin(t * 7.1)) : 1;
     const glow = (screenGlows[screens] ??= { pos: new THREE.Vector3(), dir: new THREE.Vector3(), power: 0 });
-    glow.power = v.laptop.glow(glow.pos, glow.dir);
+    glow.power = v.laptop.glow(glow.pos, glow.dir) * v.spillPower * stutter;
     glow.color = v.spillColor;
     if (glow.power > 0.01) screens++;
   }
@@ -4298,6 +4360,7 @@ function drawFrame(dt: number, t: number, frame: { at: number; paced: boolean })
   }
   smoke.update(dt, camera);
   confetti.update(dt);
+  vibeFxMoving = !upTop && vibeFx.update(dt);
   if (!upTop) teamLines.update(reduceMotion.matches ? 0 : dt);
   hanger.update();
   sky.update(dt, t, camera);
@@ -4401,23 +4464,156 @@ async function startWhenReady() {
 }
 
 /** Strict view-aware cost gating for Gemini Decision 1: active only while this 3D canvas is open, visible, and on an indoor floor. */
+const indoorHere = () => !upTop && Boolean(store.floor && store.floor !== ROOF);
 let vibesWatching = false;
 function syncVibesWatch() {
+  paintVibesBadge();
   if (!net.up) {
     vibesWatching = false;
     return;
   }
-  const want = document.visibilityState === 'visible' && !upTop && Boolean(store.floor && store.floor !== ROOF);
+  const want = document.visibilityState === 'visible' && indoorHere();
   if (want === vibesWatching) return;
   vibesWatching = want;
   net.send({ t: 'vibes.watch', active: want });
 }
+/** Living 3D runs here: connected, switched on, key accepted, and standing on an indoor floor. */
+function vibesLiveHere(): boolean {
+  const g = store.gemini;
+  return g.connected && g.vibesOn && !g.rejected && !store.setup.airgapped && indoorHere();
+}
+
+sky.calmMotion = vibeFx.calmMotion = reduceMotion.matches;
+reduceMotion.addEventListener('change', () => {
+  sky.calmMotion = vibeFx.calmMotion = reduceMotion.matches;
+});
+livingBadge = vibesBadge({
+  toggle: (on) => net.send({ t: 'gemini.vibes', on }),
+  settings: () => showSettings('connections'),
+});
+$('hud').append(livingBadge.el);
+
+/** The Living 3D switch: hidden without a key or off a floor, else on (in the mood's color), off, or paused on a rejected key. */
+function paintVibesBadge() {
+  if (!livingBadge) return;
+  const g = store.gemini;
+  if (!g.connected || store.setup.airgapped || !indoorHere()) return livingBadge.paint({ mode: 'hidden' });
+  if (g.rejected) return livingBadge.paint({ mode: 'rejected' });
+  if (!g.vibesOn) return livingBadge.paint({ mode: 'off' });
+  const vibes = store.vibes;
+  const desks = vibes ? Object.keys(vibes.workers).filter((id) => workerViews.has(id)).length : 0;
+  livingBadge.paint({
+    mode: 'on',
+    mood: vibes && isFloorMood(vibes.mood) ? vibes.mood : 'calm_planning',
+    stakes: vibes?.stakes ?? 0.5,
+    desks,
+    ...(performance.now() < badgeNoteUntil ? { note: badgeNote } : {}),
+  });
+}
+
+/** Shows `note` on the Living 3D switch for a few seconds. */
+function noteOnBadge(note: string) {
+  badgeNote = note;
+  badgeNoteUntil = performance.now() + 4000;
+  paintVibesBadge();
+  setTimeout(paintVibesBadge, 4100);
+}
+
+/** Where a worker's head is, and the floor under its desk. */
+function deskPoints(v: WorkerView): { head: THREE.Vector3; feet: THREE.Vector3 } {
+  const feet = v.model.root.getWorldPosition(new THREE.Vector3());
+  const deskView = office.desks.get(v.deskId);
+  const head = feet.clone().setY(feet.y + WORKER_HEAD);
+  if (deskView) feet.setY(deskFloor.setFromMatrixPosition(deskView.group.matrixWorld).y);
+  return { head, feet };
+}
+
+/** A worker's micro-reaction, around it: its emoji, sparks, its desk ring flaring, and confetti, smoke or a warning strobe. */
+function vibeReactionFx(id: string, v: WorkerView, kind: WorkerMicroReaction) {
+  if (!vibeFx.enabled) return;
+  const { head, feet } = deskPoints(v);
+  const fx = MICRO_REACTION_FX[kind];
+  const down = kind === 'setback' || kind === 'frustrated' || kind === 'corner_cut';
+  vibeFx.react(id, fx.glyph, fx.hex, head, feet, { sparks: kind === 'breakthrough' || kind === 'eureka' ? 56 : 32, lift: down ? -0.6 : 1 });
+  if (kind === 'breakthrough') burstOver(v.deskId, 90);
+  else if (kind === 'risky_move') sky.flashRoom(fx.hex, 1.4, 2, 3.2);
+  else if (down && !reduceMotion.matches) addEffect(new Puff(head, new THREE.Vector3(0, 1, 0)));
+  noteOnBadge(`${fx.glyph} ${v.name} · ${fx.label}`);
+}
+
+/**
+ * Something the office knows happened at a desk, played without Gemini while Living 3D is on: a
+ * beam of light for a hire, a ring closing in for a send-off, a crimson flash for a shot.
+ */
+function deskMomentFx(id: string, v: WorkerView, kind: DeskMoment) {
+  if (!vibeFx.enabled) return;
+  const { head, feet } = deskPoints(v);
+  const fx = DESK_MOMENT_FX[kind];
+  vibeFx.deskMoment(id, fx.glyph, fx.hex, head, feet, { beam: kind === 'hired' || kind === 'shipped', implode: kind === 'sent_home' || kind === 'shot', sparks: kind === 'shot' ? 70 : 40 });
+  if (kind === 'shot') sky.flashRoom(fx.hex, 2.4, 1, 2.6);
+  else if (kind === 'sent_home') sky.flashRoom(fx.hex, 0.9, 1, 1.4);
+  lastDeskMoment = { kind, worker: id };
+  noteOnBadge(`${fx.glyph} ${v.name} · ${fx.label}`);
+  activeAt = performance.now();
+  renderWake();
+}
+
+/** A worker on this floor opened a pull request: a chair spin, a beam, confetti and the whole room flashing gold. */
+function shippedFx(id: string, v: WorkerView) {
+  if (!vibeFx.enabled) return;
+  v.model.triggerReaction('shipped');
+  burstOver(v.deskId, 180);
+  deskMomentFx(id, v, 'shipped');
+  playFloorEvent('ship_it');
+}
+
+/** Pairs of graded desks at odds for a collision: the struggling or drifting ones when there are two, else every graded desk, chained left to right. */
+function collisionPairs(points: { id: string; head: THREE.Vector3 }[]): [THREE.Vector3, THREE.Vector3][] {
+  const graded = store.vibes?.workers ?? {};
+  const atOdds = points.filter((p) => {
+    const w = graded[p.id];
+    return w && (w.spill === 'amber' || w.spill === 'crimson' || w.posture === 'struggling');
+  });
+  const chain = (atOdds.length >= 2 ? atOdds : points).slice().sort((a, b) => a.head.x - b.head.x);
+  const pairs: [THREE.Vector3, THREE.Vector3][] = [];
+  for (let i = 1; i < chain.length; i++) pairs.push([chain[i - 1].head, chain[i].head]);
+  return pairs;
+}
+
+/**
+ * A room-wide moment: the whole room flashes in its color, a ring races across the floor, and every
+ * graded desk lights up as it passes. A collision crackles between the desks at odds; a crisis calls
+ * out the desks in trouble; things coming together raise a beam at every desk.
+ */
+function playFloorEvent(kind: FloorEvent | 'ship_it') {
+  const fx = FLOOR_EVENT_FX[kind];
+  sky.flashRoom(fx.hex, kind === 'crisis' || kind === 'collision' ? 3.2 : 2.6, fx.pulses, kind === 'ship_it' ? 2.2 : 1.7);
+  const center = new THREE.Vector3((FLOOR.minX + FLOOR.maxX) / 2, 0, (FLOOR.minZ + FLOOR.maxZ) / 2);
+  const graded = store.vibes?.workers ?? {};
+  const troubled = (id: string) => graded[id]?.spill === 'crimson' || graded[id]?.posture === 'struggling';
+  const anyTroubled = Object.keys(graded).some(troubled);
+  const heads: { id: string; head: THREE.Vector3; feet: THREE.Vector3 }[] = [];
+  for (const [id, v] of workerViews) {
+    if (!graded[id]) continue;
+    if (kind === 'crisis' && anyTroubled && !troubled(id)) continue;
+    heads.push({ id, ...deskPoints(v) });
+  }
+  vibeFx.roomWave(center, fx.hex, heads, fx.glyph);
+  if (kind === 'collision') vibeFx.links(collisionPairs(heads), fx.hex);
+  if (kind === 'convergence') for (const h of heads) vibeFx.deskMoment(h.id, fx.glyph, fx.hex, h.head, h.feet, { beam: true, sparks: 20 });
+  if (kind === 'ship_it') confetti.rain(FLOOR, floorArea(FLOOR) * 1.2, 2.5, ceilingOver);
+  lastRoomEvent = kind;
+  noteOnBadge(`${fx.glyph} ${fx.label}`);
+}
 
 function syncFloorVibes(snap = false) {
   const vibes = store.vibes;
+  const live = vibesLiveHere();
+  vibeFx.setEnabled(live);
   const nextMood = vibes && isFloorMood(vibes.mood) ? vibes.mood : 'calm_planning';
   let changed = snap || nextMood !== sky.currentMood;
   sky.setMood(nextMood, snap);
+  sky.setMoodStakes(vibes?.stakes ?? 0.5);
   const nowMs = store.officeNow();
   for (const [wid, v] of workerViews) {
     const wVibe = vibes?.workers[wid];
@@ -4425,16 +4621,52 @@ function syncFloorVibes(snap = false) {
     if (tone !== v.spillTone) changed = true;
     v.spillTone = tone;
     v.spillTarget.set(MONITOR_SPILL_HEX[tone]);
-    if (snap) v.spillColor.copy(v.spillTarget);
+    v.spillPowerTarget = MONITOR_SPILL_POWER[tone];
+    if (snap) {
+      v.spillColor.copy(v.spillTarget);
+      v.spillPower = v.spillPowerTarget;
+    }
     const prevPosture = v.model.activeVibePosture;
     const prevReaction = v.model.activeReaction;
     v.model.applyVibe(wVibe, nowMs);
-    if (v.model.activeVibePosture !== prevPosture || v.model.activeReaction !== prevReaction) changed = true;
+    vibeFx.setAura(wid, Boolean(wVibe), tone, v.model.activeVibePosture, v.model.activeVibeStakes, v.model.activeVibeProgress);
+    const reaction = v.model.activeReaction;
+    if (reaction && reaction !== prevReaction && isWorkerMicroReaction(reaction)) vibeReactionFx(wid, v, reaction);
+    if (v.model.activeVibePosture !== prevPosture || reaction !== prevReaction) changed = true;
   }
-  if (changed) {
+  const ev = vibes?.event;
+  if (ev && isFloorEvent(ev.kind) && ev.seq !== lastFloorEventSeq) {
+    lastFloorEventSeq = ev.seq;
+    if (live && nowMs - ev.at <= 10_000) {
+      playFloorEvent(ev.kind);
+      changed = true;
+    }
+  }
+  if (!snap) livingBadge?.beat();
+  paintVibesBadge();
+  if (changed || vibeFx.enabled) {
     activeAt = performance.now();
     renderWake();
   }
+}
+
+/** Living 3D switched on or off (here, from Settings, or from another window): a sweep across the room you can't miss. */
+function syncVibesPower() {
+  const g = store.gemini;
+  const on = g.connected && g.vibesOn && !g.rejected && !store.setup.airgapped;
+  vibeFx.setEnabled(on && indoorHere());
+  if (vibesWasOn !== null && on !== vibesWasOn && g.connected && indoorHere()) {
+    const from = new THREE.Vector3(player.pos.x, groundAt(office.colliders, player.pos.x, player.pos.z, player.pos.y + 0.5, false), player.pos.z);
+    if (!Number.isFinite(from.y)) from.y = player.pos.y;
+    vibeFx.power(on, from);
+    sky.flashRoom(on ? '#ff7a1a' : '#9aa3b2', on ? 1.8 : 1, 1, on ? 1.8 : 0.7);
+    // The pedestal switch toasts its own press once the server confirms it.
+    if (vibesToggle.pendingTarget === null) toast(on ? 'Living 3D on: the room now reacts to your workers' : 'Living 3D off: lighting and postures are back to neutral');
+    activeAt = performance.now();
+    renderWake();
+  }
+  vibesWasOn = on;
+  paintVibesBadge();
 }
 
 net.onStatus((up) => {
@@ -4442,6 +4674,7 @@ net.onStatus((up) => {
   syncVibesWatch();
 });
 store.on('floor', () => {
+  vibeFx.clear();
   syncFloorVibes(true);
   syncVibesWatch();
   syncVibesSwitch();
@@ -4450,8 +4683,14 @@ store.on('vibes', () => {
   syncFloorVibes(false);
   if (target?.kind === 'vibes') hintKey = '';
 });
-store.on('gemini', syncVibesSwitch);
-store.on('setup', syncVibesSwitch);
+store.on('gemini', () => {
+  syncVibesSwitch();
+  syncVibesPower();
+});
+store.on('setup', () => {
+  syncVibesSwitch();
+  syncVibesPower();
+});
 syncVibesSwitch();
 
 // A background tab and a fully covered window both show up as visibilityState "hidden".
@@ -4634,10 +4873,17 @@ const automation = createAutomation({
       ? {
           vibes: {
             on: store.gemini.vibesOn,
+            live: vibesLiveHere(),
+            badge: livingBadge?.mode ?? 'hidden',
             watching3d: store.gemini.watching3d,
             calls: store.gemini.calls,
             inputTokens: store.gemini.inputTokens,
             mood: sky.currentMood,
+            stakes: store.vibes?.stakes ?? 0.5,
+            event: lastRoomEvent,
+            moment: lastDeskMoment,
+            auras: vibeFx.auraCount,
+            roomFlash: sky.roomFlash,
             workers: [...store.workers.values()].map((w) => {
               const v = workerViews.get(w.id);
               return {
@@ -4645,6 +4891,8 @@ const automation = createAutomation({
                 name: w.name,
                 posture: v?.model.activeVibePosture ?? 'steady',
                 spill: v?.spillTone ?? 'neutral',
+                stakes: v?.model.activeVibeStakes ?? 0.5,
+                progress: vibeFx.progressOf(w.id),
                 reaction: v?.model.activeReaction ?? null,
               };
             }),

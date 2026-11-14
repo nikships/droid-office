@@ -536,6 +536,22 @@ export class Sky {
   private readonly moodTargetColor = new THREE.Color(FLOOR_MOOD_LIGHTING.calm_planning.hex);
   private moodFill = 1;
   private moodTargetFill = 1;
+  /** The mood's breathing pulse (fraction of the fill) and rate, scaled by the floor's stakes. */
+  private moodPulse = 0;
+  private moodPulseHz = 0;
+  private moodStakes = 0.5;
+  private moodPulseK = 1;
+  private moodT = 0;
+  /** A room-wide color flash on top of the mood (floor events, Living 3D switching on or off). */
+  private readonly flashColor = new THREE.Color();
+  private readonly flashLit = new THREE.Color();
+  private flashT = -1;
+  private flashSeconds = 0;
+  private flashPulses = 1;
+  private flashGain = 0;
+  private flashK = 0;
+  /** Prefers reduced motion: no breathing pulse, and a flash fades in and out once instead of pulsing. */
+  calmMotion = false;
   /** Up on the roof: out in the open, over the whole city (see setRoof). */
   private roof = false;
   /** Where the street is from up there (the roof is at 0), for the haze. */
@@ -718,6 +734,8 @@ export class Sky {
     const spec = FLOOR_MOOD_LIGHTING[safeMood];
     this.moodTargetColor.set(spec.hex);
     this.moodTargetFill = spec.fillScale;
+    this.moodPulse = spec.pulse;
+    this.moodPulseHz = spec.pulseHz;
     if (snap) {
       this.moodColor.copy(this.moodTargetColor);
       this.moodFill = this.moodTargetFill;
@@ -729,13 +747,76 @@ export class Sky {
     return this.mood;
   }
 
+  /** How much is riding on the floor, 0–1: how deep and fast the mood's breathing pulse goes. */
+  setMoodStakes(stakes: number) {
+    this.moodStakes = clamp01(Number.isFinite(stakes) ? stakes : 0.5);
+  }
+
+  /**
+   * Washes the whole room in `hex` for `seconds`, pulsing `pulses` times at `gain` (1 is as bright as
+   * the room's own fill). A later flash replaces one still playing.
+   */
+  flashRoom(hex: string, seconds = 2.4, pulses = 1, gain = 1.6) {
+    this.flashColor.set(hex);
+    this.flashSeconds = Number.isFinite(seconds) ? Math.max(0.2, seconds) : 2.4;
+    this.flashPulses = Number.isFinite(pulses) ? Math.max(1, Math.round(pulses)) : 1;
+    this.flashGain = Number.isFinite(gain) ? Math.max(0, gain) : 1.6;
+    this.flashT = 0;
+  }
+
+  /** The room flash playing now, 0–1 (for tests and automation). */
+  get roomFlash(): number {
+    return this.flashK;
+  }
+
+  /** How bright the room's fill light is right now (the sum of its channels). */
+  get officeFillLevel(): number {
+    const c = uniforms.skyOffice.value;
+    return c.r + c.g + c.b;
+  }
+
+  /** Crossfading, breathing with the mood, or flashing: the room light changes every frame. */
+  get moodAnimating(): boolean {
+    return this.moodTransitioning || this.flashT >= 0 || (!this.calmMotion && !this.roof && this.moodPulse > 0);
+  }
+
   /** True while the room mood fill is still crossfading toward its target. */
   get moodTransitioning(): boolean {
     return Math.abs(this.moodFill - this.moodTargetFill) > 1e-3 || Math.abs(this.moodColor.r - this.moodTargetColor.r) + Math.abs(this.moodColor.g - this.moodTargetColor.g) + Math.abs(this.moodColor.b - this.moodTargetColor.b) > 1e-3;
   }
 
   private applyOfficeFill() {
-    uniforms.skyOffice.value.copy(this.moodColor).multiplyScalar(NIGHT.office * this.overhead * this.moodFill);
+    const base = NIGHT.office * this.overhead;
+    uniforms.skyOffice.value.copy(this.moodColor).multiplyScalar(base * this.moodFill * this.moodPulseK);
+    if (this.flashK > 0) uniforms.skyOffice.value.add(this.flashLit.copy(this.flashColor).multiplyScalar(base * this.flashGain * this.flashK));
+  }
+
+  /** Steps the breathing pulse and any flash; true when the room fill changed. */
+  private stepMoodMotion(dt: number): boolean {
+    let changed = false;
+    this.moodT += dt;
+    const breathe = !this.calmMotion && !this.roof && this.moodPulse > 0;
+    const depth = this.moodPulse * (0.45 + this.moodStakes * 0.9);
+    const rateHz = this.moodPulseHz * (0.7 + this.moodStakes * 0.8);
+    const pulseK = breathe ? 1 + depth * Math.sin(this.moodT * Math.PI * 2 * rateHz) : 1;
+    if (pulseK !== this.moodPulseK) {
+      this.moodPulseK = pulseK;
+      changed = true;
+    }
+    if (this.flashT >= 0) {
+      this.flashT += dt;
+      const p = this.flashT / this.flashSeconds;
+      if (p >= 1) {
+        this.flashT = -1;
+        this.flashK = 0;
+      } else {
+        const envelope = Math.sin(Math.PI * Math.min(1, p * 1.15));
+        const pulses = this.calmMotion ? 1 : this.flashPulses;
+        this.flashK = Math.max(0, envelope) * (pulses > 1 ? 0.35 + 0.65 * Math.abs(Math.sin(p * Math.PI * pulses)) : 1);
+      }
+      changed = true;
+    }
+    return changed;
   }
 
   /**
@@ -809,12 +890,13 @@ export class Sky {
     const snap = this.snap;
     this.snap = false;
     const step = (x: number, to: number, secs: number) => (snap ? to : ease(x, to, dt, secs));
+    const moodMoved = this.stepMoodMotion(dt);
     if (this.moodTransitioning) {
-      const kMood = snap ? 1 : 1 - Math.exp(-dt / 2.2);
+      const kMood = snap ? 1 : 1 - Math.exp(-dt / 1.4);
       this.moodColor.lerp(this.moodTargetColor, kMood);
-      this.moodFill = step(this.moodFill, this.moodTargetFill, 2.2);
+      this.moodFill = step(this.moodFill, this.moodTargetFill, 1.4);
       this.applyOfficeFill();
-    }
+    } else if (moodMoved) this.applyOfficeFill();
 
     // The weather, easing from one spell to the next.
     const wantCover = weather === 'clear' ? 0 : weather === 'cloudy' ? k : weather === 'rain' ? 0.8 + 0.2 * k : weather === 'storm' ? 1 : weather === 'snow' ? 0.85 : 0.5;
