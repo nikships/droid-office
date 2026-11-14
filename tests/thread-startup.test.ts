@@ -216,7 +216,8 @@ test('a message the session rewrote in place repaints with its new text', { skip
   assert.match(await page.locator('.wt-entry').innerText(), /First draft/);
   // The session rewrote the same entry: same id and seq, new text, so the row must repaint.
   await page.evaluate(() => (window as any).message('Second draft'));
-  assert.match(await page.locator('.wt-entry').innerText(), /Second draft/);
+  // textContent: an inserted row renders (and gains innerText) at the next frame under content-visibility.
+  assert.match((await page.locator('.wt-entry').textContent()) ?? '', /Second draft/);
   await page.evaluate(() => (window as any).thread.dispose());
   assert.deepEqual(errors, []);
 });
