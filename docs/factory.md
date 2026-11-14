@@ -6,6 +6,18 @@ This is the plan for that work and the contract every Factory feature follows. S
 
 In [Airgapped (no-account) mode](subscriptions.md#airgapped-no-account-mode), Office pauses Factory key checks and polling, immediately publishes empty Factory account/usage state to open clients, and refuses Factory HTTP/cloud actions with an explanation. The key, cached data and Droid credentials are kept. Window watches still register and unregister without issuing requests while paused. Switching back immediately restores the cached state, resumes the connection and checks the saved key. Already-issued network requests and existing Droid turns are not a network-isolation guarantee.
 
+## Limits and overage
+
+`FactoryState.limits` reads `GET /api/billing/limits` with the existing `fk-*` key. It preserves Standard and Droid Core `fiveHour`, `weekly`, and `monthly` windows (`usedPercent`, nullable `windowEnd` / `secondsRemaining`), subscription status, `overagePreference`, management permission, Extra Usage balance in cents and whether Extra Usage is allowed. Null reset fields mean the window has not started. Enterprise accounts (`usesTokenRateLimitsBilling: false` or no Standard windows) are not applicable, not failures.
+
+The limits feature polls every 60 seconds, or 20 seconds while watched or Factory-hosted workers are active. Model discovery, hire gates and retry inspections share a throttled on-demand recheck. Errors preserve the last displayable sample but fail open for hiring; disconnected, rejected or unknown limits never become a new quota refusal. Airgapped mode publishes empty limits and pauses reads and writes.
+
+Hosted Standard models, including Router, need every Standard window below 100%, unless Extra Usage is selected, allowed and has a positive balance. Droid Core models use their own three windows. Selecting Droid Core fallback does not silently make a requested Standard model runnable. Inactive subscriptions refuse hosted models while leaving BYOK/DroidProxy untouched. Exhaustion names the affected windows and the earliest exhausted reset to recheck, plus the fallback/balance explanation; subsequent exhausted windows can still block after that reset.
+
+`POST /api/factory/limits/overage` accepts only `{"overagePreference":"droidCore"}` or `{"overagePreference":"extraUsage"}` and forwards to `/api/organization/subscription/set-overage-preference`. It requires an office page or paired phone, a connected key and `canManageOverage`; successful writes schedule a poll. This changes account-wide billing behavior, so automated live verification reads the preference without changing it.
+
+Factory Standard and Droid Core appear independently of DroidProxy support in quota rings and subscription sheets, Settings → Connections → Factory, model picker reasons, Thread `/limits` (**Factory Limits & Overage**), the compute wall and Factory sessions TV. A connected account whose limits are unavailable or not applicable gets an explanatory native dialog; only a disconnected account falls back to Raw TTY. Web and Android show all three windows, reset times, Extra Usage balance and overage mode. `team_models` / `models_list` include both tier summaries even when the subagent allowlist contains no models of one tier.
+
 ## The owner's decisions
 
 - Build all of it: the compute wall and the Computers window, the Sessions & credits board with credits per office worker, the CI automations board, AutoWiki on the bookshelf, and cloud workers.
@@ -16,7 +28,7 @@ In [Airgapped (no-account) mode](subscriptions.md#airgapped-no-account-mode), Of
 
 ## Factory's public API
 
-- Base URL `https://api.factory.ai`, every path under `/api/v0`, header `Authorization: Bearer <key>`. Docs: <https://docs.factory.com/api-reference>. The live OpenAPI spec also has endpoints the docs pages don't show: `GET/PATCH /organization/computer-secrets`, `GET /sessions/{id}/children` and `GET /wiki/upload-access?repoUrl=`.
+- Base URL `https://api.factory.ai`, ordinary public paths under `/api/v0`, header `Authorization: Bearer <key>`. Billing limits and overage preferences use `/api` without `/v0`, through the same authenticated, redacting, timeout/retry-aware client. Docs: <https://docs.factory.com/api-reference>. The live OpenAPI spec also has endpoints the docs pages don't show: `GET/PATCH /organization/computer-secrets`, `GET /sessions/{id}/children` and `GET /wiki/upload-access?repoUrl=`.
 - Several response schemas in the spec are empty (`{}`): CI jobs, runs and scan, and every wiki answer. The shapes in `src/shared/factory-*.ts` come from real answers instead, and for the wiki from the `droid` CLI's own schemas for the same endpoints. Where the account had no data yet (CI runs), a parsed item keeps the fields it most likely has and `raw`, the item as the API sent it.
 - Unit tests inject `fetch`, because CI has no Factory key, and use keys like `fk-test-…`. Every answer they inject is copied from a real one from the owner's account. A feature is done once it also works in a clone of the owner's office against their real account (the `office-clone` skill), and its pull request's screenshots come from there. Never commit a real key, or put one in a test, fixture, log line, PR body or commit message.
 

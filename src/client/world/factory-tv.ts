@@ -5,6 +5,8 @@ import { compactCredits, isLive, latestArtifacts, artifactLabel, sessionWhere, s
 import { MONO } from '../fonts';
 import { ANISOTROPY } from './texture-quality';
 import { paintGlyph, track } from './toon';
+import { factoryLimitsActive, factoryOverageWords, factoryWindows } from '../../shared/factory-limits';
+import { durationWords } from '../../shared/subscriptions';
 
 // The lounge TV: the Factory sessions dashboard while the office is connected to Factory (what's
 // running right now and where, the credits today and over the week, the top sessions and the
@@ -60,9 +62,9 @@ export class FactoryTvTexture {
   /** Draws the screen for `state`, unless it would look the same as the last time. `force` redraws anyway (fonts came in). */
   render(state: FactoryState, now = Date.now(), force = false): void {
     const c = state.connection;
-    const on = c.connected && !c.rejected && state.sessions.fetchedAt > 0;
+    const on = c.connected && !c.rejected && (state.sessions.fetchedAt > 0 || factoryLimitsActive(state.limits));
     // What's on screen changes with the data and, for running sessions' ages, by the minute.
-    const key = on ? JSON.stringify([state.sessions, state.computers.items.map((x) => [x.id, x.name]), Math.floor(now / 60_000)]) : JSON.stringify(['standby', c.connected, c.rejected ?? '', c.checking ?? false]);
+    const key = on ? JSON.stringify([state.sessions, state.limits, state.computers.items.map((x) => [x.id, x.name]), Math.floor(now / 60_000)]) : JSON.stringify(['standby', c.connected, c.rejected ?? '', c.checking ?? false]);
     if (!force && key === this.drawn) return;
     this.drawn = key;
     if (on) this.dashboard(state, now);
@@ -185,7 +187,7 @@ export class FactoryTvTexture {
     g.fillStyle = HAIR;
     g.fillRect(48, BY - 30, W - 96, 2);
     this.label('TOP SESSIONS · 7 DAYS', LX, BY + 20);
-    const top = s.credits.top.slice(0, 4);
+    const top = s.credits.top.slice(0, factoryLimitsActive(state.limits) ? 3 : 4);
     top.forEach((t, i) => {
       const y = BY + 80 + i * 72;
       g.font = `600 38px ${MONO}`;
@@ -213,7 +215,7 @@ export class FactoryTvTexture {
 
     const PX = 1100;
     this.label('LATEST PULL REQUESTS', PX, BY + 20);
-    const prs = latestArtifacts(s.items, 4);
+    const prs = latestArtifacts(s.items, factoryLimitsActive(state.limits) ? 3 : 4);
     prs.forEach(({ artifact, session }, i) => {
       const y = BY + 80 + i * 72;
       const merged = artifact.action === 'merge';
@@ -234,12 +236,14 @@ export class FactoryTvTexture {
       g.fillStyle = DIM;
       g.fillText('None yet', PX, BY + 80);
     }
+    if (factoryLimitsActive(state.limits)) this.limitsFooter(state, now);
 
     // How old the data is, bottom right.
     g.font = `500 22px ${MONO}`;
     g.fillStyle = DIM;
     g.textAlign = 'right';
-    g.fillText(`READ ${spanText(now - s.fetchedAt).toUpperCase()} AGO · E OPENS SESSIONS`, W - 48, H - 24);
+    const readAgo = s.fetchedAt > 0 ? `READ ${spanText(now - s.fetchedAt).toUpperCase()} AGO · ` : '';
+    g.fillText(`${readAgo}E OPENS SESSIONS`, W - 48, H - 24);
     g.textAlign = 'left';
   }
 
@@ -348,5 +352,33 @@ export class FactoryTvTexture {
     g.font = `500 22px ${MONO}`;
     g.fillStyle = DIM;
     g.fillText(fit(g, since ? `COUNTED SINCE ${sinceText.toUpperCase()}${guessedWeek ? ' · HATCHED: ESTIMATED' : ''}` : 'NOT COUNTED YET', w - 60), X + 30, Y + h - 22);
+  }
+
+  private limitsFooter(state: FactoryState, now: number) {
+    const g = this.g;
+    const s = state.limits;
+    g.fillStyle = HAIR;
+    g.fillRect(48, 944, W - 96, 2);
+    g.font = `500 22px ${MONO}`;
+    g.fillStyle = s.error ? AMBER : MUTED;
+    g.fillText(fit(g, `FACTORY LIMITS · ${factoryOverageWords(s)} · Extra Usage $${(s.extraUsageBalanceCents / 100).toFixed(2)}${s.error ? ' · cached usage' : ''}`, W - 96), 48, 974);
+    for (const [i, tier] of (['standard', 'core'] as const).entries()) {
+      const y = 1004 + i * 30;
+      g.font = `600 21px ${MONO}`;
+      g.fillStyle = ORANGE;
+      g.fillText(tier === 'standard' ? 'STANDARD' : 'DROID CORE', 48, y);
+      factoryWindows(s, tier).forEach((q, j) => {
+        const remaining = Math.max(0, Math.min(100, 100 - q.usedPercent));
+        let reset: string;
+        if (q.resetsAt === null) reset = q.usedPercent === 0 ? 'not started' : 'reset unknown';
+        else if (q.resetsAt <= now) reset = 'reset due';
+        else reset = `in ${durationWords(q.resetsAt - now)}`;
+        g.font = `500 20px ${MONO}`;
+        if (remaining <= 0) g.fillStyle = RED;
+        else if (remaining <= 20) g.fillStyle = AMBER;
+        else g.fillStyle = INK;
+        g.fillText(fit(g, `${q.name} ${Number(remaining.toFixed(1))}% left · ${reset}`, 520), 260 + j * 535, y);
+      });
+    }
   }
 }

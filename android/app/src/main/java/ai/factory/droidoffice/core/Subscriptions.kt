@@ -35,6 +35,8 @@ data class SubscriptionModels(val installed: Int = 0, val available: Int = 0, va
 data class SubscriptionState(val proxy: SubscriptionProxy = SubscriptionProxy(), val providers: List<SubscriptionProvider> = emptyList(), val models: SubscriptionModels? = null)
 
 object Subscriptions {
+    const val FACTORY_KEY = "factory"
+
     fun parse(value: JsonElement?): SubscriptionState? = (value as? JsonObject)?.let { runCatching { OfficeJson.decodeFromJsonElement<SubscriptionState>(it) }.getOrNull() }
     /** Match the web companion, including when connected to an older office. */
     fun ordered(providers: List<SubscriptionProvider>): List<SubscriptionProvider> = providers.sortedBy { provider ->
@@ -61,6 +63,7 @@ object Subscriptions {
         "grok" -> "Grok"
         "copilot" -> "GitHub Copilot"
         "meta" -> "Meta"
+        FACTORY_KEY -> "Factory"
         else -> key
     }
 

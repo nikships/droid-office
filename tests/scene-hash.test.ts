@@ -24,6 +24,7 @@ const NOT_SCENE: Record<string, string> = {
   'src/shared/factory': 'Factory data on screens',
   'src/shared/factory-ci': 'Factory data on screens',
   'src/shared/factory-computers': 'Factory data on screens',
+  'src/shared/factory-limits': 'live quota data on screens, not baked room lighting',
   'src/shared/factory-sessions': 'Factory data on screens',
   'src/shared/gemini-vibes': 'live worker postures, laptop spill and runtime mood lighting (excluded from the static probe bake)',
   'src/shared/jira': 'board data',

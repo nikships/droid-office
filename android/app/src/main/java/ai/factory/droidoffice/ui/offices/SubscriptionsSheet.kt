@@ -18,6 +18,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -37,6 +38,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -46,6 +48,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import ai.factory.droidoffice.R
 import ai.factory.droidoffice.core.ModelBrand
 import ai.factory.droidoffice.core.SubscriptionAccount
 import ai.factory.droidoffice.core.SubscriptionProvider
@@ -72,6 +75,7 @@ fun SubscriptionsSheet(onDismiss: () -> Unit) {
                 Text("Subscriptions", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
                 TextButton(onClick = onDismiss, modifier = Modifier.tagged(Tags.Subscriptions.CLOSE)) { Text("Done") }
             }
+            FactorySubscriptions(now)
             val s = state
             if (s == null) {
                 Text("No subscription status yet. Connect to the office; older offices may need an update.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.tagged(Tags.Subscriptions.STATUS))
@@ -125,7 +129,7 @@ fun SubscriptionsSheet(onDismiss: () -> Unit) {
 
 /** An account's ring: one arc per usage window, outermost first, the provider's logo inside. Tapping it shows the windows and resets underneath. */
 @Composable
-private fun QuotaRing(provider: SubscriptionProvider, account: SubscriptionAccount, picked: Boolean, onClick: () -> Unit) {
+internal fun QuotaRing(provider: SubscriptionProvider, account: SubscriptionAccount, picked: Boolean, onClick: () -> Unit) {
     val muted = Subscriptions.state(account) != null || account.windows.isEmpty()
     val windows = account.windows.take(3)
     Column(
@@ -161,7 +165,10 @@ private fun QuotaRing(provider: SubscriptionProvider, account: SubscriptionAccou
                 if (picked) drawCircle(Palette.BorderStrong, radius = size.minDimension / 2 + 3.dp.toPx(), style = Stroke(1.dp.toPx()))
             },
             contentAlignment = Alignment.Center,
-        ) { BrandLogo(ModelBrand.provider(provider.key), Modifier.size(18.dp)) }
+        ) {
+            if (provider.key == Subscriptions.FACTORY_KEY) Icon(painterResource(R.drawable.ic_glyph), null, Modifier.size(18.dp), tint = Palette.Accent)
+            else BrandLogo(ModelBrand.provider(provider.key), Modifier.size(18.dp))
+        }
         Text(account.label, style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

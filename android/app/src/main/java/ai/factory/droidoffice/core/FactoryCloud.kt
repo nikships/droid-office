@@ -47,6 +47,7 @@ data class FactoryState(
     val connection: FactoryConnection = FactoryConnection(),
     val computers: FactoryComputers = FactoryComputers(),
     val environments: FactoryEnvironments = FactoryEnvironments(),
+    val limits: FactoryLimitsState = FactoryLimitsState(),
 )
 
 /** Where `worker.spawn` hires a cloud worker (CloudHire): exactly one of [computerId] and [environmentId]. */

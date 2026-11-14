@@ -127,6 +127,8 @@ import { cloudBadge } from '../shared/factory-cloud';
 import { Compass, type Bearing } from './ui/compass';
 import { openCharacter } from './ui/character';
 import { openSettings, type SettingsPane } from './ui/settings';
+import { openFactoryLimits } from './ui/factory-limits';
+import { openSubscriptionsStatus } from './ui/subscriptions-status';
 import { openWelcome, watchWelcome } from './ui/welcome';
 import { OPEN_SETTINGS_EVENT } from './ui/model-picker';
 import { resolveSettingsPane, type SettingsCardTitle } from '../shared/settings-nav';
@@ -2866,6 +2868,16 @@ const hudActions: HudAction[] = [
     run: () => openWhiteboard(net),
   },
   { id: 'computers', icon: '🖥️', label: 'Computers', section: 'Open', count: () => store.factory.computers.items.length, title: () => 'This machine and your Factory Droid Computers', run: () => showComputers() },
+  { id: 'subscriptions', icon: '◉', label: 'Subscriptions', section: 'Open', title: () => 'Factory and DroidProxy quota windows', run: () => openSubscriptionsStatus() },
+  {
+    id: 'factory-limits',
+    icon: '◉',
+    label: 'Factory Limits & Overage',
+    section: 'Open',
+    shown: () => store.factory.connection.connected && !store.factory.connection.rejected,
+    title: () => 'Standard and Droid Core quotas, Extra Usage and overage preference',
+    run: () => openFactoryLimits(),
+  },
   {
     id: 'environments',
     icon: '⧉',

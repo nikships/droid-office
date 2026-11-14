@@ -3,7 +3,7 @@ import { isAsleep, isBusy, needsOwnerInput } from '../../shared/status';
 import { threadArgumentsText, threadOutputText, type ThreadBlock, type ThreadModelAction, type ThreadRow } from '../../shared/thread-presentation';
 import type { ThreadEntry } from '../../shared/worker-thread';
 import { CLEAR_DROID_QUEUE, readDroidQueue } from '../../shared/droid-queue';
-import { slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
+import { nativeLimits, slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
 import { ThreadQueue } from '../../shared/thread-queue';
 import type { Net } from '../net';
 import { ThreadHistory } from '../thread-history';
@@ -15,6 +15,8 @@ import { viewPicture } from './picture-viewer';
 import { markdown } from './markdown';
 import { promptImages } from './images';
 import { withToken } from '../token';
+import { store } from '../state';
+import { openFactoryLimits } from './factory-limits';
 
 export interface WorkerThread {
   element: HTMLElement;
@@ -201,6 +203,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (stick) follow();
   };
   const notice = h('p.wt-notice', { role: 'status' });
+  const limitsBar = h('div.wt-limits.row', { hidden: true }, h('button.btn.sm.ghost', { type: 'button', onclick: () => openFactoryLimits() }, 'Factory limits'));
   const retry = h(
     'button.btn.sm.hidden',
     {
@@ -304,7 +307,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
           },
           h('span.wt-slash-name', {}, `/${command.name}`),
           h('span.wt-slash-desc', { title: command.argumentHint ? `${command.description}\n/${command.name} ${command.argumentHint}` : command.description }, command.description),
-          command.kind === 'tty' ? h('span.wt-slash-tag', { title: 'Opens one of Droid’s dialogs, in Raw TTY' }, 'Raw TTY') : null,
+          command.kind === 'tty' && !nativeLimits(`/${command.name}`, store.factory.connection.connected && !store.factory.connection.rejected)
+            ? h('span.wt-slash-tag', { title: 'Opens one of Droid’s dialogs, in Raw TTY' }, 'Raw TTY')
+            : null,
           command.source ? h('span.wt-slash-tag', { title: command.source === 'skill' ? 'One of this worker’s skills' : 'A custom command' }, command.source === 'skill' ? 'Skill' : 'Command') : null,
         ),
       ),
@@ -332,7 +337,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   );
   const blockedText = h('p.wt-blocked-text');
   const blockedNote = h('div.wt-blocked.note.warn', { role: 'status', hidden: true }, icon('lock', 15), blockedText, opts.blockedAction ?? null);
-  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, progress, h('div.wt-feedback', {}, notice, retry, raw, resume), blockedNote, form);
+  const element = h('section.worker-thread', { 'aria-label': `${worker.name} thread` }, teamSection, scroll, latestAnchor, progress, h('div.wt-feedback', {}, notice, retry, raw, resume), limitsBar, blockedNote, form);
   images.dropZone(form);
   const nodes = new Map<string, { key: string; node: HTMLElement; sourceIds: string[] }>();
   const expandedMessages = new Set<string>();
@@ -830,6 +835,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const blocked = opts.blocked?.();
     const allowed = active && connected && !disposed && (opts.promptWakes || !isAsleep(worker.status)) && !worker.lost && !broken && !blocked;
     const waiting = worker.status === 'needs_input';
+    const factoryOnline = store.factory.connection.connected && !store.factory.connection.rejected;
+    limitsBar.hidden = !waiting || !active || disposed || !connected || !!worker.lost || !!broken || !!blocked || !factoryOnline;
     form.hidden = waiting || !!blocked;
     blockedNote.hidden = !blocked;
     blockedText.textContent = blocked ?? '';
@@ -918,9 +925,21 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
     updateControls();
   };
+  const clearDraft = () => {
+    input.value = '';
+    opts.onDraft('');
+    told = '';
+    paintSlash();
+  };
   const submit = async (queueSend = false) => {
-    if ((queueSend ? queue.disabled || queue.hidden : send.disabled) || sending) return;
     const text = input.value.trim();
+    if ((queueSend ? queue.disabled || queue.hidden : send.disabled) || sending) return;
+    if (active && !disposed && !queueSend && nativeLimits(text, store.factory.connection.connected && !store.factory.connection.rejected)) {
+      openFactoryLimits();
+      clearDraft();
+      updateControls();
+      return;
+    }
     const refused = cloud ? undefined : slashRefusal(text, worker.name, isBusy(worker.status));
     if (refused) {
       told = refused;
@@ -944,10 +963,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     if (!result) {
       if (queueReceipt) queued.sent(text, hasImage, after);
       images.take();
-      input.value = '';
-      opts.onDraft('');
-      told = '';
-      paintSlash();
+      clearDraft();
       if (history.historical) history.clear(worker.sessionId);
       follow();
       read();
@@ -1008,6 +1024,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     }
   });
   const off = net.onMessage(receive);
+  const offFactory = store.on('factory', () => {
+    paintSlash();
+    updateControls();
+  });
   const timer = setInterval(() => {
     if (!active || !connected || document.hidden) return;
     readTeam();
@@ -1078,6 +1098,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       teamSection.removeEventListener('focusout', teamFocus);
       document.removeEventListener('selectionchange', teamSelection);
       off();
+      offFactory();
       resize.disconnect();
       questionChanges.disconnect();
       images.discard();

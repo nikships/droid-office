@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { SLASH_COMMANDS, slashCommands, slashKind, slashOf, slashRefusal, slashSuggestions } from '../src/shared/slash-commands.js';
+import { nativeLimits, SLASH_COMMANDS, slashCommands, slashKind, slashOf, slashRefusal, slashSuggestions } from '../src/shared/slash-commands.js';
 
 test('the Android app lists the same slash commands', () => {
   const kotlin = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/core/SlashCommands.kt', import.meta.url), 'utf8');
@@ -30,6 +30,16 @@ test('reads the command a draft asks for, by name or alias', () => {
   assert.equal(slashKind('/quit'), 'blocked');
   assert.equal(slashKind('/my-skill'), 'thread');
   assert.equal(slashKind('plain text'), 'thread');
+});
+
+test('limits opens natively whenever Factory is connected, including unknown and inapplicable windows', () => {
+  assert.equal(nativeLimits('/limits', true), true);
+  assert.equal(nativeLimits('  /LIMITS ', true), true);
+  assert.equal(nativeLimits('/limits', false), false);
+  assert.equal(slashKind('/limits'), 'tty', 'disconnected clients retain the CLI fallback');
+  assert.equal(nativeLimits('/model', true), false);
+  assert.equal(nativeLimits('/limits/file', true), false);
+  assert.equal(nativeLimits('show /limits', true), false);
 });
 
 test('suggests names that start with what is typed, then aliases, then names containing it', () => {

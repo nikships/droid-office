@@ -167,6 +167,7 @@ fun WorkerScreen(
     val data by connection.data.collectAsStateWithLifecycle()
     val screens by connection.screens.collectAsStateWithLifecycle()
     val link by connection.link.collectAsStateWithLifecycle()
+    val factory by connection.factory.collectAsStateWithLifecycle()
     // Building agents aren't on any floor: the Orchestrator and the bots come from Mission Control.
     val mission = workerId == ORCHESTRATOR_ID
     // An office that predates Mission Control lists its external bots as ordinary floor workers.
@@ -269,6 +270,7 @@ fun WorkerScreen(
         }
         var sendingHome by remember { mutableStateOf(false) }
         var orchestratorMenu by remember { mutableStateOf(false) }
+        var factoryLimits by remember(workerId) { mutableStateOf(false) }
         val blocked = if (mission) MissionControl.orchestratorBlocked(orchestrator) else null
         Header(worker, embedded, link.phase == Phase.Connected, onBack, onSendHome = { if (mission) orchestratorMenu = true else sendingHome = true }, mission = mission, blocked = blocked != null)
         val live = !worker.state.asleep
@@ -460,6 +462,10 @@ fun WorkerScreen(
                     intercept = if (tty) null else { prompt ->
                         val slash = SlashCommands.of(prompt)
                         when {
+                            SlashCommands.nativeLimits(prompt, ai.factory.droidoffice.core.FactoryLimits.connected(factory)) -> {
+                                factoryLimits = true
+                                true
+                            }
                             slash == null -> false
                             slash.second?.kind == SlashCommands.Kind.Blocked -> {
                                 scope.launch { snackbar.showSnackbar(if (mission) "/${slash.first} would end the Orchestrator’s Droid. Start a new conversation from its menu instead." else "/${slash.first} would end ${worker.name}’s Droid. Send it home instead.") }
@@ -485,6 +491,7 @@ fun WorkerScreen(
             onBack()
         })
         if (orchestratorMenu && orchestrator != null) OrchestratorSheet(orchestrator, onDismiss = { orchestratorMenu = false })
+        if (factoryLimits) ai.factory.droidoffice.ui.offices.SubscriptionsSheet { factoryLimits = false }
         openedQuestionMenu?.let { menu ->
             QuestionWorkspaceDialog(
                 worker = worker,

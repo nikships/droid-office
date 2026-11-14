@@ -207,6 +207,29 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         }
     }
 
+    /** An explicit owner choice only. Never retry or redirect a paid overage preference write. */
+    suspend fun factoryOverage(base: String, auth: OfficeAuth, preference: String): Result<Unit> = withContext(Dispatchers.IO) {
+        if (preference !in setOf("droidCore", "extraUsage")) return@withContext Result.failure(IllegalArgumentException("Unknown overage preference"))
+        val body = buildJsonObject { put("overagePreference", preference) }.toString().toRequestBody(jsonType)
+        val req = request(base, "api/factory/limits/overage", auth).post(object : RequestBody() {
+            override fun contentType() = body.contentType()
+            override fun contentLength() = body.contentLength()
+            override fun isOneShot() = true
+            override fun writeTo(sink: BufferedSink) = body.writeTo(sink)
+        }).build()
+        try {
+            noRetryClient.newCall(req).await().use { res ->
+                if (res.isSuccessful) Result.success(Unit) else {
+                    val parsed = runCatching { OfficeJson.parseToJsonElement(res.body.string()) as? kotlinx.serialization.json.JsonObject }.getOrNull()
+                    val error = (parsed?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                    Result.failure(IOException(error ?: "The office answered ${res.code}. Overage preference was not confirmed."))
+                }
+            }
+        } catch (_: IOException) {
+            Result.failure(IOException("Couldn't confirm the overage preference. Check the office's current mode before trying again."))
+        }
+    }
+
     /**
      * Keeps a picture on the office's machine for a prompt that isn't sent yet (POST
      * /api/prompt/image). Answers with its id for `images` on worker.prompt, or why it was refused.

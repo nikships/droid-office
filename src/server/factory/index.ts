@@ -10,6 +10,7 @@ import { FactoryOffice } from './office.js';
 import { FactoryRegistry } from './registry.js';
 import { SessionsFeature, type OfficeSessionRef } from './sessions.js';
 import { WikiFeature, type WikiOptions } from './wiki.js';
+import { LIMITS_RECHECK_MS, LimitsFeature } from './limits.js';
 
 export { sendDownload } from './feature.js';
 
@@ -26,6 +27,8 @@ export interface MountOptions {
   cloud?: Parameters<typeof mountCloud>[1];
   /** The office's own workers with a Droid session, on every floor, for their credits. */
   officeSessions?: () => OfficeSessionRef[];
+  /** Local, cloud or Mission Control workers currently using Factory-hosted models. */
+  hostedWorkers?: () => boolean;
   /** The floors and the Droid command AutoWiki's /wiki runs need (wiki.ts). */
   wiki?: Pick<WikiOptions, 'floors' | 'runner'>;
 }
@@ -38,11 +41,12 @@ export interface MountOptions {
 export function mountFactory(opts: MountOptions) {
   let paused = !!opts.paused;
   const office = new FactoryOffice(opts.dataDir, { fetchImpl: opts.fetchImpl, base: opts.base, paused });
-  const registry = new FactoryRegistry({ link: office, broadcast: (state) => opts.broadcast(paused ? emptyFactoryState() : state), toast: opts.toast });
+  const registry = new FactoryRegistry({ link: office, paused: () => paused, broadcast: (state) => opts.broadcast(paused ? emptyFactoryState() : state), toast: opts.toast });
   registry.register((host) => new ComputersFeature(host));
   registry.register((host) => new EnvironmentsFeature(host));
   registry.register((host) => new SessionsFeature(host, { dataDir: opts.dataDir, officeSessions: opts.officeSessions }));
   registry.register((host) => new CiFeature(host));
+  const limits = registry.register((host) => new LimitsFeature(host, { hostedWorkers: opts.hostedWorkers, paused: () => paused }));
   const wiki = registry.register((host) => new WikiFeature(host, { ...opts.wiki, key: () => office.key(), fetchImpl: opts.fetchImpl, base: opts.base })) as WikiFeature;
   const cloud = opts.cloud && mountCloud(registry, { ...opts.cloud, key: () => office.key() });
   office.onChange = () => {
@@ -52,6 +56,20 @@ export function mountFactory(opts: MountOptions) {
   registry.start();
   // A saved key is checked again at every start: it may have been deleted, or its plan changed.
   void office.check();
+  let rechecking: Promise<void> | undefined;
+  let recheckedAt: number | undefined;
+
+  const recheckLimits = (): Promise<void> => {
+    if (paused || !office.client()) return Promise.resolve();
+    if (rechecking) return rechecking;
+    const now = Date.now();
+    if (recheckedAt !== undefined && now - recheckedAt < LIMITS_RECHECK_MS) return Promise.resolve();
+    recheckedAt = now;
+    rechecking = registry.recheck('limits').finally(() => {
+      rechecking = undefined;
+    });
+    return rechecking;
+  };
 
   /** Handles a factory.* message from connection `client` (named `who`); `reply` answers only them. */
   const message = (client: string, who: string, msg: FactoryMsg, reply: (msg: ServerMsg) => void) => {
@@ -96,8 +114,11 @@ export function mountFactory(opts: MountOptions) {
     registry,
     cloud,
     state: () => (paused ? emptyFactoryState() : registry.state()),
+    recheckLimits,
     setPaused: (on: boolean) => {
       paused = on;
+      if (on) limits.reset();
+      recheckedAt = undefined;
       office.setPaused(on);
       // The registry deduplicates the unmasked cache, which does not change when pausing.
       opts.broadcast(on ? emptyFactoryState() : registry.state());
