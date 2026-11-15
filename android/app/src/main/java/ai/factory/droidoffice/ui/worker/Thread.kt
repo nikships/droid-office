@@ -457,14 +457,17 @@ internal fun Thread(
         anchor = null
     }
 
-    fun earlier() {
+    /** With [keepFollowing], the older page goes in above and the thread stays on the latest. */
+    fun earlier(keepFollowing: Boolean = false) {
         if (!connected) return
         val first = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key != HEAD }
         val (req, before) = feed.earlier(System.currentTimeMillis()) ?: return
-        // Hold on to the row's newest entry: an earlier page can only add to a row from its start.
-        val row = rows.firstOrNull { it.id == first?.key } ?: rows.firstOrNull()
-        anchor = row?.let { r -> (r.sourceIds.lastOrNull() ?: r.id) to (first?.takeIf { it.key == r.id }?.offset ?: 0) }
-        follow = false
+        if (!keepFollowing) {
+            // Hold on to the row's newest entry: an earlier page can only add to a row from its start.
+            val row = rows.firstOrNull { it.id == first?.key } ?: rows.firstOrNull()
+            anchor = row?.let { r -> (r.sourceIds.lastOrNull() ?: r.id) to (first?.takeIf { it.key == r.id }?.offset ?: 0) }
+            follow = false
+        }
         if (!connection.send(ClientMsg.threadRead(w.id, req, before))) feed.unsent(req)
         state = feed.state
     }
@@ -472,7 +475,10 @@ internal fun Thread(
     LaunchedEffect(list, state.hasMore, state.loadingEarlier, connected) {
         if (!state.hasMore || state.loadingEarlier || !connected || rows.isEmpty()) return@LaunchedEffect
         snapshotFlow { list.layoutInfo.visibleItemsInfo.any { it.key == HEAD } }.collect { atTop ->
-            if (atTop && state.hasMore && !state.loadingEarlier) earlier()
+            // Still following, the head shows because the latest page fits on screen or isn't laid out
+            // yet (a thread just opened), not because the owner scrolled up to it: loading the older page
+            // must not leave the thread part way up.
+            if (atTop && state.hasMore && !state.loadingEarlier) earlier(keepFollowing = follow)
         }
     }
 
