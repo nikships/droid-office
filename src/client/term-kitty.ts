@@ -20,6 +20,7 @@ import {
 } from '../shared/kitty';
 import type { KeyAction } from '../shared/csi-enter';
 import type { ScreenImage } from '../shared/protocol';
+import { pixelScrollOf } from './term-pixel-scroll';
 import { icon } from './ui/icons';
 
 const ALT_BUFFER_MODES = [47, 1047, 1049];
@@ -394,6 +395,11 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
     }
   };
 
+  const paintNow = () => {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = 0;
+    paintOverlay();
+  };
   const schedulePaint = () => {
     if (disposed || !canvas || rafId) return;
     rafId = requestAnimationFrame(() => {
@@ -497,14 +503,18 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
     return undefined;
   };
 
-  const collectViewportRects = (): { rects: CoalescedRect[]; mutated: boolean } => {
+  /** Rows drawn past each edge of the screen: the one a pixel scroll part-shows above and below. */
+  const extraRows = () => (pixelScrollOf(term)?.drawsExtraRows() ? 1 : 0);
+
+  const collectViewportRects = (extra: number): { rects: CoalescedRect[]; mutated: boolean } => {
     const buf = term.buffer.active;
     const rects: CoalescedRect[] = [];
     const active = new Map<string, CoalescedRect>();
     let mutated = false;
 
-    for (let y = 0; y < term.rows; y++) {
-      const { mutated: lineMut, map } = extractLinePlaceholders(term, buf.viewportY + y, linePlaceholders);
+    for (let y = -extra; y < term.rows + extra; y++) {
+      const line = buf.viewportY + y;
+      const { mutated: lineMut, map } = line >= 0 ? extractLinePlaceholders(term, line, linePlaceholders) : { mutated: false, map: undefined };
       if (lineMut) mutated = true;
       const nextActive = new Map<string, CoalescedRect>();
       if (map) {
@@ -559,9 +569,9 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
           continue;
         }
         const yRel = p.marker.line - buf.viewportY;
-        if (yRel + p.rows <= 0 || yRel >= term.rows) continue;
-        const visY0 = Math.max(0, yRel);
-        const visY1 = Math.min(term.rows, yRel + p.rows);
+        if (yRel + p.rows <= -extra || yRel >= term.rows + extra) continue;
+        const visY0 = Math.max(-extra, yRel);
+        const visY1 = Math.min(term.rows + extra, yRel + p.rows);
         rects.push({
           imageId: p.imageId,
           placementId: p.placementId,
@@ -670,21 +680,26 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
     if (disposed || !canvas || !ctx || !screenEl) return;
     const geom = cellGeometry();
     if (!geom) return;
-    const { rects, mutated } = collectViewportRects();
+    const extra = extraRows();
+    const { rects, mutated } = collectViewportRects(extra);
     if (mutated) term.refresh(0, term.rows - 1);
     pruneDecoded();
     const visibleRects = graphics.size > 0 ? rects : [];
     const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+    // The canvas reaches a row past each edge; drawing stays in screen coordinates.
+    const pad = extra * geom.cellH;
+    const cssH = geom.cssH + 2 * pad;
     const devW = Math.max(1, Math.round(geom.cssW * dpr));
-    const devH = Math.max(1, Math.round(geom.cssH * dpr));
+    const devH = Math.max(1, Math.round(cssH * dpr));
     if (canvas.width !== devW || canvas.height !== devH) {
       canvas.width = devW;
       canvas.height = devH;
       canvas.style.width = `${geom.cssW}px`;
-      canvas.style.height = `${geom.cssH}px`;
+      canvas.style.height = `${cssH}px`;
     }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, geom.cssW, geom.cssH);
+    canvas.style.top = `${-pad}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, pad * dpr);
+    ctx.clearRect(0, -pad, geom.cssW, cssH);
     drawnRects = [];
     if (!visibleRects.length) {
       syncHoverAfterPaint();
@@ -1051,7 +1066,8 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
       scannedLength = buf.length;
       schedulePaint();
     }),
-    term.onRender(() => schedulePaint()),
+    // Painted in the frame xterm drew its rows in, so images move with their rows when it scrolls.
+    term.onRender(() => paintNow()),
     term.onScroll(() => schedulePaint()),
     term.onResize(() => schedulePaint()),
   ];

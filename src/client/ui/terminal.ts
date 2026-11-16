@@ -22,6 +22,7 @@ import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { loadFonts, TERM_FONT } from '../fonts';
 import { attachKittyTerminal, type ExpandedKittyImage } from '../term-kitty';
+import { attachPixelScroll } from '../term-pixel-scroll';
 import { wantsCsiEnter } from '../term-keys';
 import { viewPicture } from './picture-viewer';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
@@ -300,6 +301,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         expanded,
       ),
   });
+  const pixel = attachPixelScroll(term);
 
   const offQueries = suppressMirrorQueries(term);
   const focus = focusReports();
@@ -622,7 +624,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     }
     if (!inline && e.key === 'Escape' && e.shiftKey) return false;
     const action = kitty.keyAction(e, csiEnter());
-    if (action.do === 'default') return true;
+    if (action.do === 'default') return !pixel.handleKey(e);
     if (action.do === 'send') {
       e.preventDefault();
       term.input(action.data);
@@ -777,6 +779,7 @@ export function openOfficeShell(net: Net) {
         expanded,
       ),
   });
+  const pixel = attachPixelScroll(term);
 
   let opened = false;
   let shared = false;
@@ -925,7 +928,7 @@ export function openOfficeShell(net: Net) {
     }
     if (e.key === 'Escape' && e.shiftKey) return false;
     const action = kitty.keyAction(e, false);
-    if (action.do === 'default') return true;
+    if (action.do === 'default') return !pixel.handleKey(e);
     if (action.do === 'send') {
       e.preventDefault();
       term.input(action.data);

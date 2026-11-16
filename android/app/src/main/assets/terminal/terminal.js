@@ -21,6 +21,7 @@ import {
   KittyKeyboardState,
 } from './kitty.js';
 import { THEME } from './theme.js';
+import { attachPixelScroll } from './vendor/pixel-scroll.js';
 
 /** Readable text, in CSS pixels before the phone's font scale (the native app's 12.5 sp). */
 const READABLE_PX = 12.5;
@@ -113,6 +114,8 @@ term.open(host);
 term.textarea.readOnly = true;
 term.textarea.tabIndex = -1;
 term.textarea.setAttribute('inputmode', 'none');
+// History follows the finger pixel for pixel, as the office's terminal window does with a trackpad.
+const pixel = attachPixelScroll(term, { enabled: () => true });
 
 const screenEl = host.querySelector('.xterm-screen') ?? host;
 const kittyCanvas = document.createElement('canvas');
@@ -360,13 +363,14 @@ function placeDirect(img, req) {
   return undefined;
 }
 
-function collectViewportRects() {
+function collectViewportRects(extra) {
   const buf = term.buffer.active;
   const rects = [];
   const active = new Map();
   let mutated = false;
-  for (let y = 0; y < term.rows; y++) {
-    const { mutated: lineMut, map } = extractLinePlaceholders(buf.viewportY + y);
+  for (let y = -extra; y < term.rows + extra; y++) {
+    const line = buf.viewportY + y;
+    const { mutated: lineMut, map } = line >= 0 ? extractLinePlaceholders(line) : { mutated: false, map: undefined };
     if (lineMut) mutated = true;
     const nextActive = new Map();
     if (map) {
@@ -409,9 +413,9 @@ function collectViewportRects() {
         continue;
       }
       const yRel = p.marker.line - buf.viewportY;
-      if (yRel + p.rows <= 0 || yRel >= term.rows) continue;
-      const visY0 = Math.max(0, yRel);
-      const visY1 = Math.min(term.rows, yRel + p.rows);
+      if (yRel + p.rows <= -extra || yRel >= term.rows + extra) continue;
+      const visY0 = Math.max(-extra, yRel);
+      const visY1 = Math.min(term.rows + extra, yRel + p.rows);
       rects.push({ imageId: p.imageId, placementId: p.placementId, x: p.col, y: visY0, cols: p.cols, rows: visY1 - visY0, srcCol: 0, srcRow: visY0 - yRel, z: p.z });
     }
   }
@@ -422,21 +426,25 @@ function paintKittyOverlay() {
   if (!kittyCtx) return;
   const { w, h, cellW, cellH } = gridSize();
   if (w <= 0 || h <= 0 || cellW <= 0 || cellH <= 0) return;
-  const { rects, mutated } = collectViewportRects();
+  // A row past each edge too, for the rows a part-row scroll shows there; drawing stays in screen coordinates.
+  const extra = pixel.drawsExtraRows() ? 1 : 0;
+  const { rects, mutated } = collectViewportRects(extra);
   if (mutated) term.refresh(0, term.rows - 1);
   pruneDecoded();
   const visibleRects = kittyGraphics.size > 0 ? rects : [];
   const dpr = (window.devicePixelRatio || 1) * Math.max(1, scale);
+  const pad = extra * cellH;
   const devW = Math.max(1, Math.round(w * dpr));
-  const devH = Math.max(1, Math.round(h * dpr));
+  const devH = Math.max(1, Math.round((h + 2 * pad) * dpr));
   if (kittyCanvas.width !== devW || kittyCanvas.height !== devH) {
     kittyCanvas.width = devW;
     kittyCanvas.height = devH;
     kittyCanvas.style.width = `${w}px`;
-    kittyCanvas.style.height = `${h}px`;
+    kittyCanvas.style.height = `${h + 2 * pad}px`;
   }
-  kittyCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  kittyCtx.clearRect(0, 0, w, h);
+  kittyCanvas.style.top = `${-pad}px`;
+  kittyCtx.setTransform(dpr, 0, 0, dpr, 0, pad * dpr);
+  kittyCtx.clearRect(0, -pad, w, h + 2 * pad);
   drawnKittyRects = [];
   if (!visibleRects.length) return;
 
@@ -644,7 +652,12 @@ term.onScroll(() => {
   checkBottom();
   scheduleKittyPaint();
 });
-term.onRender(scheduleKittyPaint);
+// Painted in the frame xterm drew its rows in, so images move with their rows when it scrolls.
+term.onRender(() => {
+  if (paintRaf) cancelAnimationFrame(paintRaf);
+  paintRaf = 0;
+  paintKittyOverlay();
+});
 term.onWriteParsed(() => {
   const buf = term.buffer.active;
   const from = Math.max(0, Math.min(scannedLength - term.rows, buf.baseY));
@@ -674,19 +687,19 @@ function cellAt(x, y) {
 const rows = new RowAccumulator();
 /** Scrolls by `px` dragged at a point (positive is toward newer lines); false once nothing moves. */
 function scrollBy(px, x, y) {
-  const n = rows.add(px, (gridSize().h / term.rows) * scale);
-  if (!n) return true;
   const state = programState();
   if (swipeGoesToProgram(state)) {
+    const n = rows.add(px, (gridSize().h / term.rows) * scale);
+    if (!n) return true;
     const { col, row } = cellAt(x, y);
     const data = swipeInput(n, state, col, row);
     if (data) post({ t: 'input', data });
     return true;
   }
-  const before = term.buffer.active.viewportY;
-  term.scrollLines(n);
+  // The grid is drawn scaled, so a finger's pixels are fewer of the grid's.
+  const moved = pixel.scrollBy(px / scale);
   checkBottom();
-  return term.buffer.active.viewportY !== before;
+  return moved;
 }
 
 let touch = null;
@@ -705,6 +718,7 @@ document.addEventListener(
     const wasFlicking = flick !== 0;
     stopFlick();
     rows.reset();
+    pixel.hold(true);
     if (e.touches.length === 1) {
       const p = e.touches[0];
       touch = {
@@ -765,6 +779,7 @@ document.addEventListener(
       if (touch) touch.multiTouch = true;
       return;
     }
+    pixel.hold(false);
     const t = touch;
     touch = null;
     if (!t) return;
@@ -777,7 +792,8 @@ document.addEventListener(
         multiTouch: t.multiTouch,
       })
     ) {
-      const hit = hitTestKittyTap(drawnKittyRects, host.getBoundingClientRect(), term.cols, term.rows, t.startX, t.startY);
+      // The screen's box, moved by any part-row scroll, is where the images are drawn.
+      const hit = hitTestKittyTap(drawnKittyRects, screenEl.getBoundingClientRect(), term.cols, term.rows, t.startX, t.startY);
       if (hit) openTappedKittyImage(hit.imageId);
       return;
     }
@@ -800,6 +816,7 @@ document.addEventListener(
   'touchcancel',
   () => {
     touch = null;
+    pixel.hold(false);
   },
   opts,
 );
@@ -824,6 +841,7 @@ window.office = {
         if (msg.cols !== term.cols || msg.rows !== term.rows) term.resize(msg.cols, msg.rows);
         writeKittyStream(msg.data, () => {
           term.scrollToBottom();
+          pixel.snap();
           checkBottom();
           relayout();
           post({ t: 'drawn' });
@@ -838,6 +856,7 @@ window.office = {
       case 'bottom':
         stopFlick();
         term.scrollToBottom();
+        pixel.snap();
         checkBottom();
         break;
     }

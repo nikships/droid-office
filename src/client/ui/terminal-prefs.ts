@@ -3,6 +3,7 @@
 // which the A− / A+ buttons share.
 
 import type { ITerminalOptions, Terminal } from '@xterm/xterm';
+import { pixelScrollOf } from '../term-pixel-scroll';
 import { savedPrefs, type PrefOptions } from './saved-prefs';
 
 export const TERM_LINE_HEIGHTS = ['compact', 'default', 'relaxed'] as const;
@@ -13,7 +14,7 @@ export interface TerminalPrefs {
   lineHeight: (typeof TERM_LINE_HEIGHTS)[number];
   cursorStyle: (typeof TERM_CURSOR_STYLES)[number];
   cursorBlink: boolean;
-  /** A mouse wheel's notches and Shift+Page Up/Down glide instead of jumping. */
+  /** Scrollback moves by pixels: a trackpad follows the fingers, and wheel notches and Shift+Page Up/Down glide. */
   smoothScroll: boolean;
   scrollSpeed: (typeof TERM_SCROLL_SPEEDS)[number];
   /** Option (Alt) sends Meta to the program, as Droid's word jumps want, instead of typing the character it makes. */
@@ -73,9 +74,10 @@ export function followTerminalPrefs(term: Pick<Terminal, 'options'>, opts: { fix
 }
 
 /**
- * Runs `scroll` with smooth scrolling off. xterm's scrollLines starts from where the scrollbar is,
- * not where a glide is headed, so scrolls that build on one another (or that should land at once,
- * like a fresh snapshot's) must not glide.
+ * Runs `scroll` with smooth scrolling off, landing on a whole row. xterm's scrollLines starts from
+ * where the scrollbar is, not where a glide is headed (nor from a whole row, part way through a pixel
+ * scroll), so scrolls that build on one another (or that should land at once, like a fresh
+ * snapshot's) must not glide.
  */
 export function scrollAtOnce(term: Pick<Terminal, 'options'>, scroll: () => void) {
   const glide = term.options.smoothScrollDuration ?? 0;
@@ -85,5 +87,6 @@ export function scrollAtOnce(term: Pick<Terminal, 'options'>, scroll: () => void
     scroll();
   } finally {
     term.options.smoothScrollDuration = glide;
+    pixelScrollOf(term)?.snap();
   }
 }

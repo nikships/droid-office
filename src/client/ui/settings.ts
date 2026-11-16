@@ -271,7 +271,12 @@ function terminalRows() {
       ),
       group(
         'Scrolling',
-        card('Smooth scrolling', { desc: desc('A mouse wheel and Shift+Page Up or Down glide through history instead of jumping. Trackpads already scroll row by row.'), control: smooth.el }),
+        card('Smooth scrolling', {
+          desc: desc(
+            'History moves pixel by pixel: a trackpad or Magic Mouse follows your fingers, and a mouse wheel and Shift+Page Up or Down glide. It settles on a whole line once you stop. Full-screen programs and programs that read the mouse still move by whole lines.',
+          ),
+          control: smooth.el,
+        }),
         card('Scroll speed', { desc: desc('How far each wheel notch or trackpad swipe moves through history. Hold Option (Alt) to scroll five times faster.'), control: speed.row }),
       ),
       group(

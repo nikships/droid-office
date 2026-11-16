@@ -7,6 +7,7 @@ import { loadFonts, TERM_FONT } from '../fonts';
 import type { Net } from '../net';
 import { store, words } from '../state';
 import { attachKittyTerminal } from '../term-kitty';
+import { attachPixelScroll } from '../term-pixel-scroll';
 import { withToken } from '../token';
 import { TERM_THEME } from '../term-theme';
 import { h, openModal, toast, type Modal } from './dom';
@@ -14,7 +15,7 @@ import { colorDot, emptyState } from './kit';
 import { confirmDialog, openPrompt } from './prompt';
 import { officePrompt } from './prompts';
 import { onTermFontSize, termFontSize } from './term-font';
-import { followTerminalPrefs, terminalOptions } from './terminal-prefs';
+import { followTerminalPrefs, scrollAtOnce, terminalOptions } from './terminal-prefs';
 
 // The Changes window at a desk: the files a worker changed and their diff against the branch the
 // office was opened on, refreshed while the worker works, with commit / discard / open-a-PR, and
@@ -192,7 +193,10 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
   let view: 'diff' | 'log' = 'diff';
 
   const openLog = () => {
-    if (term) return term.scrollToBottom();
+    if (term) {
+      const t = term;
+      return scrollAtOnce(t, () => t.scrollToBottom());
+    }
     const fixed = { cursorBlink: false };
     const t = new Terminal({ ...terminalOptions(), ...fixed, fontFamily: TERM_FONT, fontSize: termFontSize(), theme: TERM_THEME, minimumContrastRatio: 4.5, disableStdin: true, scrollback: 5000, allowProposedApi: true });
     const offPrefs = followTerminalPrefs(t, { fixed });
@@ -206,6 +210,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     t.loadAddon(unicode);
     t.unicode.activeVersion = '11';
     attachKittyTerminal(t);
+    attachPixelScroll(t);
     // Keys belong to the window (T, Esc), never to the program in the terminal.
     t.attachCustomKeyEventHandler(() => false);
     term = t;
@@ -403,7 +408,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       const t = term;
       t.reset();
       t.resize(msg.cols, msg.rows);
-      t.write(msg.data, () => t.scrollToBottom());
+      t.write(msg.data, () => scrollAtOnce(t, () => t.scrollToBottom()));
     } else if (msg.t === 'changes' && msg.state.workerId === workerId && msg.state.repo === repo) onState(msg.state);
     else if (msg.t === 'changes.diff' && msg.workerId === workerId && msg.repo === repo && msg.path === selected) {
       loading = false;

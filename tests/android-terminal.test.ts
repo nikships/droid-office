@@ -15,10 +15,14 @@ import {
 import { THEME } from '../android/app/src/main/assets/terminal/theme.js';
 import { TERM_THEME } from '../src/client/world/laptop.js';
 import { decodeBase64, decodePlaceholderCell, KITTY_CELL_PX_H, KITTY_CELL_PX_W, KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
-import { vendoredPaths } from '../tools/android-terminal.mjs';
+import { builtFiles, vendoredPaths } from '../tools/android-terminal.mjs';
 
 test("the phone's vendored xterm.js matches the installed packages (node tools/android-terminal.mjs)", () => {
   for (const [from, to] of vendoredPaths()) assert.ok(readFileSync(from).equals(readFileSync(to)), `${to} is stale: run node tools/android-terminal.mjs`);
+});
+
+test("the phone's pixel scroller is built from the office terminal's (node tools/android-terminal.mjs)", () => {
+  for (const [to, text] of builtFiles()) assert.equal(readFileSync(to, 'utf8'), text, `${to} is stale: run node tools/android-terminal.mjs`);
 });
 
 test("the phone's terminal colours are the office's", () => {
