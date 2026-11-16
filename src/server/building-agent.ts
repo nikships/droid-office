@@ -4,6 +4,7 @@
 import { GLASS_ROOM } from '../shared/layout.js';
 import { ORCHESTRATOR_ID, type MissionTeamMember } from '../shared/mission-control.js';
 import type { WorkerInfo } from '../shared/protocol.js';
+import { workerActivity } from '../shared/status.js';
 
 /** A building agent: no floor, no desk, the owner's authority everywhere. */
 export function isBuildingAgent(w: Pick<WorkerInfo, 'id' | 'remote'> | undefined): boolean {
@@ -30,10 +31,13 @@ export function missionTeam(floors: readonly { id: string; def: { name: string }
       f.workers
         .list()
         .filter((w) => w.lead === lead)
-        .map((w) => ({
-          at: w.createdAt,
-          member: { id: w.id, name: w.name, floor: f.id, floorName: f.def.name, status: w.status, ...(w.task?.name ? { title: w.task.name } : {}), ...(w.activity ? { activity: w.activity } : {}) },
-        })),
+        .map((w) => {
+          const activity = workerActivity(w);
+          return {
+            at: w.createdAt,
+            member: { id: w.id, name: w.name, floor: f.id, floorName: f.def.name, status: w.status, ...(w.task?.name ? { title: w.task.name } : {}), ...(activity ? { activity } : {}) },
+          };
+        }),
     )
     .sort((a, b) => a.at - b.at)
     .map((x) => x.member);

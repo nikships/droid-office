@@ -147,13 +147,28 @@ class MissionControlTest {
         val worker = w.view.workers.single()
         assertEquals(ORCHESTRATOR_ID, worker.lead)
         assertTrue(worker.isSubagent)
-        // Its lead isn't on any floor, so the floor's list shows it on its own, not under a lead row.
+        // Its lead isn't on any floor, so arranged on its own it gets no lead row; Home leaves it to Mission Control.
         assertEquals(listOf(0), Workers.arrange(listOf(worker)).map { it.depth })
+        assertTrue(MissionControl.reportsToBuildingAgent(worker, w.missionControl))
         // The same worker, as Mission Control lists it, is on a floor that isn't the current one.
         val member = w.missionControl!!.orchestrator.agent!!.team.first { it.id == "w2" }
         assertEquals("web", member.floor)
         assertTrue(MissionControl.onAnotherFloor(member, w.view.floor))
         assertEquals(1, w.missionControl.orchestrator.agent.team.count { it.floor == w.view.floor })
+    }
+
+    @Test
+    fun aFloorListLeavesOutOnlyWhatMissionControlListsUnderAnAgent() {
+        val on = MissionControlState(OrchestratorState(OrchestratorSettings(on = true)), bots = listOf(MissionAgent(WorkerInfo(id = "bot-1", remote = true))))
+        val off = on.copy(orchestrator = OrchestratorState(OrchestratorSettings(on = false)))
+        assertTrue(MissionControl.reportsToBuildingAgent(WorkerInfo(id = "a", lead = ORCHESTRATOR_ID), on))
+        assertTrue(MissionControl.reportsToBuildingAgent(WorkerInfo(id = "a", lead = "bot-1"), on))
+        // With the Orchestrator off its section lists no team, so the floor keeps showing its subagents.
+        assertFalse(MissionControl.reportsToBuildingAgent(WorkerInfo(id = "a", lead = ORCHESTRATOR_ID), off))
+        assertFalse(MissionControl.reportsToBuildingAgent(WorkerInfo(id = "a", lead = "gone-bot"), on))
+        assertFalse(MissionControl.reportsToBuildingAgent(WorkerInfo(id = "a", lead = "floor-lead"), on))
+        assertFalse(MissionControl.reportsToBuildingAgent(WorkerInfo(id = "a"), on))
+        assertFalse(MissionControl.reportsToBuildingAgent(WorkerInfo(id = "a", lead = ORCHESTRATOR_ID), null))
     }
 
     @Test

@@ -93,6 +93,13 @@ object MissionControl {
     /** Whether a worker in a floor's list belongs on that floor's desks: building agents are only in Mission Control, but an office that predates it lists external bots as floor workers. */
     fun isDeskWorker(w: WorkerInfo, state: MissionControlState?): Boolean = w.id != ORCHESTRATOR_ID && (state == null || !w.remote)
 
+    /** Whether a worker reports to a building agent that Mission Control lists, so its row sits under that agent and not in a floor's list (`missionLead` in src/client/mission.ts). */
+    fun reportsToBuildingAgent(w: WorkerInfo, state: MissionControlState?): Boolean {
+        val lead = w.lead ?: return false
+        if (state == null) return false
+        return if (lead == ORCHESTRATOR_ID) state.orchestrator.settings.on else state.bots.any { it.worker.id == lead }
+    }
+
     /** What keeps a worker's saved state apart across floors: its floor, or the whole building for the Orchestrator, which is the same on every floor. */
     fun floorScope(floorId: String?, workerId: String): String? = if (workerId == ORCHESTRATOR_ID) "building" else floorId
 

@@ -43,7 +43,7 @@ interface RosterState {
   focused: string;
   live: boolean;
   pane(id: string): number;
-  /** Mission Control, for subworkers whose lead is a building agent rather than a worker on this floor. */
+  /** Mission Control lists a building agent's subagents itself, so the roster leaves them out. */
   mission?: MissionControlState;
 }
 interface Row {
@@ -83,12 +83,13 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
     const animate = sameFloor && wasLive && next.live && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const arrivals: HTMLElement[] = [];
     state = next;
-    const teams = workerTeams(next.workers);
-    const counts = teamCounts(next.workers);
+    const listed = next.workers.filter((w) => !missionLead(next.mission, w.lead));
+    const teams = workerTeams(listed);
+    const counts = teamCounts(listed);
     const subworkers = teams.reduce((n, team) => n + team.children.length, 0);
-    const mainCount = next.workers.length - subworkers;
+    const mainCount = listed.length - subworkers;
     summary.replaceChildren(
-      h('div.dash-roster-heading', {}, h('span', {}, 'Workers'), h('span.dash-roster-total', {}, String(next.workers.length).padStart(2, '0'))),
+      h('div.dash-roster-heading', {}, h('span', {}, 'Workers'), h('span.dash-roster-total', {}, String(listed.length).padStart(2, '0'))),
       h(
         'div.dash-roster-caption',
         {},
@@ -133,8 +134,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
       const effort = w.activeEffort ?? w.effort;
       const duration = worked >= 1000 ? shortDuration(worked) : '';
       const meta = [w.kind === 'agent' ? modelBadgeLabel(model, effort) : workerKind(w), duration].filter(Boolean).join(' · ');
-      const leader = parent ?? missionLead(next.mission, w.lead)?.worker;
-      const relationship = leader ? `Subworker of ${leader.name}` : w.lead ? 'Lead unavailable' : hasChildren ? 'Main worker' : '';
+      const relationship = parent ? `Subworker of ${parent.name}` : w.lead ? 'Lead unavailable' : hasChildren ? 'Main worker' : '';
       const todos = w.kind === 'shell' ? undefined : w.todos;
       const key = JSON.stringify([w.name, w.color, w.status, w.acked, w.lead, doingLine(w), meta, relationship, next.pane(w.id), todos]);
       if (key !== r.key) {
@@ -158,7 +158,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
             ),
             h('span.dash-row-doing', {}, doingLine(w)),
             todos ? todoMeter(todos) : null,
-            h('span.dash-row-meta', {}, ...(w.lead && !leader ? ['Lead unavailable'] : metaLine(w.kind === 'agent' ? modelBadgeNode(model, effort) : workerKind(w), duration))),
+            h('span.dash-row-meta', {}, ...(w.lead && !parent ? ['Lead unavailable'] : metaLine(w.kind === 'agent' ? modelBadgeNode(model, effort) : workerKind(w), duration))),
           ),
         );
       }
@@ -225,7 +225,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
         groups.delete(id);
         collapsed.delete(id);
       }
-    if (!next.workers.length) {
+    if (!listed.length) {
       empty.textContent = next.live ? 'No workers yet.' : 'Waiting for the office…';
       content.push(empty);
     }
@@ -240,7 +240,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
         { duration: 220, delay: Math.min(i * 30, 120), easing: 'cubic-bezier(.23, 1, .32, 1)', fill: 'backwards' },
       ),
     );
-    known = new Set(next.workers.map((w) => w.id));
+    known = new Set(listed.map((w) => w.id));
     wasLive = next.live;
   }
 

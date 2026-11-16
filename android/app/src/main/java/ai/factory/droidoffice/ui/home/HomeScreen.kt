@@ -315,9 +315,10 @@ private fun FloorPage(
     onActions: (String) -> Unit,
     onHire: () -> Unit,
 ) {
-    val rows = remember(floor?.id, floor?.workers, data.floorId, data.workers, data.buildingWorkers) {
+    val rows = remember(floor?.id, floor?.workers, data.floorId, data.workers, data.buildingWorkers, data.mission) {
         val workers = if (floor == null) data.workers.values else FloorPager.workers(floor, data.floorId, data.workers, data.buildingWorkers)
-        workers?.let(Workers::arrange)
+        // Mission Control above lists a building agent's subagents, so the floor's list leaves them out.
+        workers?.filterNot { MissionControl.reportsToBuildingAgent(it, data.mission) }?.let(Workers::arrange)
     }
     val pulls = if (floor == null) data.pulls else FloorPager.pulls(floor, data.floorId, data.pulls, data.buildingPulls)
     val name = floor?.name?.ifBlank { null } ?: "This floor"

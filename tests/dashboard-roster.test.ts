@@ -168,15 +168,23 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
     w.state.mission = { orchestrator: { settings: { on: true }, team: [{ id: 'nibble', name: 'Nibble', floor: 'home', floorName: 'home', status: 'working' }] }, bots: [] };
     w.paint();
   });
-  assert.doesNotMatch(await page.locator('[data-worker=nibble]').innerText(), /Lead unavailable/, 'the Orchestrator leads it, with or without a session');
-  assert.match((await page.locator('[data-worker=nibble]').getAttribute('title')) ?? '', /Subworker of Orchestrator/);
-  assert.equal(await page.locator('[data-worker=nibble] .dash-row-meta .model-badge').count(), 1);
+  assert.equal(await page.locator('[data-worker=nibble]').count(), 0, 'Mission Control lists a building agent’s subagents, so the roster does not');
+  assert.equal(await page.locator('.dash-roster-total').innerText(), '00');
   await page.evaluate(() => {
     const w = window as any;
+    w.state.workers = [{ ...w.workers[1], lead: 'claw' }];
+    w.state.mission.bots = [{ worker: { id: 'claw' }, team: [] }];
+    w.paint();
+  });
+  assert.equal(await page.locator('[data-worker=nibble]').count(), 0, 'nor an external bot’s');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.state.workers = [{ ...w.workers[1], lead: 'orchestrator' }];
+    w.state.mission.bots = [];
     w.state.mission.orchestrator.settings.on = false;
     w.paint();
   });
-  assert.match(await page.locator('[data-worker=nibble]').innerText(), /Lead unavailable/, 'while the Orchestrator is off, nobody leads it');
+  assert.match(await page.locator('[data-worker=nibble]').innerText(), /Lead unavailable/, 'while the Orchestrator is off, its section lists no team, so the roster keeps the subagent');
   await page.evaluate(() => {
     delete (window as any).state.mission;
   });

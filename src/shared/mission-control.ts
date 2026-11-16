@@ -33,6 +33,7 @@ export interface MissionTeamMember {
   floorName: string;
   status: WorkerStatus;
   title?: string;
+  /** What it is on now: its generated summary, or its latest activity until one is written (`workerActivity`). */
   activity?: string;
 }
 
