@@ -347,7 +347,7 @@ export function renderMathToMathMl(tex: string, displayMode: boolean): string | 
 // ------------------------------------------------------------------------------------------------
 // Workspace path:line link parser and DOM linkifier
 
-export { codePathRef, parseWorkspacePathRefs, type WorkspacePathRef } from '../../shared/path-links';
+export { codePathRef, parseWorkspacePathRefs, type WorkspacePathMatch, type WorkspacePathRef } from '../../shared/path-links';
 
 function modifierKey(): { label: string; held: (e: MouseEvent) => boolean } {
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);

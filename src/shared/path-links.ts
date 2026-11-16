@@ -300,7 +300,7 @@ export function terminalPathRef(raw: string): WorkspacePathRef | null {
   while (text.length >= 2 && PAIRS[text[0]] === text[text.length - 1] && balanced(text.slice(1, -1), text[0], text[text.length - 1])) {
     text = text.slice(1, -1);
   }
-  if (/^["'`].*["'`]$/.test(text) && text[0] === text[text.length - 1] && text.indexOf(text[0], 1) === text.length - 1) {
+  if (text.length >= 2 && (text[0] === '"' || text[0] === "'" || text[0] === '`') && text.indexOf(text[0], 1) === text.length - 1) {
     text = text.slice(1, -1);
   }
   text = text.replace(/^[<{]+/, '').replace(/[>}]+$/, '');
@@ -330,17 +330,16 @@ export function terminalPathRef(raw: string): WorkspacePathRef | null {
     }
   }
   if (!text || text.length > 4096 || /[\0\r\n]/.test(text) || text.includes('://')) return null;
-  const path = text;
-  if (!path || path.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith('@')) return null;
-  if ((line !== undefined && (!Number.isSafeInteger(line) || line < 1)) || (column !== undefined && (!Number.isSafeInteger(column) || column < 1)) || (endLine !== undefined && (!Number.isSafeInteger(endLine) || endLine < (line ?? 1))))
-    return null;
-  if (!path.includes('/') && !/^[\w.+-]+\.[\w+-]+$/.test(path) && !KNOWN_ROOT_FILES.has(path)) return null;
-  return {
-    path,
-    ...(line === undefined ? {} : { line }),
-    ...(column === undefined ? {} : { column }),
-    ...(endLine === undefined ? {} : { endLine }),
-  };
+  if (text.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(text) || text.startsWith('@')) return null;
+  if (line !== undefined && (!Number.isSafeInteger(line) || line < 1)) return null;
+  if (column !== undefined && (!Number.isSafeInteger(column) || column < 1)) return null;
+  if (endLine !== undefined && (!Number.isSafeInteger(endLine) || endLine < (line ?? 1))) return null;
+  if (!text.includes('/') && !/^[\w.+-]+\.[\w+-]+$/.test(text) && !KNOWN_ROOT_FILES.has(text)) return null;
+  const ref: WorkspacePathRef = { path: text };
+  if (line !== undefined) ref.line = line;
+  if (column !== undefined) ref.column = column;
+  if (endLine !== undefined) ref.endLine = endLine;
+  return ref;
 }
 
 export function parseTerminalPathRefs(text: string): WorkspacePathMatch[] {

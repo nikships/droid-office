@@ -75,30 +75,35 @@ export function createFloorHttp({ floors, orchestrator, workerFloor, workerThrea
       const preview = p === '/api/term/file';
       if (req.method !== (preview ? 'GET' : 'POST')) return send(res, 405, { error: preview ? 'Use GET' : 'Use POST' });
       if (!preview && !ownRequest()) return send(res, 403, { error: 'Forbidden' });
+      const fetchSite = req.headers['sec-fetch-site'];
+      if (preview && fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') return send(res, 403, { error: 'Forbidden' });
       const workerId = str(url.searchParams.get('worker'), 32);
       const owner = workerId === ORCHESTRATOR_ID ? orchestrator.workers : (workerFloor(workerId)?.workers ?? floor?.workers);
       const base = workerId === OFFICE_SHELL_ID ? floor?.shell.terminalContext() : owner?.terminalContext(workerId);
       if (!base) return send(res, 404, { error: 'No local terminal workspace.' });
-      const context = { ...base, root: workerFloor(workerId)?.def.dir ?? floor?.def.dir ?? base.cwd };
+      const root = workerId === ORCHESTRATOR_ID ? base.cwd : (workerFloor(workerId)?.def.dir ?? floor?.def.dir ?? base.cwd);
+      const context = { ...base, root };
       let candidates: string[];
       if (preview) candidates = [str(url.searchParams.get('path'), 4096)];
       else {
         let body: { paths?: unknown };
         try {
           body = JSON.parse(await readBody(req, 64 * 1024));
-        } catch {
-          return send(res, 400, { error: 'Send JSON with paths.' });
+        } catch (err) {
+          return (err as Error).message === 'too large' ? send(res, 413, { error: 'That request is too large.' }) : send(res, 400, { error: 'Send JSON with paths.' });
         }
-        if (!body || !Array.isArray(body.paths) || body.paths.length > 64 || body.paths.some((entry) => typeof entry !== 'string' || entry.length > 4096)) return send(res, 400, { error: 'Send at most 64 file paths.' });
+        if (!body || !Array.isArray(body.paths) || body.paths.length === 0 || body.paths.length > 64 || body.paths.some((entry) => typeof entry !== 'string' || entry.length > 4096))
+          return send(res, 400, { error: 'Send 1 to 64 file paths.' });
         candidates = body.paths;
       }
+      if (p === '/api/term/path/open' && candidates.length !== 1) return send(res, 400, { error: 'Send exactly one file path to open.' });
       const local = ownPage() && loopbackHost(req.headers.host) && process.platform === 'darwin';
-      if (p === '/api/term/path/open' && (!local || candidates.length !== 1)) return send(res, 403, { error: 'Host applications can be opened only from the office on its own Mac.' });
+      if (p === '/api/term/path/open' && !local) return send(res, 403, { error: 'Host applications can be opened only from the office on its own Mac.' });
       const paths = await terminalPaths.resolve(context, candidates);
       if (p === '/api/term/paths') return send(res, 200, { paths, local });
       const target = paths[0];
       if (!target) return send(res, 404, { error: 'File not found in the terminal workspace.' });
-      if (!preview) {
+      if (p === '/api/term/path/open') {
         try {
           await openTerminalFile(target.path);
           return send(res, 200, { ok: true });
@@ -108,8 +113,12 @@ export function createFloorHttp({ floors, orchestrator, workerFloor, workerThrea
       }
       // Reuse the bounded, syntax-highlighted Thread preview and its private-file restrictions.
       const parts = target.path.toLowerCase().split(path.sep);
-      const office = parts.lastIndexOf('.droid-office');
-      if (isEnvSecretPath(target.path) || parts.some((part) => ['.git', '.ssh', '.aws', '.gnupg'].includes(part)) || (office >= 0 && parts[office + 1] !== 'worktrees')) return send(res, 403, { error: 'Private files cannot be previewed.' });
+      const leaf = parts[parts.length - 1] ?? '';
+      const officeIndex = parts.lastIndexOf('.droid-office');
+      const inPrivateDir = parts.some((part) => part === '.git' || part === '.ssh' || part === '.aws' || part === '.gnupg' || part === '.kube' || part === '.docker' || part === 'keychains');
+      const isPrivateFile = leaf === '.netrc' || leaf === '.npmrc' || leaf === '.pypirc' || leaf === '.bash_history' || leaf === '.zsh_history';
+      const outsideWorktrees = officeIndex >= 0 && parts[officeIndex + 1] !== 'worktrees';
+      if (isEnvSecretPath(target.path) || inPrivateDir || isPrivateFile || outsideWorktrees) return send(res, 403, { error: 'Private files cannot be previewed.' });
       const cwd = path.dirname(target.path);
       const filename = path.basename(target.path);
       if (url.searchParams.get('raw') === 'image') {

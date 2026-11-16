@@ -39,20 +39,27 @@ export function formatFilePreviewBytes(bytes: number | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Builds the authenticated `/api/thread/file` URL for a worker's workspace path. */
-export function threadFilePreviewUrl(opts: { floor: string; workerId: string; path: string; source?: 'terminal'; requestPath?: string }): string {
+type FilePreviewUrlOptions = Pick<FilePreviewOptions, 'floor' | 'workerId' | 'path' | 'source' | 'requestPath'>;
+
+function filePreviewUrl(opts: FilePreviewUrlOptions, raw?: 'image'): string {
+  const endpoint = opts.source === 'terminal' ? '/api/term/file' : '/api/thread/file';
   const params = new URLSearchParams({
     floor: opts.floor,
     worker: opts.workerId,
     path: opts.requestPath ?? opts.path,
+    ...(raw ? { raw } : {}),
   });
-  return withToken(`${opts.source === 'terminal' ? '/api/term/file' : '/api/thread/file'}?${params}`);
+  return withToken(`${endpoint}?${params}`);
+}
+
+/** Builds the authenticated `/api/thread/file` URL for a worker's workspace path. */
+export function threadFilePreviewUrl(opts: FilePreviewUrlOptions): string {
+  return filePreviewUrl(opts);
 }
 
 /** The authenticated URL of a picture in a worker's workspace, as its bytes. */
-export function threadFileImageUrl(opts: { floor: string; workerId: string; path: string; source?: 'terminal'; requestPath?: string }): string {
-  const params = new URLSearchParams({ floor: opts.floor, worker: opts.workerId, path: opts.requestPath ?? opts.path, raw: 'image' });
-  return withToken(`${opts.source === 'terminal' ? '/api/term/file' : '/api/thread/file'}?${params}`);
+export function threadFileImageUrl(opts: FilePreviewUrlOptions): string {
+  return filePreviewUrl(opts, 'image');
 }
 
 function splitFileLines(content: string): string[] {

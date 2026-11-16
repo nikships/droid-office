@@ -156,9 +156,15 @@ test('terminal link provider batches and caches a logical line, exposes only exi
   let provider: ILinkProvider | undefined;
   let disposed = false;
   const requests: { url: string; body: unknown }[] = [];
+  let failNext = false;
   t.mock.method(globalThis, 'fetch', async (url: string, options: RequestInit) => {
-    requests.push({ url, body: JSON.parse(String(options.body)) });
-    return new Response(JSON.stringify(url.includes('/open?') ? { ok: true } : { paths: [{ path: '/checkout/src/server.ts', line: 120, column: 3 }, null], local: true }));
+    const body = JSON.parse(String(options.body)) as { paths: string[] };
+    requests.push({ url, body });
+    if (failNext) {
+      failNext = false;
+      return new Response('boom', { status: 503 });
+    }
+    return new Response(JSON.stringify(url.includes('/open?') ? { ok: true } : { paths: [{ path: '/checkout/src/server.ts', line: 120, column: 3 }, null].slice(0, body.paths.length), local: true }));
   });
   const addon = new TerminalPathLinksAddon({ floor: () => 'f1', workerId: 'w1' });
   addon.activate({
@@ -174,6 +180,8 @@ test('terminal link provider batches and caches a logical line, exposes only exi
     },
   } as Terminal);
   const get = () => new Promise<ILink[] | undefined>((resolve) => provider!.provideLinks(1, resolve));
+  failNext = true;
+  assert.equal(await get(), undefined);
   const links = await get();
   assert.equal(links?.length, 1);
   assert.deepEqual(requests[0].body, { paths: ['src/server.ts:120:3', 'missing.ts'] });
@@ -182,19 +190,19 @@ test('terminal link provider batches and caches a logical line, exposes only exi
     syncCached = resolved;
   });
   assert.equal(syncCached?.length, 1);
-  assert.equal(requests.length, 1);
+  assert.equal(requests.length, 2);
   links![0].activate({ metaKey: false, ctrlKey: false } as MouseEvent, links![0].text);
-  assert.equal(requests.length, 1);
+  assert.equal(requests.length, 2);
   links![0].activate({ metaKey: true, preventDefault() {} } as MouseEvent, links![0].text);
-  assert.equal(requests.length, 2);
-  assert.deepEqual(requests[1].body, { paths: ['src/server.ts:120:3'] });
+  assert.equal(requests.length, 3);
+  assert.deepEqual(requests[2].body, { paths: ['src/server.ts:120:3'] });
   addon.linkHandler.activate({ metaKey: false, ctrlKey: false } as MouseEvent, 'file:///checkout/src/server.ts', { start: { x: 1, y: 1 }, end: { x: 1, y: 1 } });
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 3);
   addon.linkHandler.activate({ metaKey: true, preventDefault() {} } as MouseEvent, 'file:///checkout/src/server.ts', { start: { x: 1, y: 1 }, end: { x: 1, y: 1 } });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(requests.length, 4);
-  assert.deepEqual(requests[2].body, { paths: ['file:///checkout/src/server.ts'] });
+  assert.equal(requests.length, 5);
   assert.deepEqual(requests[3].body, { paths: ['file:///checkout/src/server.ts'] });
+  assert.deepEqual(requests[4].body, { paths: ['file:///checkout/src/server.ts'] });
   addon.dispose();
   assert.equal(disposed, true);
 });
@@ -254,17 +262,22 @@ test('terminal HTTP resolves worker and boss shell paths, serves previews and re
   });
   assert.equal(proxied.status, 200);
   assert.equal(proxied.body.local, false);
+  // Orchestrator resolves relative paths against its own cwd, never an unrelated ?floor= directory.
+  assert.deepEqual((await (await request('/api/term/paths', 'orchestrator', ['README.md'])).json()).paths, [null]);
+  assert.equal((await request('/api/term/paths', 'w1', [])).status, 400);
+  assert.equal((await request('/api/term/path/open', 'w1', ['src/server.ts', 'README.md'], { 'x-own-page': 'true' })).status, 400);
   assert.equal((await request('/api/term/paths', 'missing')).status, 404);
   assert.equal((await request('/api/term/paths', 'w1', [123])).status, 400);
   assert.equal((await request('/api/term/paths', 'w1', Array(65).fill('src/a.ts'))).status, 400);
   assert.equal((await request('/api/term/path/open')).status, 403);
   assert.equal((await fetch(`${base}/api/term/paths`)).status, 405);
-  assert.equal((await fetch(`${base}/api/term/paths?floor=f1&worker=w1`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-deny': 'true' }, body: '{"paths":[]}' })).status, 403);
+  assert.equal((await fetch(`${base}/api/term/paths?floor=f1&worker=w1`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-deny': 'true' }, body: '{"paths":["a.ts"]}' })).status, 403);
   assert.equal((await fetch(`${base}/api/term/paths?floor=f1&worker=w1`, { method: 'POST', body: 'invalid' })).status, 400);
   const query = new URLSearchParams({ floor: 'f1', worker: 'w1', path: 'src/server.ts:120' });
   const preview = await fetch(`${base}/api/term/file?${query}`);
   assert.equal(preview.status, 200);
   assert.match((await preview.json()).text, /server.ts/);
+  assert.equal((await fetch(`${base}/api/term/file?${query}`, { headers: { 'sec-fetch-site': 'cross-site' } })).status, 403);
   query.set('path', '../../missing.ts');
   assert.equal((await fetch(`${base}/api/term/file?${query}`)).status, 404);
   await mkdir(path.join(checkout, '.ssh'));

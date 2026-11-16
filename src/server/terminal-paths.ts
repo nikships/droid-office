@@ -57,7 +57,10 @@ export class TerminalPaths {
     const hit = this.tracked.get(cwd);
     if (hit && Date.now() - hit.at < 5000) return hit.files;
     const files = this.gitFiles(cwd).catch(() => []);
-    if (this.tracked.size >= 64) this.tracked.delete(this.tracked.keys().next().value!);
+    if (this.tracked.size >= 64) {
+      const oldest = this.tracked.keys().next().value;
+      if (oldest !== undefined) this.tracked.delete(oldest);
+    }
     this.tracked.set(cwd, { at: Date.now(), files });
     return files;
   }
@@ -67,7 +70,7 @@ export class TerminalPaths {
     const rawLive = await this.liveCwd(context.pid);
     const live = rawLive ? await realpath(rawLive).catch(() => path.resolve(rawLive)) : undefined;
     // A shell can cd within its checkout; cd elsewhere must not grant relative-path access outside it.
-    const bases = [...new Set([...(live && roots.some((root) => within(root, live)) ? [live] : []), ...roots])];
+    const bases = live && roots.some((root) => within(root, live)) ? [...new Set([live, ...roots])] : roots;
     const displayOf = (abs: string): string => {
       for (const root of roots) {
         if (within(root, abs)) {
@@ -93,18 +96,20 @@ export class TerminalPaths {
             return null;
           }
         };
-        if (explicit) return confirm(file);
-        for (const base of bases) {
-          const found = await confirm(path.resolve(base, file));
-          if (found) return found;
-        }
-        // Unified git diff headers prefix paths with a/ or b/; fall back only when no real a/ or b/ path exists.
-        if (/^[ab]\/.+/.test(file)) {
-          const stripped = file.slice(2);
+        const fromBases = async (name: string) => {
           for (const base of bases) {
-            const found = await confirm(path.resolve(base, stripped));
+            const found = await confirm(path.resolve(base, name));
             if (found) return found;
           }
+          return null;
+        };
+        if (explicit) return confirm(file);
+        const fromBase = await fromBases(file);
+        if (fromBase) return fromBase;
+        // Unified git diff headers prefix paths with a/ or b/; fall back only when no real a/ or b/ path exists.
+        if (/^[ab]\/.+/.test(file)) {
+          const fromStripped = await fromBases(file.slice(2));
+          if (fromStripped) return fromStripped;
         }
         if (!file.includes('/')) {
           // Prefer the worker checkout. An ambiguous basename never chooses an arbitrary file.

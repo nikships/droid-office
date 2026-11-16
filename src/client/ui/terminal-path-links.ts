@@ -21,9 +21,8 @@ export function terminalLogicalLine(buffer: IBuffer, row: number, cols: number):
   let text = '';
   const cells: Position[] = [];
   for (let y = first; y < buffer.length && y < first + 16; y++) {
-    if (y > first && !buffer.getLine(y)?.isWrapped) break;
     const line = buffer.getLine(y);
-    if (!line) break;
+    if (!line || (y > first && !line.isWrapped)) break;
     const wrappedNext = buffer.getLine(y + 1)?.isWrapped;
     const length = wrappedNext ? Number.POSITIVE_INFINITY : line.translateToString(true).length;
     let offset = 0;
@@ -110,20 +109,28 @@ export class TerminalPathLinksAddon implements ITerminalAddon {
     if (hit && Date.now() - hit.at < 5000) return hit.pending;
     const entry: { at: number; value?: LookupResult; pending: Promise<LookupResult> } = {
       at: Date.now(),
-      pending: Promise.resolve({ paths: [], local: false }),
+      pending: fetch(this.url('/api/term/paths'), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ paths }),
+        signal: this.controller.signal,
+      })
+        .then(async (response) => {
+          if (!response.ok) throw new Error('Could not resolve terminal paths.');
+          const value = (await response.json()) as LookupResult;
+          if (!value || !Array.isArray(value.paths) || value.paths.length !== paths.length) throw new Error('Could not resolve terminal paths.');
+          entry.value = value;
+          return value;
+        })
+        .catch((error: unknown) => {
+          this.cache.delete(key);
+          throw error;
+        }),
     };
-    entry.pending = fetch(this.url('/api/term/paths'), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ paths }),
-      signal: this.controller.signal,
-    }).then(async (response) => {
-      if (!response.ok) throw new Error('Could not resolve terminal paths.');
-      const value = (await response.json()) as LookupResult;
-      entry.value = value;
-      return value;
-    });
-    if (this.cache.size >= 128) this.cache.delete(this.cache.keys().next().value!);
+    if (this.cache.size >= 128) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest !== undefined) this.cache.delete(oldest);
+    }
     this.cache.set(key, entry);
     return entry.pending;
   }
