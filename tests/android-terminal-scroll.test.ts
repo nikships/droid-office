@@ -54,6 +54,8 @@ test("the phone's Raw TTY follows a finger pixel for pixel and settles on a whol
     }, n);
   const transform = () => page.evaluate(() => document.querySelector<HTMLElement>('.xterm-screen')!.style.transform);
 
+  // xterm draws its rows in an animation frame after the page reports the snapshot drawn.
+  await page.waitForFunction(() => [...document.querySelectorAll('.xterm-rows > div')].some((row) => row.textContent?.trimEnd() === 'line 190'));
   const before = await rowTop(190);
   assert.ok(before !== null);
   // Drag down (toward older lines) by a distance that is not a whole number of rows, and keep the finger there.

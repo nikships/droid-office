@@ -191,6 +191,55 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
     assert.equal(rest.transform, '');
     assert.deepEqual(await aligned(page), []);
   });
+  await t.test('a fling that jumps rows at a time between renders never paints a frame out of line', async () => {
+    const page = await rig();
+    const wrong = await page.evaluate(async () => {
+      const w = window as any;
+      w.pixel().hold(true);
+      const bad: unknown[] = [];
+      let last = w.scrollTop();
+      w.check = () => {
+        const box = w.box();
+        const h = w.cellH();
+        const now = w.scrollTop();
+        // Where the painted rows put the scrollback: one position for every row, xterm's current
+        // one or, in the frame a jump lands in before xterm draws it, the one before.
+        const painted = [...document.querySelectorAll('.xterm-rows > div')].flatMap((row) => {
+          const r = row.getBoundingClientRect();
+          const n = Number(/^line (\d+)/.exec(row.textContent ?? '')?.[1]);
+          return r.bottom > box.top && r.top < box.bottom && Number.isFinite(n) ? [n * h - (r.top - box.top)] : [];
+        });
+        const at = painted[0];
+        const one = painted.every((p) => Math.abs(p - at) <= 1);
+        if (!painted.length || !one || (Math.abs(at - now) > 1 && Math.abs(at - last) > 1)) bad.push({ now: now / h, last: last / h, painted: painted.map((p) => p / h) });
+        last = now;
+      };
+      // Resize observers run after every animation frame callback and before the paint: what they
+      // see is what the frame shows.
+      const probe = document.body.appendChild(document.createElement('div'));
+      let checks = 0;
+      new ResizeObserver(() => {
+        checks++;
+        w.check();
+      }).observe(probe);
+      // Every other frame, jump several rows and a part, from inside an animation frame as a fast fling does.
+      const jumps = [-4.3, -7.7, -3.1, -9.45, -5.6, 2.35, 6.8, -11.2];
+      for (let i = 0; i < 2 * jumps.length + 4; i++) {
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => {
+            if (i % 2 === 0 && i / 2 < jumps.length) w.scroller().setScrollPosition({ scrollTop: w.scrollTop() + jumps[i / 2] * w.cellH() });
+            probe.style.width = `${i + 1}px`;
+            resolve();
+          }),
+        );
+      }
+      if (checks < 2 * jumps.length) bad.push({ checks });
+      await w.frames();
+      w.check();
+      return bad;
+    });
+    assert.deepEqual(wrong, []);
+  });
   /** Moves the scrollback by `rows` (fractions too) through the scroller's own entry point, and holds it there. */
   const scrollBy = (page: Awaited<ReturnType<typeof rig>>, rows: number) =>
     page.evaluate(async (rows) => {
