@@ -764,7 +764,10 @@ function inferSubscriptionProvider(model: TeamModel): SubscriptionProviderKey | 
 export function modelPlanName(model: TeamModel): string | undefined {
   if (model.factoryUsage) return model.factoryUsage.tier === 'core' ? 'Factory Droid Core' : 'Factory Standard';
   if (!isSubscriptionModel(model.id) && !model.usage && !model.subscriptionProvider) return undefined;
-  const key = inferSubscriptionProvider(model) ?? model.provider ?? 'subscription';
+  return subscriptionPlanName(inferSubscriptionProvider(model) ?? model.provider ?? 'subscription');
+}
+
+function subscriptionPlanName(key: string): string {
   return isSubscriptionProvider(key) ? providerName(key) : key;
 }
 
@@ -782,7 +785,7 @@ export function summarizeProviderQuotas(models: readonly TeamModel[], now = Date
   for (const model of models) {
     if (!isSubscriptionModel(model.id) && !model.usage && !model.subscriptionProvider) continue;
     const key = inferSubscriptionProvider(model) ?? model.provider ?? 'subscription';
-    const name = modelPlanName({ ...model, factoryUsage: undefined }) ?? key;
+    const name = subscriptionPlanName(key);
     let entry = grouped.get(key);
     if (!entry) {
       entry = { key, name, models: [] };
