@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { Benchmarks, BENCHMARKS_REFRESH_MS, BENCHMARKS_URL, groupBenchmarks } from '../src/server/benchmarks.js';
-import { benchmarkName, benchmarkWords, matchBenchmark, nameKey } from '../src/shared/benchmarks.js';
+import { benchmarkName, benchmarkWords, matchBenchmark, nameKey, readModelName, sameVersions, type BenchmarkModel } from '../src/shared/benchmarks.js';
 
 /** Rows from the owner's `GET /api/v2/language/models/free` (November 2026), trimmed to the fields the office reads. */
 const PAGE_1 = [
@@ -74,7 +74,30 @@ const PAGE_2 = [
     performance_v3: { mean_output_tokens_per_second: null },
   },
 ];
+/** More rows from the same read: every Claude Sonnet 5.5 effort, Gemini 4 Carbon, and an older family named brand-version-name. */
+const row = (slug: string, name: string, intelligence: number, engineering: number, costPerTask: number, tokensPerSecond: number) => ({
+  slug,
+  name,
+  evaluations: { artificial_analysis_intelligence_index: intelligence, artificial_analysis_engineering_index: engineering },
+  artificial_analysis_intelligence_index_cost: { cost_per_task: { total_cost: costPerTask } },
+  performance_v3: { mean_output_tokens_per_second: tokensPerSecond },
+});
+const SONNET = [
+  row('claude-sonnet-5-5-low', 'Claude Sonnet 5.5 (Low, Default Fallback)', 25.6, 33.4, 0.5113, 135.15),
+  row('claude-sonnet-5-5-medium', 'Claude Sonnet 5.5 (Medium, Default Fallback)', 30.8, 37.3, 0.7807, 127.94),
+  row('claude-sonnet-5-5-high', 'Claude Sonnet 5.5 (High, Default Fallback)', 41.5, 46.2, 1.6361, 144.43),
+  row('claude-sonnet-5-5-xhigh', 'Claude Sonnet 5.5 (Xhigh, Default Fallback)', 49.9, 53.8, 4.092, 143.36),
+  row('claude-sonnet-5-5', 'Claude Sonnet 5.5 (Max, Default Fallback)', 54.5, 58.5, 10.0206, 151.27),
+];
+const CARBON = [
+  row('gemini-4-carbon-low', 'Gemini 4 Carbon (Low)', 54.2, 60.2, 5.2214, 52.66),
+  row('gemini-4-carbon-medium', 'Gemini 4 Carbon (Medium)', 58.3, 63.9, 4.6777, 59.47),
+  row('gemini-4-carbon', 'Gemini 4 Carbon (High)', 60, 65.3, 5.4848, 62.43),
+];
+const HAIKU_4_5 = row('claude-4-5-haiku-reasoning', 'Claude 4.5 Haiku (Reasoning)', 7.4, 17, 0.5318, 115.83);
 const KEY = 'aa_TestKeyNotReal1234';
+const GEMINI_KEY = 'AIzaTestGeminiKeyNotReal0000';
+const DECISIONS_URL = 'https://generativelanguage.googleapis.com/v1beta/decisions';
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 test('Artificial Analysis names group by family and effort, and match Droid model names', () => {
@@ -102,18 +125,68 @@ test('Artificial Analysis names group by family and effort, and match Droid mode
   assert.equal(matchBenchmark('Opus 5', models), undefined, 'a version prefix is a different model');
   assert.equal(matchBenchmark('GPT 6.1 Sol Mini', models), undefined);
   assert.equal(matchBenchmark('Gemini 1.5 Pro', models), undefined, 'a dated name is its own model');
+  assert.equal(matchBenchmark("Gemini 1.5 Pro (Sep '24)", models)?.name, "Gemini 1.5 Pro (Sep '24)");
 });
 
-test('benchmark lines put the default effort first and keep to the efforts the model takes', () => {
+test('a name drops a parenthesis that is not an effort, and ids read as names', () => {
+  const models = groupBenchmarks([...PAGE_1, ...PAGE_2, ...CARBON, ...SONNET, HAIKU_4_5]);
+  assert.deepEqual(readModelName('Gemini 4 Carbon (Interactions proxy)'), { exact: 'gemini 4 carbon (interactions proxy)', loose: 'gemini 4 carbon' });
+  assert.equal(matchBenchmark('Gemini 4 Carbon (Interactions proxy)', models)?.name, 'Gemini 4 Carbon');
+  assert.equal(matchBenchmark('DroidProxy: Gemini 4 Carbon (Interactions proxy) (High)', models)?.name, 'Gemini 4 Carbon');
+  assert.equal(matchBenchmark('Gemini 4 Carbon Lite (Interactions proxy)', models), undefined, 'the words outside the parenthesis still have to agree');
+  assert.deepEqual(readModelName('gemini-3.8-flash-high'), { exact: 'gemini 3.8 flash', loose: 'gemini 3.8 flash', effort: 'high' });
+  assert.equal(matchBenchmark('gemini-4-carbon', models)?.name, 'Gemini 4 Carbon');
+  assert.equal(matchBenchmark('claude-opus-5-5', models)?.name, 'Claude Opus 5.5', 'an id writes 5.5 as 5-5');
+  assert.equal(matchBenchmark('custom:droidproxy:gpt-6.1-sol', models)?.name, 'GPT-6.1 Sol');
+  assert.equal(matchBenchmark('claude-opus-5', models), undefined);
+  assert.equal(nameKey('qwen3-max'), 'qwen3 max', 'max ends model names, so an id keeps it');
+  assert.equal(matchBenchmark('Haiku 4.5', models)?.name, 'Claude 4.5 Haiku', 'the same words in another order, when only one family has them');
+  const preview: BenchmarkModel[] = [{ name: 'Gemini 3.1 Pro Preview', variants: [{ intelligence: 50, engineering: 50, costPerTask: 1, tokensPerSecond: null }] }];
+  assert.equal(matchBenchmark('Gemini 3.1 Pro', preview)?.name, 'Gemini 3.1 Pro Preview');
+  assert.equal(matchBenchmark('Gemini 3.1 Pro', [...preview, { ...preview[0], name: 'Gemini 3.1 Pro (Preview)' }]), undefined, 'two families fit, so neither does');
+  assert.ok(sameVersions('PostHog Claude Opus 5.5', 'Claude Opus 5.5'));
+  assert.ok(!sameVersions('Opus 5', 'Claude Opus 5.5'));
+  assert.ok(!sameVersions('Gemini 1.5 Pro', "Gemini 1.5 Pro (Sep '24)"));
+});
+
+test("Claude Sonnet 5.5's efforts are Artificial Analysis's own rows (regression: the owner's report that Sonnet looked shifted)", () => {
+  const models = groupBenchmarks([...SONNET, ...PAGE_1, ...PAGE_2]);
+  const sonnet = matchBenchmark('Sonnet 5.5', models)!;
+  assert.equal(sonnet.name, 'Claude Sonnet 5.5');
+  assert.deepEqual(
+    sonnet.variants.map((v) => [v.effort, v.intelligence, v.engineering, v.costPerTask]),
+    [
+      ['low', 25.6, 33.4, 0.5113],
+      ['medium', 30.8, 37.3, 0.7807],
+      ['high', 41.5, 46.2, 1.6361],
+      ['xhigh', 49.9, 53.8, 4.092],
+      ['max', 54.5, 58.5, 10.0206],
+    ],
+    'each "(Effort, Default Fallback)" row is that effort, with nothing merged or shifted',
+  );
+  assert.equal(benchmarkWords(sonnet, EFFORTS, 'high'), 'high* 41.5/46.2 $1.64 · low 25.6/33.4 $0.51 · medium 30.8/37.3 $0.78 · xhigh 49.9/53.8 $4.09 · max 54.5/58.5 $10.0');
+  assert.equal(matchBenchmark('DroidProxy: Sonnet 5.5', models), sonnet);
+  assert.equal(matchBenchmark('Sonnet 5', models), undefined);
+});
+
+test('benchmark lines are compact: default effort first and starred, only the efforts the model takes', () => {
   const models = groupBenchmarks([...PAGE_1, ...PAGE_2]);
   const opus = matchBenchmark('DroidProxy: Opus 5.5', models)!;
-  assert.equal(benchmarkWords(opus, EFFORTS, 'medium'), 'medium (default): intelligence 48.2, engineering 53.7, $2.45/task; low: intelligence 34.8, engineering 43.2, $0.98/task; max: intelligence 59.1, engineering 65.3, $10.0/task');
-  assert.equal(benchmarkWords(opus, ['low', 'medium'], 'medium'), 'medium (default): intelligence 48.2, engineering 53.7, $2.45/task; low: intelligence 34.8, engineering 43.2, $0.98/task');
-  assert.equal(benchmarkWords(matchBenchmark('Haiku 5.5', models)!, EFFORTS, 'medium'), 'high: intelligence 29.9, engineering 36.5, $0.16/task');
-  assert.equal(benchmarkWords(models[3]), 'intelligence 30, engineering ?, $?/task');
+  assert.equal(benchmarkWords(opus, EFFORTS, 'medium'), 'medium* 48.2/53.7 $2.45 · low 34.8/43.2 $0.98 · max 59.1/65.3 $10.0');
+  assert.equal(benchmarkWords(opus, ['low', 'medium'], 'medium'), 'medium* 48.2/53.7 $2.45 · low 34.8/43.2 $0.98');
+  assert.equal(benchmarkWords(matchBenchmark('Haiku 5.5', models)!, EFFORTS, 'medium'), 'high 29.9/36.5 $0.16');
+  assert.equal(benchmarkWords(models[3]), '30/? $?');
 });
 
-function rig(t: { after(fn: () => void): void }, opts: { paused?: () => boolean; respond?: (url: string, key: string | null) => Response | undefined | Promise<Response | undefined> } = {}) {
+function rig(
+  t: { after(fn: () => void): void },
+  opts: {
+    paused?: () => boolean;
+    respond?: (url: string, key: string | null) => Response | undefined | Promise<Response | undefined>;
+    gemini?: () => string | undefined;
+    decide?: (body: { questions: Record<string, { instructions: string; criteria: Record<string, string> }> }) => Response;
+  } = {},
+) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'benchmarks-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   let now = Date.UTC(2026, 10, 16, 4);
@@ -124,8 +197,15 @@ function rig(t: { after(fn: () => void): void }, opts: { paused?: () => boolean;
     const page = Number(new URL(url).searchParams.get('page'));
     return Response.json({ tier: 'free', pagination: { page, page_size: 5, total_pages: 2, has_more: page < 2 }, data: page === 1 ? PAGE_1 : PAGE_2 });
   };
+  const decisions: { questions: Record<string, { instructions: string; criteria: Record<string, string> }> }[] = [];
   const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
+    if (url === DECISIONS_URL) {
+      const body = JSON.parse(String(init?.body));
+      assert.equal(new Headers(init?.headers).get('x-goog-api-key'), GEMINI_KEY);
+      decisions.push(body);
+      return opts.decide?.(body) ?? Response.json({ answers: {} });
+    }
     calls.push(url);
     const key = new Headers(init?.headers).get('x-api-key');
     return (await opts.respond?.(url, key)) ?? pages(url);
@@ -138,8 +218,9 @@ function rig(t: { after(fn: () => void): void }, opts: { paused?: () => boolean;
       fetchImpl,
       now: () => now,
       timers: { setTimeout: (fn, ms) => timers.push({ fn, ms }), clearTimeout: () => {} },
+      decisions: { apiKey: () => opts.gemini?.() },
     });
-  return { dir, file: path.join(dir, 'artificial-analysis.json'), calls, timers, states, make, advance: (ms: number) => (now += ms), at: () => now };
+  return { dir, file: path.join(dir, 'artificial-analysis.json'), calls, decisions, timers, states, make, advance: (ms: number) => (now += ms), at: () => now };
 }
 
 test('connecting reads every page with the key, keeps the key private, and survives a restart', async (t) => {
@@ -257,4 +338,121 @@ test('a refresh that cannot save says so', async (t) => {
   } finally {
     chmodSync(r.dir, 0o700);
   }
+});
+
+/** A Gemini Decisions answer for each question, naming the option whose description is `family` (or "none"). */
+function answers(pick: (instructions: string) => [family: string, probability: number]) {
+  return (body: { questions: Record<string, { instructions: string; criteria: Record<string, string> }> }) =>
+    Response.json({
+      answers: Object.fromEntries(
+        Object.entries(body.questions).map(([key, q]) => {
+          const [family, p] = pick(q.instructions);
+          const choice = family === 'none' ? 'none' : Object.keys(q.criteria).find((option) => q.criteria[option] === family)!;
+          return [key, { type: 'choice', choice, probabilities: { [choice]: p, none: choice === 'none' ? p : 1 - p }, confidence: p }];
+        }),
+      ),
+      usage: { total_input_tokens: 900, total_output_tokens: 0, total_tokens: 900 },
+    });
+}
+
+/** Fires the queued Gemini Decisions request (the timer `forModel` set) and waits for its answers to be saved. */
+async function askGemini(r: ReturnType<typeof rig>, b: Benchmarks) {
+  const i = r.timers.findIndex((x) => x.ms === 1_000);
+  assert.notEqual(i, -1, 'a Gemini Decisions request is queued');
+  r.timers.splice(i, 1)[0].fn();
+  await b.namesMatched();
+}
+
+test('names no rule matches go to Gemini Decisions once, together, and only a sure answer of the same version is used', async (t) => {
+  const r = rig(t, {
+    gemini: () => GEMINI_KEY,
+    decide: answers((q) => {
+      if (q.includes('"PostHog Claude Opus 5.5"')) return ['Claude Opus 5.5', 0.93];
+      if (q.includes('"Sol Preview Build"')) return ['GPT-6.1 Sol', 0.62];
+      if (q.includes('"Abliterated Large Flash"')) return ['none', 0.97];
+      if (q.includes('"Opus Next"')) return ['Claude Opus 5.5', 0.95];
+      throw new Error(`unexpected question ${q}`);
+    }),
+  });
+  const b = r.make();
+  await b.connect(KEY, 'owner');
+  for (const name of ['PostHog Claude Opus 5.5', 'Sol Preview Build', 'Abliterated Large Flash', 'Opus Next']) assert.equal(b.forModel(name), undefined, 'team_models never waits on the network');
+  assert.equal(b.forModel('Opus 5.5')?.name, 'Claude Opus 5.5', 'a name the rules match never asks');
+  await askGemini(r, b);
+  assert.equal(r.decisions.length, 1, 'one request for every name');
+  const asked = Object.values(r.decisions[0].questions);
+  assert.equal(asked.length, 4);
+  assert.deepEqual(Object.values(asked[0].criteria).sort(), ['Claude Haiku 5.5', 'Claude Opus 5.5', "Gemini 1.5 Pro (Sep '24)", 'GPT-6.1 Sol', 'None of these families is exactly this model and version.'].sort());
+  assert.ok(
+    asked.every((q, i) => q.instructions.split(`"${['PostHog Claude Opus 5.5', 'Sol Preview Build', 'Abliterated Large Flash', 'Opus Next'][i]}"`).length > 2),
+    'each question repeats its name',
+  );
+
+  assert.equal(b.forModel('PostHog Claude Opus 5.5')?.name, 'Claude Opus 5.5', 'accepted at 0.93');
+  assert.equal(b.forModel('Sol Preview Build'), undefined, 'rejected at 0.62');
+  assert.equal(b.forModel('Abliterated Large Flash'), undefined, 'none');
+  assert.equal(b.forModel('Opus Next'), undefined, 'a family with other version numbers is never used');
+  assert.equal(r.timers.filter((x) => x.ms === 1_000).length, 0, 'answered names are not asked again');
+  assert.equal(r.decisions.length, 1);
+
+  const again = r.make();
+  assert.equal(again.forModel('PostHog Claude Opus 5.5')?.name, 'Claude Opus 5.5', 'answers survive a restart');
+  assert.equal(again.forModel('Abliterated Large Flash'), undefined);
+  assert.equal(r.timers.filter((x) => x.ms === 1_000).length, 0);
+  assert.ok(!readFileSync(r.file, 'utf8').includes(GEMINI_KEY));
+});
+
+test('a refresh that lists other families asks again in one request; without Gemini, the rules alone answer', async (t) => {
+  let page2 = PAGE_2;
+  const r = rig(t, {
+    gemini: () => GEMINI_KEY,
+    decide: answers(() => ['Claude Opus 5.5', 0.9]),
+    respond: (url) => {
+      const page = Number(new URL(url).searchParams.get('page'));
+      return Response.json({ pagination: { has_more: page < 2 }, data: page === 1 ? PAGE_1 : page2 });
+    },
+  });
+  const b = r.make();
+  await b.connect(KEY, 'owner');
+  b.forModel('PostHog Claude Opus 5.5');
+  b.forModel('Gateway Opus 5.5');
+  await askGemini(r, b);
+  assert.equal(r.decisions.length, 1);
+  assert.equal(await b.refresh(), undefined);
+  assert.equal(r.timers.filter((x) => x.ms === 1_000).length, 0, 'the same families: nothing to ask');
+  page2 = [...PAGE_2, ...CARBON];
+  assert.equal(await b.refresh(), undefined);
+  assert.equal(b.forModel('PostHog Claude Opus 5.5'), undefined, 'an answer about the old list is not used');
+  await askGemini(r, b);
+  assert.equal(r.decisions.length, 2);
+  assert.equal(Object.keys(r.decisions[1].questions).length, 2, 'both names in one request');
+  assert.equal(b.forModel('PostHog Claude Opus 5.5')?.name, 'Claude Opus 5.5');
+
+  const off = rig(t, { decide: () => assert.fail('Gemini Decisions is not connected') });
+  const plain = off.make();
+  await plain.connect(KEY, 'owner');
+  assert.equal(plain.forModel('PostHog Claude Opus 5.5'), undefined);
+  assert.equal(plain.forModel('DroidProxy: GPT 6.1 Sol')?.name, 'GPT-6.1 Sol');
+  assert.equal(off.timers.filter((x) => x.ms === 1_000).length, 0, 'nothing is queued');
+  assert.equal(off.decisions.length, 0);
+});
+
+test('a failed Gemini Decisions request saves nothing and waits an hour before asking about that name again', async (t) => {
+  let fail = true;
+  const r = rig(t, {
+    gemini: () => GEMINI_KEY,
+    decide: (body) => (fail ? Response.json({ error: { message: 'quota exhausted', status: 'RESOURCE_EXHAUSTED' } }, { status: 429 }) : answers(() => ['Claude Opus 5.5', 0.9])(body)),
+  });
+  const b = r.make();
+  await b.connect(KEY, 'owner');
+  b.forModel('PostHog Claude Opus 5.5');
+  await askGemini(r, b);
+  assert.equal(b.forModel('PostHog Claude Opus 5.5'), undefined);
+  assert.equal(r.timers.filter((x) => x.ms === 1_000).length, 0, 'not asked again at once');
+  fail = false;
+  r.advance(60 * 60_000);
+  b.forModel('PostHog Claude Opus 5.5');
+  await askGemini(r, b);
+  assert.equal(b.forModel('PostHog Claude Opus 5.5')?.name, 'Claude Opus 5.5');
+  assert.equal(r.decisions.length, 2);
 });

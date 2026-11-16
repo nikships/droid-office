@@ -27,6 +27,8 @@ import {
   inspectModelStatus,
   inspectTerminalRetry,
   inspectWorkerForge,
+  modelPlanName,
+  shortIso,
   summarizeProviderQuotas,
   type WorkerRuntimeSnapshot,
 } from '../src/server/worker-status.js';
@@ -663,7 +665,7 @@ test('MCP end-to-end: office_look, worker_log, team_status, office_roster, team_
   assert.equal(recheckCalls, prevRechecks + 1, 'team_models triggers throttled recheckModels');
   const quotasText = (quotasOnly.content as { text: string }[]).map((c) => c.text).join('\n');
   assert.match(quotasText, /Subscription quotas:/);
-  assert.match(quotasText, /ChatGPT \(COOLDOWN, best of 2 accounts, 0\/1 runnable\): out of quota on 5-hour, resets in 42 min \(2026-04-17T22:42:00\.000Z\) · 5-hour 0% left.*Weekly 62% left/);
+  assert.match(quotasText, /ChatGPT \(COOLDOWN, best of 2 accounts, 0\/1 runnable\): out of quota on 5-hour, resets in 42 min \(2026-04-17T22:42:00Z\) · 5-hour 0% left.*Weekly 62% left/);
   assert.match(quotasText, /Claude \(1\/1 runnable\): 5-hour 74% left/);
   assert.match(quotasText, /Grok \(COOLDOWN, 0\/1 runnable\): out of quota on Weekly.*Weekly 0% left/);
   assert.doesNotMatch(quotasText, /Claude Opus 5\.5\nanthropic, x1\.6 credits/, 'only: quotas omits per-model catalogue blocks');
@@ -681,4 +683,18 @@ test('MCP end-to-end: office_look, worker_log, team_status, office_roster, team_
   assert.equal(summary.length, 3);
   assert.ok(formatProviderQuotas(summary).startsWith('Subscription quotas:\n'));
   assert.ok(formatWorkerInspection(team.inspectWorker(sub), { includeSteps: true }).includes('1. [x] Inspect DroidProxy control API'));
+});
+
+test("a model names the quota row it draws on, by that row's name", () => {
+  const windows = [{ name: '5-hour', leftPercent: 96, resetsAt: '2026-11-16T20:42:56.039Z', resetsIn: '3 h 46 min' }];
+  const factoryUsage = { tier: 'standard' as const, windows, overagePreference: 'droid-core' as const, extraUsageBalanceCents: 0, extraUsageAllowed: false, overageHint: 'Droid Core fallback is active; Extra Usage balance $0.00.' };
+  assert.equal(modelPlanName({ id: 'claude-opus-5-5', name: 'Opus 5.5', factoryUsage }), 'Factory Standard');
+  assert.equal(modelPlanName({ id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', factoryUsage: { ...factoryUsage, tier: 'core' } }), 'Factory Droid Core');
+  assert.equal(modelPlanName({ id: 'custom:droidproxy:gpt-6.1-sol', name: 'DroidProxy: GPT 6.1 Sol', custom: true }), 'ChatGPT');
+  assert.equal(modelPlanName({ id: 'custom:droidproxy:gemini-3.8-flash-high', name: 'DroidProxy: Antigravity: Gemini 3.8 Flash (High)', subscriptionProvider: 'antigravity' }), 'Antigravity');
+  assert.equal(modelPlanName({ id: 'custom:mine', name: 'Mine', custom: true }), undefined);
+  const quotas = summarizeProviderQuotas([{ id: 'custom:droidproxy:gpt-6.1-sol', name: 'DroidProxy: GPT 6.1 Sol', custom: true }]);
+  assert.equal(quotas[0].name, modelPlanName({ id: 'custom:droidproxy:gpt-6.1-sol', name: 'DroidProxy: GPT 6.1 Sol' }));
+  assert.equal(shortIso('2026-11-16T19:55:10.000Z'), '2026-11-16T19:55:10Z');
+  assert.equal(shortIso('2026-11-16T19:55:10Z'), '2026-11-16T19:55:10Z');
 });

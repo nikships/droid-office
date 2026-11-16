@@ -909,7 +909,7 @@ export class Team {
       else if (factoryAvailability && factoryAvailability.state !== 'ok') stuck = factoryAvailability.reason;
       const usage = this.opts.usage?.(id, now);
       const factoryUsage = factoryModelUsage(factory, m ?? { id }, now);
-      const benchmarks = m?.displayName ? this.opts.benchmarks?.(m.displayName) : undefined;
+      const benchmarks = this.opts.benchmarks?.(m?.displayName ?? id);
       const subscriptionProvider = usage?.provider ?? (avail && 'provider' in avail ? avail.provider : undefined);
       const emptyWin = usage?.windows.find((w) => w.leftPercent <= 0);
       const cooldownFor = (until: number | null, window: string): NonNullable<TeamModel['cooldown']> => ({

@@ -760,6 +760,19 @@ function inferSubscriptionProvider(model: TeamModel): SubscriptionProviderKey | 
   return undefined;
 }
 
+/** The `Subscription quotas:` row a model draws on, by that row's name ("Factory Standard", "ChatGPT"). */
+export function modelPlanName(model: TeamModel): string | undefined {
+  if (model.factoryUsage) return model.factoryUsage.tier === 'core' ? 'Factory Droid Core' : 'Factory Standard';
+  if (!isSubscriptionModel(model.id) && !model.usage && !model.subscriptionProvider) return undefined;
+  const key = inferSubscriptionProvider(model) ?? model.provider ?? 'subscription';
+  return isSubscriptionProvider(key) ? providerName(key) : key;
+}
+
+/** "2026-11-16T19:55:10Z": an ISO time without the milliseconds nobody plans around. */
+export function shortIso(at: string): string {
+  return at.replace(/\.\d{3}Z$/, 'Z');
+}
+
 /**
  * Collapses subscription-backed models into one compact quota/cooldown summary per provider
  * so leads can read 5-hour/weekly quota and reset times without scanning dozens of model blocks.
@@ -769,7 +782,7 @@ export function summarizeProviderQuotas(models: readonly TeamModel[], now = Date
   for (const model of models) {
     if (!isSubscriptionModel(model.id) && !model.usage && !model.subscriptionProvider) continue;
     const key = inferSubscriptionProvider(model) ?? model.provider ?? 'subscription';
-    const name = isSubscriptionProvider(key) ? providerName(key) : key;
+    const name = modelPlanName({ ...model, factoryUsage: undefined }) ?? key;
     let entry = grouped.get(key);
     if (!entry) {
       entry = { key, name, models: [] };
@@ -851,7 +864,7 @@ export function formatProviderQuotas(quotas: readonly ProviderQuotaSummary[]): s
     const counts = `${q.runnableModels}/${q.totalModels} runnable`;
     const parts: string[] = [];
     if (q.cooldownWindow && q.runnableModels === 0) {
-      const reset = q.cooldownIn && q.cooldownUntil ? `resets in ${q.cooldownIn} (${q.cooldownUntil})` : q.cooldownUntil ? `reset due (${q.cooldownUntil})` : 'out of quota';
+      const reset = q.cooldownIn && q.cooldownUntil ? `resets in ${q.cooldownIn} (${shortIso(q.cooldownUntil)})` : q.cooldownUntil ? `reset due (${shortIso(q.cooldownUntil)})` : 'out of quota';
       parts.push(`out of quota on ${q.cooldownWindow}, ${reset}`);
     } else if (q.reason && q.runnableModels === 0) {
       parts.push(q.reason);
@@ -860,7 +873,7 @@ export function formatProviderQuotas(quotas: readonly ProviderQuotaSummary[]): s
       parts.push(
         q.windows
           .map((w) => {
-            const reset = w.resetsAt === null ? '' : w.resetsIn ? ` (resets in ${w.resetsIn} at ${w.resetsAt})` : ` (reset due since ${w.resetsAt})`;
+            const reset = w.resetsAt === null ? '' : w.resetsIn ? ` (resets in ${w.resetsIn} at ${shortIso(w.resetsAt)})` : ` (reset due since ${shortIso(w.resetsAt)})`;
             return `${w.name} ${w.leftPercent}% left${reset}`;
           })
           .join(', '),

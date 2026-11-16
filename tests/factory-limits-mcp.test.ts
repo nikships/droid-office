@@ -182,7 +182,10 @@ test('MCP Factory quotas, model discovery, hire gates and retry rechecks share t
   assert.ok(model.cannotRun);
   assert.ok(model.cooldown?.resetsIn);
   assert.equal(model.factoryUsage?.windows.length, 3);
-  assert.match((all.content as { text: string }[]).map((c) => c.text).join('\n'), /Factory Standard:.*Monthly 44% left/);
+  const allText = (all.content as { text: string }[]).map((c) => c.text).join('\n');
+  assert.match(allText, /- Factory Standard \(COOLDOWN, 0\/1 runnable\):.*Monthly 44% left/);
+  assert.match(allText, /gpt-6\.1-sol \(default\): GPT 6\.1 Sol · .*plan: Factory Standard\n/);
+  assert.doesNotMatch(allText, /Factory usage:/, 'the plan numbers are in the summary only');
   const blocked = await client.callTool({ name: 'team_hire', arguments: { title: 'Quota test', brief: 'No network work', model: STANDARD, worktree: false } });
   assert.equal(blocked.isError, true);
   assert.equal(hires, 0);

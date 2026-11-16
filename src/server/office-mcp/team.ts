@@ -6,9 +6,9 @@ import type { TeamEvent, TeamMember, TeamModel, TeamReply, WorkerReview } from '
 import { teamBoardText, type TeamBoardMember } from '../team.js';
 import { formatOtherFloorWorkers, type OtherFloorWorker } from '../floor-watch.js';
 import { formatImageLines, OfficeImageStore, type StoredImageMeta } from '../office-images.js';
-import { isSubscriptionModel, modelUsageWords, paceWords } from '../../shared/subscriptions.js';
+import { isSubscriptionModel, paceWords } from '../../shared/subscriptions.js';
 import { benchmarkWords } from '../../shared/benchmarks.js';
-import { briefAge, factoryUsageWords, formatForgeLines, formatProviderQuotas, formatTaskTag, formatWorkerInspection, type ProviderQuotaSummary, type WorkerInspection } from '../worker-status.js';
+import { briefAge, formatForgeLines, formatProviderQuotas, formatTaskTag, formatWorkerInspection, modelPlanName, shortIso, type ProviderQuotaSummary, type WorkerInspection } from '../worker-status.js';
 import { hasOwnerAccess } from './owner.js';
 import { formatBlockingSummary, formatQueueBrief } from '../worker-queue.js';
 import { enrichTeamReplyBody, floorDeepLink, mcpDeepLinkBase, withCompactWorkerDeepLink, withMemberDeepLink, withOtherWorkerDeepLink, workerDeepLink } from './deep-links.js';
@@ -108,36 +108,52 @@ function eventText(event: TeamEvent, imageOrigin?: string): string {
   return `${at} Office status: ${event.name} ${status[event.kind]}${event.text ? `: ${event.text}` : ''}.${event.kind === 'needs_input' ? ' Tell whoever asked you; someone must answer at its desk.' : ''}`;
 }
 
-/** Said once above models that carry benchmarks, so agents know what the numbers mean. */
-function benchmarksLegend(models: readonly TeamModel[]): string[] {
-  if (!models.some((m) => m.benchmarks)) return [];
+/** Said once above the models, so agents know what the benchmark numbers, stars and plan tags mean. */
+function modelsLegend(models: readonly TeamModel[]): string[] {
+  const benchmarks = models.some((m) => m.benchmarks);
+  const stars = models.some((m) => m.defaultEffort);
+  const plans = models.some((m) => modelPlanName(m));
+  if (!benchmarks && !stars && !plans) return [];
   return [
-    `Intelligence and engineering are 0-100 indexes (higher is better); $/task is what one index task costs at the model's API prices at that effort (tokens spent times price), not plan quota; Pace lines measure how fast a plan runs out. Compare models at the effort you will hire on.`,
+    [
+      ...(benchmarks
+        ? [
+            "Benchmarks from Artificial Analysis (artificialanalysis.ai): effort intelligence/engineering $per-task. Both are 0-100 indexes (higher is better); $ is what one Intelligence Index task costs at the creator's API prices at that effort (tokens spent times price), not plan quota. Compare models at the effort you will hire on.",
+          ]
+        : []),
+      ...(stars ? ['* marks the default effort.'] : []),
+      ...(plans ? ['plan: names the Subscription quotas row a model draws on; Pace lines measure how fast a plan runs out.'] : []),
+    ].join(' '),
   ];
 }
 
+function effortWords(efforts: readonly string[] | undefined, defaultEffort: string | undefined): string | undefined {
+  if (!efforts?.length) return defaultEffort ? `default effort ${defaultEffort}` : undefined;
+  const list = `effort ${efforts.map((e) => (e === defaultEffort ? `${e}*` : e)).join('/')}`;
+  return defaultEffort && !efforts.includes(defaultEffort) ? `${list}, default effort ${defaultEffort}` : list;
+}
+
 function modelText(model: TeamModel): string {
+  const plan = modelPlanName(model);
+  const facts = [
+    model.provider,
+    model.custom ? 'custom, no Factory credits' : model.multiplier !== undefined ? `x${model.multiplier} credits` : 'credit cost unknown',
+    ...(plan ? [`plan: ${plan}`] : []),
+    ...(model.noImages ? ['no images'] : []),
+    effortWords(model.efforts, model.defaultEffort),
+    ...(model.unlisted ? ['not currently listed by Droid'] : []),
+    model.promo,
+  ]
+    .filter(Boolean)
+    .join(', ');
   return [
-    `${model.id}${model.default ? ' (default)' : ''}: ${model.name}`,
-    [
-      model.provider,
-      model.custom ? "owner's API key, no Factory credits" : model.multiplier !== undefined ? `x${model.multiplier} credits` : 'credit cost unknown',
-      ...(model.noImages ? ['no images'] : []),
-      ...(model.efforts ? [`effort ${model.efforts.join('/')}`] : []),
-      ...(model.defaultEffort ? [`default effort ${model.defaultEffort}`] : []),
-      ...(model.unlisted ? ['not currently listed by Droid'] : []),
-      model.promo,
-    ]
-      .filter(Boolean)
-      .join(', '),
-    ...(model.usage ? [`Subscription usage: ${modelUsageWords(model.usage)}`] : []),
+    `${model.id}${model.default ? ' (default)' : ''}${model.name && model.name !== model.id ? `: ${model.name}` : ''} · ${facts}`,
     // The provider's own pace is on its quota line; a model only adds one measured on itself.
     ...(model.usage?.pace?.state === 'measured' && model.usage.pace.basis === 'model' ? [`Pace on this model: ${paceWords(model.usage.pace, model.usage.provider)}`] : []),
-    ...(model.factoryUsage ? [`Factory usage: ${factoryUsageWords(model.factoryUsage)}`] : []),
     ...(model.benchmarks ? [`Benchmarks: ${benchmarkWords(model.benchmarks, model.efforts, model.defaultEffort)}`] : []),
     ...(model.note ? [`Owner's note: ${model.note}`] : []),
     ...(model.cannotRun ? [`Cannot run: ${model.cannotRun}`] : []),
-    ...(model.cooldown?.until ? [`Cooldown resets at: ${model.cooldown.until} (${model.cooldown.window})`] : []),
+    ...(model.cooldown?.until ? [`Cooldown resets at: ${shortIso(model.cooldown.until)} (${model.cooldown.window})`] : []),
   ].join('\n');
 }
 
@@ -419,7 +435,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         const quotas = body.quotas as ProviderQuotaSummary[] | undefined;
         return [
           ...(quotas?.length ? [formatProviderQuotas(quotas)] : []),
-          ...benchmarksLegend(body.models as TeamModel[]),
+          ...modelsLegend(body.models as TeamModel[]),
           ...(body.models as TeamModel[]).map((model) => `${model.enabled === false ? (model.cannotRun ? 'Unavailable: ' : 'Not allowed: ') : ''}${modelText(model)}`),
         ].join('\n\n');
       });
@@ -586,7 +602,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           ...(quotas?.length ? [formatProviderQuotas(quotas)] : []),
           body.restricted ? 'Settings restrict subagent models to the listed picks.' : 'Subagents may use any current Droid model.',
           ...(body.unavailable ? ['Droid could not list its models; costs and providers may be missing.'] : []),
-          ...benchmarksLegend(filtered),
+          ...modelsLegend(filtered),
           ...filtered.map(modelText),
           defaultLine,
         ].join('\n\n'),

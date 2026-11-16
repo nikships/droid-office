@@ -671,7 +671,7 @@ export async function startServer(cfg: Config) {
         .filter((model): model is string => Boolean(model)),
   });
   // Artificial Analysis benchmarks for team_models, read once a day with the owner's key.
-  const benchmarks = new Benchmarks({ dataDir: cfg.dataDir, broadcast: (state) => broadcast({ t: 'benchmarks', state }), paused: () => Boolean(setup.state().airgapped) });
+  const benchmarks = new Benchmarks({ dataDir: cfg.dataDir, broadcast: (state) => broadcast({ t: 'benchmarks', state }), paused: () => Boolean(setup.state().airgapped), decisions: geminiStore });
 
   // The machine's CPU and memory, for the monitor on the wall and a warning before hiring, and the
   // most workers the office runs at once, across every floor (--max-workers, or ⚙️ Settings).

@@ -171,10 +171,11 @@ test('team models describes costs, notes, efforts, images, default and unavailab
   );
   assert.match(result.output, /Settings restrict subagent models to the listed picks\./);
   assert.match(result.output, /x1.6 credits/);
-  assert.match(result.output, /effort low\/medium\/high/);
+  assert.match(result.output, /claude-opus-5-5 \(default\): Opus 5\.5 · anthropic, x1\.6 credits, effort low\/medium\*\/high/);
+  assert.match(result.output, /\* marks the default effort\./);
   assert.match(result.output, /x0.06 credits, no images/);
   assert.match(result.output, /tests and docs/);
-  assert.match(result.output, /owner's API key, no Factory credits/);
+  assert.match(result.output, /custom, no Factory credits/);
   assert.match(result.output, /Default: claude-opus-5-5\./);
   r.settings.models = [{ id: 'glm-5.3-flash', note: 'tests and docs' }];
   const withoutDefault = await r.call(r.lead, 'team_models');
@@ -285,15 +286,20 @@ test('team_models and models_list print the plan a subscription model runs on, a
   });
   const text = (await r.call(r.lead, 'team_models')).content as { text: string }[];
   const shown = text.map((c) => c.text).join('\n');
-  assert.match(shown, /Subscription usage: ChatGPT, best of 2 accounts: 5-hour 100% left \(resets in 4 h 57 min\), Weekly 61% left \(resets in 2 d 9 h\); read 40 min ago, may be out of date/);
-  assert.match(shown, /Subscription usage: Grok: usage couldn't be read \(timed out\)\nCannot run: Out of quota, back in 1 h \(Weekly\)/);
-  assert.equal((shown.match(/Subscription usage/g) ?? []).length, 2, 'GLM is not a subscription model');
+  assert.match(shown, /- ChatGPT \(best of 2 accounts, 1\/1 runnable\): 5-hour 100% left \(resets in 4 h 57 min at [^)]*\d{2}Z\), Weekly 61% left .*; read 40 min ago\n/, 'the plan numbers are in the quota summary, once');
+  assert.match(shown, /- Grok \(COOLDOWN, 0\/1 runnable\): .*usage couldn't be read \(timed out\)/);
+  assert.match(shown, /\ncustom:droidproxy:gpt-6\.1-sol: DroidProxy: GPT 6\.1 Sol · custom, no Factory credits, plan: ChatGPT, effort low\/medium\*\/high\n/);
+  assert.match(shown, /\ncustom:droidproxy:grok-4\.7: DroidProxy: Grok 4\.7 · custom, no Factory credits, plan: Grok\nCannot run: Out of quota, back in 1 h \(Weekly\)\nCooldown resets at: [^\n]*\d{2}Z \(Weekly\)/);
+  assert.doesNotMatch(shown, /Subscription usage|Factory usage/, 'models name their plan instead of repeating its numbers');
+  assert.equal((shown.match(/, plan: /g) ?? []).length, 2, 'GLM is not a subscription model');
+  assert.match(shown, /\nglm-5\.3-flash: GLM-5\.3-Flash · x0\.06 credits\n/);
   assert.match(shown, /Pace on this model: Weekly ~6% per worker-hour \(about 10 worker-hours left\); measured over 1\.5 worker-hours on this model in the last 7 days, across 2 accounts/);
   assert.match(shown, /- ChatGPT \(best of 2 accounts, 1\/1 runnable\): .* · pace: Weekly ~7\.5% per worker-hour \(about 8\.1 worker-hours left\); measured over 4 worker-hours on all ChatGPT models/);
-  assert.match(shown, /Benchmarks: medium \(default\): intelligence 46\.3, engineering 52\.1, \$0\.36\/task; high: intelligence 50\.3, engineering 55\.4, \$0\.59\/task/);
+  assert.match(shown, /\nBenchmarks: medium\* 46\.3\/52\.1 \$0\.36 · high 50\.3\/55\.4 \$0\.59\n/);
+  assert.equal((shown.match(/Benchmarks from Artificial Analysis \(artificialanalysis\.ai\): effort intelligence\/engineering \$per-task\..* \* marks the default effort\./g) ?? []).length, 1, 'the legend is said once, with its source');
   assert.equal((shown.match(/^Benchmarks:/gm) ?? []).length, 1, 'only models Artificial Analysis knows get a line');
   const listed = (await r.call(r.lead, 'models_list')).content as { text: string }[];
-  assert.match(listed.map((c) => c.text).join('\n'), /Subscription usage: ChatGPT, best of 2 accounts/);
+  assert.match(listed.map((c) => c.text).join('\n'), /DroidProxy: GPT 6\.1 Sol · custom, no Factory credits, plan: ChatGPT/);
 
   // With SubagentSettings.models active, team_models keeps the compact provider quota summary scoped to allowed picks.
   r.settings.models = [{ id: SOL, note: 'try before factory-billed' }];
