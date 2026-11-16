@@ -523,6 +523,13 @@ export class WorkerManager {
     return info?.kind === 'agent' && !info.cloud && !info.remote ? this.cwd(info) : undefined;
   }
 
+  /** Server-owned base directory and process for terminal path links, including shell workers. */
+  terminalContext(id: string): { cwd: string; pid?: number } | undefined {
+    const worker = this.workers.get(id);
+    if (!worker || worker.info.cloud || worker.info.remote) return undefined;
+    return { cwd: this.cwd(worker.info), pid: worker.pty?.pid };
+  }
+
   /**
    * Read-only conversation identity. Never accepts a caller-supplied path or session: the file is the
    * one the worker's own hooks named for its session, when they have.

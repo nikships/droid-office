@@ -383,7 +383,7 @@ export function createHttpHandler(ctx: HttpContext) {
         return;
       }
       // Await the extracted route so resource failures still use this handler's 500 response.
-      if (isFloorHttpPath(p, req.method)) return await floorRequest(req, res, p, url, ownRequest);
+      if (isFloorHttpPath(p, req.method)) return await floorRequest(req, res, p, url, ownRequest, () => !gate.device && ownPage(req));
       if (p === '/' || p === '/index.html') return serveIndex(res, url.searchParams.get('t'));
       const file = publicFile(p);
       if (file) return serveFile(res, file, false);

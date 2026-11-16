@@ -1,4 +1,5 @@
 import type http from 'node:http';
+import path from 'node:path';
 import type { Floor } from '../floor.js';
 import type { Orchestrator } from '../orchestrator.js';
 import type { WorkerThreadReader } from '../worker-thread.js';
@@ -11,8 +12,10 @@ import { DROP_MAX_BYTES } from '../../shared/drops.js';
 import { UPLOAD_MAX_BYTES } from '../../shared/decor.js';
 import { SEARCH_MAX, SEARCH_MIN, searchKey } from '../../shared/search.js';
 import type { SearchResults } from '../../shared/protocol.js';
+import { loopbackHost } from '../lan.js';
 import { DROP_IMAGE_ID } from '../thread-images.js';
-import { ThreadWorkspace } from '../thread-workspace.js';
+import { isEnvSecretPath, ThreadWorkspace } from '../thread-workspace.js';
+import { openTerminalFile, TerminalPaths } from '../terminal-paths.js';
 import type { createWhiteboardRuntime } from './whiteboard.js';
 import { imageIds, repoOf, str } from './validation.js';
 import { readBody, readBytes, send } from './http-utils.js';
@@ -22,6 +25,9 @@ const SEARCH_TERMINAL_HITS = 25;
 export function isFloorHttpPath(p: string, method: string | undefined): boolean {
   return (
     p === '/api/term/drop' ||
+    p === '/api/term/paths' ||
+    p === '/api/term/path/open' ||
+    p === '/api/term/file' ||
     p === '/api/prompt/image' ||
     p === '/api/decor/picture' ||
     p === '/api/changes/file' ||
@@ -46,6 +52,7 @@ interface FloorHttpContext {
 /** Authenticated floor resources: terminals, boards, docs, integrations and uploads. */
 export function createFloorHttp({ floors, orchestrator, workerFloor, workerThreads, factory, setup, whiteboardRequest }: FloorHttpContext) {
   const threadWorkspace = new ThreadWorkspace();
+  const terminalPaths = new TerminalPaths();
   const resolveThreadCwd = (workerId: string, floor: Floor | undefined): string | undefined => {
     if (!workerId) return undefined;
     if (workerId === ORCHESTRATOR_ID) return orchestrator.cwd;
@@ -61,9 +68,66 @@ export function createFloorHttp({ floors, orchestrator, workerFloor, workerThrea
     return { q, terminals: shown.hits, more: shown.more };
   };
 
-  return async (req: http.IncomingMessage, res: http.ServerResponse, p: string, url: URL, ownRequest: () => boolean) => {
+  return async (req: http.IncomingMessage, res: http.ServerResponse, p: string, url: URL, ownRequest: () => boolean, ownPage: () => boolean = () => false) => {
     // Which floor a request is about: its boards and its workers.
     const floor = floors.get(url.searchParams.get('floor') ?? '');
+    if (p === '/api/term/paths' || p === '/api/term/path/open' || p === '/api/term/file') {
+      const preview = p === '/api/term/file';
+      if (req.method !== (preview ? 'GET' : 'POST')) return send(res, 405, { error: preview ? 'Use GET' : 'Use POST' });
+      if (!preview && !ownRequest()) return send(res, 403, { error: 'Forbidden' });
+      const workerId = str(url.searchParams.get('worker'), 32);
+      const owner = workerId === ORCHESTRATOR_ID ? orchestrator.workers : (workerFloor(workerId)?.workers ?? floor?.workers);
+      const base = workerId === OFFICE_SHELL_ID ? floor?.shell.terminalContext() : owner?.terminalContext(workerId);
+      if (!base) return send(res, 404, { error: 'No local terminal workspace.' });
+      const context = { ...base, root: workerFloor(workerId)?.def.dir ?? floor?.def.dir ?? base.cwd };
+      let candidates: string[];
+      if (preview) candidates = [str(url.searchParams.get('path'), 4096)];
+      else {
+        let body: { paths?: unknown };
+        try {
+          body = JSON.parse(await readBody(req, 64 * 1024));
+        } catch {
+          return send(res, 400, { error: 'Send JSON with paths.' });
+        }
+        if (!body || !Array.isArray(body.paths) || body.paths.length > 64 || body.paths.some((entry) => typeof entry !== 'string' || entry.length > 4096)) return send(res, 400, { error: 'Send at most 64 file paths.' });
+        candidates = body.paths;
+      }
+      const local = ownPage() && loopbackHost(req.headers.host) && process.platform === 'darwin';
+      if (p === '/api/term/path/open' && (!local || candidates.length !== 1)) return send(res, 403, { error: 'Host applications can be opened only from the office on its own Mac.' });
+      const paths = await terminalPaths.resolve(context, candidates);
+      if (p === '/api/term/paths') return send(res, 200, { paths, local });
+      const target = paths[0];
+      if (!target) return send(res, 404, { error: 'File not found in the terminal workspace.' });
+      if (!preview) {
+        try {
+          await openTerminalFile(target.path);
+          return send(res, 200, { ok: true });
+        } catch {
+          return send(res, 500, { error: 'The default application could not open that file.' });
+        }
+      }
+      // Reuse the bounded, syntax-highlighted Thread preview and its private-file restrictions.
+      const parts = target.path.toLowerCase().split(path.sep);
+      const office = parts.lastIndexOf('.droid-office');
+      if (isEnvSecretPath(target.path) || parts.some((part) => ['.git', '.ssh', '.aws', '.gnupg'].includes(part)) || (office >= 0 && parts[office + 1] !== 'worktrees')) return send(res, 403, { error: 'Private files cannot be previewed.' });
+      const cwd = path.dirname(target.path);
+      const filename = path.basename(target.path);
+      if (url.searchParams.get('raw') === 'image') {
+        const image = await threadWorkspace.readImage(cwd, filename);
+        if ('error' in image) return send(res, image.status, { error: image.error });
+        res.writeHead(200, {
+          'content-type': image.type,
+          'content-length': String(image.body.length),
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+          'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+          'cross-origin-resource-policy': 'same-origin',
+        });
+        return res.end(image.body);
+      }
+      const result = await threadWorkspace.readPreview(cwd, filename);
+      return 'error' in result ? send(res, result.status, result) : send(res, 200, { ...result, path: target.displayPath ?? target.path });
+    }
     if (p === '/api/thread/image' && req.method === 'GET') {
       // A picture a worker read or was sent, shown in its Thread (worker-thread.ts reads it from the session).
       const workerId = str(url.searchParams.get('worker'), 32);

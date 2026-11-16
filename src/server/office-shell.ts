@@ -37,6 +37,10 @@ export interface ShellEvents {
  * same process back up from the terminal host, the way a shell worker's terminal is.
  */
 export class OfficeShell {
+  terminalContext(): { cwd: string; pid?: number } {
+    return { cwd: this.dir, pid: this.pty?.pid };
+  }
+
   private pty?: Pty;
   private term?: HeadlessTerminal;
   private ser?: Serializer;

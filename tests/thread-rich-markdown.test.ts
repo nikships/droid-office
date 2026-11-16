@@ -494,6 +494,23 @@ test('openFilePreviewModal handles text, target line scrolling, binary files, an
   await p3;
   assert.match(modalRoot.textContent, /File not found/);
   m3.close();
+
+  // 4. Terminal source routes through /api/term/file with original requestPath
+  let requestedUrl = '';
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    value: async (input: string) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({ path: '/abs/src/x.ts', content: 'line 1\nline 2\n', size: 14 }), { status: 200 });
+    },
+  });
+  const p4 = waitForBody();
+  const m4 = openFilePreviewModal({ floor: 'main', workerId: 'w1', source: 'terminal', path: '/abs/src/x.ts', requestPath: './src/x.ts:2', line: 2 });
+  await p4;
+  assert.match(requestedUrl, /^\/api\/term\/file\?/);
+  assert.equal(new URL(requestedUrl, 'http://127.0.0.1').searchParams.get('path'), './src/x.ts:2');
+  assert.equal(scrolledLine, 2);
+  m4.close();
 });
 
 const status = browserStatus();

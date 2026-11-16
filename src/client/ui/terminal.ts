@@ -1,6 +1,7 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { TerminalPathLinksAddon } from './terminal-path-links';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import type { Net } from '../net';
 import { store } from '../state';
@@ -258,6 +259,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     else team.replaceChildren(h('span.term-team-label', {}, summary ?? ''), ...mates.map(chip));
   };
 
+  const pathLinks = new TerminalPathLinksAddon({ floor: () => store.floor ?? '', workerId, workerName: info.name });
   const term = new Terminal({
     ...terminalOptions(),
     fontFamily: TERM_FONT,
@@ -267,9 +269,11 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     disableStdin: true,
     scrollback: 5000,
     allowProposedApi: true,
+    linkHandler: pathLinks.linkHandler,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
+  term.loadAddon(pathLinks);
   // The addon's default opens a blank window and then assigns its location. Electron's window
   // open handler only sees the blank URL and denies it, so pass the real URL up front.
   term.loadAddon(
@@ -738,6 +742,7 @@ export function openOfficeShell(net: Net) {
   const host = h('div.term-host', { 'data-drop': 'Drop screenshots or files to put them in the shell' });
   const el = h('div.modal.full.term', { role: 'dialog', 'aria-label': 'Shell' }, h('header', {}, colorDot('#8d99ae'), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom), closeBtn), host);
 
+  const pathLinks = new TerminalPathLinksAddon({ floor: () => store.floor ?? '', workerId: OFFICE_SHELL_ID });
   const term = new Terminal({
     ...terminalOptions(),
     fontFamily: TERM_FONT,
@@ -746,9 +751,11 @@ export function openOfficeShell(net: Net) {
     minimumContrastRatio: 4.5,
     scrollback: 5000,
     allowProposedApi: true,
+    linkHandler: pathLinks.linkHandler,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
+  term.loadAddon(pathLinks);
   term.loadAddon(
     new WebLinksAddon((event, uri) => {
       if (!(event.metaKey || event.ctrlKey)) return;
