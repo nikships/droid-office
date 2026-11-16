@@ -295,7 +295,7 @@ class OfficeConnection(
     private var models: Triple<String, Long, ModelCatalogue>? = null
     private val slash = ConcurrentHashMap<String, Triple<String, Long, List<DroidCommand>>>()
     private val actionRequests = ConcurrentHashMap<String, CompletableDeferred<ServerMsg.ActionResult?>>()
-    /** Changes when a socket ends, so a delayed answer cannot cross a reconnection. */
+    /** Changes when a socket ends, so an answer cannot cross a reconnection. */
     var answerEpoch: Long = 0
         private set
 
