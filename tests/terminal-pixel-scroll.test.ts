@@ -148,8 +148,13 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
     page.evaluate(() => {
       const w = window as any;
       const box = w.box();
+      const h = w.cellH();
       const wrong: unknown[] = [];
       for (let y = box.top + 1; y < box.bottom - 1; y += 3) {
+        // The screen moves by whole device pixels, so a row edge can sit up to half a pixel from
+        // xterm's exact position: look clear of the edges.
+        const at = (y - box.top + w.scrollTop()) / h;
+        if (Math.abs(at - Math.round(at)) * h < 1) continue;
         const line = w.lineAt(y);
         const got = w.textAt(box.left + 40, y);
         if (got !== w.expected(line)) wrong.push({ y: y - box.top, line, got, want: w.expected(line) });
