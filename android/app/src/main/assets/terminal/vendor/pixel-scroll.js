@@ -194,7 +194,7 @@ function attachPixelScroll(term, opts = {}) {
   };
   const api = {
     offset: () => shown,
-    drawsExtraRows: () => !!parts && !disposed,
+    drawsExtraRows: () => !disposed && active(),
     scrollBy(px) {
       if (!parts || !normal()) {
         const h = cell()?.height || 1;

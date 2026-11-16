@@ -793,7 +793,7 @@ document.addEventListener(
       })
     ) {
       // The screen's box, moved by any part-row scroll, is where the images are drawn.
-      const hit = hitTestKittyTap(drawnKittyRects, screenEl.getBoundingClientRect(), term.cols, term.rows, t.startX, t.startY);
+      const hit = hitTestKittyTap(drawnKittyRects, screenEl.getBoundingClientRect(), term.cols, term.rows, t.startX, t.startY, pixel.drawsExtraRows() ? 1 : 0);
       if (hit) openTappedKittyImage(hit.imageId);
       return;
     }

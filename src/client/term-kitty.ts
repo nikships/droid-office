@@ -339,6 +339,8 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
   let expandBtn: HTMLButtonElement | null = null;
   let cleanupScreenListeners: (() => void) | null = null;
   let screenEl: HTMLElement | null = null;
+  /** The screen's clipping box: past the screen's edges it is what the pointer is over in a part-shown row. */
+  let pointerEl: HTMLElement | null = null;
   let drawnRects: DrawnKittyRect[] = [];
   let hoveredHit: { imageId: number; placementId: number } | null = null;
   let pointerClient: { x: number; y: number } | null = null;
@@ -358,6 +360,7 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
     if (!screenEl) return;
     const clickable = !!opts.onExpandImage && !!hoveredHit && !overExpandBtn && (isNormalKittyShell(shellState()) || modHeld);
     screenEl.classList.toggle('term-kitty-clickable', clickable);
+    pointerEl?.classList.toggle('term-kitty-clickable', clickable);
   };
 
   const hideHover = () => {
@@ -612,9 +615,11 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
   const hitAtClient = (clientX: number, clientY: number): DrawnKittyRect | undefined => {
     if (!screenEl || !drawnRects.length) return undefined;
     const r = screenEl.getBoundingClientRect();
+    // Part of the row above or below the screen shows inside the clipping box while it sits between rows.
+    const box = extraRows() && pointerEl ? pointerEl.getBoundingClientRect() : r;
+    if (clientX < r.left || clientX >= r.right || clientY < box.top || clientY >= box.bottom) return undefined;
     const px = clientX - r.left;
     const py = clientY - r.top;
-    if (px < 0 || py < 0 || px >= r.width || py >= r.height) return undefined;
     const hit = hitTestKittyRect(drawnRects, px, py);
     if (!hit || !graphics.get(hit.imageId) || !decoded.get(hit.imageId)?.root) return undefined;
     return hit;
@@ -879,6 +884,8 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
     cleanupScreenListeners?.();
     cleanupScreenListeners = null;
     screenEl = term.element?.querySelector<HTMLElement>('.xterm-screen') ?? parent;
+    const clip = screenEl.parentElement;
+    pointerEl = clip?.classList.contains('xterm-scrollable-element') ? clip : screenEl;
     canvas?.remove();
     expandBtn?.remove();
     const c = document.createElement('canvas');
@@ -921,12 +928,14 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
 
       let pendingPress: { imageId: number; x: number; y: number; mod: boolean; hadSelection: boolean } | null = null;
       let swallowNextClick = false;
-      const targetEl = screenEl;
+      const targetEl = pointerEl ?? screenEl;
+      const onScrollbar = (e: Event) => !!(e.target as Element | null)?.closest?.('.scrollbar');
 
       const onMouseMove = (e: MouseEvent) => {
         modHeld = e.metaKey || e.ctrlKey;
         pointerClient = { x: e.clientX, y: e.clientY };
         if (btn.contains(e.target as Node)) return;
+        if (onScrollbar(e)) return hideHover();
         syncHoverAt(e.clientX, e.clientY);
       };
       const onMouseLeave = () => {
@@ -935,7 +944,7 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
         hideHover();
       };
       const onMouseDown = (e: MouseEvent) => {
-        if (btn.contains(e.target as Node)) return;
+        if (btn.contains(e.target as Node) || onScrollbar(e)) return;
         swallowNextClick = false;
         modHeld = e.metaKey || e.ctrlKey;
         const hit = hitAtClient(e.clientX, e.clientY);
@@ -1091,7 +1100,9 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
     canvas = null;
     ctx = null;
     screenEl?.classList.remove('term-kitty-clickable');
+    pointerEl?.classList.remove('term-kitty-clickable');
     screenEl = null;
+    pointerEl = null;
   };
 
   const origDispose = term.dispose.bind(term);

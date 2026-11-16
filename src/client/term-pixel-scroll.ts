@@ -305,7 +305,7 @@ export function attachPixelScroll(term: Terminal, opts: { enabled?: () => boolea
 
   const api: PixelScroll = {
     offset: () => shown,
-    drawsExtraRows: () => !!parts && !disposed,
+    drawsExtraRows: () => !disposed && active(),
     scrollBy(px) {
       if (!parts || !normal()) {
         const h = cell()?.height || 1;

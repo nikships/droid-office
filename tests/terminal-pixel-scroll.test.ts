@@ -302,6 +302,9 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
     const box = await page.evaluate(() => (window as any).box().toJSON());
     assert.ok(top < box.y + box.height && top > box.y + box.height - h, `the image's row is the one past the edge: ${top}`);
     assert.ok(red && Math.abs(red.top - top) < 1, `drawn there, not popping in later: ${JSON.stringify({ red, top })}`);
+    // Its part that shows answers the pointer as the rest of the image does.
+    await page.mouse.move(box.x + 10, (top + box.y + box.height) / 2);
+    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('.term-kitty-expand')?.hidden === false);
   });
 
   await t.test('output streaming in keeps a scrolled-up reader exactly where they are', async () => {

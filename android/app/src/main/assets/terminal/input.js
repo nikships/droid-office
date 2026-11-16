@@ -120,13 +120,15 @@ export function isKittyTap({ movedPx, durationMs, wasFlicking, multiTouch }) {
 /**
  * Hit-tests a page tap `(clientX, clientY)` against visible Kitty image cell rects inside `gridRect`
  * (`host.getBoundingClientRect()`, which already includes any `Desktop` view CSS `scale(...)`).
- * Picks the topmost rect: highest `z`, breaking ties by later draw order.
+ * Picks the topmost rect: highest `z`, breaking ties by later draw order. `extraRows` rows past each
+ * edge also count, for the part-shown row a pixel scroll draws above or below the grid.
  */
-export function hitTestKittyTap(rects, gridRect, cols, rows, clientX, clientY) {
+export function hitTestKittyTap(rects, gridRect, cols, rows, clientX, clientY, extraRows = 0) {
   if (!rects?.length || !(gridRect?.width > 0 && gridRect?.height > 0 && cols > 0 && rows > 0)) return null;
   const rx = clientX - gridRect.left;
   const ry = clientY - gridRect.top;
-  if (rx < 0 || ry < 0 || rx >= gridRect.width || ry >= gridRect.height) return null;
+  const pad = (extraRows * gridRect.height) / rows;
+  if (rx < 0 || ry < -pad || rx >= gridRect.width || ry >= gridRect.height + pad) return null;
   const fx = (rx / gridRect.width) * cols;
   const fy = (ry / gridRect.height) * rows;
   let hit = null;
