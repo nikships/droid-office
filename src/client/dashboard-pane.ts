@@ -749,6 +749,7 @@ export function createPane(host: PaneHost, index: number): Pane {
   function paintQuestion(review = false) {
     const w = id ? host.worker(id) : undefined;
     if (!w || mode === 'empty' || !mode) return;
+    if (w.status !== 'needs_input' && question.hidden && !shownMenu && !questionWorkspace && !questionReplying && Date.now() >= answerSettlesAt) return;
     const screen = lines(w.id);
     const next = canAnswer(w, screen) ? workerMenu(w, screen) : undefined;
     if (w.status !== 'needs_input') {

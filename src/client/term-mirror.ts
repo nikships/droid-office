@@ -16,6 +16,7 @@ export class TerminalMirror {
   private waiting = true;
   private pending: string[] = [];
   private bytes = 0;
+  private visible = true;
 
   constructor(
     private term: Sink,
@@ -31,7 +32,17 @@ export class TerminalMirror {
     this.bytes = 0;
   }
 
+  /** Hidden following terminals discard live parsing, then hydrate once from the authoritative PTY. */
+  setVisible(visible: boolean) {
+    if (visible === this.visible) return false;
+    this.visible = visible;
+    this.disconnect();
+    if (visible) this.resnapshot();
+    return true;
+  }
+
   snapshot(snapshot: Snapshot) {
+    if (!this.visible) return;
     this.disconnect();
     this.waiting = false;
     const generation = this.generation;

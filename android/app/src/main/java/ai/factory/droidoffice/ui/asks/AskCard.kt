@@ -77,14 +77,12 @@ import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.ThreadPalette
 import ai.factory.droidoffice.ui.worker.ToolIcons
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 
-private const val ANSWER_DELAY_MS = 3_000L
 /** How long a worker that stopped asking after an answer keeps the workspace open: a status blip is not the end. */
 private const val SERIES_END_MS = 1_500L
 
@@ -188,7 +186,6 @@ private fun AnswerWorkspace(worker: WorkerInfo, initial: Menu, entries: List<Thr
     val data by connection.data.collectAsStateWithLifecycle()
     val screens by connection.screens.collectAsStateWithLifecycle()
     val link by connection.link.collectAsStateWithLifecycle()
-    val store by graph.store.snapshot.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateAsState()
     val visible = lifecycle.isAtLeast(Lifecycle.State.STARTED)
@@ -230,7 +227,6 @@ private fun AnswerWorkspace(worker: WorkerInfo, initial: Menu, entries: List<Thr
     var delivering by remember { mutableStateOf(false) }
     var uncertain by rememberSaveable(identity, draftKey) { mutableStateOf(false) }
     var interrupted by rememberSaveable(identity, draftKey) { mutableStateOf(false) }
-    var job by remember { mutableStateOf<Job?>(null) }
     val connected = link.phase == Phase.Connected
     LaunchedEffect(connected) { if (!connected) interrupted = true }
     val now = data.worker(worker.id)
@@ -288,7 +284,6 @@ private fun AnswerWorkspace(worker: WorkerInfo, initial: Menu, entries: List<Thr
     }
     fun dismiss() {
         keep()
-        if (!delivering) job?.cancel()
         onDismiss()
     }
     Dialog(onDismissRequest = { if (!delivering) dismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
@@ -373,7 +368,6 @@ private fun AnswerWorkspace(worker: WorkerInfo, initial: Menu, entries: List<Thr
                     interrupted -> "The connection changed. Reopen this question before submitting. Your draft is kept."
                     !same -> if (worker.isCloud) "This question changed or was answered. Your draft is kept." else "This question changed or was answered. Your draft is kept; check Raw TTY."
                     !supported -> if (worker.isCloud) "Update the host office to answer checkbox questions here. Your draft is kept." else "Update the host office to answer checkbox questions here, or use Raw TTY. Your draft is kept."
-                    pending && !delivering -> "Sending shortly. Cancel to keep editing."
                     delivering -> "Waiting for the office to confirm your answer…"
                     uncertain -> error
                     else -> error
@@ -382,16 +376,14 @@ private fun AnswerWorkspace(worker: WorkerInfo, initial: Menu, entries: List<Thr
                 if (connected && asking && !same && currentMenu != null && !pending && !advancing) {
                     SecondaryButton("Show current question", { shown = currentMenu; epoch = connection.answerEpoch }, Modifier.fillMaxWidth().tagged(Tags.Answer.CURRENT))
                 }
-                if (pending && !delivering) SecondaryButton("Cancel", { job?.cancel(); pending = false }, Modifier.fillMaxWidth().tagged(Tags.Answer.CANCEL))
-                else SecondaryButton(
+                SecondaryButton(
                     if (delivering) "Submitting…" else if (shown.review != null) "Submit answers" else if (following != null) "Submit and continue" else "Submit answer",
                     {
                         keep()
                         pending = true
                         error = null
-                        job = scope.launch {
+                        scope.launch {
                             try {
-                                if (store.settings.answerDelay) delay(ANSWER_DELAY_MS)
                                 val fresh = connection.data.value
                                 val freshWorker = fresh.worker(worker.id)
                                 val freshIdentity = fresh.askIdentity(worker.id, freshWorker?.sessionId)

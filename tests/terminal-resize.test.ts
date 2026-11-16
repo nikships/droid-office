@@ -14,7 +14,8 @@ test('inline terminals follow pane geometry without focus or stale size rollback
   t.after(() => context.close());
   const bundle = buildSync({
     stdin: {
-      contents: "export { openTerminal, routeTerminalMessage } from './src/client/ui/terminal'; export { store } from './src/client/state'; export { Terminal } from '@xterm/xterm';",
+      contents:
+        "export { openTerminal, openOfficeShell, routeTerminalMessage } from './src/client/ui/terminal'; export { setTermFontSize } from './src/client/ui/term-font'; export { store } from './src/client/state'; export { OFFICE_SHELL_ID } from './src/shared/office-shell'; export { Terminal } from '@xterm/xterm';",
       resolveDir: fileURLToPath(new URL('..', import.meta.url)),
     },
     bundle: true,
@@ -25,7 +26,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
   }).outputFiles[0].text;
   const css = await readFile(new URL('../src/client/style.css', import.meta.url), 'utf8');
   const xtermCss = await readFile(new URL('../node_modules/@xterm/xterm/css/xterm.css', import.meta.url), 'utf8');
-  const rig = async (shared = true, delaySnapshot = false, hidden = false) => {
+  const rig = async (shared = true, delaySnapshot = false, hidden = false, mode = 'inline', pageHidden = false) => {
     const page = await context.newPage();
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
@@ -37,9 +38,14 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     await page.addStyleTag({ content: css + xtermCss });
     await page.addScriptTag({ content: bundle });
     await page.evaluate(
-      ({ shared, delaySnapshot, hidden }) => {
+      ({ shared, delaySnapshot, hidden, mode, pageHidden }) => {
         const w = window as any;
-        const { Terminal, store, openTerminal, routeTerminalMessage } = w.TerminalUI;
+        w.visibility = (nextHidden: boolean) => {
+          Object.defineProperty(document, 'hidden', { configurable: true, value: nextHidden });
+          document.dispatchEvent(new Event('visibilitychange'));
+        };
+        w.visibility(pageHidden);
+        const { Terminal, store, openTerminal, openOfficeShell, routeTerminalMessage, OFFICE_SHELL_ID } = w.TerminalUI;
         const open = Terminal.prototype.open;
         Terminal.prototype.open = function (host: HTMLElement) {
           w.term = this;
@@ -57,7 +63,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
           up: true,
           send(msg: any) {
             w.messages.push(msg);
-            if (msg.t === 'worker.attach' && !delaySnapshot) queueMicrotask(w.snapshot);
+            if ((msg.t === 'worker.attach' || msg.t === 'shell.attach') && !delaySnapshot) queueMicrotask(w.snapshot);
             return true;
           },
           onStatus(fn: any) {
@@ -65,29 +71,94 @@ test('inline terminals follow pane geometry without focus or stale size rollback
             return () => {};
           },
         };
-        w.snapshot = () => routeTerminalMessage({ t: 'term.snapshot', workerId: worker.id, data: '', cols: worker.cols, rows: worker.rows, shared });
+        w.snapshot = () => routeTerminalMessage({ t: 'term.snapshot', workerId: mode === 'shell' ? OFFICE_SHELL_ID : worker.id, data: '', cols: worker.cols, rows: worker.rows, shared });
         w.update = (cols = worker.cols, rows = worker.rows) => {
           Object.assign(worker, { cols, rows });
-          store.apply({ t: 'worker.update', worker: { ...worker } });
+          if (mode === 'shell') {
+            store.screens.set(OFFICE_SHELL_ID, { cols, rows });
+            store.emit('screens');
+          } else store.apply({ t: 'worker.update', worker: { ...worker } });
         };
         w.resize = (width: number, height: number) => {
           mount.style.width = `${width}px`;
           mount.style.height = `${height}px`;
         };
-        w.sizes = () => w.messages.filter((m: any) => m.t === 'term.resize').map(({ cols, rows }: any) => [cols, rows]);
+        w.sizes = () => w.messages.filter((m: any) => m.t === 'term.resize' || m.t === 'shell.resize').map(({ cols, rows }: any) => [cols, rows]);
         w.frames = async () => {
           for (let i = 0; i < 3; i++) await new Promise(requestAnimationFrame);
         };
         document.getElementById('focus')!.focus();
-        w.handle = openTerminal(w.net, worker.id, undefined, undefined, { mount, focus: false });
+        if (mode === 'shell') openOfficeShell(w.net);
+        else if (mode === 'modal') {
+          worker.kind = 'shell';
+          openTerminal(w.net, worker.id);
+        } else w.handle = openTerminal(w.net, worker.id, undefined, undefined, { mount, focus: false });
       },
-      { shared, delaySnapshot, hidden },
+      { shared, delaySnapshot, hidden, mode, pageHidden },
     );
     await page.waitForFunction(() => !!(window as any).term?.element);
-    if (!delaySnapshot) await page.waitForFunction(() => !(window as any).term.options.disableStdin);
+    if (!delaySnapshot && !pageHidden) await page.waitForFunction(() => !(window as any).term.options.disableStdin);
     await page.evaluate(() => (window as any).frames());
     return page;
   };
+
+  for (const mode of ['inline', 'modal', 'shell']) {
+    await t.test(`${mode} fits visible cells inside padding and refits shared views on layout and font changes`, async () => {
+      const page = await rig(true, false, false, mode);
+      assert.deepEqual(await page.evaluate(() => (window as any).sizes()), []);
+      if (mode === 'inline') await page.evaluate(() => (window as any).resize(700, 400));
+      else await page.setViewportSize({ width: 1024, height: 700 });
+      await page.evaluate(() => (window as any).frames());
+      assert.equal(await page.evaluate(() => (window as any).sizes().length), 1);
+      const fits = () =>
+        page.evaluate(() => {
+          const host = document.querySelector('.term-host')!.getBoundingClientRect();
+          const screen = document.querySelector('.xterm-screen')!.getBoundingClientRect();
+          return screen.right <= host.right - 4 && screen.bottom <= host.bottom - 4 ? true : { host: host.toJSON(), screen: screen.toJSON() };
+        });
+      assert.equal(await fits(), true, 'last row and column must stay inside the padded host');
+      await page.evaluate(() => {
+        const w = window as any;
+        for (const size of w.sizes()) w.update(...size);
+        w.update(90, 25);
+        w.messages = [];
+        w.TerminalUI.setTermFontSize(20);
+      });
+      await page.evaluate(() => (window as any).frames());
+      assert.equal(await page.evaluate(() => (window as any).sizes().length), 1, 'font change reclaims shared sizing');
+      assert.equal(await fits(), true);
+    });
+  }
+
+  await t.test('shell acknowledgements do not roll back rapid resizes and external sizes stay passive', async () => {
+    const page = await rig(false, false, false, 'shell');
+    await page.evaluate(() => {
+      const w = window as any;
+      w.update(w.term.cols, w.term.rows);
+      w.messages = [];
+    });
+    for (const width of [1440, 1024, 1280]) {
+      await page.setViewportSize({ width, height: 700 });
+      await page.evaluate(() => (window as any).frames());
+    }
+    const final = await page.evaluate(() => [(window as any).term.cols, (window as any).term.rows]);
+    const sizes = await page.evaluate(() => (window as any).sizes());
+    assert.equal(sizes.length, 3);
+    for (const size of sizes) {
+      await page.evaluate((size) => (window as any).update(...size), size);
+      assert.deepEqual(await page.evaluate(() => [(window as any).term.cols, (window as any).term.rows]), final);
+    }
+    await page.evaluate(() => {
+      const w = window as any;
+      w.update(90, 25);
+      w.messages = [];
+    });
+    await page.evaluate(() => (window as any).frames());
+    assert.deepEqual(await page.evaluate(() => [(window as any).term.cols, (window as any).term.rows]), [90, 25]);
+    assert.equal(await page.evaluate(() => (window as any).sizes().length), 0, 'following another viewer must not create a resize loop');
+    await page.evaluate(() => (window as any).term.input('x'));
+    assert.equal(await page.evaluate(() => (window as any).sizes().length), 1, 'typing explicitly reclaims size');
+  });
 
   await t.test('shared attachment stays passive, but each pane size change claims its new box', async () => {
     const page = await rig();
@@ -126,6 +197,78 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     await page.evaluate(() => (window as any).resize(700, 400));
     await page.evaluate(() => (window as any).frames());
     assert.equal(await page.evaluate(() => (window as any).sizes().length), before + 1);
+  });
+
+  await t.test('a hidden following pane detaches once, ignores late snapshots, and hydrates once on return', async () => {
+    const page = await rig();
+    await page.evaluate(() => {
+      const w = window as any;
+      w.messages = [];
+      w.writes = 0;
+      const write = w.term.write.bind(w.term);
+      w.term.write = (...args: any[]) => {
+        w.writes++;
+        return write(...args);
+      };
+      w.visibility(true);
+      w.visibility(true);
+      w.handle.attach();
+      w.snapshot();
+      w.TerminalUI.routeTerminalMessage({ t: 'term.data', workerId: 'pixel', data: 'invisible output' });
+    });
+    assert.deepEqual(
+      await page.evaluate(() => {
+        const w = window as any;
+        return { messages: w.messages.map((m: any) => m.t), writes: w.writes, stdinDisabled: w.term.options.disableStdin };
+      }),
+      { messages: ['worker.detach'], writes: 0, stdinDisabled: true },
+    );
+    await page.evaluate(() => (window as any).visibility(false));
+    await page.waitForFunction(() => !(window as any).term.options.disableStdin);
+    await page.evaluate(() => (window as any).visibility(false));
+    assert.deepEqual(await page.evaluate(() => (window as any).messages.map((m: any) => m.t)), ['worker.detach', 'worker.attach']);
+    await page.evaluate(() => {
+      const w = window as any;
+      w.handle.close();
+      w.messages = [];
+      w.visibility(true);
+      w.visibility(false);
+    });
+    assert.deepEqual(await page.evaluate(() => (window as any).messages), []);
+  });
+
+  await t.test('initially hidden panes wait for visibility; reconnecting while hidden does not attach early', async () => {
+    const page = await rig(true, false, false, 'inline', true);
+    assert.deepEqual(await page.evaluate(() => (window as any).messages.map((m: any) => m.t)), ['worker.detach']);
+    await page.evaluate(() => {
+      const w = window as any;
+      w.net.up = false;
+      w.connectionStatus(false);
+      w.net.up = true;
+      w.connectionStatus(true);
+      w.handle.attach();
+    });
+    assert.equal(await page.evaluate(() => (window as any).messages.filter((m: any) => m.t === 'worker.attach').length), 0);
+    await page.evaluate(() => (window as any).visibility(false));
+    await page.waitForFunction(() => !(window as any).term.options.disableStdin);
+    assert.equal(await page.evaluate(() => (window as any).messages.filter((m: any) => m.t === 'worker.attach').length), 1);
+  });
+
+  await t.test('a scrolled-up reader keeps its exact history and input readiness across backgrounding', async () => {
+    const page = await rig();
+    const before = await page.evaluate(async () => {
+      const w = window as any;
+      await new Promise<void>((resolve) => w.term.write(Array.from({ length: 100 }, (_, i) => `history ${i}\r\n`).join(''), resolve));
+      w.term.scrollToTop();
+      w.messages = [];
+      w.visibility(true);
+      return { viewport: w.term.buffer.active.viewportY, base: w.term.buffer.active.baseY };
+    });
+    assert.ok(before.base > before.viewport);
+    await page.evaluate(() => (window as any).visibility(false));
+    assert.deepEqual(await page.evaluate(() => (window as any).messages), []);
+    assert.equal(await page.evaluate(() => (window as any).term.buffer.active.viewportY), before.viewport);
+    assert.equal(await page.evaluate(() => (window as any).term.options.disableStdin), false);
   });
 
   await t.test('initial unshared fit survives the snapshot refresh before its acknowledgement', async () => {

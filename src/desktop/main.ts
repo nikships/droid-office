@@ -725,6 +725,7 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
   // shutting down and installing an update. None of them is turned into a close to the menu bar.
   app.on('before-quit', (e) => {
     quitting = true;
+    updates.stop();
     if (!office) return;
     e.preventDefault();
     void stopOffice(!stopWorkersOnQuit).finally(() => app.quit());

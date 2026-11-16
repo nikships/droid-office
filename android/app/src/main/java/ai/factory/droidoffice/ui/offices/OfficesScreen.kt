@@ -200,17 +200,6 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                         settings { it.copy(notifyDone = on) }
                     }
                 }
-
-                Eyebrow("Answers", Modifier.padding(start = 4.dp, top = 26.dp, bottom = 8.dp))
-                Column(Modifier.fillMaxWidth().panel()) {
-                    Toggle(
-                        OfficeIcons.Bell, "Wait before sending",
-                        "Answers from Asks wait 3 seconds with Cancel before they go. Keys typed into a terminal can't be taken back.",
-                        store.settings.answerDelay,
-                        Tags.Offices.ANSWER_DELAY,
-                    ) { on -> settings { it.copy(answerDelay = on) } }
-                }
-
                 Eyebrow("Feel", Modifier.padding(start = 4.dp, top = 26.dp, bottom = 8.dp))
                 Column(Modifier.fillMaxWidth().panel()) {
                     Toggle(OfficeIcons.Keyboard, "Haptics", "A light tap on keys, sends and alerts.", store.settings.haptics, Tags.Offices.HAPTICS) { on ->

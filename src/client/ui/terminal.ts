@@ -424,6 +424,19 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     },
     () => net.send({ t: 'worker.attach', workerId }),
   );
+  // Keep a scrolled-up reader's exact history. Only a following companion terminal can discard
+  // invisible output and return to the latest snapshot, without retaining an unbounded backlog.
+  const visibility = () => {
+    if (!inline) return;
+    if (!document.hidden || term.buffer.active.viewportY >= term.buffer.active.baseY) {
+      const changed = mirror.setVisible(!document.hidden);
+      if (document.hidden && changed) net.send({ t: 'worker.detach', workerId });
+      else if (!document.hidden && !changed && !mirror.ready) net.send({ t: 'worker.attach', workerId });
+      term.options.disableStdin = !net.up || !mirror.ready;
+    }
+  };
+  if (inline) document.addEventListener('visibilitychange', visibility);
+  if (document.hidden) visibility();
   const onMsg = (msg: ServerMsg) => {
     if (msg.t === 'term.data' && msg.workerId === workerId) mirror.data(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === workerId) {
@@ -447,7 +460,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     if (width <= 0 || height <= 0) return;
     // The initial observation is not a layout change and must not seize a shared terminal.
     // Keep a change pending through snapshot loading/disconnection, without fitting hidden boxes.
-    if (inline && box && (width !== box.width || height !== box.height)) paneSizeChanged = true;
+    if (box && (width !== box.width || height !== box.height)) paneSizeChanged = true;
     box = { width, height };
     sendSize();
   });
@@ -461,6 +474,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
 
   const onClose = () => {
+    document.removeEventListener('visibilitychange', visibility);
     thread?.dispose();
     listeners.delete(onMsg);
     unsub();
@@ -579,6 +593,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const offFont = onTermFontSize((px) => {
     term.options.fontSize = px;
     header?.zoom(px);
+    paneSizeChanged = true;
     sendSize();
   });
 
@@ -674,7 +689,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     opened = true;
     ro.observe(host);
     adoptSharedSize = store.worker(workerId)?.open === true;
-    net.send({ t: 'worker.attach', workerId });
+    if (!inline || !document.hidden) net.send({ t: 'worker.attach', workerId });
     setTimeout(() => {
       if (alive && inline?.focus !== false && !threadView) term.focus();
     }, 50);
@@ -685,7 +700,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     close: () => modal.close(),
     focus: () => term.focus(),
     attach: () => {
-      if (alive && opened) net.send({ t: 'worker.attach', workerId });
+      if (alive && opened && !document.hidden) net.send({ t: 'worker.attach', workerId });
     },
   };
 }
@@ -749,23 +764,31 @@ export function openOfficeShell(net: Net) {
   let lastSentSize = '';
   let ptyCols = 0;
   let ptyRows = 0;
+  const pendingSizes: string[] = [];
+  let box: { width: number; height: number } | undefined;
+  let boxChanged = false;
   const offQueries = suppressMirrorQueries(term);
   let mirror: TerminalMirror | undefined;
 
   const sendSize = (typing = false) => {
-    if (!mirror?.ready || !opened) return;
+    if (!mirror?.ready || !opened || !net.up || !host.clientWidth || !host.clientHeight) return;
+    if (typing || boxChanged) shared = false;
+    boxChanged = false;
     if (!typing && shared) {
       if (ptyCols !== term.cols || ptyRows !== term.rows) term.resize(ptyCols, ptyRows);
       return;
     }
     try {
-      fit.fit();
+      const size = fit.proposeDimensions();
+      if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
+      term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
     } catch {
       return;
     }
     const key = `${term.cols}x${term.rows}`;
-    if ((ptyCols !== term.cols || ptyRows !== term.rows) && key !== lastSentSize) {
+    if ((pendingSizes.length || ptyCols !== term.cols || ptyRows !== term.rows) && key !== lastSentSize) {
       lastSentSize = key;
+      pendingSizes.push(key);
       shared = false;
       net.send({ t: 'shell.resize', cols: term.cols, rows: term.rows });
     }
@@ -778,6 +801,7 @@ export function openOfficeShell(net: Net) {
       ptyCols = snapshot.cols;
       ptyRows = snapshot.rows;
       lastSentSize = '';
+      pendingSizes.length = 0;
       sendSize();
       term.scrollToBottom();
     },
@@ -800,11 +824,25 @@ export function openOfficeShell(net: Net) {
     if (s.cols === ptyCols && s.rows === ptyRows) return;
     ptyCols = s.cols;
     ptyRows = s.rows;
+    const acknowledged = pendingSizes.indexOf(`${ptyCols}x${ptyRows}`);
+    if (acknowledged >= 0) {
+      pendingSizes.splice(0, acknowledged + 1);
+      return;
+    }
     if (`${ptyCols}x${ptyRows}` === lastSentSize) return;
+    shared = true;
     term.resize(ptyCols, ptyRows);
     lastSentSize = '';
+    pendingSizes.length = 0;
   });
-  const ro = new ResizeObserver(() => sendSize());
+  const ro = new ResizeObserver(([entry]) => {
+    if (!entry) return;
+    const { width, height } = entry.contentRect;
+    if (width <= 0 || height <= 0) return;
+    if (box && (width !== box.width || height !== box.height)) boxChanged = true;
+    box = { width, height };
+    sendSize();
+  });
 
   const modal = openModal(el, {
     backdropCloses: true,
@@ -840,6 +878,7 @@ export function openOfficeShell(net: Net) {
   const offFont = onTermFontSize((px) => {
     term.options.fontSize = px;
     paintZoom(px);
+    boxChanged = true;
     sendSize();
   });
   const zoomBy = (dir: 1 | -1) => {

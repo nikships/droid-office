@@ -831,8 +831,8 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .modal.term { width: min(1200px, 100%); height: min(820px, calc(100vh - 32px)); background: #000000; }
 .modal.term.inline { width: 100%; height: 100%; max-height: none; flex: 1; min-height: 0; border: 0; border-radius: 0; box-shadow: none; animation: none; }
 .modal.term header { background: var(--surface); }
-.modal.term .term-host { position: relative; flex: 1; min-height: 0; padding: 8px 4px 4px 10px; background: #000000; }
-.modal.term .term-host .xterm { height: 100%; }
+.modal.term .term-host { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: #000000; }
+.modal.term .term-host .xterm { height: 100%; padding: 8px 4px 4px 10px; }
 .xterm .xterm-screen canvas.term-kitty-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .xterm .xterm-screen.term-kitty-clickable { cursor: zoom-in; }
 .xterm .xterm-screen .term-kitty-expand { position: absolute; z-index: 3; width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border: 1px solid var(--border-strong); border-radius: var(--radius); background: rgba(14, 14, 16, .86); backdrop-filter: blur(6px); color: var(--text-secondary); cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); transition: background 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out; }
@@ -2281,6 +2281,7 @@ li.cmp-muted:hover { background: none; }
 #scene.hdr-under { opacity: 0; }
 
 /* Web companion (/dashboard, dashboard.ts): the office's workers, terminals and Whiteboard in a desktop browser, without the 3D scene. */
+.companion-background *, .companion-background *::before, .companion-background *::after { animation-play-state: paused !important; }
 /* The companion's own tokens: every surface is the black base, so an OLED screen stays dark; hover and selection show as edges, not lifted fills. */
 .dashboard { --key-h: 18px; --key-border: 1px solid var(--border-strong); --key-depth: 1px; --key-bg: transparent; --key-fg: var(--text-secondary); --surface: var(--bg); --surface-raised: var(--bg); --surface-hover: var(--bg); --text-secondary: #a3a3a3; --border: rgba(255, 255, 255, .075); --border-strong: rgba(255, 255, 255, .14); --text-tertiary: rgba(255, 255, 255, .5); font-size: var(--text-body); line-height: var(--leading-body); min-width: 960px; background: var(--bg); }
 html:has(body.dashboard), body.dashboard { overflow: auto; }

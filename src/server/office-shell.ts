@@ -132,7 +132,7 @@ export class OfficeShell {
   /** Subscribes one connection. `shared` means someone already had it open, so this window should take that size. */
   attach(clientId: string): { data: string; cols: number; rows: number; shared: boolean } | undefined {
     if (!this.snapshot || !this.term) return undefined;
-    const shared = this.subscribers.size > 0;
+    const shared = [...this.subscribers].some((id) => id !== clientId);
     this.subscribers.add(clientId);
     return { data: this.snapshot(), cols: this.cols, rows: this.rows, shared };
   }

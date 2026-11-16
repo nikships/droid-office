@@ -1,13 +1,12 @@
 import { appendFileSync } from 'node:fs';
-import { app, type BaseWindow, autoUpdater as squirrel } from 'electron';
+import { app, type BaseWindow, powerMonitor, autoUpdater as squirrel } from 'electron';
 import updater from 'electron-updater';
 import { UpdateController } from './update-controller.js';
+import { UpdateSchedule } from './update-schedule.js';
 import { type UpdatePhase, updateView } from './update-view.js';
 import { UpdateWindow } from './update-window.js';
 
 const { autoUpdater, CancellationToken } = updater;
-
-const CHECK_EVERY_MS = 30 * 60_000;
 
 export interface UpdatesOptions {
   log: string;
@@ -18,18 +17,19 @@ export interface UpdatesOptions {
 }
 
 /**
- * Keeps the app on the newest GitHub release. Checks at launch and every half hour, and when one
+ * Keeps the app on the newest GitHub release. Checks at launch and every half hour while awake
+ * and unlocked (deferring overdue checks until wake/unlock), and when one
  * is out, opens a single window that offers it, downloads it with a progress bar, and restarts
  * into it. Nothing downloads until the owner chooses Install and Restart.
  */
 export class Updates {
-  private timer?: NodeJS.Timeout;
-  private initial?: NodeJS.Timeout;
+  private readonly schedule: UpdateSchedule;
   private window?: UpdateWindow;
   private checkedVersion?: string;
   readonly controller: UpdateController;
 
   constructor(private readonly o: UpdatesOptions) {
+    this.schedule = new UpdateSchedule(powerMonitor, () => this.controller.check(false));
     const write = (level: string) => (msg: unknown) => {
       try {
         appendFileSync(o.log, `${new Date().toISOString()} ${level} ${String(msg)}\n`);
@@ -45,11 +45,12 @@ export class Updates {
     this.controller = new UpdateController({
       enabled: app.isPackaged,
       currentVersion: app.getVersion(),
-      check: async () => {
-        const result = await autoUpdater.checkForUpdates();
-        this.checkedVersion = result?.isUpdateAvailable ? result.updateInfo.version : undefined;
-        return this.checkedVersion;
-      },
+      check: () =>
+        this.schedule.track(async () => {
+          const result = await autoUpdater.checkForUpdates();
+          this.checkedVersion = result?.isUpdateAvailable ? result.updateInfo.version : undefined;
+          return this.checkedVersion;
+        }),
       download: (version, preparing) => {
         if (version !== this.checkedVersion) throw new Error('The offered update changed. Check for updates again before installing.');
         const token = new CancellationToken();
@@ -89,14 +90,11 @@ export class Updates {
 
   start() {
     if (!this.enabled) return;
-    this.stop();
-    this.initial = setTimeout(() => void this.check(false), 10_000);
-    this.timer = setInterval(() => void this.check(false), CHECK_EVERY_MS);
+    this.schedule.start();
   }
 
   stop() {
-    clearInterval(this.timer);
-    clearTimeout(this.initial);
+    this.schedule.stop();
   }
 
   /** `manual` is the menu's Check for Updates…: it always opens the window and says what it found. */

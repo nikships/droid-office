@@ -8,6 +8,7 @@ import { DESK_BY_ID } from '../shared/layout';
 import { originKind, type OriginKind } from '../shared/devices';
 import { BROWSER_KEY, DASHBOARD_FLOOR_KEY, browserCredential, draftKey, forgetBrowserCredential, isBrowserCredential, saveBrowserCredential, type BrowserCredential } from './browser-session';
 import { Net } from './net';
+import { VisiblePaint } from './visible-paint';
 import { bindFactory } from './factory';
 import { connectWhiteboard, store, words } from './state';
 import { setBrowserAuth, withToken } from './token';
@@ -866,8 +867,9 @@ net.onMessage((msg) => {
   }
   if (entering || msg.t === 'floors' || msg.t === 'worker.update') followWorkerLink();
 });
-for (const topic of ['floors', 'workers', 'building', 'pulls', 'whiteboard', 'project', 'missionControl'] as const) store.on(topic, paint);
+for (const topic of ['floors', 'workers', 'building', 'pulls', 'whiteboard', 'project', 'missionControl'] as const) store.on(topic, () => paints.schedule());
 store.on('screens', () => {
+  if (document.hidden) return;
   for (const p of panes) p?.paintQuestion();
   schedulePreviews();
 });
@@ -973,7 +975,7 @@ const remeasureFloorStrip = () => {
 document.fonts?.addEventListener('loadingdone', remeasureFloorStrip);
 // Visits and workers count for less as they age: re-rank now and then even when nothing else changes.
 setInterval(() => {
-  if (!latestTriageItems.length) return;
+  if (document.hidden || !latestTriageItems.length) return;
   latestRanked = rankTriageFloors(latestTriageItems, Date.now());
   fitFloorStrip();
 }, 60_000);
@@ -1216,7 +1218,16 @@ function paintConsole(up: boolean, buildingRows: readonly BuildingWorkerRow[]) {
   if (focused) [...floors.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.dataset.floor === focused && !b.hidden)?.focus({ preventScroll: true });
 }
 
+const paints = new VisiblePaint(
+  () => !document.hidden,
+  paintNow,
+  (callback) => requestAnimationFrame(callback),
+  (frame) => cancelAnimationFrame(frame),
+);
 function paint() {
+  paints.now();
+}
+function paintNow() {
   workerMenu.refresh();
   title.textContent = officeName;
   const up = live();
@@ -1492,7 +1503,7 @@ function paintWorkspace() {
 let previewFrame = 0;
 let previewAt = 0;
 function schedulePreviews() {
-  if (previewFrame || !panes.some((p) => p?.mode() === 'info')) return;
+  if (document.hidden || previewFrame || !panes.some((p) => p?.mode() === 'info')) return;
   // Screens stream a few times a second per worker; a quarter second is plenty for a glance.
   const wait = Math.max(0, 250 - (performance.now() - previewAt));
   previewFrame = window.setTimeout(() => {
@@ -1844,11 +1855,23 @@ window.addEventListener('offline', () => {
   paint();
 });
 document.addEventListener('visibilitychange', () => {
+  document.body.classList.toggle('companion-background', document.hidden);
+  if (document.hidden && previewFrame) {
+    clearTimeout(previewFrame);
+    previewFrame = 0;
+  }
+  // State keeps arriving while hidden. Restore directly from the latest store, not queued paints.
+  if (!document.hidden) {
+    latestRanked = rankTriageFloors(latestTriageItems, Date.now());
+    paint();
+  }
+  paints.visibilityChanged();
   if (!document.hidden && (authorized || gate === 'off')) void net.connect();
 });
 window.addEventListener('pagehide', () => net.close());
 window.addEventListener('pageshow', (e) => {
   if (e.persisted) void net.connect();
 });
+document.body.classList.toggle('companion-background', document.hidden);
 paint();
 void net.connect();
