@@ -16,6 +16,7 @@ import ai.factory.droidoffice.notify.StayConnectedService
 import ai.factory.droidoffice.session.Answers
 import ai.factory.droidoffice.session.OfficeConnection
 import ai.factory.droidoffice.session.Pairer
+import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.update.GitHubUpdates
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +24,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.launch
 
 class DroidOfficeApp : Application() {
     lateinit var graph: AppGraph
@@ -59,14 +64,20 @@ class AppGraph(val app: Application) {
     val visibility = AppVisibility()
     val answers = Answers(connection)
     val alerts = Alerts(app, scope, connection, store, visibility)
-    val updates = UpdateController(scope, GitHubUpdates(app))
+    val updates = UpdateController(scope, GitHubUpdates(app, connection::appRelease))
 
     init {
+        // The office answers the release check, so it waits until the app is on screen and connected.
+        scope.launch {
+            combine(visibility.foreground, connection.link) { shown, link -> shown && link.phase == Phase.Connected }
+                .distinctUntilChanged()
+                .filter { it }
+                .collect { updates.check() }
+        }
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
                 visibility.set(true)
                 connection.hold(UI_HOLD)
-                updates.check()
                 if (store.snapshot.value.settings.stayConnected) StayConnectedService.start(app)
             }
 

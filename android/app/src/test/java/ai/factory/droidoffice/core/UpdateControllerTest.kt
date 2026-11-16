@@ -99,6 +99,18 @@ class UpdateControllerTest {
         assertNull(updates.state.value.error)
     }
 
+    @Test fun failureSaysWhyTheOfficeCouldNotCheck() = runTest {
+        val source = Source(null).apply { error = IOException("The office couldn't read the newest release from GitHub: gh isn't logged in on the server — run `gh auth login`") }
+        val updates = UpdateController(this, source)
+        updates.check()
+        testScheduler.runCurrent()
+        assertEquals(source.error!!.message, updates.state.value.error)
+        source.error = IllegalArgumentException("Unexpected JSON token")
+        updates.check(force = true)
+        testScheduler.runCurrent()
+        assertEquals("The office sent a release this app can't read.", updates.state.value.error)
+    }
+
     @Test fun failedRefreshKeepsAKnownAvailableUpdate() = runTest {
         val source = Source(release)
         val updates = UpdateController(this, source)

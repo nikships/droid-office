@@ -44,6 +44,7 @@ import ai.factory.droidoffice.net.NetworkMonitor
 import ai.factory.droidoffice.net.OfficeApi
 import ai.factory.droidoffice.net.OfficeAuth
 import ai.factory.droidoffice.net.ThreadFiles
+import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -429,6 +430,12 @@ class OfficeConnection(
         val (base, auth) = current ?: return null
         slash[workerId]?.let { (b, at, c) -> if (b == base && System.currentTimeMillis() - at < 60_000) return c }
         return api.slashCommands(base, auth, workerId)?.also { if (it.isNotEmpty()) slash[workerId] = Triple(base, System.currentTimeMillis(), it) }
+    }
+
+    /** The Android app's newest release, as the active office reads it from GitHub with its `gh`. */
+    suspend fun appRelease(): Result<String> {
+        val (base, auth) = current ?: return Result.failure(IOException("Connect to your office to check for app updates."))
+        return api.appRelease(base, auth)
     }
 
     suspend fun hostUpdate(officeId: String, action: HostUpdateAction? = null, version: String? = null): Result<HostUpdateState> {

@@ -21,6 +21,7 @@ import {
 import { ControlError, controlClient, type RawProvider, type RawStatus, type RawUsage } from './control.js';
 import { fallbackName, hireRefusal, mapAvailability, mapProviders, modelNames, modelProviders, providersFromUsage, stripPrefix } from './map.js';
 import { UsagePaceTracker } from './pace.js';
+import type { GhRunner } from '../github-releases.js';
 import { APP_NAME, DROIDPROXY_BUNDLE_ID, InstallError, installProxy, latestRelease, readBundle, runCommand, type AppDirs, type Runner } from './proxy-install.js';
 
 /** The subscriptions.* messages a client sends (see protocol.ts). */
@@ -46,8 +47,10 @@ export interface SubscriptionsOptions {
   modelsChanged(): void;
   /** The model of every office worker busy on a turn right now, for the pace each plan's quota is spent at. */
   busyModels?(): string[];
-  /** For tests: the network (GitHub and DroidProxy). */
+  /** For tests: the network (GitHub downloads and DroidProxy). */
   fetchImpl?: typeof fetch;
+  /** For tests: `gh`, which reads DroidProxy's newest release. */
+  gh?: GhRunner;
   /** For tests: the home folder with .droidproxy/control.json and .factory/settings.json. */
   home?: string;
   platform?: NodeJS.Platform;
@@ -347,7 +350,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
     if (stopped) return;
     releaseTimer = timers.setTimeout(() => void checkRelease(), RELEASE_EVERY_MS);
     try {
-      const r = await latestRelease(opts.fetchImpl);
+      const r = await latestRelease(opts.gh);
       if (r.version !== state.proxy.latest) {
         setProxy({ latest: r.version });
         publish();
@@ -425,6 +428,7 @@ export function mountSubscriptions(opts: SubscriptionsOptions): Subscriptions {
       try {
         const r = await installProxy({
           fetchImpl: opts.fetchImpl,
+          gh: opts.gh,
           run,
           dirs,
           current: state.proxy.path,

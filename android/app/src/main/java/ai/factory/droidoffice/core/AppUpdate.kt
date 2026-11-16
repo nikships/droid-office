@@ -46,7 +46,6 @@ private data class GitHubAsset(
 object AppUpdates {
     const val PACKAGE = "ai.factory.droidoffice"
     const val LATEST_URL = "https://github.com/nikships/droid-office/releases/latest"
-    const val API_URL = "https://api.github.com/repos/nikships/droid-office/releases/latest"
     const val MAX_APK_BYTES = 150L * 1024 * 1024
     private val TAG = Regex("""v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)""")
     private val APK = Regex("""Droid-Office-((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))\.apk""")

@@ -21,6 +21,7 @@ import { airgappedModelError, createDroidModelCatalogue, customModelCatalogue, r
 import { HiddenModels } from './hidden-models.js';
 import { Upgrader } from './upgrade.js';
 import { HostUpdates } from './host-updates.js';
+import { ANDROID_RELEASE_REPO, cachedLatestRelease } from './github-releases.js';
 import { PhoneSizes } from './phone-sizes.js';
 import { ImageProxy } from './decor.js';
 import { JiraOffice } from './jira.js';
@@ -929,6 +930,7 @@ export async function startServer(cfg: Config) {
     deepLinkBase,
     toastAll,
     hostUpdates,
+    androidRelease: cachedLatestRelease(ANDROID_RELEASE_REPO),
     automationRequest,
     trackpadHaptics,
     hotReload,

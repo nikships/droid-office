@@ -8,6 +8,7 @@ import type { DevicesStore } from '../devices.js';
 import type { WebCompanion } from '../web-companion.js';
 import type { TailnetHttps } from '../tailnet-https.js';
 import { hostUpdateCommand, type HostUpdates } from '../host-updates.js';
+import type { GitHubRelease } from '../github-releases.js';
 import type { HotReload } from '../hot-reload.js';
 import { officeStatus } from '../office-status.js';
 import { orchestratorNeedsOwner, ORCHESTRATOR_ID, type MissionControlState } from '../../shared/mission-control.js';
@@ -46,6 +47,8 @@ interface HttpContext extends ReturnType<typeof createAccess>, ReturnType<typeof
   deepLinkBase(): string | undefined;
   toastAll(text: string): void;
   hostUpdates: HostUpdates;
+  /** The Android app's newest release on GitHub, read with the owner's `gh`. */
+  androidRelease(): Promise<GitHubRelease>;
   automationRequest: ReturnType<typeof createAutomation>['request'];
   trackpadHaptics: TrackpadHaptics;
   hotReload: HotReload;
@@ -72,6 +75,7 @@ export function createHttpHandler(ctx: HttpContext) {
     deepLinkBase,
     toastAll,
     hostUpdates,
+    androidRelease,
     automationRequest,
     trackpadHaptics,
     hotReload,
@@ -198,6 +202,15 @@ export function createHttpHandler(ctx: HttpContext) {
       }
       if (p === '/api/automation') return automationRequest(req, res, ownRequest());
       if (p === '/api/mobile/hello' && req.method === 'GET') return send(res, 200, { ok: true, office: officeCard(), ...(gate.device ? { deviceId: gate.device.id } : {}) });
+      // The phone checks for app updates here rather than on GitHub's unauthenticated API, whose 60
+      // requests an hour are shared by everything behind the same public IP.
+      if (p === '/api/mobile/app-release' && req.method === 'GET') {
+        try {
+          return send(res, 200, await androidRelease());
+        } catch (err) {
+          return send(res, 502, { error: `The office couldn't read the newest release from GitHub: ${(err as Error).message}` });
+        }
+      }
       if (p === '/api/mobile/pair' && req.method === 'DELETE') {
         // The phone's own "Unpair": only with its device token.
         if (!gate.device) return send(res, 400, { error: 'Send the device token to unpair (Authorization: Bearer <token>)' });

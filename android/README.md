@@ -57,13 +57,13 @@ The APK keeps its original version when a Mac-only release carries it forward un
 
 ### Update it
 
-The app checks the public [latest GitHub release](https://github.com/nikships/droid-office/releases/latest), independently of the office you're paired with. It checks when it comes to the foreground, at most once an hour in a running app (15 minutes after a failed check). **Check for updates** under **Offices → About**, or on the welcome screen, checks immediately.
+The app asks the office it's connected to for the [latest GitHub release](https://github.com/nikships/droid-office/releases/latest), and the office reads it with its own signed-in `gh`. It checks when it is on screen and connected, at most once an hour in a running app (15 minutes after a failed check). **Check for updates** under **Offices → About**, or on the welcome screen, checks immediately. Until the app is connected to an office, the check says so instead.
 
 When an update is available, tap **Update app → Update now**. It downloads and verifies the APK, then opens Android's installer. The first time, Android asks you to allow installs from **Droid Office**; enable **Allow from this source** and return to the app to continue. Confirm the update in Android and reopen Droid Office. Your offices, keys and settings stay put. This is not an unattended background update.
 
-Cancel the installer and **Install update** tries again without downloading again. A finished download can also be reused after the app restarts, after its size, checksum and package are checked again. A download interrupted by process death restarts on the next **Update now** tap. If the phone is offline, GitHub is rate limited, the APK isn't ready, or in-app installation isn't possible, **Download newest version** opens the latest release in your browser. Debug builds offer that link instead of trying to replace themselves with the differently named release app.
+Cancel the installer and **Install update** tries again without downloading again. A finished download can also be reused after the app restarts, after its size, checksum and package are checked again. A download interrupted by process death restarts on the next **Update now** tap. If the office can't read the release (for example `gh` isn't signed in on its Mac), the check shows the office's reason. If the APK isn't ready, or in-app installation isn't possible, **Download newest version** opens the latest release in your browser. Debug builds offer that link instead of trying to replace themselves with the differently named release app.
 
-The updater uses only HTTPS, no GitHub login or office token. Before installation it checks GitHub's SHA-256 digest, the package name, version code, Android requirement and the installed app's signing key. The APK is kept in private cache and shared read-only with the installer; no storage permission is needed. See [the update design and research](docs/updates.md) for the alternatives and platform limits.
+The release check goes only to the office, with the phone's device token. The APK download uses only HTTPS from GitHub, with no GitHub login or office token. Before installation it checks GitHub's SHA-256 digest, the package name, version code, Android requirement and the installed app's signing key. The APK is kept in private cache and shared read-only with the installer; no storage permission is needed. See [the update design and research](docs/updates.md) for the alternatives and platform limits.
 
 ## How it connects
 
@@ -180,7 +180,7 @@ The keystore and its passwords are kept outside the repository by the maintainer
 | `data/` | Paired offices and settings (DataStore) and the Keystore token vault |
 | `net/` | The HTTP API (OkHttp), the cleartext guard and the network monitor |
 | `session/` | `OfficeConnection`, the one connection to the current office (route race, WebSocket, reconnects, who holds it open), and `Pairer` |
-| `update/` | Public GitHub release checks, verified private-cache APK downloads and package identity checks |
+| `update/` | Release checks through the office, verified private-cache APK downloads and package identity checks |
 | `notify/` | Notifications, direct replies and the Stay connected foreground service |
 | `ui/` | Compose screens: `onboarding/`, `home/`, `worker/`, `board/`, `offices/`, plus the theme and shared components |
 | `app/src/main/assets/` | The WebView pages: `terminal/` (xterm.js) and `whiteboard/` (the live card: the sandboxed frame, the office's bridge and the marks over it) |

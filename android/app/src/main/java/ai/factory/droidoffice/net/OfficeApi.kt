@@ -179,6 +179,26 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         }
     }
 
+    /** The Android app's newest GitHub release, as the office reads it with its own `gh` (GET /api/mobile/app-release). */
+    suspend fun appRelease(base: String, auth: OfficeAuth): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            client.newCall(request(base, "api/mobile/app-release", auth).header("Cache-Control", "no-store").get().build()).await().use { res ->
+                val text = res.body.string()
+                when {
+                    res.isSuccessful -> Result.success(text)
+                    res.code == 404 -> Result.failure(IOException("Update the office on your Mac to check for app updates."))
+                    else -> {
+                        val body = runCatching { OfficeJson.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject }.getOrNull()
+                        val error = (body?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                        Result.failure(IOException(error ?: "The office answered ${res.code}"))
+                    }
+                }
+            }
+        } catch (e: IOException) {
+            Result.failure(e)
+        }
+    }
+
     /** No automatic retries for commands that may restart the host. Poll status after an uncertain answer. */
     suspend fun hostUpdate(base: String, auth: OfficeAuth, action: HostUpdateAction? = null, version: String? = null): Result<HostUpdateState> = withContext(Dispatchers.IO) {
         val builder = request(base, "api/host/update", auth)

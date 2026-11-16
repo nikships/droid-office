@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { ghRunner, latestGitHubRelease, type GhRunner } from '../github-releases.js';
 
 /** DroidProxy's release on GitHub, and how the office checks and installs it (docs/subscriptions.md). */
 
@@ -15,7 +16,6 @@ export const DROIDPROXY_BUNDLE_ID = 'com.droidproxy.app';
 const DROIDPROXY_TEAM = 'NW6B3R27LQ';
 export const APP_NAME = 'DroidProxy.app';
 const ZIP = 'DroidProxy-arm64.zip';
-const LATEST = `https://api.github.com/repos/${DROIDPROXY_REPO}/releases/latest`;
 const DOWNLOAD_PREFIX = `https://github.com/${DROIDPROXY_REPO}/releases/download/`;
 /** Where GitHub sends a release download. Anything else, or plain http, is refused. */
 const DOWNLOAD_HOSTS = new Set(['github.com', 'api.github.com', 'objects.githubusercontent.com', 'release-assets.githubusercontent.com']);
@@ -56,16 +56,14 @@ export class InstallError extends Error {
   }
 }
 
-/** The newest DroidProxy release and its two assets. */
-export async function latestRelease(fetchImpl: typeof fetch = fetch): Promise<Release> {
-  let res: Response;
+/** The newest DroidProxy release and its two assets, read with the owner's `gh`. */
+export async function latestRelease(gh: GhRunner = ghRunner): Promise<Release> {
+  let json: { tag_name?: unknown; assets?: { name?: unknown; browser_download_url?: unknown }[] };
   try {
-    res = await fetchImpl(LATEST, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'droid-office' }, signal: AbortSignal.timeout(15_000) });
+    json = await latestGitHubRelease(DROIDPROXY_REPO, gh);
   } catch (err) {
-    throw new InstallError(`Couldn't reach GitHub for DroidProxy's newest release (${(err as Error)?.message ?? err})`);
+    throw new InstallError(`Couldn't read DroidProxy's newest release with gh (${(err as Error)?.message ?? err})`);
   }
-  if (!res.ok) throw new InstallError(`GitHub answered ${res.status} for DroidProxy's newest release`);
-  const json = (await res.json().catch(() => ({}))) as { tag_name?: unknown; assets?: { name?: unknown; browser_download_url?: unknown }[] };
   const tag = typeof json.tag_name === 'string' ? json.tag_name : '';
   const version = tag.replace(/^v/i, '');
   if (!/^\d+(\.\d+)*$/.test(version)) throw new InstallError("GitHub's newest DroidProxy release has no version the office understands");
@@ -160,6 +158,8 @@ async function targetDir(dirs: AppDirs, current: string | null): Promise<string>
 
 export interface InstallOptions {
   fetchImpl?: typeof fetch;
+  /** `gh`, for the newest release when `release` is left out. */
+  gh?: GhRunner;
   run?: Runner;
   dirs: AppDirs;
   /** The installed DroidProxy, to replace; null for a first install. */
@@ -180,7 +180,7 @@ export interface InstallOptions {
 export async function installProxy(opts: InstallOptions): Promise<{ path: string; version: string }> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const run = opts.run ?? runCommand;
-  const release = opts.release ?? (await latestRelease(fetchImpl));
+  const release = opts.release ?? (await latestRelease(opts.gh));
   const work = await mkdtemp(path.join(opts.tmp ?? tmpdir(), 'droidproxy-'));
   try {
     const shaText = await (await download(fetchImpl, release.sha256, 30_000)).text();

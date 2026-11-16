@@ -141,7 +141,6 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
   });
   const fetchImpl = counted(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
-    if (url === 'https://api.github.com/repos/nikships/droidproxy/releases/latest') return json(RELEASE);
     if (url.endsWith('.zip.sha256')) return new Response(`${createHash('sha256').update(ZIP).digest('hex')}  DroidProxy-arm64.zip\n`);
     if (url.endsWith('.zip')) return new Response(ZIP, { headers: { 'content-length': String(ZIP.length) } });
     const u = new URL(url);
@@ -214,6 +213,10 @@ async function rig(t: { after(fn: () => void): void }, o: RigOptions = {}): Prom
     modelsChanged: () => r.modelsChanged++,
     busyModels: () => o.busy ?? [],
     fetchImpl,
+    gh: counted(async (args: string[]) => {
+      assert.deepEqual(args.slice(0, 2), ['api', 'repos/nikships/droidproxy/releases/latest']);
+      return JSON.stringify(RELEASE);
+    }),
     home,
     platform: o.platform ?? 'darwin',
     arch: 'arm64',

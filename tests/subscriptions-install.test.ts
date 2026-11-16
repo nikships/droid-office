@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import type { GhRunner } from '../src/server/github-releases.js';
 import { installProxy, latestRelease, parseSha, type Runner } from '../src/server/subscriptions/proxy-install.js';
-import { CODESIGN_DV, SPCTL, fakeApp, json, ok, tempDir } from './subscriptions-fixtures.js';
+import { CODESIGN_DV, SPCTL, fakeApp, ok, tempDir } from './subscriptions-fixtures.js';
 
 const ZIP_URL = 'https://github.com/nikships/droidproxy/releases/download/v1.8.179/DroidProxy-arm64.zip';
 const SHA_URL = `${ZIP_URL}.sha256`;
-/** GET /repos/nikships/droidproxy/releases/latest, trimmed. */
+/** `gh api repos/nikships/droidproxy/releases/latest --jq '{tag_name, draft, prerelease, assets: [...]}'`, trimmed. */
 const RELEASE = {
   tag_name: 'v1.8.179',
   assets: [
@@ -24,6 +25,7 @@ interface Rig {
   calls: string[][];
   fetchImpl: typeof fetch;
   fetched: string[];
+  gh: GhRunner;
 }
 
 function rig(over: { sha?: string; team?: string; notarized?: boolean; verify?: number; bundle?: string; redirect?: string } = {}): Rig {
@@ -51,13 +53,19 @@ function rig(over: { sha?: string; team?: string; notarized?: boolean; verify?: 
   const fetchImpl = (async (input: string | URL | Request) => {
     const url = String(input);
     fetched.push(url);
-    if (url === 'https://api.github.com/repos/nikships/droidproxy/releases/latest') return json(RELEASE);
     if (url === SHA_URL) return new Response(`${over.sha ?? SHA}  DroidProxy-arm64.zip\n`);
     if (url === ZIP_URL) return new Response(null, { status: 302, headers: { location: over.redirect ?? 'https://release-assets.githubusercontent.com/github-production-release-asset/1/zip?sp=r' } });
     if (url.startsWith('https://release-assets.githubusercontent.com/')) return new Response(ZIP, { headers: { 'content-length': String(ZIP.length) } });
     return new Response('nope', { status: 404 });
   }) as typeof fetch;
-  return { run, calls, fetchImpl, fetched };
+  return { run, calls, fetchImpl, fetched, gh: releaseGh(RELEASE) };
+}
+
+function releaseGh(release: unknown): GhRunner {
+  return async (args) => {
+    assert.deepEqual(args.slice(0, 2), ['api', 'repos/nikships/droidproxy/releases/latest']);
+    return `${JSON.stringify(release)}\n`;
+  };
 }
 
 function dirs(t: { after(fn: () => void): void }) {
@@ -69,9 +77,14 @@ function dirs(t: { after(fn: () => void): void }) {
 
 test("the newest release is GitHub's latest, with both assets", async () => {
   const r = rig();
-  assert.deepEqual(await latestRelease(r.fetchImpl), { version: '1.8.179', zip: ZIP_URL, sha256: SHA_URL });
-  const elsewhere = (async () => json({ ...RELEASE, assets: [{ name: 'DroidProxy-arm64.zip', browser_download_url: 'https://evil.example/DroidProxy-arm64.zip' }] })) as unknown as typeof fetch;
+  assert.deepEqual(await latestRelease(r.gh), { version: '1.8.179', zip: ZIP_URL, sha256: SHA_URL });
+  const elsewhere = releaseGh({ ...RELEASE, assets: [{ name: 'DroidProxy-arm64.zip', browser_download_url: 'https://evil.example/DroidProxy-arm64.zip' }] });
   await assert.rejects(latestRelease(elsewhere), /has no DroidProxy-arm64.zip on GitHub/);
+  const loggedOut: GhRunner = async () => {
+    throw new Error("gh isn't logged in on the server — run `gh auth login`");
+  };
+  await assert.rejects(latestRelease(loggedOut), /Couldn't read DroidProxy's newest release with gh \(gh isn't logged in/);
+  assert.equal(r.fetched.length, 0, 'the release is never read from the unauthenticated REST API');
   assert.equal(parseSha(`${SHA}  DroidProxy-arm64.zip\n`), SHA);
   assert.equal(parseSha('nope'), undefined);
 });
@@ -82,7 +95,7 @@ test('a checked download replaces the installed DroidProxy where it is, after qu
   const old = fakeApp(d.system, '1.8.177');
   const r = rig();
   const progress: number[] = [];
-  const done = await installProxy({ fetchImpl: r.fetchImpl, run: r.run, dirs: d, current: old, tmp: d.tmp, progress: (p) => progress.push(p) });
+  const done = await installProxy({ fetchImpl: r.fetchImpl, gh: r.gh, run: r.run, dirs: d, current: old, tmp: d.tmp, progress: (p) => progress.push(p) });
   assert.deepEqual(done, { path: path.join(d.system, 'DroidProxy.app'), version: '1.8.179' });
   assert.equal(JSON.parse(readFileSync(path.join(done.path, 'Contents', 'Info.plist'), 'utf8')).CFBundleShortVersionString, '1.8.179');
   assert.equal(progress.at(-1), 1);
@@ -99,7 +112,7 @@ test("into ~/Applications when /Applications can't be written", async (t) => {
   chmodSync(d.system, 0o555);
   try {
     const r = rig();
-    const done = await installProxy({ fetchImpl: r.fetchImpl, run: r.run, dirs: d, current: null, tmp: d.root });
+    const done = await installProxy({ fetchImpl: r.fetchImpl, gh: r.gh, run: r.run, dirs: d, current: null, tmp: d.root });
     assert.equal(done.path, path.join(d.user, 'DroidProxy.app'));
     assert.deepEqual(readdirSync(d.system), []);
   } finally {
@@ -121,7 +134,7 @@ for (const [what, over, said] of [
     mkdirSync(d.tmp);
     const old = fakeApp(d.system, '1.8.177');
     const r = rig(over);
-    await assert.rejects(installProxy({ fetchImpl: r.fetchImpl, run: r.run, dirs: d, current: old, tmp: d.tmp }), said);
+    await assert.rejects(installProxy({ fetchImpl: r.fetchImpl, gh: r.gh, run: r.run, dirs: d, current: old, tmp: d.tmp }), said);
     assert.deepEqual(readdirSync(d.tmp), []);
     assert.deepEqual(readdirSync(d.system), ['DroidProxy.app']);
     assert.equal(JSON.parse(readFileSync(path.join(old, 'Contents', 'Info.plist'), 'utf8')).CFBundleShortVersionString, '1.8.177');

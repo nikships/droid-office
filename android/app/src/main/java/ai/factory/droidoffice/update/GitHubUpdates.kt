@@ -21,44 +21,26 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.Cache
-import okhttp3.CacheControl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/** Public GitHub requests never share an office's client, cookies or device token. */
-class GitHubUpdates(private val context: Context) : UpdateSource {
-    private val client = OkHttpClient.Builder()
+/** Release metadata comes from the active office's `gh`; APKs download from GitHub without an office's client, cookies or device token. */
+class GitHubUpdates(private val context: Context, private val releaseJson: suspend () -> Result<String>) : UpdateSource {
+    private val downloads = OkHttpClient.Builder()
         .addNetworkInterceptor(CleartextGuard())
         .addNetworkInterceptor { chain ->
             if (!chain.request().url.isHttps) throw IOException("Updates need a secure connection.")
             chain.proceed(chain.request())
         }
         .followSslRedirects(false)
-        .cache(Cache(File(context.cacheDir, "update-http"), 1024 * 1024))
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
-        .callTimeout(20, TimeUnit.SECONDS)
+        .callTimeout(5, TimeUnit.MINUTES)
         .build()
-    private val downloads = client.newBuilder().cache(null).callTimeout(5, TimeUnit.MINUTES).build()
     private val directory = File(context.cacheDir, "updates")
 
     override suspend fun latest(): AppRelease? = withContext(Dispatchers.IO) {
-        val request = Request.Builder().url(AppUpdates.API_URL)
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", "Droid-Office-Android/${BuildConfig.VERSION_NAME}")
-            .cacheControl(CacheControl.Builder().maxAge(0, TimeUnit.SECONDS).build())
-            .build()
-        client.newCall(request).await().use { response ->
-            if (!response.isSuccessful) throw IOException("Couldn't check GitHub for updates.")
-            // Releases contain notes and other assets, but must not consume unbounded memory.
-            val source = response.body.source()
-            source.request(1024 * 1024 + 1L)
-            val text = source.readByteArray(source.buffer.size.coerceAtMost(1024 * 1024 + 1L))
-            if (text.size > 1024 * 1024) throw IOException("The release answer was too large.")
-            AppUpdates.available(text.toString(Charsets.UTF_8), BuildConfig.VERSION_CODE)
-        }
+        AppUpdates.available(releaseJson().getOrThrow(), BuildConfig.VERSION_CODE)
     }
 
     override suspend fun download(release: AppRelease, progress: (Long) -> Unit): File = withContext(Dispatchers.IO) {

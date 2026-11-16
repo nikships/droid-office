@@ -47,8 +47,8 @@ class UpdateController(
                 nextCheck = now() + 60 * 60_000
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
-                mutable.update { it.copy(phase = UpdatePhase.Idle, error = "Couldn't check for updates. Try again when you're online.") }
+            } catch (e: Exception) {
+                mutable.update { it.copy(phase = UpdatePhase.Idle, error = (e as? IOException)?.message ?: "The office sent a release this app can't read.") }
             }
         }
     }
