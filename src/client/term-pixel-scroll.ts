@@ -29,6 +29,7 @@ interface XtermScrollableElement {
   _scrollable?: XtermScrollable;
   onScroll(listener: (e: ScrollPosition) => void): IDisposable;
   getScrollPosition(): ScrollPosition;
+  getScrollDimensions?(): { height: number; scrollHeight: number };
   setScrollPosition(update: { scrollTop: number; reuseAnimation?: boolean }): void;
   getDomNode(): HTMLElement;
 }
@@ -57,8 +58,8 @@ interface XtermDomRenderer {
 }
 interface XtermCore {
   _viewport?: { _scrollableElement?: XtermScrollableElement };
-  _renderService?: { _renderer?: { value?: XtermDomRenderer } };
-  _bufferService?: { buffer?: { lines: { get(i: number): unknown }; ybase: number; y: number; x: number } };
+  _renderService?: { _renderer?: { value?: XtermDomRenderer }; _renderRows?(start: number, end: number): void; onRender?: Terminal['onRender'] };
+  _bufferService?: { buffer?: { lines: { get(i: number): unknown; length: number }; ybase: number; y: number; x: number } };
 }
 
 interface Parts {
@@ -126,6 +127,8 @@ export function attachPixelScroll(term: Terminal, opts: { enabled?: () => boolea
   /** Which top row the extra rows were drawn for, and whether what they show may have changed since. */
   let extraTop = Number.NaN;
   let extraStale = true;
+  let extraDrawn = false;
+  let overflowBefore = '';
 
   const cell = () => parts?.renderer.dimensions?.css?.cell;
   const normal = () => term.buffer.active.type === 'normal';
@@ -172,8 +175,18 @@ export function attachPixelScroll(term: Terminal, opts: { enabled?: () => boolea
     if (p.renderer._rowContainer!.lastElementChild !== below) p.renderer._rowContainer!.append(above, below);
     drawRow(above, drawnTop - 1, -h);
     drawRow(below, drawnTop + term.rows, term.rows * h);
+    above.hidden = below.hidden = false;
     extraTop = drawnTop;
     extraStale = false;
+    extraDrawn = true;
+  };
+  /** Empties and hides the extra rows at rest, so a resize that moves the screen's edge never shows stale ones. */
+  const clearExtraRows = () => {
+    above.replaceChildren();
+    below.replaceChildren();
+    above.hidden = below.hidden = true;
+    extraDrawn = false;
+    extraStale = true;
   };
 
   /** Where the position is, against the rows xterm has drawn, clamped to the one extra row each side. */
@@ -189,8 +202,9 @@ export function attachPixelScroll(term: Terminal, opts: { enabled?: () => boolea
     frame = 0;
     if (!parts || disposed) return;
     const dpr = window.devicePixelRatio || 1;
-    const o = Math.round(target() * dpr) / dpr;
+    const o = Math.round(target() * dpr) / dpr || 0;
     if (o !== 0 && (extraStale || extraTop !== drawnTop)) drawExtraRows();
+    else if (o === 0 && extraDrawn) clearExtraRows();
     if (o === shown) return;
     shown = o;
     // Promoted the first time it moves, and kept: a layer made and dropped each gesture repaints twice.
@@ -217,10 +231,7 @@ export function attachPixelScroll(term: Terminal, opts: { enabled?: () => boolea
     const h = cell()!.height;
     return Math.round(px / h) * h;
   };
-  const offRow = (px: number) => {
-    const h = cell()?.height;
-    return !!h && Math.abs(px - Math.round(px / h) * h) > 0.01;
-  };
+  const offRow = (px: number) => !!cell()?.height && Math.abs(px - nearestRow(px)) > 0.01;
   const settle = () => {
     settleTimer = undefined;
     if (!parts || disposed || held || dragging || !active() || !cell()?.height) return;
@@ -243,6 +254,22 @@ export function attachPixelScroll(term: Terminal, opts: { enabled?: () => boolea
     settleTimer = setTimeout(settle, SETTLE_DELAY_MS);
   };
 
+  /**
+   * xterm ignores its own scroll events while it resizes, which can leave its position rows away
+   * from the rows it shows (its scrollbar too). Once its scroll box matches the buffer again, put
+   * the position back on those rows rather than draw the gap.
+   */
+  const resync = () => {
+    const p = parts;
+    const h = cell()?.height;
+    if (!p || disposed || !h || !active()) return;
+    const dims = p.scroller.getScrollDimensions?.();
+    const lines = p.core._bufferService!.buffer!.lines.length;
+    if (!dims || Math.abs(dims.scrollHeight - lines * h) > 0.5 || Math.abs(dims.height - p.renderer.dimensions.css.canvas.height) > 0.5) return;
+    const top = term.buffer.active.viewportY;
+    if (Math.round(p.scroller.getScrollPosition().scrollTop / h) !== top) write(top * h);
+  };
+
   const onPointerUp = () => {
     if (!dragging) return;
     dragging = false;
@@ -256,31 +283,36 @@ export function attachPixelScroll(term: Terminal, opts: { enabled?: () => boolea
     const p = parts;
     drawnTop = term.buffer.active.viewportY;
     above.className = below.className = 'term-extra-row';
+    above.hidden = below.hidden = true;
     above.setAttribute('aria-hidden', 'true');
     below.setAttribute('aria-hidden', 'true');
     // The extra rows sit outside the screen's box, so clip them to it: they show only while moving.
+    overflowBefore = p.scroller.getDomNode().style.overflowY;
     p.scroller.getDomNode().style.overflowY = 'clip';
+    const markStale = () => {
+      extraStale = true;
+      if (shown) schedule();
+    };
     subs.push(
       p.scroller.onScroll((e) => {
+        const h = cell()?.height;
+        // xterm's own sync may still be under way: look once it has finished.
+        if (h && Math.round(e.scrollTop / h) !== term.buffer.active.viewportY) queueMicrotask(resync);
         if (!tweening) stopTween();
         const off = offRow(e.scrollTop);
         if (off || shown) schedule();
         if (off && active()) scheduleSettle();
       }),
       // Rows are redrawn in xterm's animation frame: line the screen up with them in the same one.
-      term.onRender(() => {
+      // The public onRender skips redraws of an unmoved viewport, which still draw rows.
+      (p.core._renderService?.onRender ?? term.onRender)(() => {
         drawnTop = term.buffer.active.viewportY;
+        resync();
         extraStale = true;
         apply();
       }),
-      term.onWriteParsed(() => {
-        extraStale = true;
-        if (shown) schedule();
-      }),
-      term.onSelectionChange(() => {
-        extraStale = true;
-        if (shown) schedule();
-      }),
+      term.onWriteParsed(markStale),
+      term.onSelectionChange(markStale),
       // Typing lands on the bottom row (xterm only scrolls there when it isn't on that row already).
       term.onData(() => {
         const b = term.buffer.active;
@@ -288,16 +320,42 @@ export function attachPixelScroll(term: Terminal, opts: { enabled?: () => boolea
       }),
     );
     const node = p.scroller.getDomNode();
+    const onScrollbar = (e: Event) => !!(e.target as Element | null)?.closest?.('.scrollbar');
     const onPointerDown = (e: PointerEvent) => {
-      if (!(e.target as Element | null)?.closest?.('.scrollbar')) return;
+      if (!onScrollbar(e)) return;
       dragging = true;
       stopTween();
     };
+    // xterm finds the row under the pointer from the screen's box and clamps it to the rows it
+    // drew, so a press (or a selection dragged) onto the part-shown row past an edge would land on
+    // the row beside it. Bring that row fully in first, drawn at once, so the same line is under the
+    // pointer as a whole row when xterm handles the event.
+    const onPointerOnStrip = (e: MouseEvent) => {
+      if (!shown || !active() || (e.type === 'mousemove' && !e.buttons) || onScrollbar(e)) return;
+      const r = p.screen.getBoundingClientRect();
+      const dir = e.clientY >= r.bottom ? 1 : e.clientY < r.top ? -1 : 0;
+      if (!dir) return;
+      const render = p.core._renderService?._renderRows;
+      if (typeof render !== 'function') {
+        // Without a way to draw it now, doing nothing beats landing on the wrong line.
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      stopTween();
+      write((drawnTop + dir) * cell()!.height);
+      render.call(p.core._renderService, 0, term.rows - 1);
+      apply();
+    };
     node.addEventListener('pointerdown', onPointerDown);
+    node.addEventListener('mousedown', onPointerOnStrip, true);
+    node.addEventListener('mousemove', onPointerOnStrip, true);
     window.addEventListener('pointerup', onPointerUp);
     subs.push({
       dispose: () => {
         node.removeEventListener('pointerdown', onPointerDown);
+        node.removeEventListener('mousedown', onPointerOnStrip, true);
+        node.removeEventListener('mousemove', onPointerOnStrip, true);
         window.removeEventListener('pointerup', onPointerUp);
       },
     });
@@ -319,8 +377,8 @@ export function attachPixelScroll(term: Terminal, opts: { enabled?: () => boolea
       }
       const before = parts.scroller.getScrollPosition().scrollTop;
       parts.scroller.setScrollPosition({ scrollTop: before + px });
-      if (!enabled()) return parts.scroller.getScrollPosition().scrollTop !== before;
-      return Math.abs(parts.scroller.getScrollPosition().scrollTop - before) > 0.01;
+      const moved = parts.scroller.getScrollPosition().scrollTop - before;
+      return enabled() ? Math.abs(moved) > 0.01 : moved !== 0;
     },
     snap() {
       if (!parts || !cell()?.height) return;
@@ -360,7 +418,10 @@ export function attachPixelScroll(term: Terminal, opts: { enabled?: () => boolea
       for (const s of subs.splice(0)) s.dispose();
       above.remove();
       below.remove();
-      if (parts) parts.screen.style.transform = '';
+      if (parts) {
+        parts.screen.style.transform = parts.screen.style.willChange = '';
+        parts.scroller.getDomNode().style.overflowY = overflowBefore;
+      }
       attached.delete(term);
     },
   };

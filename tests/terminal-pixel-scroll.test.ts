@@ -157,15 +157,58 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
       return wrong.slice(0, 5);
     });
 
+  /** Moves the scrollback by `rows` (fractions too) through the scroller's own entry point, and holds it there. */
+  const scrollBy = (page: Awaited<ReturnType<typeof rig>>, rows: number) =>
+    page.evaluate(async (rows) => {
+      const w = window as any;
+      w.pixel().hold(true);
+      w.pixel().scrollBy(rows * w.cellH());
+      await w.frames();
+    }, rows);
+  const lineTop = (page: Awaited<ReturnType<typeof rig>>, line: number) =>
+    page.evaluate((line) => {
+      const w = window as any;
+      return w.box().top + line * w.cellH() - w.scrollTop();
+    }, line);
+
+  /** The offset xterm's own position asks for: how far it sits past the rows xterm drew, in device pixels. */
+  const wantOffset = (page: Awaited<ReturnType<typeof rig>>) =>
+    page.evaluate(() => {
+      const w = window as any;
+      const dpr = window.devicePixelRatio || 1;
+      return Math.round((w.scrollTop() - w.term.buffer.active.viewportY * w.cellH()) * dpr) / dpr || 0;
+    });
+
+  await t.test('a real wheel moves the screen to the position xterm keeps, by pixels, and it settles on a whole row', async () => {
+    const page = await rig();
+    const before = await page.evaluate(() => (window as any).scrollTop());
+    await wheel(page, -4.4);
+    const moved = await page.evaluate(() => (window as any).scrollTop());
+    assert.ok(moved < before, `the wheel scrolled back: ${before} → ${moved}`);
+    assert.equal(await page.evaluate(() => (window as any).pixel().offset()), await wantOffset(page));
+    assert.deepEqual(await aligned(page), []);
+    await page.evaluate(async () => {
+      const w = window as any;
+      w.pixel().hold(false);
+      await new Promise((r) => setTimeout(r, w.TerminalUI.SETTLE_DELAY_MS + w.TerminalUI.SETTLE_MS + 100));
+      await w.frames();
+    });
+    const rows = await page.evaluate(() => (window as any).scrollTop() / (window as any).cellH());
+    assert.ok(Math.abs(rows - Math.round(rows)) < 1e-6, `settled on a whole row: ${rows}`);
+    assert.equal(await page.evaluate(() => (window as any).pixel().offset()), 0);
+  });
+
   await t.test('a part-row scroll draws a fractional offset, the row past the edge included, and settles on a whole row', async () => {
     const page = await rig();
-    await wheel(page, -4.4);
+    // 4.4 rows up through xterm's own scroller, whatever a wheel notch comes to on this platform.
+    await scrollBy(page, -4.4);
     const mid = await page.evaluate(() => {
       const w = window as any;
       const h = w.cellH();
       return { offset: w.pixel().offset(), h, frac: (w.scrollTop() / h) % 1, transform: document.querySelector<HTMLElement>('.xterm-screen')!.style.transform };
     });
     assert.ok(Math.abs(mid.offset) > 1 && Math.abs(mid.offset) < mid.h, `a part of a row: ${JSON.stringify(mid)}`);
+    assert.equal(mid.offset, await wantOffset(page));
     assert.match(mid.transform, /translate3d\(0px, -?[\d.]+px, 0px\)/);
     assert.deepEqual(await aligned(page), []);
     // The rows past each edge are clipped to the box xterm's screen has at rest.
@@ -240,19 +283,6 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
     });
     assert.deepEqual(wrong, []);
   });
-  /** Moves the scrollback by `rows` (fractions too) through the scroller's own entry point, and holds it there. */
-  const scrollBy = (page: Awaited<ReturnType<typeof rig>>, rows: number) =>
-    page.evaluate(async (rows) => {
-      const w = window as any;
-      w.pixel().hold(true);
-      w.pixel().scrollBy(rows * w.cellH());
-      await w.frames();
-    }, rows);
-  const lineTop = (page: Awaited<ReturnType<typeof rig>>, line: number) =>
-    page.evaluate((line) => {
-      const w = window as any;
-      return w.box().top + line * w.cellH() - w.scrollTop();
-    }, line);
 
   await t.test('selection, its highlight, path links and their underline line up with the text at a part-row offset', async () => {
     const page = await rig();
@@ -299,6 +329,135 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
     await page.keyboard.up('Meta');
     await page.waitForFunction(() => (window as any).opened.length > 0);
     assert.deepEqual(await page.evaluate(() => (window as any).opened), [`src/file-${target}.ts`], '⌘-click opens the path drawn under the pointer');
+  });
+
+  await t.test('a press or a selection drag on the part-shown row past an edge lands on the line drawn there', async () => {
+    const page = await rig();
+    const h = await page.evaluate(() => (window as any).cellH());
+    const box = await page.evaluate(() => (window as any).box().toJSON());
+    const colX = (col: number) => page.evaluate((col) => (window as any).box().left + col * (window as any).term._core._renderService.dimensions.css.cell.width, col);
+    /** Holds the view part way between rows and finds the line in the strip past the edge, where it is drawn. */
+    const strip = async (rows: number) => {
+      await page.evaluate(() => (window as any).term.clearSelection());
+      await scrollBy(page, rows);
+      return page.evaluate(() => {
+        const w = window as any;
+        const o = w.pixel().offset();
+        const b = w.box();
+        const y = o > 0 ? b.bottom - o / 2 : b.top - o / 2;
+        const line = w.lineAt(y);
+        return { o, y, line, drawn: w.textAt(b.left + 40, y), want: w.expected(line), top: w.term.buffer.active.viewportY, rows: w.term.rows };
+      });
+    };
+
+    // The row below: ⌘-click on its path never opens the path of the row beside it.
+    let s = await strip(-40.55);
+    assert.ok(s.o > 2 && s.o < h - 2, `part of the row below shows: ${JSON.stringify(s)}`);
+    assert.equal(s.line, s.top + s.rows, 'the strip is the row past the bottom edge');
+    assert.equal(s.drawn, s.want);
+    const x = await colX(12);
+    await page.mouse.move(x, s.y);
+    await page.keyboard.down('Meta');
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.keyboard.up('Meta');
+    await page.waitForTimeout(300);
+    const first = await page.evaluate(() => (window as any).opened.slice());
+    assert.ok(
+      first.every((p: string) => p === `src/file-${s.line}.ts`),
+      `nothing but its own path opens: ${JSON.stringify(first)}`,
+    );
+    // The press brought that row fully in, under the pointer.
+    const after = await page.evaluate((y) => ({ offset: (window as any).pixel().offset(), line: (window as any).lineAt(y), drawn: (window as any).textAt((window as any).box().left + 40, y) }), s.y);
+    assert.deepEqual(after, { offset: 0, line: s.line, drawn: s.want });
+    await page.mouse.move(x, s.y - 2);
+    await page.mouse.move(x, s.y);
+    await page.waitForFunction(() => [...document.querySelectorAll('.xterm-rows span')].some((el) => getComputedStyle(el).textDecorationLine.includes('underline')));
+    await page.keyboard.down('Meta');
+    await page.mouse.click(x, s.y);
+    await page.keyboard.up('Meta');
+    await page.waitForFunction((n) => (window as any).opened.length > n, first.length);
+    assert.deepEqual(await page.evaluate((n) => (window as any).opened.slice(n), first.length), [`src/file-${s.line}.ts`]);
+
+    // A selection pressed on the strip starts on its line.
+    s = await strip(-0.55);
+    assert.ok(s.o > 2, JSON.stringify(s));
+    await page.mouse.move(box.x + 2, s.y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 200, s.y, { steps: 4 });
+    await page.mouse.up();
+    let selected = await page.evaluate(() => (window as any).term.getSelection());
+    assert.ok(selected.length > 4 && !selected.includes('\n') && s.want.startsWith(selected), `selected on the strip's line: ${JSON.stringify(selected)} of ${s.want}`);
+
+    // A selection dragged from inside onto the strip ends on the strip's line.
+    s = await strip(-0.55);
+    const from = s.line - 3;
+    const y0 = (await lineTop(page, from)) + h / 2;
+    await page.mouse.move(box.x + 2, y0);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 200, s.y, { steps: 6 });
+    await page.mouse.up();
+    selected = await page.evaluate(() => (window as any).term.getSelection());
+    const lines = selected.split('\n');
+    const want = await page.evaluate((from) => (window as any).expected(from), from);
+    assert.equal(lines.length, 4, JSON.stringify(selected));
+    assert.ok(lines[0] === want && s.want.startsWith(lines[3]) && lines[3].length > 4, `from line ${from} to the strip's line ${s.line}: ${JSON.stringify(selected)}`);
+
+    // The row above: a press there starts on its line too.
+    s = await strip(-0.45);
+    assert.ok(s.o < -2 && s.line === s.top - 1, `part of the row above shows: ${JSON.stringify(s)}`);
+    await page.mouse.move(box.x + 2, s.y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 200, s.y, { steps: 4 });
+    await page.mouse.up();
+    selected = await page.evaluate(() => (window as any).term.getSelection());
+    assert.ok(selected.length > 4 && !selected.includes('\n') && s.want.startsWith(selected), `selected on the line above: ${JSON.stringify(selected)} of ${s.want}`);
+  });
+
+  await t.test('a resize leaves xterm its own rows and no stale extra row on screen', async () => {
+    const page = await rig();
+    const state = () =>
+      page.evaluate(() => {
+        const w = window as any;
+        const all = [...document.querySelectorAll('.xterm-rows > div')];
+        const extra = all.filter((r) => r.classList.contains('term-extra-row'));
+        return { rows: w.term.rows, owned: all.length - extra.length, extraText: extra.map((r) => r.textContent), offset: w.pixel().offset() };
+      });
+    const resize = async (height: number) => {
+      const rows = await page.evaluate(() => (window as any).term.rows);
+      await page.evaluate((height) => {
+        document.getElementById('mount')!.style.height = `${height}px`;
+      }, height);
+      await page.waitForFunction((rows) => (window as any).term.rows !== rows, rows);
+      await page.evaluate(() => (window as any).frames());
+    };
+    await scrollBy(page, -3.45);
+    let s = await state();
+    assert.ok(s.offset !== 0 && s.owned === s.rows && s.extraText.some((t) => t), JSON.stringify(s));
+    // Settled, the extra rows are emptied; growing the screen over where they sat shows none of them.
+    await page.evaluate(async () => {
+      const w = window as any;
+      w.pixel().hold(false);
+      await new Promise((r) => setTimeout(r, w.TerminalUI.SETTLE_DELAY_MS + w.TerminalUI.SETTLE_MS + 100));
+      await w.frames();
+    });
+    await resize(520);
+    s = await state();
+    assert.deepEqual(s, { rows: s.rows, owned: s.rows, extraText: ['', ''], offset: 0 });
+    assert.deepEqual(await aligned(page), []);
+    // Resized while between rows: still xterm's own rows only, and the extra rows at the new edges.
+    await scrollBy(page, -2.45);
+    await resize(380);
+    await scrollBy(page, -0.3);
+    s = await state();
+    assert.equal(s.owned, s.rows);
+    assert.deepEqual(await aligned(page), []);
+    const edges = await page.evaluate(() => {
+      const w = window as any;
+      const [above, below] = [...document.querySelectorAll('.term-extra-row')].map((r) => Number.parseFloat((r as HTMLElement).style.top));
+      return { above, below, h: w.cellH(), rows: w.term.rows };
+    });
+    assert.deepEqual([edges.above, edges.below], [-edges.h, edges.rows * edges.h]);
   });
 
   await t.test('Kitty images move with their rows, into the part-shown row past the edge too', async () => {
@@ -358,7 +517,7 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
 
   await t.test('output streaming in keeps a scrolled-up reader exactly where they are', async () => {
     const page = await rig();
-    await wheel(page, -6.3);
+    await scrollBy(page, -6.3);
     const before = await page.evaluate(() => {
       const w = window as any;
       const box = w.box();
@@ -385,7 +544,7 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
   await t.test('typing snaps to the bottom row at once, also from part of a row above it', async () => {
     const page = await rig();
     for (const rows of [-3.4, -0.3]) {
-      await wheel(page, rows);
+      await scrollBy(page, rows);
       assert.notEqual(await page.evaluate(() => (window as any).pixel().offset()), 0);
       await page.evaluate(() => (window as any).term.focus());
       await page.keyboard.type('x');

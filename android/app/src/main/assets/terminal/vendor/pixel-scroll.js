@@ -29,6 +29,8 @@ function attachPixelScroll(term, opts = {}) {
   const below = document.createElement("div");
   let extraTop = Number.NaN;
   let extraStale = true;
+  let extraDrawn = false;
+  let overflowBefore = "";
   const cell = () => parts?.renderer.dimensions?.css?.cell;
   const normal = () => term.buffer.active.type === "normal";
   const active = () => !!parts && enabled() && normal();
@@ -71,8 +73,17 @@ function attachPixelScroll(term, opts = {}) {
     if (p.renderer._rowContainer.lastElementChild !== below) p.renderer._rowContainer.append(above, below);
     drawRow(above, drawnTop - 1, -h);
     drawRow(below, drawnTop + term.rows, term.rows * h);
+    above.hidden = below.hidden = false;
     extraTop = drawnTop;
     extraStale = false;
+    extraDrawn = true;
+  };
+  const clearExtraRows = () => {
+    above.replaceChildren();
+    below.replaceChildren();
+    above.hidden = below.hidden = true;
+    extraDrawn = false;
+    extraStale = true;
   };
   const target = () => {
     if (!active()) return 0;
@@ -85,8 +96,9 @@ function attachPixelScroll(term, opts = {}) {
     frame = 0;
     if (!parts || disposed) return;
     const dpr = window.devicePixelRatio || 1;
-    const o = Math.round(target() * dpr) / dpr;
+    const o = Math.round(target() * dpr) / dpr || 0;
     if (o !== 0 && (extraStale || extraTop !== drawnTop)) drawExtraRows();
+    else if (o === 0 && extraDrawn) clearExtraRows();
     if (o === shown) return;
     shown = o;
     if (o) parts.screen.style.willChange = "transform";
@@ -111,10 +123,7 @@ function attachPixelScroll(term, opts = {}) {
     const h = cell().height;
     return Math.round(px / h) * h;
   };
-  const offRow = (px) => {
-    const h = cell()?.height;
-    return !!h && Math.abs(px - Math.round(px / h) * h) > 0.01;
-  };
+  const offRow = (px) => !!cell()?.height && Math.abs(px - nearestRow(px)) > 0.01;
   const settle = () => {
     settleTimer = void 0;
     if (!parts || disposed || held || dragging || !active() || !cell()?.height) return;
@@ -135,6 +144,16 @@ function attachPixelScroll(term, opts = {}) {
     if (settleTimer !== void 0) clearTimeout(settleTimer);
     settleTimer = setTimeout(settle, SETTLE_DELAY_MS);
   };
+  const resync = () => {
+    const p = parts;
+    const h = cell()?.height;
+    if (!p || disposed || !h || !active()) return;
+    const dims = p.scroller.getScrollDimensions?.();
+    const lines = p.core._bufferService.buffer.lines.length;
+    if (!dims || Math.abs(dims.scrollHeight - lines * h) > 0.5 || Math.abs(dims.height - p.renderer.dimensions.css.canvas.height) > 0.5) return;
+    const top = term.buffer.active.viewportY;
+    if (Math.round(p.scroller.getScrollPosition().scrollTop / h) !== top) write(top * h);
+  };
   const onPointerUp = () => {
     if (!dragging) return;
     dragging = false;
@@ -147,30 +166,34 @@ function attachPixelScroll(term, opts = {}) {
     const p = parts;
     drawnTop = term.buffer.active.viewportY;
     above.className = below.className = "term-extra-row";
+    above.hidden = below.hidden = true;
     above.setAttribute("aria-hidden", "true");
     below.setAttribute("aria-hidden", "true");
+    overflowBefore = p.scroller.getDomNode().style.overflowY;
     p.scroller.getDomNode().style.overflowY = "clip";
+    const markStale = () => {
+      extraStale = true;
+      if (shown) schedule();
+    };
     subs.push(
       p.scroller.onScroll((e) => {
+        const h = cell()?.height;
+        if (h && Math.round(e.scrollTop / h) !== term.buffer.active.viewportY) queueMicrotask(resync);
         if (!tweening) stopTween();
         const off = offRow(e.scrollTop);
         if (off || shown) schedule();
         if (off && active()) scheduleSettle();
       }),
       // Rows are redrawn in xterm's animation frame: line the screen up with them in the same one.
-      term.onRender(() => {
+      // The public onRender skips redraws of an unmoved viewport, which still draw rows.
+      (p.core._renderService?.onRender ?? term.onRender)(() => {
         drawnTop = term.buffer.active.viewportY;
+        resync();
         extraStale = true;
         apply();
       }),
-      term.onWriteParsed(() => {
-        extraStale = true;
-        if (shown) schedule();
-      }),
-      term.onSelectionChange(() => {
-        extraStale = true;
-        if (shown) schedule();
-      }),
+      term.onWriteParsed(markStale),
+      term.onSelectionChange(markStale),
       // Typing lands on the bottom row (xterm only scrolls there when it isn't on that row already).
       term.onData(() => {
         const b = term.buffer.active;
@@ -178,16 +201,37 @@ function attachPixelScroll(term, opts = {}) {
       })
     );
     const node = p.scroller.getDomNode();
+    const onScrollbar = (e) => !!e.target?.closest?.(".scrollbar");
     const onPointerDown = (e) => {
-      if (!e.target?.closest?.(".scrollbar")) return;
+      if (!onScrollbar(e)) return;
       dragging = true;
       stopTween();
     };
+    const onPointerOnStrip = (e) => {
+      if (!shown || !active() || e.type === "mousemove" && !e.buttons || onScrollbar(e)) return;
+      const r = p.screen.getBoundingClientRect();
+      const dir = e.clientY >= r.bottom ? 1 : e.clientY < r.top ? -1 : 0;
+      if (!dir) return;
+      const render = p.core._renderService?._renderRows;
+      if (typeof render !== "function") {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      stopTween();
+      write((drawnTop + dir) * cell().height);
+      render.call(p.core._renderService, 0, term.rows - 1);
+      apply();
+    };
     node.addEventListener("pointerdown", onPointerDown);
+    node.addEventListener("mousedown", onPointerOnStrip, true);
+    node.addEventListener("mousemove", onPointerOnStrip, true);
     window.addEventListener("pointerup", onPointerUp);
     subs.push({
       dispose: () => {
         node.removeEventListener("pointerdown", onPointerDown);
+        node.removeEventListener("mousedown", onPointerOnStrip, true);
+        node.removeEventListener("mousemove", onPointerOnStrip, true);
         window.removeEventListener("pointerup", onPointerUp);
       }
     });
@@ -208,8 +252,8 @@ function attachPixelScroll(term, opts = {}) {
       }
       const before = parts.scroller.getScrollPosition().scrollTop;
       parts.scroller.setScrollPosition({ scrollTop: before + px });
-      if (!enabled()) return parts.scroller.getScrollPosition().scrollTop !== before;
-      return Math.abs(parts.scroller.getScrollPosition().scrollTop - before) > 0.01;
+      const moved = parts.scroller.getScrollPosition().scrollTop - before;
+      return enabled() ? Math.abs(moved) > 0.01 : moved !== 0;
     },
     snap() {
       if (!parts || !cell()?.height) return;
@@ -249,7 +293,10 @@ function attachPixelScroll(term, opts = {}) {
       for (const s of subs.splice(0)) s.dispose();
       above.remove();
       below.remove();
-      if (parts) parts.screen.style.transform = "";
+      if (parts) {
+        parts.screen.style.transform = parts.screen.style.willChange = "";
+        parts.scroller.getDomNode().style.overflowY = overflowBefore;
+      }
       attached.delete(term);
     }
   };
