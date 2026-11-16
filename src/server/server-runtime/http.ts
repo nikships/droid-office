@@ -118,7 +118,7 @@ export function createHttpHandler(ctx: HttpContext) {
         res.writeHead(404).end();
         return;
       }
-      if (p === '/favicon.svg' || p === '/factory-glyph.svg' || p === '/manifest.webmanifest' || p.startsWith('/icons/') || p.startsWith('/fonts/')) {
+      if (p === '/favicon.svg' || p === '/factory-glyph.svg' || p === '/manifest.webmanifest' || p === '/dashboard.webmanifest' || p.startsWith('/icons/') || p.startsWith('/fonts/')) {
         const file = publicFile(p);
         if (file) return serveFile(res, file, false);
         res.writeHead(404).end();

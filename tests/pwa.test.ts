@@ -5,6 +5,7 @@ import { test } from 'node:test';
 const client = new URL('../src/client/', import.meta.url);
 const publicDir = new URL('public/', client);
 const manifest = JSON.parse(readFileSync(new URL('manifest.webmanifest', publicDir), 'utf8'));
+const companion = JSON.parse(readFileSync(new URL('dashboard.webmanifest', publicDir), 'utf8'));
 
 function pngSize(src: string) {
   const png = readFileSync(new URL(src.replace(/^\//, ''), publicDir));
@@ -37,10 +38,28 @@ test('the manifest supplies the favicon, both PNG sizes and a separate maskable 
   assert.equal(pngSize('/icons/apple-touch-icon.png'), '180x180');
 });
 
-for (const page of ['index']) {
-  test(`${page} advertises the same manifest, theme color and Apple icon`, () => {
+test('the companion installs separately and opens the dashboard without credentials or worker links', () => {
+  assert.equal(companion.id, '/dashboard');
+  assert.equal(companion.name, 'Droid Office Companion');
+  assert.equal(companion.short_name, 'Companion');
+  assert.equal(companion.start_url, '/dashboard');
+  assert.equal(companion.scope, '/dashboard');
+  assert.notEqual(companion.id, manifest.id ?? manifest.start_url);
+  assert.equal(companion.display, 'standalone');
+  assert.equal(companion.background_color, manifest.background_color);
+  assert.equal(companion.theme_color, manifest.theme_color);
+  assert.deepEqual(companion.icons, manifest.icons);
+  for (const route of ['/dashboard', '/dashboard/', '/dashboard.html']) assert.ok(route.startsWith(companion.scope));
+  for (const route of ['/', '/open/worker/example', '/api/mobile/hello']) assert.ok(!route.startsWith(companion.scope));
+});
+
+for (const [page, appManifest] of [
+  ['index', '/manifest.webmanifest'],
+  ['dashboard', '/dashboard.webmanifest'],
+]) {
+  test(`${page} advertises its own manifest, theme color and Apple icon`, () => {
     const head = readFileSync(new URL(`${page}.html`, client), 'utf8').split('</head>')[0];
-    assert.match(head, /<link rel="manifest" href="\/manifest\.webmanifest"\s*\/>/);
+    assert.ok(head.includes(`<link rel="manifest" href="${appManifest}" />`));
     assert.match(head, /<meta name="theme-color" content="#020202"\s*\/>/);
     assert.match(head, /<link rel="apple-touch-icon" href="\/icons\/apple-touch-icon\.png"\s*\/>/);
   });

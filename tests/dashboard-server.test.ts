@@ -590,10 +590,22 @@ test('production dashboard has a public data-free bootstrap, gated APIs and no 3
     assert.equal(response.status, 200);
     const html = await response.text();
     assert.match(html, /id="dashboard"/);
+    assert.match(html, /<link rel="manifest" href="\/dashboard\.webmanifest"\s*\/>/);
     assert.doesNotMatch(html, /hot-reload|window\.office|devices\.json/);
     assert.ok(!html.includes(server.lanToken));
     for (const asset of html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)) assert.equal((await fetch(remote + asset[1])).status, 200);
   }
+  const appManifest = await fetch(`${remote}/dashboard.webmanifest`);
+  assert.equal(appManifest.status, 200, 'Chrome can fetch the companion manifest without pairing credentials');
+  assert.equal(appManifest.headers.get('content-type'), 'application/manifest+json');
+  assert.equal(appManifest.headers.get('cache-control'), 'no-store');
+  const app = await appManifest.json();
+  assert.equal(app.id, '/dashboard');
+  assert.equal(app.start_url, '/dashboard');
+  assert.equal(app.scope, '/dashboard');
+  assert.equal(app.display, 'standalone');
+  assert.ok(!JSON.stringify(app).includes(server.lanToken));
+  for (const icon of app.icons) assert.equal((await fetch(remote + icon.src)).status, 200);
   if (ip) {
     assert.equal((await fetch(`${remote}/api/mobile/hello`)).status, 401);
     assert.equal((await fetch(`${remote}/api/agents/droid/models`)).status, 401);
