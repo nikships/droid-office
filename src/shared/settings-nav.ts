@@ -1,5 +1,5 @@
 /** The categories down the side of Settings, grouped so a setting's place can be guessed: what is only yours, what workers do, and what the whole office shares. */
-export type SettingsPane = 'you' | 'sound' | 'graphics' | 'thread' | 'workers' | 'models' | 'subagents' | 'orchestrator' | 'connections' | 'office' | 'phone';
+export type SettingsPane = 'you' | 'sound' | 'graphics' | 'thread' | 'terminal' | 'workers' | 'models' | 'subagents' | 'orchestrator' | 'connections' | 'office' | 'phone';
 
 /** The sidebar groups, in order. Every pane belongs to exactly one. */
 export type SettingsSection = 'Personal' | 'Workers' | 'Office';
@@ -33,6 +33,14 @@ export const SETTINGS_PANES: PaneDef[] = [
     section: 'Personal',
     scope: 'Just you',
     blurb: 'How worker conversations read: text, spacing, and how much of their tools and thinking shows. Kept in this browser.',
+  },
+  {
+    id: 'terminal',
+    icon: '⌨️',
+    label: 'Terminal',
+    section: 'Personal',
+    scope: 'Just you',
+    blurb: 'How worker terminals and the shell look and scroll, and what the Option key does in them. Kept in this browser.',
   },
   { id: 'workers', icon: '🤖', label: 'Workers', section: 'Workers', scope: 'Everyone', blurb: 'Where new workers start, how many run, when they leave, how their worktrees are set up and what the office tells them.' },
   { id: 'models', icon: '🧠', label: 'Models', section: 'Workers', scope: 'Everyone', blurb: 'The model a worker starts on, and which models the pickers offer.' },
@@ -114,6 +122,14 @@ export const SETTINGS_CARDS = [
   { pane: 'thread', title: 'Tool calls', keywords: 'thread tool calls commands edits diffs expand open folded collapse conversation chat' },
   { pane: 'thread', title: 'Thinking', keywords: 'thread thinking thoughts reasoning hide hidden show expand open folded collapse conversation chat' },
   { pane: 'thread', title: 'Restore Thread defaults', keywords: 'thread reset restore defaults text font spacing width tools thinking' },
+  { pane: 'terminal', title: 'Terminal text size', keywords: 'terminal tty raw text size font bigger smaller larger zoom px' },
+  { pane: 'terminal', title: 'Line spacing', keywords: 'terminal tty line height spacing leading compact relaxed rows' },
+  { pane: 'terminal', title: 'Cursor shape', keywords: 'terminal tty cursor style shape block bar beam underline caret' },
+  { pane: 'terminal', title: 'Cursor blink', keywords: 'terminal tty cursor blink blinking flash steady caret' },
+  { pane: 'terminal', title: 'Smooth scrolling', keywords: 'terminal tty smooth scrolling scroll animate glide wheel page up down' },
+  { pane: 'terminal', title: 'Scroll speed', keywords: 'terminal tty scroll speed sensitivity wheel trackpad slow fast' },
+  { pane: 'terminal', title: 'Option key', keywords: 'terminal tty option alt key meta mac special characters keyboard layout' },
+  { pane: 'terminal', title: 'Restore Terminal defaults', keywords: 'terminal tty reset restore defaults text size line spacing cursor scrolling option' },
   { pane: 'workers', title: 'Where fresh workers start', keywords: 'fresh workers branch main floor branch checkout start' },
   { pane: 'workers', title: 'Worker limit', keywords: 'limit most workers at once max ceiling hire' },
   { pane: 'workers', title: 'Workers whose pull request merged', keywords: 'merged pull request go home leave stay worker cleanup' },

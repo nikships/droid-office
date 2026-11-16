@@ -1,25 +1,24 @@
 // The terminal window starts at 14 px. Its adjustable size is saved in this browser.
 
-const TERM_FONT_DESKTOP = 14;
+export const TERM_FONT_DEFAULT = 14;
 export const TERM_FONT_MIN = 10;
 export const TERM_FONT_MAX = 36;
-const STEP = 2;
+export const TERM_FONT_STEP = 2;
 
-const base = TERM_FONT_DESKTOP;
 const storageKey = 'droid-office.term-font';
 const listeners = new Set<(px: number) => void>();
 
 function clampTermFont(px: number): number {
-  if (!Number.isFinite(px)) return base;
+  if (!Number.isFinite(px)) return TERM_FONT_DEFAULT;
   return Math.max(TERM_FONT_MIN, Math.min(TERM_FONT_MAX, Math.round(px)));
 }
 
 /** One step bigger (+1) or smaller (-1). */
 export function stepTermFont(px: number, dir: 1 | -1): number {
-  return clampTermFont(px + dir * STEP);
+  return clampTermFont(px + dir * TERM_FONT_STEP);
 }
 
-/** The size a terminal opens at: the saved choice, else the default for where the office runs. */
+/** The size a terminal opens at: the saved choice, else the default. */
 export function termFontSize(): number {
   try {
     const saved = localStorage.getItem(storageKey);
@@ -27,7 +26,7 @@ export function termFontSize(): number {
   } catch {
     // storage blocked
   }
-  return base;
+  return TERM_FONT_DEFAULT;
 }
 
 export function setTermFontSize(px: number) {

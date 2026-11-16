@@ -21,6 +21,8 @@ import { droidSettings } from './droid-settings';
 import { hiddenModelSettings } from './hidden-models';
 import { workerLabelSettings } from './worker-labels';
 import { onThreadViewPrefs, resetThreadViewPrefs, setThreadViewPrefs, isDefaultThreadViewPrefs, threadViewPrefs, type ThreadViewPrefs } from './thread-view-prefs';
+import { isDefaultTerminalPrefs, onTerminalPrefs, resetTerminalPrefs, setTerminalPrefs, terminalPrefs, type TerminalPrefs } from './terminal-prefs';
+import { onTermFontSize, setTermFontSize, termFontSize, TERM_FONT_DEFAULT, TERM_FONT_MAX, TERM_FONT_MIN, TERM_FONT_STEP } from './term-font';
 import { openHostUpdate } from './host-update';
 import { openPhone, pairedPhones } from './phone';
 import { companionState, openCompanion } from './companion';
@@ -193,6 +195,101 @@ function threadRows() {
   };
 }
 
+/** The Terminal pane: how worker terminals and the shell draw, scroll and read Option, saved in this browser and applied live to every open terminal. `dispose` stops listening. */
+function terminalRows() {
+  const choose = <K extends keyof TerminalPrefs>(key: K, label: string, options: readonly (readonly [TerminalPrefs[K], string])[]) =>
+    radios<TerminalPrefs[K]>(
+      label,
+      options,
+      () => terminalPrefs()[key],
+      (value) => setTerminalPrefs({ [key]: value } as Partial<TerminalPrefs>),
+    );
+  const switchFor = (key: 'cursorBlink' | 'smoothScroll', label: string) =>
+    toggle(
+      label,
+      () => terminalPrefs()[key],
+      (on) => setTerminalPrefs({ [key]: on }),
+    );
+  const size = h('input', { type: 'range', min: TERM_FONT_MIN, max: TERM_FONT_MAX, step: TERM_FONT_STEP, 'aria-label': 'Terminal text size' }) as HTMLInputElement;
+  const sizeValue = h('span.vol-pct');
+  size.addEventListener('input', () => {
+    if (Number(size.value) !== termFontSize()) setTermFontSize(Number(size.value));
+  });
+  const lineHeight = choose('lineHeight', 'Line spacing', [
+    ['compact', 'Compact'],
+    ['default', 'Default'],
+    ['relaxed', 'Relaxed'],
+  ]);
+  const cursorStyle = choose('cursorStyle', 'Cursor shape', [
+    ['block', 'Block'],
+    ['bar', 'Bar'],
+    ['underline', 'Underline'],
+  ]);
+  const blink = switchFor('cursorBlink', 'Cursor blink');
+  const smooth = switchFor('smoothScroll', 'Smooth scrolling');
+  const speed = choose('scrollSpeed', 'Scroll speed', [
+    ['slow', 'Slow'],
+    ['default', 'Default'],
+    ['fast', 'Fast'],
+  ]);
+  const option = choose('optionIsMeta', 'Option key', [
+    [true, 'Sends Meta'],
+    [false, 'Types characters'],
+  ]);
+  const restore = h(
+    'button.btn',
+    {
+      type: 'button',
+      onclick: () => {
+        resetTerminalPrefs();
+        setTermFontSize(TERM_FONT_DEFAULT);
+      },
+    },
+    'Restore defaults',
+  ) as HTMLButtonElement;
+  const paint = () => {
+    const px = termFontSize();
+    size.value = String(px);
+    size.style.setProperty('--fill', `${((px - TERM_FONT_MIN) / (TERM_FONT_MAX - TERM_FONT_MIN)) * 100}%`);
+    sizeValue.textContent = `${px} px`;
+    for (const choice of [lineHeight, cursorStyle, blink, smooth, speed, option]) choice.paint();
+    restore.disabled = isDefaultTerminalPrefs(terminalPrefs()) && px === TERM_FONT_DEFAULT;
+  };
+  paint();
+  const offs = [onTerminalPrefs(paint), onTermFontSize(paint)];
+  return {
+    groups: [
+      group(
+        'Text',
+        card('Terminal text size', { desc: desc('How big terminal text draws. The A− and A+ buttons over a terminal change it too.'), control: h('div.volume', {}, size, sizeValue) }),
+        card('Line spacing', { desc: desc('The room between rows of text. Compact fits the most rows on screen.'), control: lineHeight.row }),
+      ),
+      group(
+        'Cursor',
+        card('Cursor shape', { desc: desc('How the cursor draws while a terminal has focus. Unfocused, it is an outline.'), control: cursorStyle.row }),
+        card('Cursor blink', { desc: desc('Off keeps the cursor steady.'), control: blink.el }),
+      ),
+      group(
+        'Scrolling',
+        card('Smooth scrolling', { desc: desc('A mouse wheel and Shift+Page Up or Down glide through history instead of jumping. Trackpads already scroll row by row.'), control: smooth.el }),
+        card('Scroll speed', { desc: desc('How far each wheel notch or trackpad swipe moves through history. Hold Option (Alt) to scroll five times faster.'), control: speed.row }),
+      ),
+      group(
+        'Keyboard',
+        card('Option key', {
+          desc: desc(
+            'On a Mac, Sends Meta makes Option+letter a Meta shortcut, such as Option+B and Option+F to jump by word in a shell. Types characters lets Option type what your keyboard layout puts on it, such as @ or € on many European layouts. Option+Arrow and Option+Delete move and delete by word either way.',
+          ),
+          control: option.row,
+        }),
+      ),
+      group(null, card('Restore Terminal defaults', { desc: desc('Put every Terminal setting back to how it came, text size included.'), control: restore })),
+    ],
+    dispose: () => {
+      for (const off of offs) off();
+    },
+  };
+}
 /** The sky and clock outside as a quiet value: its leading weather glyph spaced from the words. */
 const outsideNow = (now: string) => {
   const icon = now.match(/^\p{Extended_Pictographic}\uFE0F?/u)?.[0] ?? '';
@@ -887,6 +984,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   const { surface, first, hireForSetup } = opts;
   const only = opts.surface === 'office' ? officeRows(net, opts.office) : undefined;
   const threadPane = threadRows();
+  const terminalPane = terminalRows();
   const shown = settingsPanes(surface);
   // ---- Workers ------------------------------------------------------------------------------------
   // Where a fresh worker starts: the latest main, or the branch the checkout is on.
@@ -1328,6 +1426,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   const panes: Partial<Record<SettingsPane, Node[]>> = {
     ...(only ? { you: only.you, sound: only.sound, graphics: only.graphics } : {}),
     thread: threadPane.groups,
+    terminal: terminalPane.groups,
     workers: [
       group(
         'Hiring',
@@ -1550,6 +1649,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       for (const off of offStore) off();
       only?.dispose();
       threadPane.dispose();
+      terminalPane.dispose();
       factoryKey.dispose();
       gemini.dispose();
       benchmarks.dispose();

@@ -23,6 +23,7 @@ import type { ScreenImage } from '../shared/protocol';
 import { icon } from './ui/icons';
 
 const ALT_BUFFER_MODES = [47, 1047, 1049];
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 const MAX_DIRECT_PLACEMENTS = 128;
 /** Width-1 plain ASCII `' '` content word in xterm's `BufferLine._data`, avoiding DOM-renderer negative letter-spacing on `U+10EEEE`. */
 const XTERM_SPACE_CONTENT = 0x20 | (1 << 22);
@@ -592,8 +593,7 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
     const top = Math.max(2, Math.min(geom.cssH - size - 2, bounds.y + inset));
     expandBtn.style.left = `${Math.round(left)}px`;
     expandBtn.style.top = `${Math.round(top)}px`;
-    const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
-    expandBtn.title = isNormalKittyShell(shellState()) ? 'Expand image (Click)' : isMac ? 'Expand image (⌘+Click)' : 'Expand image (Ctrl+Click)';
+    expandBtn.title = isNormalKittyShell(shellState()) ? 'Expand image (Click)' : IS_MAC ? 'Expand image (⌘+Click)' : 'Expand image (Ctrl+Click)';
     expandBtn.hidden = false;
     updateCursor();
     return true;
@@ -1091,6 +1091,7 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
       return encodeKittyKey(e, keyboard.flags, {
         csiEnter,
         appCursor: term.modes.applicationCursorKeysMode,
+        optionTypes: IS_MAC && term.options.macOptionIsMeta === false,
       });
     },
     dispose,

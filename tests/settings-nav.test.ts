@@ -2,18 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SETTINGS_CARDS, SETTINGS_PANES, initialSettingsPane, resolveSettingsPane, searchSettings, settingsCards, settingsPaneAfter, settingsPanes, type SettingsPane } from '../src/shared/settings-nav.js';
 
-test('settings has the eleven categories, grouped Personal / Workers / Office, in order', () => {
+test('settings has the twelve categories, grouped Personal / Workers / Office, in order', () => {
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.label),
-    ['You', 'Sound & alerts', 'Display', 'Thread', 'Workers', 'Models', 'Subagents & visits', 'Orchestrator', 'Connections', 'Office & floors', 'Phone & web'],
+    ['You', 'Sound & alerts', 'Display', 'Thread', 'Terminal', 'Workers', 'Models', 'Subagents & visits', 'Orchestrator', 'Connections', 'Office & floors', 'Phone & web'],
   );
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.id),
-    ['you', 'sound', 'graphics', 'thread', 'workers', 'models', 'subagents', 'orchestrator', 'connections', 'office', 'phone'],
+    ['you', 'sound', 'graphics', 'thread', 'terminal', 'workers', 'models', 'subagents', 'orchestrator', 'connections', 'office', 'phone'],
   );
   assert.deepEqual(
     SETTINGS_PANES.map((p) => p.section),
-    ['Personal', 'Personal', 'Personal', 'Personal', 'Workers', 'Workers', 'Workers', 'Workers', 'Office', 'Office', 'Office'],
+    ['Personal', 'Personal', 'Personal', 'Personal', 'Personal', 'Workers', 'Workers', 'Workers', 'Workers', 'Office', 'Office', 'Office'],
   );
   for (const pane of SETTINGS_PANES) {
     assert.ok(pane.scope, `${pane.id} says who it applies to`);
@@ -48,6 +48,14 @@ test('every setting is in a category', () => {
     ['Tool calls', 'thread'],
     ['Thinking', 'thread'],
     ['Restore Thread defaults', 'thread'],
+    ['Terminal text size', 'terminal'],
+    ['Line spacing', 'terminal'],
+    ['Cursor shape', 'terminal'],
+    ['Cursor blink', 'terminal'],
+    ['Smooth scrolling', 'terminal'],
+    ['Scroll speed', 'terminal'],
+    ['Option key', 'terminal'],
+    ['Restore Terminal defaults', 'terminal'],
     ['Worker labels', 'workers'],
     ['Where fresh workers start', 'workers'],
     ['Prompts', 'workers'],
@@ -149,6 +157,13 @@ test('search finds a setting by name, pane or keyword, every word required', () 
   assert.deepEqual(searchSettings('benchmarks'), [{ pane: 'connections', title: 'Artificial Analysis' }]);
   assert.deepEqual(searchSettings('new conversation'), [{ pane: 'orchestrator', title: 'New conversation' }]);
   assert.deepEqual(searchSettings('orchestrator model'), [{ pane: 'orchestrator', title: 'Orchestrator model' }]);
+  assert.deepEqual(searchSettings('smooth scroll'), [{ pane: 'terminal', title: 'Smooth scrolling' }]);
+  assert.deepEqual(searchSettings('tty cursor'), [
+    { pane: 'terminal', title: 'Cursor shape' },
+    { pane: 'terminal', title: 'Cursor blink' },
+    { pane: 'terminal', title: 'Restore Terminal defaults' },
+  ]);
+  assert.deepEqual(searchSettings('alt meta'), [{ pane: 'terminal', title: 'Option key' }]);
   assert.deepEqual(searchSettings('there is no such setting'), []);
 });
 
@@ -164,10 +179,11 @@ test('arrow keys move between categories and wrap, Home and End jump', () => {
   assert.equal(settingsPaneAfter('phone', 'ArrowDown'), 'you');
   assert.equal(settingsPaneAfter('connections', 'ArrowDown'), 'office');
   assert.equal(settingsPaneAfter('office', 'ArrowDown'), 'phone');
-  assert.equal(settingsPaneAfter('workers', 'ArrowUp'), 'thread');
+  assert.equal(settingsPaneAfter('workers', 'ArrowUp'), 'terminal');
   assert.equal(settingsPaneAfter('sound', 'ArrowDown'), 'graphics');
   assert.equal(settingsPaneAfter('graphics', 'ArrowDown'), 'thread');
-  assert.equal(settingsPaneAfter('thread', 'ArrowDown'), 'workers');
+  assert.equal(settingsPaneAfter('thread', 'ArrowDown'), 'terminal');
+  assert.equal(settingsPaneAfter('terminal', 'ArrowDown'), 'workers');
   assert.equal(settingsPaneAfter('sound', 'Home'), 'you');
   assert.equal(settingsPaneAfter('sound', 'End'), 'phone');
   assert.equal(settingsPaneAfter('you', 'Enter'), null);
@@ -182,11 +198,11 @@ test('the companions leave out what only the 3D office has, and only the Mac app
   );
   assert.deepEqual(
     settingsPanes('companion').map((p) => p.label),
-    ['Thread', 'Workers', 'Models', 'Subagents & visits', 'Orchestrator', 'Connections', 'Office & floors'],
+    ['Thread', 'Terminal', 'Workers', 'Models', 'Subagents & visits', 'Orchestrator', 'Connections', 'Office & floors'],
   );
   assert.deepEqual(
     settingsPanes('mac-companion').map((p) => p.label),
-    ['Thread', 'Workers', 'Models', 'Subagents & visits', 'Orchestrator', 'Connections', 'Office & floors', 'Phone & web'],
+    ['Thread', 'Terminal', 'Workers', 'Models', 'Subagents & visits', 'Orchestrator', 'Connections', 'Office & floors', 'Phone & web'],
   );
   const officeOnly = [
     'Your character',
@@ -228,7 +244,22 @@ test('the companions leave out what only the 3D office has, and only the Mac app
     titles('mac-companion'),
     SETTINGS_CARDS.map((c) => c.title as string).filter((t) => !officeOnly.includes(t)),
   );
-  for (const kept of ['Text size', 'Tool calls', 'Restore Thread defaults', 'Workspace folder', 'Host desktop app', 'Droid', 'Factory API key', 'Gemini Decisions API', 'DroidProxy', 'Worktree setup', 'Default worker'])
+  for (const kept of [
+    'Text size',
+    'Tool calls',
+    'Restore Thread defaults',
+    'Terminal text size',
+    'Smooth scrolling',
+    'Restore Terminal defaults',
+    'Workspace folder',
+    'Host desktop app',
+    'Droid',
+    'Factory API key',
+    'Gemini Decisions API',
+    'DroidProxy',
+    'Worktree setup',
+    'Default worker',
+  ])
     assert.ok(titles('companion').includes(kept), kept);
 });
 
@@ -253,7 +284,7 @@ test('a companion’s search and arrow keys stay among its own settings', () => 
   assert.deepEqual(searchSettings('openclaw', 'mac-companion'), [{ pane: 'phone', title: 'Tailscale MCP' }]);
   assert.deepEqual(searchSettings('office mcp', 'companion'), [{ pane: 'subagents', title: 'Office MCP' }]);
 
-  assert.equal(settingsPaneAfter('workers', 'ArrowUp', 'companion'), 'thread');
+  assert.equal(settingsPaneAfter('workers', 'ArrowUp', 'companion'), 'terminal');
   assert.equal(settingsPaneAfter('thread', 'ArrowUp', 'companion'), 'office');
   assert.equal(settingsPaneAfter('office', 'ArrowDown', 'companion'), 'thread');
   assert.equal(settingsPaneAfter('office', 'ArrowDown', 'mac-companion'), 'phone');

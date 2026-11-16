@@ -6,7 +6,7 @@ import type { Net } from '../net';
 import { store } from '../state';
 import { withToken } from '../token';
 import { TERM_THEME } from '../term-theme';
-import { suppressMirrorQueries, TerminalMirror } from '../term-mirror';
+import { focusReports, suppressMirrorQueries, TerminalMirror } from '../term-mirror';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { colorDot } from './kit';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell';
@@ -24,6 +24,7 @@ import { attachKittyTerminal, type ExpandedKittyImage } from '../term-kitty';
 import { wantsCsiEnter } from '../term-keys';
 import { viewPicture } from './picture-viewer';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
+import { followTerminalPrefs, scrollAtOnce, terminalOptions } from './terminal-prefs';
 import { mountWorkerThread, type WorkerThread } from './worker-thread';
 
 function openKittyPicture(img: ExpandedKittyImage, about: string, isAlive: () => boolean, focusTerm: () => void, state: { modal: Modal | null }) {
@@ -258,16 +259,14 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   };
 
   const term = new Terminal({
+    ...terminalOptions(),
     fontFamily: TERM_FONT,
     fontSize: termFontSize(),
-    lineHeight: 1.1,
     theme: TERM_THEME,
     minimumContrastRatio: 4.5,
-    cursorBlink: true,
     disableStdin: true,
     scrollback: 5000,
     allowProposedApi: true,
-    macOptionIsMeta: true,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -299,6 +298,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
 
   const offQueries = suppressMirrorQueries(term);
+  const focus = focusReports();
   let lastSentSize = '';
   let lastPtySize = '';
   const pendingSizes: string[] = [];
@@ -394,8 +394,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     const scroll = () => {
       if (marker.line < 0) return;
       // xterm scrolls from where its scrollbar is, which lags behind a resize; from the top is exact.
-      term.scrollLines(-term.buffer.active.length);
-      term.scrollLines(Math.max(0, marker.line - Math.floor(term.rows / 3)));
+      scrollAtOnce(term, () => {
+        term.scrollLines(-term.buffer.active.length);
+        term.scrollLines(Math.max(0, marker.line - Math.floor(term.rows / 3)));
+      });
     };
     scroll();
     // The window settles its size just after it opens; stay on the line through that.
@@ -412,12 +414,14 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     term,
     (snapshot) => {
       adoptSharedSize = snapshot.shared ?? adoptSharedSize;
+      const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
+      if (focusIn) net.send({ t: 'term.input', workerId, data: focusIn });
       lastSentSize = '';
       pendingSizes.length = 0;
       term.options.disableStdin = !net.up;
       disconnected.classList.add('hidden');
       sendSize();
-      term.scrollToBottom();
+      scrollAtOnce(term, () => term.scrollToBottom());
       refresh();
       if (pendingFind) jumpTo(pendingFind);
       pendingFind = undefined;
@@ -483,6 +487,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     offQueries();
     mirror.disconnect();
     offFont();
+    offPrefs();
     ro.disconnect();
     net.send({ t: 'worker.detach', workerId });
     term.dispose();
@@ -596,6 +601,12 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     paneSizeChanged = true;
     sendSize();
   });
+  const offPrefs = followTerminalPrefs(term, {
+    resized: () => {
+      paneSizeChanged = true;
+      sendSize();
+    },
+  });
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.ctrlKey && e.key === ']' && (!inline || inline.onLeave)) {
@@ -616,7 +627,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
   term.onData((data) => {
     if (!mirror.ready || !net.up) return;
-    sendSize(true);
+    const kind = focus.classify(data);
+    if (kind === 'repeat') return;
+    // Focus moving is not typing, so it leaves the shared PTY at its size.
+    if (kind === 'input') sendSize(true);
     net.send({ t: 'term.input', workerId, data });
   });
 
@@ -725,15 +739,13 @@ export function openOfficeShell(net: Net) {
   const el = h('div.modal.full.term', { role: 'dialog', 'aria-label': 'Shell' }, h('header', {}, colorDot('#8d99ae'), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom), closeBtn), host);
 
   const term = new Terminal({
+    ...terminalOptions(),
     fontFamily: TERM_FONT,
     fontSize: termFontSize(),
-    lineHeight: 1.1,
     theme: TERM_THEME,
     minimumContrastRatio: 4.5,
-    cursorBlink: true,
     scrollback: 5000,
     allowProposedApi: true,
-    macOptionIsMeta: true,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -768,6 +780,7 @@ export function openOfficeShell(net: Net) {
   let box: { width: number; height: number } | undefined;
   let boxChanged = false;
   const offQueries = suppressMirrorQueries(term);
+  const focus = focusReports();
   let mirror: TerminalMirror | undefined;
 
   const sendSize = (typing = false) => {
@@ -798,12 +811,14 @@ export function openOfficeShell(net: Net) {
     term,
     (snapshot) => {
       shared = snapshot.shared === true;
+      const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
+      if (focusIn) net.send({ t: 'shell.input', data: focusIn });
       ptyCols = snapshot.cols;
       ptyRows = snapshot.rows;
       lastSentSize = '';
       pendingSizes.length = 0;
       sendSize();
-      term.scrollToBottom();
+      scrollAtOnce(term, () => term.scrollToBottom());
     },
     () => net.send({ t: 'shell.attach' }),
   );
@@ -862,6 +877,7 @@ export function openOfficeShell(net: Net) {
       offQueries();
       mirror?.disconnect();
       offFont();
+      offPrefs();
       ro.disconnect();
       net.send({ t: 'shell.detach' });
       term.dispose();
@@ -880,6 +896,12 @@ export function openOfficeShell(net: Net) {
     paintZoom(px);
     boxChanged = true;
     sendSize();
+  });
+  const offPrefs = followTerminalPrefs(term, {
+    resized: () => {
+      boxChanged = true;
+      sendSize();
+    },
   });
   const zoomBy = (dir: 1 | -1) => {
     setTermFontSize(stepTermFont(term.options.fontSize ?? termFontSize(), dir));
@@ -904,7 +926,10 @@ export function openOfficeShell(net: Net) {
     return false;
   });
   term.onData((data) => {
-    sendSize(true);
+    if (!mirror?.ready || !net.up) return;
+    const kind = focus.classify(data);
+    if (kind === 'repeat') return;
+    if (kind === 'input') sendSize(true);
     net.send({ t: 'shell.input', data });
   });
 

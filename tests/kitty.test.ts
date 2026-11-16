@@ -111,6 +111,38 @@ test('encodeKittyKey handles progressive flags 0, 1, 2, 4, 8 and 16 while preser
   assert.deepEqual(encodeKittyKey(key('ArrowUp'), f1), { do: 'send', data: '\x1b[A' });
   assert.deepEqual(encodeKittyKey(key('ArrowUp'), f1, { appCursor: true }), { do: 'send', data: '\x1bOA' });
   assert.deepEqual(encodeKittyKey(key('ArrowUp', { altKey: true }), f1), { do: 'send', data: '\x1b[1;3A' });
+  // Option as Meta (the default) sends Alt+key; Option typing characters lets xterm type what the layout makes.
+  assert.deepEqual(encodeKittyKey(key('@', { altKey: true, code: 'KeyL' }), f1), { do: 'send', data: '\x1b[108;3u' });
+  assert.deepEqual(encodeKittyKey(key('@', { altKey: true, code: 'KeyL' }), f1, { optionTypes: true }), { do: 'default' });
+  assert.deepEqual(encodeKittyKey(key('@', { altKey: true, code: 'KeyL' }), KITTY_KB_ALL_FLAGS, { optionTypes: true }), { do: 'send', data: '\x1b[64;1;64u' });
+  assert.deepEqual(encodeKittyKey(key('ArrowLeft', { altKey: true }), f1, { optionTypes: true }), { do: 'send', data: '\x1b[1;3D' }, 'Option+Arrow still jumps by word');
+  assert.deepEqual(encodeKittyKey(key('Backspace', { altKey: true }), f1, { optionTypes: true }), { do: 'send', data: '\x1b[127;3u' }, 'Option+Delete still deletes a word');
+  assert.deepEqual(encodeKittyKey(key('a', { altKey: true, ctrlKey: true, code: 'KeyA' }), f1, { optionTypes: true }), { do: 'send', data: '\x1b[97;7u' });
+  // A DOM KeyboardEvent keeps its fields in prototype getters.
+  class DomKey {
+    get type() {
+      return 'keydown';
+    }
+    get key() {
+      return '@';
+    }
+    get code() {
+      return 'KeyL';
+    }
+    get altKey() {
+      return true;
+    }
+    get ctrlKey() {
+      return false;
+    }
+    get shiftKey() {
+      return false;
+    }
+    get metaKey() {
+      return false;
+    }
+  }
+  assert.deepEqual(encodeKittyKey(new DomKey(), KITTY_KB_ALL_FLAGS, { optionTypes: true }), { do: 'send', data: '\x1b[64;1;64u' });
   assert.deepEqual(encodeKittyKey(key('Delete', { ctrlKey: true }), f1), { do: 'send', data: '\x1b[3;5~' });
   assert.deepEqual(encodeKittyKey(key('Shift', { code: 'ShiftLeft', shiftKey: true }), f1), { do: 'default' });
   assert.deepEqual(encodeKittyKey(key('Escape', { type: 'keyup' }), f1), { do: 'default' });

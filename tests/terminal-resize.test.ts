@@ -71,7 +71,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
             return () => {};
           },
         };
-        w.snapshot = () => routeTerminalMessage({ t: 'term.snapshot', workerId: mode === 'shell' ? OFFICE_SHELL_ID : worker.id, data: '', cols: worker.cols, rows: worker.rows, shared });
+        w.snapshot = (data = '') => routeTerminalMessage({ t: 'term.snapshot', workerId: mode === 'shell' ? OFFICE_SHELL_ID : worker.id, data, cols: worker.cols, rows: worker.rows, shared });
         w.update = (cols = worker.cols, rows = worker.rows) => {
           Object.assign(worker, { cols, rows });
           if (mode === 'shell') {
@@ -127,6 +127,78 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       await page.evaluate(() => (window as any).frames());
       assert.equal(await page.evaluate(() => (window as any).sizes().length), 1, 'font change reclaims shared sizing');
       assert.equal(await fits(), true);
+    });
+  }
+
+  for (const mode of ['inline', 'shell']) {
+    await t.test(`${mode} forwards focus changes once and never claims size for them`, async () => {
+      const page = await rig(true, false, false, mode);
+      // The Boss Shell focuses itself shortly after opening; let that land before taking focus away.
+      if (mode === 'shell') await page.waitForFunction(() => document.activeElement === (window as any).term.textarea);
+      await page.evaluate(() => {
+        document.getElementById('focus')!.focus();
+        (window as any).messages = [];
+      });
+      const reports = async (enable = 0) =>
+        page.evaluate(async (enable) => {
+          const w = window as any;
+          // Droid turns focus reporting on again each time it regains focus.
+          for (let i = 0; i < enable; i++) await new Promise<void>((resolve) => w.term.write('\x1b[?1004h', resolve));
+          return { input: w.messages.filter((m: any) => m.t === 'term.input' || m.t === 'shell.input').map((m: any) => m.data), sizes: w.sizes() };
+        }, enable);
+      assert.deepEqual(await reports(3), { input: [], sizes: [] }, 'an unfocused window stays silent when focus reporting turns on');
+      await page.evaluate(() => (window as any).term.focus());
+      assert.deepEqual(await reports(3), { input: ['\x1b[I'], sizes: [] }, 'focus-in is sent once, not echoed for every re-enable');
+      await page.evaluate(() => document.getElementById('focus')!.focus());
+      assert.deepEqual(await reports(2), { input: ['\x1b[I', '\x1b[O'], sizes: [] });
+      await page.evaluate(() => (window as any).term.input('x'));
+      assert.equal((await reports()).sizes.length, 1, 'typing still claims the size');
+    });
+
+    await t.test(`${mode} sends focus-in again after focus changed while a snapshot loaded`, async () => {
+      const page = await rig(true, false, false, mode);
+      if (mode === 'shell') await page.waitForFunction(() => document.activeElement === (window as any).term.textarea);
+      const sent = () => page.evaluate(() => (window as any).messages.filter((m: any) => m.t === 'term.input' || m.t === 'shell.input').map((m: any) => m.data));
+      await page.evaluate(async () => {
+        const w = window as any;
+        w.term.focus();
+        w.messages = [];
+        await new Promise<void>((resolve) => w.term.write('\x1b[?1004h', resolve));
+        // A fresh snapshot loads, and focus leaves while it does: that focus-out never reaches the program.
+        w.snapshot();
+        document.getElementById('focus')!.focus();
+      });
+      await page.evaluate(() => (window as any).frames());
+      assert.deepEqual(await sent(), ['\x1b[I']);
+      await page.evaluate(async () => {
+        const w = window as any;
+        w.term.focus();
+        await new Promise<void>((resolve) => w.term.write('\x1b[?1004h', resolve));
+      });
+      assert.deepEqual(await sent(), ['\x1b[I', '\x1b[I'], 'the returning focus-in is not mistaken for a repeat');
+    });
+
+    await t.test(`${mode} keeps forwarding focus when it stays focused through a snapshot`, async () => {
+      const page = await rig(true, false, false, mode);
+      if (mode === 'shell') await page.waitForFunction(() => document.activeElement === (window as any).term.textarea);
+      const sent = () => page.evaluate(() => (window as any).messages.filter((m: any) => m.t === 'term.input' || m.t === 'shell.input').map((m: any) => m.data));
+      await page.evaluate(async () => {
+        const w = window as any;
+        w.term.focus();
+        await new Promise<void>((resolve) => w.term.write('\x1b[?1004h', resolve));
+        w.messages = [];
+        // A snapshot carries the program's modes, focus reporting among them.
+        w.snapshot('\x1b[?1004h');
+      });
+      await page.evaluate(() => (window as any).frames());
+      assert.deepEqual(await sent(), ['\x1b[I'], 'the snapshot reasserts this window’s focus');
+      await page.evaluate(async () => {
+        const w = window as any;
+        await new Promise<void>((resolve) => w.term.write('\x1b[?1004h', resolve));
+        document.getElementById('focus')!.focus();
+      });
+      await page.evaluate(() => (window as any).frames());
+      assert.deepEqual(await sent(), ['\x1b[I', '\x1b[O'], 'the next blur reaches the program');
     });
   }
 
