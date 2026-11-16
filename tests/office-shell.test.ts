@@ -36,7 +36,9 @@ test('the boss shell runs, restarts after exit, and is picked up after an office
   const open = shell.attach('one');
   assert.ok(open);
   assert.equal(open.shared, false);
+  assert.equal(shell.attach('one')?.shared, false, 'reattaching the same viewer is not sharing');
   assert.equal(shell.attach('two')?.shared, true);
+  assert.equal(shell.attach('one')?.shared, true, 'another viewer still counts on reattach');
   shell.detach('two');
 
   shell.write('echo OFFICE_SHELL_OK\r');
