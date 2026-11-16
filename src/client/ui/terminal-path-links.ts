@@ -97,7 +97,9 @@ export class TerminalPathLinksAddon implements ITerminalAddon {
       signal: this.controller.signal,
     })
       .then(async (response) => {
-        if (!response.ok) throw new Error(((await response.json()) as { error?: string }).error ?? 'Could not open file.');
+        const body = (await response.json().catch(() => ({}))) as { error?: string; revealed?: boolean };
+        if (!response.ok) throw new Error(body.error ?? 'Could not open file.');
+        if (body.revealed) toast('Revealed in Finder');
       })
       .catch((error: unknown) => {
         if (!this.controller.signal.aborted) toast(error instanceof Error ? error.message : 'Could not open file.', 'error');

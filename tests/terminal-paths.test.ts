@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
@@ -11,7 +11,7 @@ import type { IBuffer, ILink, ILinkProvider, Terminal } from '@xterm/xterm';
 import { TerminalPathLinksAddon, terminalLogicalLine } from '../src/client/ui/terminal-path-links.js';
 import { threadFileImageUrl, threadFilePreviewUrl } from '../src/client/ui/file-preview.js';
 import { createFloorHttp, isFloorHttpPath } from '../src/server/server-runtime/floor-http.js';
-import { TerminalPaths } from '../src/server/terminal-paths.js';
+import { openTerminalFile, REVEAL_ONLY_EXTENSIONS, revealOnly, TerminalPaths } from '../src/server/terminal-paths.js';
 import { OFFICE_SHELL_ID } from '../src/shared/office-shell.js';
 import { parseTerminalPathRefs, terminalPathRef } from '../src/shared/path-links.js';
 
@@ -96,18 +96,11 @@ test('terminal resolution prefers worktree, falls back to floor, uses live cwd a
     async () => path.join(checkout, 'src'),
     root,
   );
-  const paths = await resolver.resolve({ cwd: checkout, root: floor, pid: 1 }, [
-    'tests/tailnet-https.test.ts:120:3',
-    'server.ts',
-    'duplicate.ts',
-    'README.md',
-    './server.ts',
-    '../tests/tailnet-https.test.ts',
-    'missing.ts',
-    '../../outside.txt',
-    `${root}/outside.txt`,
-    '~/outside.txt',
-  ]);
+  const paths = await resolver.resolve(
+    { cwd: checkout, root: floor, pid: 1 },
+    ['tests/tailnet-https.test.ts:120:3', 'server.ts', 'duplicate.ts', 'README.md', './server.ts', '../tests/tailnet-https.test.ts', 'missing.ts', '../../outside.txt', `${root}/outside.txt`, '~/outside.txt'],
+    { allowOutside: true },
+  );
   assert.deepEqual(paths[0], { path: path.join(checkout, 'tests/tailnet-https.test.ts'), displayPath: 'tests/tailnet-https.test.ts', line: 120, column: 3 });
   assert.equal(paths[1]?.path, path.join(checkout, 'src/server.ts'));
   assert.equal(paths[2]?.path, path.join(checkout, 'src/duplicate.ts')); // exact file in live cwd wins
@@ -118,6 +111,11 @@ test('terminal resolution prefers worktree, falls back to floor, uses live cwd a
   assert.equal(paths[7], null);
   assert.equal(paths[8]?.path, path.join(root, 'outside.txt'));
   assert.equal(paths[9]?.path, path.join(root, 'outside.txt'));
+  assert.deepEqual(await resolver.resolve({ cwd: checkout, root: floor, pid: 1 }, [`${root}/outside.txt`, '~/outside.txt', `${checkout}/src/server.ts`]), [
+    null,
+    null,
+    { path: path.join(checkout, 'src/server.ts'), displayPath: 'src/server.ts' },
+  ]);
   const noLive = new TerminalPaths(
     async () => {
       scans++;
@@ -144,9 +142,57 @@ test('relative paths cannot escape allowed roots through traversal or symlinks',
     async () => [],
     async () => root,
   );
-  const resolved = await resolver.resolve({ cwd: checkout, root: floor }, ['../outside.txt', 'src/escape.txt', 'external/outside.txt', './missing.ts', 'src/', `${checkout}/src/escape.txt`]);
-  assert.deepEqual(resolved.slice(0, 5), [null, null, null, null, null]);
-  assert.equal(resolved[5]?.path, path.join(root, 'outside.txt'));
+  const candidates = ['../outside.txt', 'src/escape.txt', 'external/outside.txt', './missing.ts', 'src/', `${checkout}/src/escape.txt`];
+  // An absolute symlink out of the checkout is confined like any other outside path unless the caller allows it.
+  assert.deepEqual(await resolver.resolve({ cwd: checkout, root: floor }, candidates), [null, null, null, null, null, null]);
+  const owner = await resolver.resolve({ cwd: checkout, root: floor }, candidates, { allowOutside: true });
+  assert.deepEqual(owner.slice(0, 5), [null, null, null, null, null]);
+  assert.equal(owner[5]?.path, path.join(root, 'outside.txt'));
+});
+
+test('paired-device resolution never reaches home secrets outside the roots; the owner page still can', async (t) => {
+  const { root, checkout, floor } = await fixture(t);
+  const home = path.join(root, 'home');
+  await mkdir(path.join(home, '.factory'), { recursive: true });
+  await writeFile(path.join(home, '.factory/settings.json'), '{"apiKey":"secret"}');
+  const resolver = new TerminalPaths(
+    async () => [],
+    async () => undefined,
+    home,
+  );
+  const candidates = ['~/.factory/settings.json', path.join(home, '.factory/settings.json'), 'src/server.ts'];
+  const device = await resolver.resolve({ cwd: checkout, root: floor }, candidates);
+  assert.deepEqual(device.slice(0, 2), [null, null]);
+  assert.equal(device[2]?.path, path.join(checkout, 'src/server.ts'));
+  const owner = await resolver.resolve({ cwd: checkout, root: floor }, candidates, { allowOutside: true });
+  assert.equal(owner[0]?.path, path.join(home, '.factory/settings.json'));
+  assert.equal(owner[1]?.path, path.join(home, '.factory/settings.json'));
+});
+
+test('opening a terminal path reveals anything LaunchServices could execute and opens documents', async (t) => {
+  const { root } = await fixture(t);
+  const files: Record<string, number> = { 'run.command': 0o644, 'build.sh': 0o755, 'site.webloc': 0o644, 'Tool.JAR': 0o644, 'notes.ts': 0o644, 'README.md': 0o644 };
+  for (const [name, mode] of Object.entries(files)) {
+    await writeFile(path.join(root, name), 'x\n');
+    await chmod(path.join(root, name), mode);
+  }
+  const calls: string[][] = [];
+  const run = async (args: string[]) => {
+    calls.push(args);
+  };
+  for (const name of ['run.command', 'build.sh', 'site.webloc', 'Tool.JAR']) {
+    const file = path.join(root, name);
+    assert.deepEqual(await openTerminalFile(file, run), { revealed: true }, name);
+    assert.deepEqual(calls.at(-1), ['-R', '--', file], name);
+  }
+  for (const name of ['notes.ts', 'README.md']) {
+    const file = path.join(root, name);
+    assert.deepEqual(await openTerminalFile(file, run), { revealed: false }, name);
+    assert.deepEqual(calls.at(-1), ['--', file], name);
+  }
+  for (const ext of ['.command', '.tool', '.terminal', '.workflow', '.action', '.scpt', '.applescript', '.scptd', '.jar', '.pkg', '.mpkg', '.app', '.webloc', '.inetloc', '.fileloc']) assert.ok(REVEAL_ONLY_EXTENSIONS.has(ext), ext);
+  // A file that vanished before the check is never handed to the default app.
+  assert.equal(await revealOnly(path.join(root, 'gone.txt')), true);
 });
 
 test('terminal link provider batches and caches a logical line, exposes only existing files and requires modifier', async (t) => {
@@ -208,7 +254,8 @@ test('terminal link provider batches and caches a logical line, exposes only exi
 });
 
 test('terminal HTTP resolves worker and boss shell paths, serves previews and refuses remote host opens', async (t) => {
-  const { checkout, floor } = await fixture(t);
+  const { root, checkout, floor } = await fixture(t);
+  const opened: string[][] = [];
   const fakeFloor = {
     def: { dir: floor },
     workers: { terminalContext: (id: string) => (id === 'w1' ? { cwd: checkout } : undefined) },
@@ -222,6 +269,10 @@ test('terminal HTTP resolves worker and boss shell paths, serves previews and re
     factory: {},
     setup: {},
     whiteboardRequest() {},
+    openFile: (file: string) =>
+      openTerminalFile(file, async (args) => {
+        opened.push(args);
+      }),
   } as never);
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -293,6 +344,26 @@ test('terminal HTTP resolves worker and boss shell paths, serves previews and re
   const image = await fetch(`${base}/api/term/file?${query}`);
   assert.equal(image.status, 200);
   assert.equal(image.headers.get('content-type'), 'image/png');
+  query.delete('raw');
+  // Paired devices are confined to the terminal's roots: home secrets and other absolute paths are invisible.
+  const outside = path.join(root, 'outside.txt');
+  for (const candidate of ['~/.factory/settings.json', outside]) {
+    assert.deepEqual((await (await request('/api/term/paths', 'w1', [candidate])).json()).paths, [null], candidate);
+    query.set('path', candidate);
+    assert.equal((await fetch(`${base}/api/term/file?${query}`)).status, 404, candidate);
+  }
+  // The owner's own loopback page keeps explicit paths anywhere; opening still goes through the reveal rule.
+  const ownerOutside = await (await request('/api/term/paths', 'w1', [outside], { 'x-own-page': 'true' })).json();
+  assert.equal(ownerOutside.paths[0]?.path, outside);
+  if (process.platform === 'darwin') {
+    await writeFile(path.join(root, 'run.command'), 'echo hi\n');
+    const reveal = await request('/api/term/path/open', 'w1', [path.join(root, 'run.command')], { 'x-own-page': 'true' });
+    assert.deepEqual(await reveal.json(), { ok: true, revealed: true });
+    assert.deepEqual(opened.at(-1), ['-R', '--', path.join(root, 'run.command')]);
+    const open = await request('/api/term/path/open', 'w1', [outside], { 'x-own-page': 'true' });
+    assert.deepEqual(await open.json(), { ok: true });
+    assert.deepEqual(opened.at(-1), ['--', outside]);
+  }
   assert.match(threadFilePreviewUrl({ floor: 'f1', workerId: 'w1', path: 'src/a.ts', source: 'terminal' }), /^\/api\/term\/file\?/);
   assert.match(threadFileImageUrl({ floor: 'f1', workerId: 'w1', path: 'src/a.png', source: 'terminal' }), /^\/api\/term\/file\?/);
   assert.equal(new URL(threadFilePreviewUrl({ floor: 'f1', workerId: 'w1', path: '/absolute/a.ts', requestPath: './src/a.ts:12', source: 'terminal' }), base).searchParams.get('path'), './src/a.ts:12');

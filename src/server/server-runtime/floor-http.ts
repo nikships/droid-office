@@ -47,10 +47,11 @@ interface FloorHttpContext {
   factory: ReturnType<typeof mountFactory>;
   setup: Setup;
   whiteboardRequest: ReturnType<typeof createWhiteboardRuntime>['whiteboardRequest'];
+  openFile?: typeof openTerminalFile;
 }
 
 /** Authenticated floor resources: terminals, boards, docs, integrations and uploads. */
-export function createFloorHttp({ floors, orchestrator, workerFloor, workerThreads, factory, setup, whiteboardRequest }: FloorHttpContext) {
+export function createFloorHttp({ floors, orchestrator, workerFloor, workerThreads, factory, setup, whiteboardRequest, openFile = openTerminalFile }: FloorHttpContext) {
   const threadWorkspace = new ThreadWorkspace();
   const terminalPaths = new TerminalPaths();
   const resolveThreadCwd = (workerId: string, floor: Floor | undefined): string | undefined => {
@@ -97,16 +98,18 @@ export function createFloorHttp({ floors, orchestrator, workerFloor, workerThrea
         candidates = body.paths;
       }
       if (p === '/api/term/path/open' && candidates.length !== 1) return send(res, 400, { error: 'Send exactly one file path to open.' });
-      const local = ownPage() && loopbackHost(req.headers.host) && process.platform === 'darwin';
+      // Paired devices and proxied companions (non-loopback Host) only see files inside the terminal's roots.
+      const ownerPage = ownPage() && loopbackHost(req.headers.host);
+      const local = ownerPage && process.platform === 'darwin';
       if (p === '/api/term/path/open' && !local) return send(res, 403, { error: 'Host applications can be opened only from the office on its own Mac.' });
-      const paths = await terminalPaths.resolve(context, candidates);
+      const paths = await terminalPaths.resolve(context, candidates, { allowOutside: ownerPage });
       if (p === '/api/term/paths') return send(res, 200, { paths, local });
       const target = paths[0];
       if (!target) return send(res, 404, { error: 'File not found in the terminal workspace.' });
       if (p === '/api/term/path/open') {
         try {
-          await openTerminalFile(target.path);
-          return send(res, 200, { ok: true });
+          const { revealed } = await openFile(target.path);
+          return send(res, 200, revealed ? { ok: true, revealed: true } : { ok: true });
         } catch {
           return send(res, 500, { error: 'The default application could not open that file.' });
         }

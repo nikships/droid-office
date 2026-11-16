@@ -65,7 +65,11 @@ export class TerminalPaths {
     return files;
   }
 
-  async resolve(context: TerminalPathContext, candidates: string[]): Promise<(ResolvedTerminalPath | null)[]> {
+  /**
+   * Relative paths and tracked basenames never leave the roots. Explicit absolute and `~/` paths resolve anywhere only
+   * with `allowOutside`, which callers grant solely to the owner's own page on the host; paired devices stay confined.
+   */
+  async resolve(context: TerminalPathContext, candidates: string[], { allowOutside = false }: { allowOutside?: boolean } = {}): Promise<(ResolvedTerminalPath | null)[]> {
     const roots = [...new Set(await Promise.all([context.cwd, context.root].map((root) => realpath(root).catch(() => path.resolve(root)))))];
     const rawLive = await this.liveCwd(context.pid);
     const live = rawLive ? await realpath(rawLive).catch(() => path.resolve(rawLive)) : undefined;
@@ -89,7 +93,7 @@ export class TerminalPaths {
         const confirm = async (target: string): Promise<ResolvedTerminalPath | null> => {
           try {
             const abs = await realpath(target);
-            if (!explicit && !roots.some((root) => within(root, abs))) return null;
+            if (!(explicit && allowOutside) && !roots.some((root) => within(root, abs))) return null;
             if (!(await stat(abs)).isFile()) return null;
             return { ...ref, path: abs, displayPath: displayOf(abs) };
           } catch {
@@ -125,8 +129,30 @@ export class TerminalPaths {
   }
 }
 
-/** LaunchServices chooses the default app; source locations remain available in remote previews. */
-export async function openTerminalFile(file: string): Promise<void> {
+/**
+ * Extensions whose LaunchServices default handler runs code (scripts, installers, Automator, Java) or follows a
+ * location file to whatever it names. ⌘-click reveals these in Finder instead of opening them.
+ */
+export const REVEAL_ONLY_EXTENSIONS: ReadonlySet<string> = new Set(['.command', '.tool', '.terminal', '.workflow', '.action', '.scpt', '.applescript', '.scptd', '.jar', '.pkg', '.mpkg', '.app', '.webloc', '.inetloc', '.fileloc']);
+
+/** True when opening the file could execute it: a listed extension, or any executable bit (Terminal may run it). */
+export async function revealOnly(file: string): Promise<boolean> {
+  if (REVEAL_ONLY_EXTENSIONS.has(path.extname(file).toLowerCase())) return true;
+  try {
+    return ((await stat(file)).mode & 0o111) !== 0;
+  } catch {
+    return true;
+  }
+}
+
+const runOpen = async (args: string[]): Promise<void> => {
   if (process.platform !== 'darwin') throw new Error('Opening host files is supported only on macOS.');
-  await command('/usr/bin/open', ['--', file]);
+  await command('/usr/bin/open', args);
+};
+
+/** LaunchServices chooses the default app for documents; anything that could run is only revealed in Finder. */
+export async function openTerminalFile(file: string, run: (args: string[]) => Promise<unknown> = runOpen): Promise<{ revealed: boolean }> {
+  const revealed = await revealOnly(file);
+  await run(revealed ? ['-R', '--', file] : ['--', file]);
+  return { revealed };
 }
