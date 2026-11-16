@@ -109,7 +109,7 @@ auth();
 const where: OriginKind = originKind(location.hostname);
 const WHERE: Record<OriginKind, { icon: IconName; label: string; line: string }> = {
   local: { icon: 'monitor', label: 'This computer', line: 'You are on the computer that runs the office. It always opens here: there is nothing to pair.' },
-  lan: { icon: 'wifi', label: 'Wi-Fi', line: 'You reached the office over the local network (Wi-Fi or Ethernet). This works while this computer is on the same network as the office.' },
+  lan: { icon: 'wifi', label: 'Network', line: 'LAN-only access is no longer supported. Open the Tailscale HTTPS pairing link from the office instead.' },
   tailscale: { icon: 'globe', label: 'Tailscale', line: 'You reached the office over Tailscale. This works from anywhere, while this computer is signed in to the same tailnet.' },
 };
 
@@ -1345,7 +1345,7 @@ function paintGate() {
       ? []
       : [
           h('span', {}, 'On the office’s computer, open ', h('b', {}, '⚙️ Settings → Phone & web → Web companion'), '.'),
-          h('span', {}, 'Click ', h('b', {}, 'Copy pairing link'), ' beside Wi-Fi or Tailscale, then paste the complete link into this browser.'),
+          h('span', {}, 'Click ', h('b', {}, 'Copy pairing link'), ' beside Tailscale HTTPS, then paste the complete link into this browser.'),
           h('span', {}, 'Choose ', h('b', {}, 'Pair this browser'), ' before refreshing, then bookmark the page.'),
         ]
   ).map((s, i) => h('li', {}, h('span.dash-step-no', {}, String(i + 1)), s));
@@ -1377,7 +1377,7 @@ function paintGate() {
         where === 'tailscale'
           ? h('li', {}, icon('check', 14), 'Tailscale is connected on both computers, on the same tailnet.')
           : where === 'lan'
-            ? h('li', {}, icon('check', 14), 'This computer is on the same network as the office.')
+            ? h('li', {}, icon('check', 14), 'Use the Tailscale HTTPS pairing link, with Tailscale connected on both computers.')
             : null,
       ),
       retry,

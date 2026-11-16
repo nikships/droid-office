@@ -69,7 +69,7 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
   const steps = h(
     'ol.phone-steps',
     {},
-    h('li', {}, h('span', {}, h('b', {}, 'Open Droid Office for Android'), ' on your phone.')),
+    h('li', {}, h('span', {}, h('b', {}, 'Sign both devices in to Tailscale'), ', then open Droid Office for Android on your phone.')),
     h('li', {}, h('span', {}, 'Start pairing in the app and point the camera at this code.')),
     h('li', {}, h('span', {}, 'Your phone shows up under ', h('b', {}, 'Paired phones'), '. Hire workers, watch their terminals and prompt them from it.')),
   );
@@ -79,7 +79,7 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
     'button.phone-web',
     { type: 'button', onclick: () => openCompanion() },
     h('span.phone-web-icon', {}, icon('monitor', 18)),
-    h('span.phone-web-text', {}, h('b', {}, 'On a computer instead?'), h('small', {}, 'The web companion opens this office in any desktop browser, here, on your Wi-Fi or over Tailscale.')),
+    h('span.phone-web-text', {}, h('b', {}, 'Web companion & remote access'), h('small', {}, 'Open the companion here, or manage Tailscale HTTPS for remote browsers and Android.')),
     h('span.btn.sm', {}, 'Web companion', icon('external', 12)),
   );
   const footer = h('footer', {}, h('span.grow', {}, 'The code changes every time the office starts. A paired phone stays paired until you forget it.'));
@@ -118,13 +118,7 @@ export function openPhone(onChange?: (devices: PairedDevice[]) => void) {
       ),
     );
     addresses.classList.toggle('hidden', !state.addresses.length);
-    const tailnet = state.addresses.some((a) => a.kind === 'tailscale');
-    const wifi = state.addresses.some((a) => a.kind === 'wifi');
-    addressNote.textContent = !state.addresses.length
-      ? ''
-      : tailnet
-        ? `The phone tries them in this order.${wifi ? ' Wi-Fi works on the same network as this machine;' : ''} Tailscale works from anywhere, once the phone is signed in to the same tailnet.`
-        : 'The phone needs to be on the same Wi-Fi as this machine. Sign in to Tailscale on both to reach the office from anywhere.';
+    addressNote.textContent = !state.addresses.length ? '' : 'Tailscale HTTPS works from anywhere on your tailnet. Both devices need Tailscale, even on the same Wi-Fi. Pair again if you previously used an HTTP address.';
   };
 
   const forgetButton = (d: PairedDevice) => {

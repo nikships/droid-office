@@ -1,7 +1,7 @@
 import type http from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Config } from '../config.js';
-import { isLoopback, loopbackHost } from '../lan.js';
+import { isLocalRequest, loopbackHost } from '../lan.js';
 export function readBody(req: http.IncomingMessage, limit = 1024 * 1024): Promise<string> {
   return readBytes(req, limit).then((b) => b.toString('utf8'));
 }
@@ -42,7 +42,7 @@ export function sameOrigin(req: http.IncomingMessage, cfg: Config): boolean {
  * host name (not a site whose name a DNS rebinding pointed here), and not from another site's page (which sends Origin).
  */
 export function statusRequest(req: http.IncomingMessage): boolean {
-  return isLoopback(req.socket.remoteAddress) && loopbackHost(req.headers.host) && !req.headers.origin;
+  return isLocalRequest(req) && loopbackHost(req.headers.host) && !req.headers.origin;
 }
 
 export function refuseUpgrade(socket: Duplex) {

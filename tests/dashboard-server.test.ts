@@ -18,7 +18,7 @@ import { OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER } from '../src/server/office-
 import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 import type { ClientMsg, ServerMsg } from '../src/shared/protocol.js';
 import type { PairingState } from '../src/shared/devices.js';
-import { reachableLan } from './lan-probe.js';
+import { tailnetProxy } from './tailnet-proxy.js';
 
 async function office(t: TestContext, home?: string, agent?: string) {
   const dir = home ?? mkdtempSync(path.join(os.tmpdir(), 'dashboard-'));
@@ -543,8 +543,8 @@ test('host update routes require office access and same-origin writes, with clea
   assert.equal((await post('{"action":"check"}', headers)).status, 409, 'native paired phones may write without Origin');
   server.devices.forget(paired.device.id);
   assert.equal((await fetch(`${base}/api/host/update`, { headers })).status, 401);
-  const ip = await reachableLan(t, server.server);
-  if (ip) assert.equal((await fetch(`${base.replace('127.0.0.1', ip)}/api/host/update`)).status, 401);
+  const remote = await tailnetProxy(t, server.server);
+  assert.equal((await remote.fetch(`${remote.base}/api/host/update`)).status, 401);
 });
 
 test('floor moves from a companion update every client and the next welcome, with invalid moves refused', async (t) => {
@@ -583,8 +583,9 @@ test('floor moves from a companion update every client and the next welcome, wit
 
 test('production dashboard has a public data-free bootstrap, gated APIs and no 3D office in its bundle', async (t) => {
   const { base, server } = await office(t);
-  const ip = await reachableLan(t, server.server);
-  const remote = ip ? base.replace('127.0.0.1', ip) : base;
+  const proxy = await tailnetProxy(t, server.server);
+  const remote = proxy.base;
+  const fetch = proxy.fetch;
   for (const route of ['/dashboard', '/dashboard/', '/dashboard.html']) {
     const response = await fetch(remote + route);
     assert.equal(response.status, 200);
@@ -606,13 +607,11 @@ test('production dashboard has a public data-free bootstrap, gated APIs and no 3
   assert.equal(app.display, 'standalone');
   assert.ok(!JSON.stringify(app).includes(server.lanToken));
   for (const icon of app.icons) assert.equal((await fetch(remote + icon.src)).status, 200);
-  if (ip) {
-    assert.equal((await fetch(`${remote}/api/mobile/hello`)).status, 401);
-    assert.equal((await fetch(`${remote}/api/agents/droid/models`)).status, 401);
-    assert.equal((await fetch(`${remote}/api/agents/droid/commands?worker=missing`)).status, 401);
-    assert.equal((await fetch(`${remote}/api/whiteboard/render?floor=missing&card=missing`)).status, 401);
-    assert.equal((await fetch(`${remote}/`)).status, 401);
-  }
+  assert.equal((await fetch(`${remote}/api/mobile/hello`)).status, 401);
+  assert.equal((await fetch(`${remote}/api/agents/droid/models`)).status, 401);
+  assert.equal((await fetch(`${remote}/api/agents/droid/commands?worker=missing`)).status, 401);
+  assert.equal((await fetch(`${remote}/api/whiteboard/render?floor=missing&card=missing`)).status, 401);
+  assert.equal((await fetch(`${remote}/`)).status, 401);
   assert.equal((await fetch(`${base}/api/agents/droid/commands?worker=missing`)).status, 404);
   assert.match(await (await fetch(`${base}/`)).text(), /id="loading"/);
   const result = await build({ configFile: path.resolve('vite.config.ts'), logLevel: 'silent', build: { write: false, reportCompressedSize: false } });
@@ -786,7 +785,7 @@ test('the web companion switch refuses browsers while off, keeps their pairing, 
   const state = (await (await fetch(`${base}/api/mobile/pairing`, { headers: { 'sec-fetch-site': 'same-origin' } })).json()) as PairingState;
   assert.equal(state.companion, true);
   assert.equal(state.local, `http://localhost:${first.port}`);
-  assert.equal(state.reachable, true);
+  assert.equal(state.reachable, false, 'tests do not enable real Tailscale Serve');
   assert.equal(typeof state.tailscale, 'boolean');
   const pair = (await (await fetch(`${base}/api/mobile/pair`, { method: 'POST', headers: own, body: '{"kind":"browser","device":"Desktop"}' })).json()) as { token: string };
   const phone = (await (await fetch(`${base}/api/mobile/pair`, { method: 'POST', body: '{"device":"Phone"}' })).json()) as { token: string };

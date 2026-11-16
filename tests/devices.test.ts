@@ -17,7 +17,7 @@ import { DEVICES_MAX, DEVICE_NAME_MAX, pairingLink, type PairingState } from '..
 import { AUTO_DESK } from '../src/shared/protocol.js';
 import { DESKS, nextFreeSeat } from '../src/shared/layout.js';
 import type { IncomingMessage } from 'node:http';
-import { reachableLan } from './lan-probe.js';
+import { tailnetProxy } from './tailnet-proxy.js';
 
 const tmp = (t: { after(fn: () => unknown): unknown }, prefix: string) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -122,19 +122,10 @@ test('the pairing link carries the name, the token and every base URL, encoded',
   assert.deepEqual(q.getAll('u'), ['http://192.168.1.20:4600', 'http://my-mac.tail1.ts.net:4600']);
 });
 
-test('pairing addresses: Wi-Fi first, then the MagicDNS name, then tailnet IPs; none on loopback', () => {
-  const tailscale = { dnsName: 'my-mac.tail1.ts.net', ips: ['100.96.1.2'] };
-  assert.deepEqual(pairingAddresses({ scheme: 'http', host: '0.0.0.0', port: 4600, lan: ['192.168.1.20', '100.96.1.2'], tailscale, tailscaleIps: ['100.96.1.2', '100.64.0.9'] }), [
-    { url: 'http://192.168.1.20:4600', kind: 'wifi' },
-    { url: 'http://my-mac.tail1.ts.net:4600', kind: 'tailscale', dns: true },
-    { url: 'http://100.96.1.2:4600', kind: 'tailscale' },
-    { url: 'http://100.64.0.9:4600', kind: 'tailscale' },
-  ]);
-  assert.deepEqual(pairingAddresses({ scheme: 'https', host: '::', port: 1, lan: [] }), []);
-  for (const host of ['127.0.0.1', '::1', 'localhost']) assert.deepEqual(pairingAddresses({ scheme: 'http', host, port: 4600, lan: ['192.168.1.20'], tailscale }), [], host);
-  assert.deepEqual(pairingAddresses({ scheme: 'https', host: '192.168.1.20', port: 4600, lan: ['10.0.0.1'], tailscale }), [{ url: 'https://192.168.1.20:4600', kind: 'wifi' }]);
-  assert.deepEqual(pairingAddresses({ scheme: 'http', host: '100.96.1.2', port: 4600, lan: [] }), [{ url: 'http://100.96.1.2:4600', kind: 'tailscale' }]);
-  assert.deepEqual(pairingAddresses({ scheme: 'http', host: 'fe80::1', port: 4600, lan: [] }), [{ url: 'http://[fe80::1]:4600', kind: 'wifi' }]);
+test('pairing addresses contain only the active Tailscale HTTPS origin', () => {
+  assert.deepEqual(pairingAddresses('https://my-mac.tail1.ts.net:8444'), [{ url: 'https://my-mac.tail1.ts.net:8444', kind: 'tailscale', dns: true }]);
+  for (const origin of [undefined, 'wrong', 'http://my-mac.tail1.ts.net:4600', 'http://192.168.1.20:4600', 'https://100.96.1.2', 'https://localhost', 'https://user:pass@mac.tail1.ts.net'])
+    assert.deepEqual(pairingAddresses(origin), [], origin);
 });
 
 // --- Tailscale ---------------------------------------------------------------------------------------
@@ -275,13 +266,14 @@ test('external workers are set up only from the office’s own page, and an offi
   assert.equal((await fetch(url, { headers: { origin: 'http://evil.test' } })).status, 403);
 });
 
-test('pairing over the LAN: the token pairs, the bearer opens HTTP and the socket, forgetting refuses it', { timeout: 60_000 }, async (t) => {
+test('pairing through Serve: the token pairs, the bearer opens APIs and sockets, forgetting refuses it', { timeout: 60_000 }, async (t) => {
   const rig = tempRig(t, 'devices-office-');
   const home = rig.dir;
   const { office, port, stop } = await startOffice(rig, home, '--host', '0.0.0.0');
-  const ip = await reachableLan(t, office.server);
-  if (!ip) return;
-  const lan = `http://${ip}:${port}`;
+  const remote = await tailnetProxy(rig, office.server);
+  const fetch = remote.fetch;
+  const lan = remote.base;
+  const remoteSocket = (url: string, headers: Record<string, string>) => socket(url, { host: remote.host, ...headers });
   const local = `http://127.0.0.1:${port}`;
   const wsLan = lan.replace('http:', 'ws:');
   const t0 = office.lanToken;
@@ -313,34 +305,27 @@ test('pairing over the LAN: the token pairs, the bearer opens HTTP and the socke
   assert.equal((await fetch(`${lan}/`, { headers: bearer })).status, 200);
 
   // The socket: the bearer header needs no Origin; ?d= can come from a web page, so it needs a matching one.
-  const viaHeader = await socket(`${wsLan}/ws?name=Pixel`, bearer);
+  const viaHeader = await remoteSocket(`${wsLan}/ws?name=Pixel`, bearer);
   rig.after(() => viaHeader.ws.terminate());
   assert.equal(viaHeader.first?.t, 'welcome');
-  assert.equal((await socket(`${wsLan}/ws?name=Pixel&d=${paired.token}`, {})).status, 401);
-  const viaQuery = await socket(`${wsLan}/ws?name=Pixel&d=${paired.token}`, { origin: lan });
+  assert.equal((await remoteSocket(`${wsLan}/ws?name=Pixel&d=${paired.token}`, {})).status, 401);
+  const viaQuery = await remoteSocket(`${wsLan}/ws?name=Pixel&d=${paired.token}`, { origin: remote.origin });
   rig.after(() => viaQuery.ws.terminate());
   assert.equal(viaQuery.first?.t, 'welcome');
 
   // The Phone window's routes answer only the office's own page on its own machine.
   assert.equal((await fetch(`${lan}/api/mobile/pairing`, { headers: bearer })).status, 403);
-  assert.equal((await fetch(`${lan}/api/mobile/pairing?t=${t0}`, { headers: { origin: lan, 'sec-fetch-site': 'same-origin' } })).status, 403);
+  assert.equal((await fetch(`${lan}/api/mobile/pairing?t=${t0}`, { headers: { origin: remote.origin, 'sec-fetch-site': 'same-origin' } })).status, 403);
   assert.equal((await fetch(`${local}/api/mobile/pairing`)).status, 403);
   assert.equal((await fetch(`${local}/api/mobile/pairing`, { headers: { origin: 'http://evil.test' } })).status, 403);
   assert.equal((await fetch(`${local}/api/mobile/pairing`, { headers: { ...bearer, 'sec-fetch-site': 'same-origin' } })).status, 403);
   assert.equal((await fetch(`${local}/api/mobile/devices/${paired.deviceId}`, { method: 'DELETE', headers: { origin: 'http://evil.test' } })).status, 403);
-  assert.equal((await fetch(`${lan}/api/mobile/devices/${paired.deviceId}?t=${t0}`, { method: 'DELETE', headers: { origin: lan } })).status, 403);
+  assert.equal((await fetch(`${lan}/api/mobile/devices/${paired.deviceId}?t=${t0}`, { method: 'DELETE', headers: { origin: remote.origin } })).status, 403);
   const own = await fetch(`${local}/api/mobile/pairing`, { headers: { 'sec-fetch-site': 'same-origin' } });
   assert.equal(own.status, 200);
   const state = (await own.json()) as PairingState;
-  assert.ok(state.link?.startsWith('droidoffice://pair?v=1&'));
-  const link = new URL(state.link!);
-  assert.equal(link.searchParams.get('t'), t0);
-  assert.equal(link.searchParams.get('name'), state.office.name);
-  assert.deepEqual(
-    link.searchParams.getAll('u'),
-    state.addresses.map((a) => a.url),
-  );
-  assert.ok(state.addresses.some((a) => a.url === `http://${ip}:${port}` && a.kind === 'wifi'));
+  assert.equal(state.link, undefined, 'the test proxy is not an actual Tailscale Serve mapping');
+  assert.deepEqual(state.addresses, []);
   assert.deepEqual(
     state.devices.map((d) => d.name),
     ['Pixel 10 Pro XL'],
@@ -350,10 +335,11 @@ test('pairing over the LAN: the token pairs, the bearer opens HTTP and the socke
   // It survives a restart: a new office on the same folder, a new LAN token, the same device token.
   await stop();
   const second = await startOffice(rig, home, '--host', '0.0.0.0');
-  const lan2 = `http://${ip}:${second.port}`;
+  const remote2 = await tailnetProxy(rig, second.office.server);
+  const lan2 = remote2.base;
   assert.notEqual(second.office.lanToken, t0);
-  assert.equal((await fetch(`${lan2}/api/mobile/hello`, { headers: bearer })).status, 200);
-  const again = await socket(`${lan2.replace('http:', 'ws:')}/ws?name=Pixel`, bearer);
+  assert.equal((await remote2.fetch(`${lan2}/api/mobile/hello`, { headers: bearer })).status, 200);
+  const again = await socket(`${lan2.replace('http:', 'ws:')}/ws?name=Pixel`, { host: remote2.host, ...bearer });
   assert.equal(again.first?.t, 'welcome');
 
   // The owner forgets it from the Phone window: the open socket closes, and the token is refused.
@@ -363,11 +349,11 @@ test('pairing over the LAN: the token pairs, the bearer opens HTTP and the socke
   assert.deepEqual(((await forgot.json()) as PairingState).devices, []);
   assert.equal((await closed)[0], 4401);
   assert.equal((await fetch(`http://127.0.0.1:${second.port}/api/mobile/devices/${paired.deviceId}`, { method: 'DELETE', headers: { origin: `http://127.0.0.1:${second.port}` } })).status, 404);
-  const refused = await fetch(`${lan2}/api/mobile/hello`, { headers: bearer });
+  const refused = await remote2.fetch(`${lan2}/api/mobile/hello`, { headers: bearer });
   assert.equal(refused.status, 401);
   assert.match(((await refused.json()) as { error: string }).error, /not paired/);
   assert.equal((await fetch(`http://127.0.0.1:${second.port}/api/health`, { headers: bearer })).status, 401, 'a forgotten token is refused even on loopback');
-  assert.equal((await socket(`${lan2.replace('http:', 'ws:')}/ws?name=Pixel`, bearer)).status, 401);
+  assert.equal((await socket(`${lan2.replace('http:', 'ws:')}/ws?name=Pixel`, { host: remote2.host, ...bearer })).status, 401);
 });
 
 test('the phone unpairs itself with DELETE /api/mobile/pair', { timeout: 60_000 }, async (t) => {
@@ -383,7 +369,7 @@ test('the phone unpairs itself with DELETE /api/mobile/pair', { timeout: 60_000 
   const state = (await (await fetch(`${base}/api/mobile/pairing`, { headers: { 'sec-fetch-site': 'same-origin' } })).json()) as PairingState;
   assert.equal(state.link, undefined);
   assert.deepEqual(state.addresses, []);
-  assert.match(state.reason ?? '', /127\.0\.0\.1/);
+  assert.match(state.reason ?? '', /Tailscale HTTPS/);
 });
 
 test('worker.spawn with deskId "auto" takes the first free desk on the floor', { timeout: 60_000, skip: process.platform === 'win32' }, async (t) => {

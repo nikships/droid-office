@@ -187,7 +187,7 @@ Every hired worker runs **Factory Droid**, not a separate agent harness. Pick fr
 | --- | --- |
 | **[Download the Mac app](https://github.com/nikships/droid-office/releases/latest)** | **[Download the APK](https://github.com/nikships/droid-office/releases/latest)** |
 | macOS 14+ on Apple M-series **Pro, Max or Ultra** | Pairs with an office running on your computer |
-| Signed, notarized and auto-updating. No Node.js install. | Wi-Fi or Tailscale. [Pairing guide →](android/README.md) |
+| Signed, notarized and auto-updating. No Node.js install. | Private Tailscale HTTPS. [Pairing guide →](android/README.md) |
 
 1. Open `Droid-Office-<version>-arm64.dmg`, drag **Droid Office** into **Applications**, then launch it.
 2. Follow the welcome. It installs the [Droid CLI](https://docs.factory.com/droid-cli/quickstart) if you don't have it, signs it in to your Factory account, and connects the Claude or ChatGPT plan you already pay for. You need `git` installed.
@@ -208,7 +208,7 @@ Every hired worker runs **Factory Droid**, not a separate agent harness. Pick fr
 
 Install `Droid-Office-<version>.apk`, then scan the QR code in **Settings → Phone & web**. The computer hosting your office must stay awake; the phone app is a companion, not a standalone office installation.
 
-[Download Android](https://github.com/nikships/droid-office/releases/latest) · [Wi-Fi and Tailscale pairing](android/README.md)
+[Download Android](https://github.com/nikships/droid-office/releases/latest) · [Tailscale HTTPS pairing](android/README.md)
 
 ## For developers
 

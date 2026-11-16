@@ -8,8 +8,9 @@ import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { WebSocket } from 'ws';
-import { reachableLan } from './lan-probe.js';
-import { isLoopback, lanAllowed, lanIPv4s, lanTokenOk, loopbackHost, mintLanToken } from '../src/server/lan.js';
+import { tcpReachable } from './lan-probe.js';
+import { tailnetProxy } from './tailnet-proxy.js';
+import { isLoopback, isLocalRequest, markProxied, lanAllowed, lanIPv4s, lanTokenOk, loopbackHost, mintLanToken } from '../src/server/lan.js';
 import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 
@@ -58,6 +59,15 @@ test('lanIPv4s lists dotted IPv4 addresses', () => {
   for (const ip of lanIPv4s()) assert.match(ip, /^\d{1,3}(\.\d{1,3}){3}$/, ip);
 });
 
+test('a marked proxy never inherits loopback trust, and forwarded headers cannot grant it', () => {
+  const req = { socket: { remoteAddress: '127.0.0.1' }, headers: { 'x-forwarded-for': '127.0.0.1' } } as unknown as IncomingMessage;
+  assert.equal(isLocalRequest(req), true);
+  markProxied(req);
+  assert.equal(isLocalRequest(req), false);
+  assert.equal(lanAllowed(req, new URL('http://x/'), 'key'), false);
+  assert.equal(lanAllowed(req, new URL('http://x/?t=key'), 'key'), true);
+});
+
 async function startOffice(t: { after(fn: () => unknown): unknown }, ...argv: string[]) {
   const home = mkdtempSync(path.join(tmpdir(), 'droid-office-lan-'));
   const cfg = loadConfig(['--home', home, '--projects', home, '--weather', 'clear', ...argv]);
@@ -102,12 +112,14 @@ test('the sign-in routes are gone', { timeout: 60_000 }, async (t) => {
   assert.equal((await fetch(`${base}/api/logout`, { method: 'POST' })).status, 404);
 });
 
-test('off the machine, missing and wrong tokens are refused', { timeout: 60_000 }, async (t) => {
+test('only Tailscale HTTPS reaches remote APIs, and missing or wrong tokens are refused', { timeout: 60_000 }, async (t) => {
   const { office } = await startOffice(t, '--host', '0.0.0.0');
-  const ip = await reachableLan(t, office.server);
-  if (!ip) return;
   const port = (office.server.address() as AddressInfo).port;
-  const base = `http://${ip}:${port}`;
+  assert.equal((office.server.address() as AddressInfo).address, '127.0.0.1');
+  for (const ip of lanIPv4s()) assert.equal(await tcpReachable(ip, port), false, 'plain HTTP must not listen on LAN');
+  const remote = await tailnetProxy(t, office.server);
+  const base = remote.base;
+  const fetch = remote.fetch;
   const token = office.lanToken;
 
   assert.equal((await fetch(`${base}/`)).status, 401);
@@ -118,12 +130,12 @@ test('off the machine, missing and wrong tokens are refused', { timeout: 60_000 
   // The bundle's static files carry no office data and load openly.
   assert.equal((await fetch(`${base}/favicon.svg`)).status, 200);
 
-  const refused = new WebSocket(`${base.replace('http:', 'ws:')}/ws?name=Stranger`, { headers: { origin: base } });
+  const refused = new WebSocket(`${base.replace('http:', 'ws:')}/ws?name=Stranger`, { headers: { host: remote.host, origin: remote.origin } });
   t.after(() => refused.terminate());
   const [err] = await Promise.race([once(refused, 'error'), once(refused, 'open').then(() => assert.fail('a socket without the token opened'))]);
   assert.match((err as Error).message, /401/);
 
-  const ws = new WebSocket(`${base.replace('http:', 'ws:')}/ws?name=Owner&t=${token}`, { headers: { origin: base } });
+  const ws = new WebSocket(`${base.replace('http:', 'ws:')}/ws?name=Owner&t=${token}`, { headers: { host: remote.host, origin: remote.origin } });
   t.after(() => ws.terminate());
   const [raw] = await once(ws, 'message');
   assert.equal(JSON.parse(String(raw)).t, 'welcome');

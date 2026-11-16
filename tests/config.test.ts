@@ -67,9 +67,10 @@ test('starting drops legacy password state left in config.json', (t) => {
   assert.deepEqual(JSON.parse(readFileSync(path.join(cfg.dataDir, 'config.json'), 'utf8')), {});
 });
 
-test('the office binds everywhere by default, with loopback one flag away', (t) => {
-  assert.equal(load(t).host, '0.0.0.0');
+test('the office binds loopback only, including legacy network host flags', (t) => {
+  assert.equal(load(t).host, '127.0.0.1');
   assert.equal(load(t, '--host', '127.0.0.1').host, '127.0.0.1');
+  for (const host of ['0.0.0.0', '::', '192.168.1.20', '100.96.217.59']) assert.equal(load(t, '--host', host).host, '127.0.0.1');
 });
 
 test('Finder integration is opt-in and uses the explicit native bridge path', (t) => {

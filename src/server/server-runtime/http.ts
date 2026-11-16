@@ -3,9 +3,10 @@ import type { Config } from '../config.js';
 import { serveDeepLinkBounce } from '../deep-links.js';
 import { DEEP_LINK_OPEN_PREFIX } from '../../shared/deep-links.js';
 import { COMPANION_OFF } from '../../shared/devices.js';
-import { lanAllowed } from '../lan.js';
+import { isLocalRequest, lanAllowed } from '../lan.js';
 import type { DevicesStore } from '../devices.js';
 import type { WebCompanion } from '../web-companion.js';
+import type { TailnetHttps } from '../tailnet-https.js';
 import { hostUpdateCommand, type HostUpdates } from '../host-updates.js';
 import type { HotReload } from '../hot-reload.js';
 import { officeStatus } from '../office-status.js';
@@ -41,6 +42,7 @@ interface HttpContext extends ReturnType<typeof createAccess>, ReturnType<typeof
   orchestrator: Orchestrator;
   missionState(): MissionControlState;
   remoteMcp(): RemoteMcp | undefined;
+  tailnetHttps(): TailnetHttps;
   deepLinkBase(): string | undefined;
   toastAll(text: string): void;
   hostUpdates: HostUpdates;
@@ -131,7 +133,7 @@ export function createHttpHandler(ctx: HttpContext) {
       // `/open/question/...`): zero office state or credentials, redirecting Android browsers into
       // `droidoffice://open/...` with a fallback launch card when uninstalled or on desktop.
       if (p === '/open' || p.startsWith(DEEP_LINK_OPEN_PREFIX)) {
-        const scheme = cfg.tls ? 'https' : 'http';
+        const scheme = cfg.tls || !isLocalRequest(req) ? 'https' : 'http';
         return serveDeepLinkBounce(req, res, req.url ?? p, scheme, deepLinkBase());
       }
       // Public bootstrap only: no office state or injected credentials. Saved browser tokens are
@@ -203,10 +205,10 @@ export function createHttpHandler(ctx: HttpContext) {
         forgetDevice(gate.device.id);
         return send(res, 200, { ok: true });
       }
-      if (p === '/api/mobile/pairing' || p === '/api/mobile/companion' || p.startsWith('/api/mobile/devices/')) {
+      if (p === '/api/mobile/pairing' || p === '/api/mobile/companion' || p === '/api/mobile/https' || p.startsWith('/api/mobile/devices/')) {
         if (gate.device || !ownPage(req)) return send(res, 403, { error: 'Pair devices from the office itself, on its own machine' });
         if (p === '/api/mobile/pairing' && req.method === 'GET') return send(res, 200, await pairingState());
-        if (p === '/api/mobile/companion' && req.method === 'PUT') {
+        if ((p === '/api/mobile/companion' || p === '/api/mobile/https') && req.method === 'PUT') {
           let body: { on?: unknown } | null;
           try {
             body = JSON.parse(await readBody(req, 1024));
@@ -214,7 +216,10 @@ export function createHttpHandler(ctx: HttpContext) {
             return send(res, 400, { error: 'Send JSON: {"on": true}' });
           }
           if (typeof body?.on !== 'boolean') return send(res, 400, { error: 'Send JSON: {"on": true}' });
-          setCompanion(body.on);
+          if (p === '/api/mobile/https') {
+            if (cfg.tailnetHttps === false) return send(res, 403, { error: 'Tailscale HTTPS is disabled by DROID_OFFICE_TAILNET_HTTPS=off.' });
+            await ctx.tailnetHttps().set(body.on);
+          } else setCompanion(body.on);
           return send(res, 200, await pairingState());
         }
         if (p.startsWith('/api/mobile/devices/') && req.method === 'DELETE') {

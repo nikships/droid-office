@@ -64,6 +64,15 @@ function parseServeStatus(json: unknown, dnsName: string): ServeRoute[] {
 /** HTTPS ports the office tries for its own Serve mapping, in order. Never 443, which is the first one people use for their own services. */
 const SERVE_PORTS = [8443, 8444, 8445, 8446, 8447, 8448, 8449, 10443];
 
+let serveWork: Promise<unknown> = Promise.resolve();
+
+/** Office HTTPS and remote MCP share Serve's port table. Serialize discovery plus changes. */
+export function withServeLock<T>(task: () => Promise<T>): Promise<T> {
+  const run = serveWork.then(task);
+  serveWork = run.catch(() => undefined);
+  return run;
+}
+
 /**
  * The port to serve `target` on: the one already proxying to it, else the office's previous port when
  * it still points at the office's previous backend, else the first port nothing else uses.

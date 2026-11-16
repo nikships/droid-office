@@ -10,8 +10,6 @@ import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DEVICE_NAME_MAX, DEVICES_MAX, type PairedDevice, type PairingAddress } from '../shared/devices.js';
-import { isTailscaleIPv4 } from './lan.js';
-import type { TailscaleSelf } from './tailscale.js';
 
 interface DeviceRecord extends PairedDevice {
   /** SHA-256 of the device token, hex. The token itself is never written down. */
@@ -151,20 +149,14 @@ export function machineName(): string {
   return cachedMachineName;
 }
 
-/**
- * The base URLs a phone can reach the office at, Wi-Fi first, then Tailscale (the MagicDNS name, then
- * the 100.x address). Bound to every interface, that's all of them; bound to one address, only that
- * one; bound to loopback, none.
- */
-export function pairingAddresses(opts: { scheme: 'http' | 'https'; host: string; port: number; lan: readonly string[]; tailscale?: TailscaleSelf; tailscaleIps?: readonly string[] }): PairingAddress[] {
-  const { scheme, host, port } = opts;
-  const base = (h: string) => `${scheme}://${h.includes(':') ? `[${h}]` : h}:${port}`;
-  const loopback = host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
-  if (loopback) return [];
-  const wildcard = host === '0.0.0.0' || host === '::' || host === '';
-  if (!wildcard) return [isTailscaleIPv4(host) ? { url: base(host), kind: 'tailscale' } : { url: base(host), kind: 'wifi' }];
-  const out: PairingAddress[] = opts.lan.filter((ip) => !isTailscaleIPv4(ip)).map((ip) => ({ url: base(ip), kind: 'wifi' }));
-  if (opts.tailscale?.dnsName) out.push({ url: base(opts.tailscale.dnsName), kind: 'tailscale', dns: true });
-  for (const ip of new Set([...(opts.tailscale?.ips ?? []), ...(opts.tailscaleIps ?? [])])) if (isTailscaleIPv4(ip)) out.push({ url: base(ip), kind: 'tailscale' });
-  return out;
+/** Only the active Tailscale Serve HTTPS origin belongs in a phone's pairing code. */
+export function pairingAddresses(origin?: string): PairingAddress[] {
+  if (!origin) return [];
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== 'https:' || !url.hostname.endsWith('.ts.net') || url.username || url.password) return [];
+    return [{ url: url.origin, kind: 'tailscale', dns: true }];
+  } catch {
+    return [];
+  }
 }

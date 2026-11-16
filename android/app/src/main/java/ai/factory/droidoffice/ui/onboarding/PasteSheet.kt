@@ -72,7 +72,7 @@ fun PasteSheet(onDismiss: () -> Unit, onInvite: (PairingInvite) -> Unit) {
             Text("Paste the join link", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(6.dp))
             Text(
-                "The office prints it under its QR code: http://192.168.1.20:4600/?t=… Tailscale addresses work too.",
+                "Use the Tailscale HTTPS pairing link from the office's terminal or Settings → Phone & web. Both devices need Tailscale.",
                 style = MaterialTheme.typography.bodySmall,
             )
             Spacer(Modifier.height(16.dp))
@@ -83,7 +83,7 @@ fun PasteSheet(onDismiss: () -> Unit, onInvite: (PairingInvite) -> Unit) {
                     error = null
                 },
                 modifier = Modifier.fillMaxWidth().focusRequester(focus).tagged(Tags.Paste.INPUT),
-                placeholder = { Text("http://…/?t=…", style = LocalOfficeType.current.monoBody, color = Palette.TextTertiary) },
+                placeholder = { Text("https://…ts.net:8444/?t=…", style = LocalOfficeType.current.monoBody, color = Palette.TextTertiary) },
                 textStyle = LocalOfficeType.current.monoBody,
                 isError = error != null,
                 supportingText = error?.let { { Text(it) } },

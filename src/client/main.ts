@@ -2916,7 +2916,7 @@ const hudActions: HudAction[] = [
     run: () => openWelcome(net),
   },
   { id: 'phone', icon: '📱', label: 'Pair a phone', section: 'Office', title: () => 'Pair Droid Office for Android with the QR code', run: () => openPhone() },
-  { id: 'companion', icon: '🌐', label: 'Web companion', section: 'Office', title: () => 'Open the office in a desktop browser: its links for this computer, Wi-Fi and Tailscale', run: () => openCompanion() },
+  { id: 'companion', icon: '🌐', label: 'Web companion', section: 'Office', title: () => 'Open the office here or over Tailscale HTTPS, and manage remote access', run: () => openCompanion() },
   { id: 'help', icon: '❓', label: 'Controls', section: 'Office', key: 'H', run: () => openHelp(settings.sidearm) },
   {
     id: 'upgrade',

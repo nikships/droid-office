@@ -22,6 +22,8 @@ export interface Config {
    * DROID_OFFICE_REMOTE_MCP=off; unset in tests, so they never touch a tailnet).
    */
   remoteMcp?: boolean;
+  /** Start the Tailscale HTTPS gateway. Set by the CLI, unset in tests to avoid changing Serve. */
+  tailnetHttps?: boolean;
   /**
    * Render Whiteboard cards with the headless Chromium, downloading it on the first render when it's
    * missing (the CLI sets it; unset in tests, so they never start a browser or a download).
@@ -89,13 +91,14 @@ Options:
                           DROID_OFFICE_PROJECTS. Also settable from ⚙️ Settings
                           in the office
   -p, --port <n>          Port to listen on (default 4600, env PORT)
-  -H, --host <addr>       Address to bind (default 0.0.0.0)
+  -H, --host <addr>       Legacy option; the local listener always binds 127.0.0.1.
+                          Remote access uses Tailscale HTTPS only.
       --agent <cmd>       The Droid command (default "droid", env DROID_OFFICE_AGENT)
       --agent-args <str>  Extra args for Droid, e.g. "--auto medium"
       --tls-cert <file>   Serve HTTPS with this certificate (PEM)
       --tls-key <file>    ...and this private key (PEM)
       --self-signed       Serve HTTPS with a generated self-signed certificate
-      --trust-proxy       Trust X-Forwarded-* headers (behind Caddy/nginx)
+      --trust-proxy       Trust X-Forwarded-* headers on the local listener
       --finder-bridge <file>
                           Signed macOS Keychain helper for Finder dispatch.
                           Supplied by the Mac app; disabled when absent
@@ -185,7 +188,7 @@ export function loadConfig(argv: string[]): Config {
   let homeGiven = !!process.env.DROID_OFFICE_HOME;
   let projects = process.env.DROID_OFFICE_PROJECTS ? path.resolve(process.env.DROID_OFFICE_PROJECTS) : '';
   let port = Number(process.env.PORT) || 4600;
-  let host = '0.0.0.0';
+  const host = '127.0.0.1';
   let agentCmd = process.env.DROID_OFFICE_AGENT || 'droid';
   let agentArgs: string[] = splitArgs(process.env.DROID_OFFICE_AGENT_ARGS || '');
   let tlsCert = '';
@@ -210,7 +213,7 @@ export function loadConfig(argv: string[]): Config {
         break;
       case '-H':
       case '--host':
-        host = takeValue(argv, i++, a);
+        takeValue(argv, i++, a); // Accepted for old launch scripts, never opens a network listener.
         break;
       case '--agent':
         agentCmd = takeValue(argv, i++, a);

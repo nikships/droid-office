@@ -96,7 +96,7 @@ fun WelcomeScreen(onScan: () -> Unit, onLink: (PairingInvite) -> Unit, pendingDe
                 )
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    "Hire Droid workers, answer their questions and steer them from your phone. Over the same Wi-Fi, or anywhere on your tailnet.",
+                    "Hire Droid workers, answer their questions and steer them from your phone. Connect privately over Tailscale HTTPS, at home or away.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = Palette.TextSecondary,
                 )

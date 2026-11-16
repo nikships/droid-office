@@ -17,6 +17,17 @@ export function isLoopback(ip: string | undefined): boolean {
   return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 }
 
+const proxied = new WeakSet<IncomingMessage>();
+
+/** Only the dedicated HTTPS listener marks requests; client-supplied headers never grant trust. */
+export function markProxied(req: IncomingMessage): void {
+  proxied.add(req);
+}
+
+export function isLocalRequest(req: IncomingMessage): boolean {
+  return !proxied.has(req) && isLoopback(req.socket.remoteAddress);
+}
+
 /** Whether a Host header names this machine by a loopback name or address (any port), not by a site's name. */
 export function loopbackHost(host: string | undefined): boolean {
   if (!host) return false;
@@ -34,12 +45,11 @@ export function lanTokenOk(candidate: string | null | undefined, token: string):
 }
 
 /**
- * Whether this request may reach the office. The socket's own address decides loopback (headers
- * can be spoofed; the peer address can't), so a trusted proxy in front of the office still gates
- * its own clients.
+ * Whether this request may reach the office. The dedicated HTTPS listener never inherits its
+ * loopback transport's privileges. Headers cannot mark a request as local.
  */
 export function lanAllowed(req: IncomingMessage, url: URL, token: string): boolean {
-  if (isLoopback(req.socket.remoteAddress)) return true;
+  if (isLocalRequest(req)) return true;
   return lanTokenOk(url.searchParams.get('t'), token);
 }
 

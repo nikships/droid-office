@@ -9,6 +9,16 @@ class PairingTest {
     private fun invalid(raw: String) = (Pairing.parse(raw) as InviteParse.Invalid).reason
 
     @Test
+    fun readsTailnetHttpsCodeAndCompanionJoinLink() {
+        val base = "https://nikhils-macbook-pro-2.tail08b849.ts.net:8444"
+        val invite = ok("droidoffice://pair?v=1&name=Office&t=abcdefgh123&u=https%3A%2F%2Fnikhils-macbook-pro-2.tail08b849.ts.net%3A8444")
+        assertEquals(listOf(base), invite.bases)
+        assertEquals(RouteKind.Tailscale, Routes.kindOf(invite.bases.single()))
+        assertEquals(invite.bases, ok("$base/dashboard?t=abcdefgh123").bases)
+        assertEquals(invite.lanToken, ok("$base/?t=abcdefgh123").lanToken)
+    }
+
+    @Test
     fun readsThePayloadWithEveryAddressInOrder() {
         val invite = ok(
             "droidoffice://pair?v=1&name=Nik%27s%20MacBook%20%28Pro%29&t=EQKpRyC1i_DeLm3qG8tOQLmcv27XanhU" +

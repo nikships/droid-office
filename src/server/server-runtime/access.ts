@@ -1,7 +1,8 @@
 import type http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Config } from '../config.js';
-import { bearerToken, isLoopback, lanAllowed, lanIPv4s, tailscaleIPv4s } from '../lan.js';
+import { bearerToken, isLocalRequest, lanAllowed } from '../lan.js';
+import type { TailnetHttps } from '../tailnet-https.js';
 import { machineName, pairingAddresses, type DevicesStore } from '../devices.js';
 import type { TailscaleWatch } from '../tailscale.js';
 import type { WebCompanion } from '../web-companion.js';
@@ -15,13 +16,14 @@ interface AccessContext {
   devices: DevicesStore;
   tailscale: TailscaleWatch;
   companion: WebCompanion;
+  tailnetHttps(): TailnetHttps;
   clients: Map<string, Client>;
   version: string;
   address(): AddressInfo | string | null;
 }
 
 /** Shared HTTP/WebSocket credentials and owner-only pairing settings. */
-export function createAccess({ cfg, lanToken, devices, tailscale, companion, clients, version, address }: AccessContext) {
+export function createAccess({ cfg, lanToken, devices, tailscale, companion, tailnetHttps, clients, version, address }: AccessContext) {
   /**
    * Who may reach the office: loopback, this start's LAN token (`?t=`), or a paired phone's device
    * token (`Authorization: Bearer`, or `?d=`). A device token that isn't paired (any more) is refused
@@ -41,29 +43,31 @@ export function createAccess({ cfg, lanToken, devices, tailscale, companion, cli
    * or for a GET, which carries none, the browser's Sec-Fetch-Site). What the Phone window reads and
    * changes (the pairing link, the paired phones) answers nothing else: no phone, no LAN browser.
    */
-  const ownPage = (req: http.IncomingMessage) => isLoopback(req.socket.remoteAddress) && !bearerToken(req) && (sameOrigin(req, cfg) || (!req.headers.origin && req.headers['sec-fetch-site'] === 'same-origin'));
+  const ownPage = (req: http.IncomingMessage) => isLocalRequest(req) && !bearerToken(req) && (sameOrigin(req, cfg) || (!req.headers.origin && req.headers['sec-fetch-site'] === 'same-origin'));
   const officeCard = () => ({ name: machineName(), version });
   /** The Phone window's view: the pairing link with the addresses it carries, and the paired phones. */
   const pairingState = async (): Promise<PairingState> => {
     const port = (address() as AddressInfo | null)?.port ?? cfg.port;
     const scheme = cfg.tls ? 'https' : 'http';
     const tailnet = await tailscale.get();
-    const addresses = pairingAddresses({ scheme, host: cfg.host, port, lan: lanIPv4s(), tailscale: tailnet, tailscaleIps: tailscaleIPv4s() });
+    const https = cfg.tailnetHttps === false ? { on: false, status: 'off' as const, locked: 'Tailscale HTTPS is disabled by DROID_OFFICE_TAILNET_HTTPS=off.' } : tailnetHttps().state();
+    const addresses = pairingAddresses(https.origin);
     const office = officeCard();
-    const reachable = !(cfg.host === '127.0.0.1' || cfg.host === '::1' || cfg.host === 'localhost' || cfg.host.startsWith('127.'));
-    const reason = addresses.length
+    const reachable = addresses.length > 0;
+    const reason = reachable
       ? undefined
-      : cfg.host === '0.0.0.0' || cfg.host === '::'
-        ? 'This machine has no Wi-Fi or Tailscale address a phone could reach it at. Join a network and reopen this window.'
-        : 'The office only listens on this machine (--host 127.0.0.1), so no phone can reach it. Start it without --host to pair one.';
+      : (https.locked ??
+        https.reason ??
+        (https.on ? 'Tailscale HTTPS is not ready. Start Tailscale on both devices and check HTTPS in the Web companion window.' : 'Tailscale HTTPS is off. Turn it on in the Web companion window to pair phones or browsers.'));
     const urls = addresses.map((a) => a.url);
     const link = urls.length ? pairingLink(office.name, lanToken, urls) : undefined;
     return {
       office,
       companion: companion.on,
+      https,
       local: `${scheme}://localhost:${port}`,
       reachable,
-      tailscale: !!tailnet || tailscaleIPv4s().length > 0,
+      tailscale: !!tailnet,
       ...(link ? { link } : {}),
       addresses,
       ...(reason ? { reason } : {}),

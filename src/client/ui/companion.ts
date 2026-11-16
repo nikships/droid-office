@@ -1,4 +1,4 @@
-import type { PairedDevice, PairingAddress, PairingState } from '../../shared/devices';
+import type { PairedDevice, PairingState } from '../../shared/devices';
 import { companionLink } from '../../shared/devices';
 import { withToken } from '../token';
 import { copy } from './clipboard';
@@ -8,7 +8,7 @@ import { emptyState, toggle, windowHeader } from './kit';
 import { confirmDialog } from './prompt';
 
 // The 🌐 Web companion window: whether desktop browsers may use the office at /dashboard, the link for
-// each way to reach this computer (this computer itself, the Wi-Fi, Tailscale), how pairing works,
+// each way to reach this computer (localhost or Tailscale HTTPS), how pairing works,
 // and the browsers that are paired. Like the Phone window, only the office's own page on its own
 // machine can read or change it (/api/mobile/pairing and /api/mobile/companion in server.ts).
 
@@ -23,19 +23,16 @@ function lanTokenOf(state: PairingState): string {
 
 interface Way {
   icon: IconName;
-  kind: 'local' | 'wifi' | 'tailscale';
+  kind: 'local' | 'tailscale';
   title: string;
   reach: string;
   tags: string[];
-  alternative?: boolean;
   /** What Copy and Open use. */
   link: string;
 }
 
 function ways(state: PairingState): Way[] {
   const token = lanTokenOf(state);
-  const wifi = state.addresses.find((a) => a.kind === 'wifi');
-  const tailscale = state.addresses.find((a) => a.kind === 'tailscale' && a.dns) ?? state.addresses.find((a) => a.kind === 'tailscale');
   const local: Way = {
     icon: 'monitor',
     kind: 'local',
@@ -44,19 +41,19 @@ function ways(state: PairingState): Way[] {
     tags: ['No pairing'],
     link: companionLink(state.local),
   };
-  const other = (a: PairingAddress): Way =>
-    a.kind === 'wifi'
-      ? { icon: 'wifi', kind: 'wifi', title: a === wifi ? 'Wi-Fi' : 'Wi-Fi · alternative', reach: 'From a computer on the same network as this one.', tags: ['Pair once'], alternative: a !== wifi, link: companionLink(a.url, token) }
-      : {
-          icon: 'globe',
-          kind: 'tailscale',
-          title: a.dns ? 'Tailscale · MagicDNS' : 'Tailscale · tailnet IP',
-          reach: 'From anywhere, on a computer signed in to the same tailnet.',
-          tags: a.dns ? ['Pair once', 'Best to bookmark'] : ['Pair once'],
-          alternative: a !== tailscale,
-          link: companionLink(a.url, token),
-        };
-  return [local, ...state.addresses.map(other)];
+  return [
+    local,
+    ...state.addresses.map(
+      (a): Way => ({
+        icon: 'globe',
+        kind: 'tailscale',
+        title: 'Tailscale · HTTPS',
+        reach: 'Private to your tailnet. Pair here, then install with Chrome’s address-bar button.',
+        tags: ['Chrome app', 'Best to bookmark'],
+        link: companionLink(a.url, token),
+      }),
+    ),
+  ];
 }
 
 /**
@@ -83,10 +80,34 @@ export function openCompanion(onChange?: (state: PairingState) => void, { compan
   const hero = h('section.wc-hero', {}, h('span.wc-hero-icon', {}, icon('monitor', 26)), h('div.wc-hero-text', {}, h('div.wc-hero-title', {}, h('b', {}, 'Your office in any desktop browser'), statePill), heroText), toggleEl);
   const addrs = h('div.wc-ways', { 'aria-label': 'Ways to connect' });
   const reachNote = h('div.wc-notes');
+  const httpsToggle = toggle({
+    label: 'Tailscale HTTPS',
+    disabled: true,
+    description: 'The only remote access path for browsers and Android. Both devices need Tailscale. Localhost keeps working.',
+    onChange: (on) => {
+      httpsToggle.input.disabled = true;
+      const update = () => {
+        httpsBusy = true;
+        httpsToggle.input.disabled = true;
+        void request('PUT', '/api/mobile/https', { on }).finally(() => {
+          httpsBusy = false;
+          if (!disposed && last) paint(last);
+        });
+      };
+      if (on) update();
+      else {
+        httpsToggle.input.checked = true;
+        httpsToggle.input.disabled = false;
+        confirmDialog('Turn off remote access?', 'Every remote browser and Android connection disconnects. The office stays available on this computer.', 'Turn off', update);
+      }
+    },
+  });
+  const httpsNote = h('p.note', { role: 'status' });
+  const httpsSection = h('div.stack.tight', { hidden: true }, httpsToggle, httpsNote);
   const steps = h(
     'ol.wc-steps',
     {},
-    h('li', {}, h('span', {}, 'Click ', h('b', {}, 'Copy pairing link'), ' for Wi-Fi or Tailscale above, then paste it into the other computer’s browser.')),
+    h('li', {}, h('span', {}, 'Sign both computers in to Tailscale. Click ', h('b', {}, 'Copy pairing link'), ' above and paste it into the other computer’s browser.')),
     h('li', {}, h('span', {}, 'Choose ', h('b', {}, 'Pair this browser'), ' there before refreshing. There is no approval pop-up on this computer: the link grants access.')),
     h('li', {}, h('span', {}, h('b', {}, 'Bookmark the page.'), ' Each address pairs on its own, so bookmark the one you’ll use. Tailscale’s name works at home and away.')),
   );
@@ -101,7 +122,7 @@ export function openCompanion(onChange?: (state: PairingState) => void, { compan
       {},
       hero,
       status,
-      h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '01'), 'Choose how to connect'), addrs, reachNote),
+      h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '01'), 'Choose how to connect'), httpsSection, addrs, reachNote),
       h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '02'), 'Pair a browser on another computer'), steps),
       h('p.note.info', {}, 'Pairing links include a private access key. Use the copy button, not a manually typed address. Keep the link private; it works until the office restarts.'),
       h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '03'), 'Paired browsers', count), list),
@@ -111,6 +132,7 @@ export function openCompanion(onChange?: (state: PairingState) => void, { compan
   const el = h('div.modal.lg.wc', { role: 'dialog', 'aria-label': 'Web companion' }, windowHeader('🌐 Web companion', 'Workers, live terminals and the Whiteboard, without the 3D'), body, footer);
 
   let last: PairingState | undefined;
+  let httpsBusy = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
   let stopped = false;
@@ -135,7 +157,7 @@ export function openCompanion(onChange?: (state: PairingState) => void, { compan
   };
 
   const paintWays = (state: PairingState) => {
-    const key = JSON.stringify([state.companion, state.local, state.addresses, lanTokenOf(state), state.reachable, state.tailscale]);
+    const key = JSON.stringify([state.companion, state.https, state.local, state.addresses, lanTokenOf(state), state.reachable, state.reason]);
     if (key === waysKey) return;
     waysKey = key;
     const off = !state.companion;
@@ -159,11 +181,7 @@ export function openCompanion(onChange?: (state: PairingState) => void, { compan
         ),
       );
     const available = ways(state);
-    const alternatives = available.filter((w) => w.alternative);
-    addrs.replaceChildren(
-      ...available.filter((w) => !w.alternative).map(way),
-      ...(alternatives.length ? [h('details.wc-alternatives', {}, h('summary', {}, 'Other network connections'), h('div.stack.tight', {}, ...alternatives.map(way)))] : []),
-    );
+    addrs.replaceChildren(...available.map(way));
     const notes: HTMLElement[] = [];
     if (!state.reachable)
       notes.push(
@@ -171,40 +189,9 @@ export function openCompanion(onChange?: (state: PairingState) => void, { compan
           'div.wc-way.missing',
           {},
           h('span.wc-way-icon', {}, icon('lock', 18)),
-          h(
-            'div.wc-way-main',
-            {},
-            h('b', {}, 'Only this computer'),
-            h('small', {}, 'The office listens on this computer only (', h('code', {}, '--host 127.0.0.1'), '). Start it without ', h('code', {}, '--host'), ' to open it from other computers on your Wi-Fi or tailnet.'),
-          ),
+          h('div.wc-way-main', {}, h('b', {}, 'Only this computer'), h('small', {}, state.reason ?? 'Start Tailscale on both devices and enable HTTPS above. LAN-only and plain HTTP remote connections are not supported.')),
         ),
       );
-    else {
-      if (!state.addresses.some((a) => a.kind === 'wifi'))
-        notes.push(
-          h(
-            'div.wc-way.missing',
-            {},
-            h('span.wc-way-icon', {}, icon('wifi', 18)),
-            h('div.wc-way-main', {}, h('b', {}, 'No Wi-Fi address'), h('small', {}, 'This computer isn’t on a local network right now. Join one and this window picks it up.')),
-          ),
-        );
-      if (!state.tailscale)
-        notes.push(
-          h(
-            'div.wc-way.missing',
-            {},
-            h('span.wc-way-icon', {}, icon('globe', 18)),
-            h(
-              'div.wc-way-main',
-              {},
-              h('b', {}, 'Tailscale isn’t running here'),
-              h('small', {}, 'To reach the office away from this network, install Tailscale on this computer and the other one, and sign both in to the same tailnet. Nothing is opened to the internet.'),
-            ),
-            h('div.wc-way-actions', {}, h('a.btn.sm', { href: 'https://tailscale.com/download', target: '_blank', rel: 'noopener noreferrer' }, icon('external', 13), 'Get Tailscale')),
-          ),
-        );
-    }
     reachNote.replaceChildren(...notes);
     addrs.classList.toggle('off', off);
     reachNote.classList.toggle('off', off);
@@ -257,6 +244,17 @@ export function openCompanion(onChange?: (state: PairingState) => void, { compan
 
   const paint = (state: PairingState) => {
     last = state;
+    const https = state.https;
+    httpsSection.hidden = !https;
+    httpsToggle.input.checked = https?.on ?? false;
+    httpsToggle.input.disabled = httpsBusy || !!https?.locked;
+    let httpsMessage = https?.locked ?? https?.reason;
+    if (!httpsMessage) {
+      if (https?.status === 'starting') httpsMessage = 'Setting up Tailscale Serve…';
+      else if (https?.status === 'serving') httpsMessage = 'HTTPS is ready. Copy its pairing link below. Pair again if you previously used HTTP.';
+      else httpsMessage = 'Remote access is off. Turn on to create a tailnet-only HTTPS address. Nothing is opened to the public internet.';
+    }
+    httpsNote.replaceChildren(httpsMessage, ...(https?.fixUrl ? [' ', h('a', { href: https.fixUrl, target: '_blank', rel: 'noopener noreferrer' }, 'Enable HTTPS in Tailscale')] : []));
     toggleEl.input.checked = state.companion;
     toggleEl.input.disabled = false;
     statePill.className = `pill ${state.companion ? 'done' : 'offline'}`;

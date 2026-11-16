@@ -8,7 +8,7 @@ import { createOfficeMcp, OFFICE_MCP_PATH, OFFICE_MCP_WORKER_HEADER, type Office
 import type { RemoteOffice } from './remote-office.js';
 import type { GrokBotInput } from './remote-workers.js';
 import type { GrokWebhookResult } from './grok-webhook.js';
-import { planServe, TailscaleCli } from './tailscale.js';
+import { planServe, TailscaleCli, withServeLock } from './tailscale.js';
 import type { RemoteMcpBot, RemoteMcpConnection, RemoteMcpState, RemoteMcpStatus } from '../shared/remote-mcp.js';
 
 /** In the office's own `.droid-office/`: whether the endpoint is on, and the ports it last used, so its URL stays put. */
@@ -226,7 +226,7 @@ export class RemoteMcp {
   }
 
   private queue(task: () => Promise<void>): Promise<RemoteMcpState> {
-    const run = this.work.then(task);
+    const run = this.work.then(() => withServeLock(task));
     this.work = run.catch(() => undefined);
     return run.then(
       () => this.state(),

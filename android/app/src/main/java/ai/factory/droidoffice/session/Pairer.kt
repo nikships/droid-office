@@ -72,7 +72,7 @@ class Pairer(
             )
             is RaceResult.AllFailed -> return PairOutcome.Failed(
                 "Can't reach the office",
-                "Tried ${invite.bases.joinToString { it.substringAfter("://") }}. Make sure the phone is on the same Wi-Fi as the laptop, or that Tailscale is on for both.",
+                "Tried ${invite.bases.joinToString { it.substringAfter("://") }}. Sign both devices in to Tailscale and check that HTTPS is ready in the office's Settings → Phone & web → Web companion. If you used HTTP before, scan a new pairing code.",
             )
         }
         onStep(PairStep.Pairing, "${winner.kind.label} · ${winner.base.substringAfter("://")}")

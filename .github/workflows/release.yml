@@ -246,6 +246,7 @@ jobs:
           DROID_OFFICE_HOME: ${{ runner.temp }}/office
           # A CI office never makes Tailscale Serve mappings on the runner's tailnet.
           DROID_OFFICE_REMOTE_MCP: 'off'
+          DROID_OFFICE_TAILNET_HTTPS: 'off'
         run: |
           cd "$RUNNER_TEMP"
           # A free port: more than one job can be running on this Mac at once.
@@ -466,6 +467,7 @@ jobs:
         if: env.PUBLISHING == 'true'
         env:
           DROID_OFFICE_REMOTE_MCP: 'off'
+          DROID_OFFICE_TAILNET_HTTPS: 'off'
         run: |
           app="release/mac-arm64/Droid Office.app"
           # A free port: more than one job can be running on this Mac at once.

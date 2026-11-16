@@ -19,9 +19,11 @@ Single-player games and local issue-card carrying remain browser features.
 ## Access
 
 Loopback requests connect without credentials. Every server start creates a
-random in-memory LAN token. Non-loopback HTTP requests and WebSocket connections
-must supply it as `?t=<token>`. Startup prints a join link and QR code for another
-browser on the same network. Restarting changes the token.
+random in-memory pairing token (historically called the LAN token). Remote HTTP
+requests and WebSocket connections arrive only through Tailscale Serve HTTPS
+and must supply it as `?t=<token>`, or carry a paired device token. Startup prints
+the HTTPS companion link and an Android pairing QR code. Restarting changes the
+pairing token.
 
 A paired phone (Droid Office for Android) is a device of the same owner, not a
 second user. Pairing gives it a device token, sent as `Authorization: Bearer` or
@@ -30,8 +32,21 @@ stores only its SHA-256 in `.droid-office/devices.json`; forgetting the phone in
 Settings → Phone & web revokes it at once. A device record names a phone, never a
 person: it has no role, profile or presence.
 
-The default bind address remains `0.0.0.0`. Use `--host 127.0.0.1` to keep access
-on the office's own machine. TLS and trusted reverse proxies remain available.
+The main listener always binds `127.0.0.1`, including with legacy `--host` flags.
+It serves the Mac app and local browsers. Remote access, including Android,
+requires Tailscale HTTPS, even on the same Wi-Fi. A separate loopback Serve
+backend shares the HTTP and WebSocket handlers but marks requests in-process:
+they must authenticate and never gain local owner privileges. It validates the
+Serve host and HTTPS Origin, refuses Funnel and a known different Tailscale
+user, and ignores forwarded-host overrides. Client headers cannot grant local
+trust. Local pairing management and `/api/status` remain local-only.
+
+The HTTPS endpoint starts by default and keeps its ports and on/off setting in
+`.droid-office/tailnet-https.json`. Disabling it closes remote HTTP and WebSocket
+connections and removes only its own Serve mapping. Shutdown retains the mapping
+for a stable URL on restart. The setting is independent of remote MCP and the
+web companion switch (which does not disable Android). Set
+`DROID_OFFICE_TAILNET_HTTPS=off` for local-only operation.
 See [the guide](guide/getting-started.md#access) for details.
 
 ## Existing data
@@ -46,6 +61,8 @@ keep their current persistence formats.
 - `tests/lan.test.ts` covers loopback access and token-gated network access.
 - `tests/devices.test.ts` covers pairing, device tokens, revocation and the
   pairing link.
+- `tests/tailnet-https.test.ts` covers Serve lifecycle, collisions, HTTPS-only
+  origins, Funnel refusal, proxy authentication and local owner isolation.
 - `tests/no-media.test.ts` rejects capture APIs, peer signaling, voice/share UI,
   chat, and teammate presence while preserving office sounds and the jukebox.
 - Worker, terminal, floor and pipeline suites cover the retained server

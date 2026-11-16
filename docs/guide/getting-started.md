@@ -39,7 +39,7 @@ The first time the checkout starts in a terminal, it walks you through setting u
 
 Press Enter to skip any step: the elevator in the office asks for your first project too. Run `droid-office setup` to go through it again while the office is stopped, or `droid-office setup --projects ~/Workspace --project ~/Workspace/my-project` to do the same without questions, from a script.
 
-It prints the URL for this machine's browser, which needs no login, and — unless bound to loopback — a join URL and QR code for other devices on your Wi-Fi (see [Access](#access) below).
+It prints the URL for this machine's browser, which needs no login, and sets up private Tailscale HTTPS for other devices (see [Access](#access) below).
 
 The office keeps its data in `~/droid-office` (`--home` or `DROID_OFFICE_HOME` to move it) and opens your existing checkouts as floors where they are. To make it look for them in another folder, like `~/Workspace`, pick the **Workspace folder** in ⚙️ Settings → **Office & floors**, or with **Change folder** in the elevator's add-a-project panel (or start with `--projects` or `DROID_OFFICE_PROJECTS`). The folder has to exist. Floors you already have stay where they are when it moves. The list of floors is `~/droid-office/.droid-office/floors.json`. Each floor keeps its workers, pictures and worktrees in its own checkout's `.droid-office/`.
 
@@ -91,9 +91,11 @@ In Chrome or Edge, open an already-running office and choose **Install** in the 
 
 ### Access
 
-There are no office passwords, accounts, sessions or login pages. Each start mints a random LAN token, kept in memory and never written to disk; starting the office prints the join URL and a QR code of it in the terminal. Requests from the office's own machine (loopback) connect freely with no token. Every other HTTP request and WebSocket connection must carry the token as `?t=<token>`; a missing or wrong token is refused.
+There are no office passwords, accounts, sessions or login pages. Localhost HTTP serves the Mac app and local browsers. It never listens on a network interface, including with old `--host` flags. Every remote device, including Android, connects through **Tailscale HTTPS only**, even on the same Wi-Fi.
 
-To connect another browser on your network, use the printed link or scan the terminal's QR code: that is the join URL, token included. The token changes on every start, so after a restart, scan the new code. To keep the office to this machine only, start with `--host 127.0.0.1`: there is then no join URL at all.
+Sign the host and other devices in to Tailscale. The office uses **Tailscale Serve**, never public Funnel, to create a trusted HTTPS address automatically. If HTTPS needs administrator approval, **Settings → Phone & web → Web companion** shows the Tailscale approval link. Copy the HTTPS pairing link for a browser, or scan **Pair a phone** for Android. Pair again if you previously used an HTTP or LAN address. Chrome can install the HTTPS companion as **Droid Office Companion**.
+
+Each start mints a random pairing token (historically called the LAN token), kept in memory and never written to disk. Initial remote pairing needs it as `?t=<token>`; local requests need no token. Paired browsers and phones keep a device token instead. The terminal prints the HTTPS companion link and Android pairing QR code once HTTPS is ready. No Tailscale means local-only operation, not an HTTP fallback. Turn off **Tailscale HTTPS** in the Web companion window, or start with `DROID_OFFICE_TAILNET_HTTPS=off`, to disable remote access. Remote MCP has its own independent setting.
 
 A paired phone (see [Droid Office for Android](android.md)) carries a **device token** instead. It opens the office the way the LAN token does, for every page, API and the WebSocket, but it keeps working across restarts until you forget the phone. The phone sends it as `Authorization: Bearer <token>` (or `?d=<token>`). The office keeps only its SHA-256, in its own `.droid-office/devices.json`. A device token that was forgotten is refused everywhere, even on loopback, so the phone knows to pair again.
 
@@ -106,13 +108,13 @@ droid-office [dir] [options]
       --projects <dir>    Where the office looks for existing git checkouts to add as floors (default a
                           code folder in your home folder, else the home folder; also settable from ⚙️ Settings → **Office & floors**)
   -p, --port <n>          Port (default 4600, env PORT)
-  -H, --host <addr>       Bind address (default 0.0.0.0; 127.0.0.1 keeps the office on this machine)
+  -H, --host <addr>       Legacy option; the local listener always binds 127.0.0.1
       --agent <cmd>       The Droid command (default "droid", env DROID_OFFICE_AGENT)
       --agent-args <str>  Extra args for Droid, e.g. "--auto medium"
       --tls-cert <file>   Serve HTTPS with this cert…
       --tls-key <file>    …and key
       --self-signed       Serve HTTPS with a generated self-signed cert
-      --trust-proxy       Trust X-Forwarded-* (behind Caddy/nginx)
+      --trust-proxy       Trust X-Forwarded-* on the local listener
       --max-workers <n>   Run at most n workers at once, across every floor (env DROID_OFFICE_MAX_WORKERS)
       --city <name>       Put the office in a real city: its sun and live weather (open-meteo.com)
       --weather <kind>    Pin the weather: clear, cloudy, rain, storm, snow or fog

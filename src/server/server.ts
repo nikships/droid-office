@@ -9,10 +9,10 @@ import { WebSocketServer, WebSocket } from 'ws';
 import type { Config } from './config.js';
 import type { AddressInfo } from 'node:net';
 import { lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
-import { DevicesStore, pairingAddresses } from './devices.js';
-import { pickDeepLinkBase } from '../shared/deep-links.js';
+import { DevicesStore } from './devices.js';
 import { TailscaleWatch } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
+import { TailnetHttps } from './tailnet-https.js';
 import type { PairedDevice } from '../shared/devices.js';
 import { MAX_REPOS, childEnv, resolveAgent, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
@@ -200,19 +200,8 @@ export async function startServer(cfg: Config) {
   const floorActivity = new FloorActivity(cfg.dataDir);
   const remoteWorkers = new RemoteWorkers(cfg.dataDir, () => missionChanged());
   let remoteMcp: RemoteMcp | undefined;
-  const deepLinkBase = (): string | undefined => {
-    let port = cfg.port;
-    try {
-      port = (server.address() as AddressInfo | null)?.port ?? cfg.port;
-    } catch {
-      // server not initialized yet
-    }
-    const scheme = cfg.tls ? 'https' : 'http';
-    const tailIps = tailscaleIPv4s();
-    const serveDns = remoteMcp?.dnsName();
-    const tailnet = tailscale.peek() ?? (serveDns ? { dnsName: serveDns, ips: tailIps } : undefined);
-    return pickDeepLinkBase(pairingAddresses({ scheme, host: cfg.host, port, lan: lanIPv4s(), tailscale: tailnet, tailscaleIps: tailIps }));
-  };
+  let tailnetHttps: TailnetHttps | undefined;
+  const deepLinkBase = (): string | undefined => tailnetHttps?.state().origin;
   const remoteOffice = new RemoteOffice(remoteWorkers, () => [...floors.values()], { deepLinkBase });
   const floorOf = (c: Client): Floor | undefined => (c.floor ? floors.get(c.floor) : undefined);
   /** The floor a worker sits on. Worker ids are unique across the building. */
@@ -919,7 +908,7 @@ export async function startServer(cfg: Config) {
 
   // --- HTTP ------------------------------------------------------------------------------------
   const staticFiles = createStaticFiles(hotReload);
-  const accessRuntime = createAccess({ cfg, lanToken, devices, tailscale, companion, clients, version: upgrader.version, address: () => server.address() });
+  const accessRuntime = createAccess({ cfg, lanToken, devices, tailscale, companion, tailnetHttps: () => httpsGateway, clients, version: upgrader.version, address: () => server.address() });
   const { access, pairingState } = accessRuntime;
 
   const automation = createAutomation(clients, sendTo);
@@ -951,6 +940,7 @@ export async function startServer(cfg: Config) {
     serveCard,
     floorRequest,
     remoteMcp: () => remoteMcp,
+    tailnetHttps: () => httpsGateway,
     ...accessRuntime,
     ...staticFiles,
   });
@@ -979,6 +969,13 @@ export async function startServer(cfg: Config) {
     if (gate.device) devices.seen(gate.device.id);
     wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, url, gate.device));
   });
+
+  const httpsGateway = new TailnetHttps({
+    dataDir: cfg.dataDir,
+    request: handler,
+    upgrade: (req, socket, head) => server.emit('upgrade', req, socket, head),
+  });
+  tailnetHttps = httpsGateway;
 
   const onConnection = (ws: WebSocket, url: URL, device?: PairedDevice) => {
     const id = randomBytes(5).toString('hex');
@@ -2541,10 +2538,11 @@ export async function startServer(cfg: Config) {
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(cfg.port, cfg.host, () => resolve());
+    server.listen(cfg.port, '127.0.0.1', () => resolve());
   });
   await hotReload.start();
   workerLabels.start();
+  const httpsReady = cfg.tailnetHttps ? httpsGateway.start() : Promise.resolve(httpsGateway.state());
 
   /** With `keep` (a restart), workers' terminals keep running for the next office to pick up. */
   const shutdown = (keep = false) => {
@@ -2576,6 +2574,7 @@ export async function startServer(cfg: Config) {
     hookServer.close();
     remoteOffice.stop();
     remoteMcp?.stop();
+    httpsGateway.stop();
     return labelsStopped;
   };
 
@@ -2611,6 +2610,7 @@ export async function startServer(cfg: Config) {
     shutdown,
     lanToken,
     pairing: pairingState,
+    httpsReady,
     companion: () => companion.on,
     devices,
     publicDir,

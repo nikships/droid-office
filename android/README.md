@@ -1,6 +1,6 @@
 # Droid Office for Android
 
-A companion app for your phone. Pair it with your office once, and from anywhere on your Wi-Fi or your tailnet you can see every worker, hire new ones, watch their live terminals, prompt them, and read and comment on the floor's Whiteboard.
+A companion app for your phone. Pair it with your office once over Tailscale HTTPS, and from anywhere on your tailnet you can see every worker, hire new ones, watch their live terminals, prompt them, and read and comment on the floor's Whiteboard. Both devices need Tailscale, even on the same Wi-Fi. Current offices no longer expose plain HTTP or LAN-only access. If you paired over HTTP before, scan the new HTTPS pairing code and remove the old office entry from the phone. Older hosts' pairing links remain readable for compatibility.
 
 <p>
   <img src="docs/home.jpg" alt="The office's workers listed by floor, each with its status, model, task and branch" width="19%">

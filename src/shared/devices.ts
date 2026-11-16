@@ -17,11 +17,21 @@ export interface PairedDevice {
 export type PairingAddressKind = 'wifi' | 'tailscale';
 
 export interface PairingAddress {
-  /** A base URL like `http://192.168.1.20:4600`. */
+  /** A base URL like `https://my-mac.tailnet.ts.net:8444`. */
   url: string;
   kind: PairingAddressKind;
   /** For a Tailscale address: whether it's the MagicDNS name or the 100.x address. */
   dns?: boolean;
+}
+
+export interface TailnetHttpsState {
+  on: boolean;
+  status: 'off' | 'starting' | 'serving' | 'unavailable';
+  /** Active private HTTPS origin, without credentials. */
+  origin?: string;
+  reason?: string;
+  fixUrl?: string;
+  locked?: string;
 }
 
 /** What `GET /api/mobile/pairing` answers the Phone and Web companion windows with. */
@@ -29,17 +39,19 @@ export interface PairingState {
   office: { name: string; version: string };
   /** Whether the web companion (`/dashboard`) is on. Off, desktop browsers can't pair or connect; phones are unaffected. */
   companion: boolean;
+  /** The sole remote endpoint, shared by Android and desktop browsers. */
+  https?: TailnetHttpsState;
   /** The office on this machine itself, `http://localhost:<port>` (`https` with TLS). */
   local: string;
-  /** Whether anything off this machine can reach the office: false when it listens on loopback only (`--host 127.0.0.1`). */
+  /** Whether the Tailscale HTTPS endpoint is ready. */
   reachable: boolean;
   /** Whether Tailscale is running and signed in on this machine. */
   tailscale: boolean;
   /** The QR code's text (`droidoffice://pair?…`), or none when nothing off this machine can reach the office. */
   link?: string;
-  /** The addresses the link carries, in its order: Wi-Fi first, then Tailscale. */
+  /** The Tailscale HTTPS origin, when ready. No LAN or plain HTTP addresses. */
   addresses: PairingAddress[];
-  /** Why there's no link (a loopback-only bind, or no network). */
+  /** Why HTTPS is not ready (disabled, Tailscale unavailable, or awaiting setup). */
   reason?: string;
   devices: PairedDevice[];
 }
