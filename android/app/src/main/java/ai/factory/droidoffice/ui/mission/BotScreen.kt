@@ -47,7 +47,6 @@ import ai.factory.droidoffice.ui.components.statusLook
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
-import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
 
 /**
@@ -65,7 +64,7 @@ fun BotScreen(bot: MissionAgent, embedded: Boolean, onBack: () -> Unit, onOpenWo
     Column(Modifier.fillMaxSize().tagged(Tags.Bot.SCREEN).background(Palette.Bg).windowInsetsPadding(insets)) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            AgentTile(OfficeIcons.Antenna, if (w.state.asleep) Palette.TextSecondary else look.color, small = true)
+            BotTile(bot.grokBot, if (w.state.asleep) Palette.TextSecondary else look.color, small = true)
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Bot.NAME))
                 Text(if (bot.grokBot) "Mission Control · Grok Bot" else "Mission Control · runs externally", style = LocalOfficeType.current.monoBody.copy(color = Palette.TextSecondary, fontSize = MaterialTheme.typography.bodySmall.fontSize))

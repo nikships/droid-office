@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -39,6 +41,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import ai.factory.droidoffice.R
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -227,7 +232,7 @@ private fun BotRow(bot: MissionAgent, selected: Boolean, onOpen: () -> Unit) {
             .padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AgentTile(OfficeIcons.Antenna, if (w.state.asleep) Palette.TextSecondary else look.color, small = true)
+        BotTile(bot.grokBot, if (w.state.asleep) Palette.TextSecondary else look.color, small = true)
         Column(Modifier.weight(1f).padding(start = 10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
@@ -249,6 +254,22 @@ internal fun AgentTile(icon: ImageVector, tint: Color, small: Boolean = false) {
         Modifier.size(if (small) 26.dp else 32.dp).clip(shape).background(tint.copy(alpha = 0.1f)).border(1.dp, tint.copy(alpha = 0.4f), shape),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, null, Modifier.size(if (small) 15.dp else 18.dp), tint = tint) }
+}
+
+/** An external bot's mark: the Grok Bot logo when webhook push is configured, otherwise the generic antenna tile. */
+@Composable
+internal fun BotTile(grokBot: Boolean, tint: Color, small: Boolean = false) {
+    if (!grokBot) {
+        AgentTile(OfficeIcons.Antenna, tint, small = small)
+        return
+    }
+    val shape = RoundedCornerShape(if (small) 5.dp else 6.dp)
+    Box(
+        Modifier.size(if (small) 26.dp else 32.dp).clip(shape).border(1.dp, tint.copy(alpha = 0.4f), shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(painterResource(R.drawable.grokbot), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+    }
 }
 
 @Composable

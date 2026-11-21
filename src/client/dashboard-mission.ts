@@ -10,7 +10,7 @@ import { statusDot, workerDot, workingBars, WORKER_MIME } from './dashboard-pane
 import { reconcileChildren, todoMeter } from './dashboard-roster';
 import { botLine, buildingAgent, orchestratorBlocked, orchestratorLine } from './mission';
 import { h, STATUS_LABEL, timeAgo } from './ui/dom';
-import { icon } from './ui/icons';
+import { grokBotLogo, icon } from './ui/icons';
 import { modelBadgeLabel, modelBadgeNode } from './ui/models';
 
 export interface MissionRosterState {
@@ -191,7 +191,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
       r.open.setAttribute('aria-label', `Open ${w.name}, ${role}, ${status}: ${line}`);
       r.split?.setAttribute('aria-label', `Open ${w.name} in a new pane`);
       r.open.replaceChildren(
-        h('span.dash-mission-mark', { 'data-status': blocked ? 'blocked' : w.status, 'aria-hidden': 'true' }, icon(orchestrator ? 'satellite' : 'bot', 13), workerDot(w)),
+        h('span.dash-mission-mark', { 'data-status': blocked ? 'blocked' : w.status, 'aria-hidden': 'true' }, orchestrator ? icon('satellite', 13) : agent.grokBot ? grokBotLogo(20) : icon('bot', 13), workerDot(w)),
         h(
           'span.dash-row-main',
           {},

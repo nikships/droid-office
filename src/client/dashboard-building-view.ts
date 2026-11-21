@@ -8,7 +8,7 @@ import { doingLine, workerKind } from './worker-words';
 import { orchestratorBlocked, orchestratorLine } from './mission';
 import type { MissionControlState } from '../shared/mission-control';
 import { h } from './ui/dom';
-import { icon } from './ui/icons';
+import { grokBotLogo, icon } from './ui/icons';
 import { modelBadgeNode } from './ui/models';
 
 const FILTERS: readonly [BuildingFilter, string][] = [
@@ -200,7 +200,7 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
           h(
             'span.dash-building-identity',
             {},
-            workerDot(w),
+            row.grokBot ? h('span.dash-mission-mark', { 'data-status': w.status, 'aria-hidden': 'true' }, grokBotLogo(20), workerDot(w)) : workerDot(w),
             h(
               'span.dash-building-work',
               {},

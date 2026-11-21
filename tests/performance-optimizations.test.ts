@@ -111,9 +111,11 @@ test('createStaticFiles negotiates brotli and gzip, caches immutable assets, and
   const tinyCss = 'body{margin:0}\n';
   const jsFile = path.join(dir, 'bundle.hash123.js');
   const cssFile = path.join(dir, 'tiny.css');
+  const webpFile = path.join(dir, 'grokbot.webp');
   const htmlFile = path.join(dir, 'index.html');
   writeFileSync(jsFile, bigJs);
   writeFileSync(cssFile, tinyCss);
+  writeFileSync(webpFile, 'RIFF\x00\x00\x00\x00WEBP');
   writeFileSync(htmlFile, `<!doctype html><html><body>${'hello '.repeat(200)}</body></html>`);
 
   const reload = new HotReload({ publicDir: dir, dataDir: dir });
@@ -123,6 +125,7 @@ test('createStaticFiles negotiates brotli and gzip, caches immutable assets, and
   const server = http.createServer((req, res) => {
     if (req.url === '/bundle.js') return files.serveFile(res, jsFile, true, req);
     if (req.url === '/tiny.css') return files.serveFile(res, cssFile, true, req);
+    if (req.url === '/icons/grokbot.webp') return files.serveFile(res, webpFile, false, req);
     if (req.url === '/manifest.json') return files.serveFile(res, jsFile, 'revalidate', req);
     return files.serveIndex(res, null, req);
   });
@@ -162,6 +165,10 @@ test('createStaticFiles negotiates brotli and gzip, caches immutable assets, and
   const tinyRes = await rawGet('/tiny.css', { 'accept-encoding': 'br, gzip' });
   assert.equal(tinyRes.headers['content-encoding'], undefined, 'sub-512B assets skip compression overhead');
   assert.equal(tinyRes.body.toString('utf8'), tinyCss);
+
+  const webpRes = await rawGet('/icons/grokbot.webp');
+  assert.equal(webpRes.status, 200);
+  assert.equal(webpRes.headers['content-type'], 'image/webp');
 
   const reval = await rawGet('/manifest.json', { 'accept-encoding': 'br' });
   assert.equal(reval.status, 200);

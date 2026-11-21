@@ -2467,6 +2467,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-building-worker.needs-you { box-shadow: inset 2px 0 var(--danger); }
 .dash-building-identity { display: flex; align-items: flex-start; gap: var(--space-3); min-width: 0; }
 .dash-building-identity > .dash-dot { margin-top: 5px; flex: none; }
+.dash-building-identity > .dash-mission-mark { margin-top: 1px; }
 .dash-building-work { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; flex: 1; }
 .dash-building-name { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
 .dash-building-name b { flex: 0 1 auto; min-width: 0; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2573,9 +2574,18 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-mission-agent:has(.dash-team-toggle) > .dash-row { margin-bottom: 0; }
 .dash-mission-agent:has(.dash-team-toggle) > .dash-row > .dash-row-open { border-color: transparent; }
 .dash-mission-agent > .dash-team-toggle { border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+.grokbot-logo { display: block; flex: none; object-fit: cover; border-radius: calc(var(--radius) - 1px); }
 .dash-mission-mark { position: relative; flex: none; display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--border-strong); border-radius: var(--radius); color: var(--accent); }
+.dash-mission-mark.sm { width: 18px; height: 18px; }
+.dash-mission-mark.lg { width: 36px; height: 36px; border-radius: var(--radius-lg); }
 .dash-mission-bot .dash-mission-mark { color: var(--text-secondary); }
+.dash-mission-mark > .grokbot-logo { width: 100%; height: 100%; }
+.dash-mission-mark.lg > .grokbot-logo { border-radius: calc(var(--radius-lg) - 1px); }
 .dash-mission-mark > .dash-dot { position: absolute; right: -3px; bottom: -3px; width: 7px; height: 7px; }
+.dash-mission-mark.lg > .dash-dot { width: 9px; height: 9px; }
+.bot-modal-mark { display: inline-flex; align-items: center; flex: none; }
+.bot-modal-mark.is-grokbot { width: 24px; height: 24px; border: 1px solid var(--border-strong); border-radius: var(--radius); }
+.bot-modal-mark > .grokbot-logo { width: 100%; height: 100%; }
 .dash-mission-row.blocked .dash-row-doing { color: var(--warning); }
 .dash-mission-key { flex: none; margin: 0; }
 .dash-mission-off { display: flex; align-items: center; gap: var(--space-2); width: 100%; margin-bottom: var(--space-1); padding: var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); background: none; color: var(--text-secondary); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--duration) var(--ease), color var(--duration) var(--ease); }

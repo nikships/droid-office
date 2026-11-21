@@ -36,6 +36,7 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon',
   '.json': 'application/json',
   '.webmanifest': 'application/manifest+json',

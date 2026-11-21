@@ -16,7 +16,8 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   page.on('pageerror', (error) => errors.push(error.message));
   const bundle = buildSync({
     stdin: {
-      contents: "export { createMissionRoster } from './dashboard-mission'; export { createPane } from './dashboard-pane'; export { orchestratorWorker, missionWorker, ORCHESTRATOR_EXAMPLES } from './mission';",
+      contents:
+        "export { createMissionRoster } from './dashboard-mission'; export { createPane } from './dashboard-pane'; export { orchestratorWorker, missionWorker, ORCHESTRATOR_EXAMPLES } from './mission'; export { openBot } from './ui/mission-control'; export { store } from './state';",
       resolveDir: fileURLToPath(new URL('../src/client', import.meta.url)),
     },
     bundle: true,
@@ -318,5 +319,43 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   assert.equal(keeps, true, 'activity the strip doesn’t show rebuilds nothing');
   await pane.locator('.dash-team-nav [data-member=w-dot]').click();
   assert.ok((await page.evaluate(() => (window as any).calls)).some((c: any) => c[0] === 'across' && c[1] === 'w-dot' && c[2] === 'f-api'));
+
+  // Grok Bot external bots wear the Grok Bot logo in place of the generic bot icon across sidebar, pane and 3D modal.
+  assert.equal(await roster.locator('[data-worker=bot-claw] .dash-mission-mark svg.icon').count(), 1, 'non-Grok bots keep the generic bot icon');
+  assert.equal(await roster.locator('[data-worker=bot-claw] .dash-mission-mark img.grokbot-logo').count(), 0);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.mission.bots.push({
+      worker: { id: 'bot-grok', name: 'grokbot', kind: 'agent', remote: true, deskId: '', status: 'offline', acked: true, color: '#7a6fd8', createdBy: '', createdAt: 0, cols: 80, rows: 24, open: false },
+      team: [],
+      grokBot: true,
+      lastUsedAt: Date.now() - 10_800_000,
+    });
+    w.paintRoster();
+    w.paintPane('bot-grok', 'terminal');
+  });
+  assert.equal(await roster.locator('[data-worker=bot-grok] .dash-mission-mark svg.icon').count(), 0);
+  assert.equal(await roster.locator('[data-worker=bot-grok] .dash-mission-mark img.grokbot-logo').getAttribute('src'), '/icons/grokbot.webp');
+  assert.equal(await pane.locator('.dash-pane-head .dash-mission-mark img.grokbot-logo').getAttribute('src'), '/icons/grokbot.webp');
+  assert.equal(await pane.locator('.dash-bot .dash-info-who .dash-mission-mark img.grokbot-logo').getAttribute('src'), '/icons/grokbot.webp');
+  assert.equal(await pane.locator('.dash-bot .dash-info-kind').innerText(), 'Grok Bot');
+
+  await page.evaluate(() => {
+    const w = window as any;
+    w.MissionUI.store.missionControl = w.mission;
+    w.MissionUI.openBot('bot-grok', { openMember() {} });
+  });
+  assert.equal(await page.locator('.modal .bot-modal-mark.is-grokbot img.grokbot-logo').getAttribute('src'), '/icons/grokbot.webp');
+  await page.evaluate(() => {
+    const w = window as any;
+    w.mission.bots[1].grokBot = false;
+    w.MissionUI.store.emit('missionControl');
+    w.paintRoster();
+    w.paintPane('bot-grok', 'terminal');
+  });
+  assert.equal(await page.locator('.modal .bot-modal-mark.is-grokbot').count(), 0);
+  assert.equal(await page.locator('.modal .bot-modal-mark .dot').count(), 1, 'disabling Grok Bot restores the standard bot dot');
+  assert.equal(await roster.locator('[data-worker=bot-grok] .dash-mission-mark svg.icon').count(), 1);
+  assert.equal(await pane.locator('.dash-bot .dash-info-who img.grokbot-logo').count(), 0);
   assert.deepEqual(errors, []);
 });

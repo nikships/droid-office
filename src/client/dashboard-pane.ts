@@ -14,7 +14,7 @@ import { doingLine, workerKind as kind } from './worker-words';
 import { store } from './state';
 import { h, STATUS_LABEL, timeAgo, toast } from './ui/dom';
 import { colorDot } from './ui/kit';
-import { icon, type IconName } from './ui/icons';
+import { grokBotLogo, icon, type IconName } from './ui/icons';
 import { modelBadgeLabel, modelBadgeNode } from './ui/models';
 import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import type { QuestionDraft, QuestionReply, openQuestionWorkspace } from './ui/question-workspace';
@@ -525,8 +525,9 @@ export function createPane(host: PaneHost, index: number): Pane {
     const local = !!w && !w.cloud && !w.remote;
     const threaded = mode === 'thread';
     // The Orchestrator has a terminal only while a session it started is awake.
+    const bot = w?.remote ? missionAgent(host.mission(), w.id) : undefined;
     const toggles = local && w.kind === 'agent' && (w.id !== ORCHESTRATOR_ID || !!orchestratorAwake(host.mission()));
-    const key = JSON.stringify([w && [w.id, w.name, w.color, w.status, w.acked, w.lead, headLine(w), w.activeModel ?? w.model, w.activeEffort ?? w.effort], toggles, mode, s.maximized, s.canMaximize, host.live()]);
+    const key = JSON.stringify([w && [w.id, w.name, w.color, w.status, w.acked, w.lead, bot?.grokBot, headLine(w), w.activeModel ?? w.model, w.activeEffort ?? w.effort], toggles, mode, s.maximized, s.canMaximize, host.live()]);
     if (key === headKey) return;
     headKey = key;
     el.setAttribute('aria-label', w ? `Pane ${index + 1}: ${w.name}` : `Pane ${index + 1}: empty`);
@@ -545,7 +546,7 @@ export function createPane(host: PaneHost, index: number): Pane {
       views.hidden = flip.hidden = true;
       return;
     }
-    who.replaceChildren(workerDot(w));
+    who.replaceChildren(bot?.grokBot ? h('span.dash-mission-mark.sm', { 'data-status': w.status, 'aria-hidden': 'true' }, grokBotLogo(16), workerDot(w)) : workerDot(w));
     name.textContent = w.name;
     name.title = `${w.name} · ${kind(w)}`;
     const doing = headLine(w);
@@ -689,7 +690,10 @@ export function createPane(host: PaneHost, index: number): Pane {
     const key = JSON.stringify([w.name, w.color, w.status, w.activity, w.title, lastUsed, bot?.grokBot, here, host.live(), team, team.map((m) => store.workers.get(m.id)?.color)]);
     if (key === info.key) return;
     info.key = key;
-    info.who.replaceChildren(workerDot(w), h('div', {}, h('div.dash-info-name', {}, info.name), h('div.dash-info-kind', {}, bot?.grokBot ? 'Grok Bot' : kind(w))));
+    info.who.replaceChildren(
+      bot?.grokBot ? h('span.dash-mission-mark.lg', { 'data-status': w.status, 'aria-hidden': 'true' }, grokBotLogo(34), workerDot(w)) : workerDot(w),
+      h('div', {}, h('div.dash-info-name', {}, info.name), h('div.dash-info-kind', {}, bot?.grokBot ? 'Grok Bot' : kind(w))),
+    );
     info.name.textContent = w.name;
     info.activity.textContent = bot ? botLine(bot) : (w.activity ?? 'Hasn’t reported yet');
     // Offline, that line is what the Status row already says.

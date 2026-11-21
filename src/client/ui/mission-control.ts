@@ -7,6 +7,7 @@ import { newOrchestratorConversation, stopOrchestrator } from './orchestrator';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, STATUS_LABEL, toast } from './dom';
+import { grokBotLogo } from './icons';
 import { colorDot, emptyState, windowHeader } from './kit';
 import { openPrompt } from './prompt';
 
@@ -128,6 +129,7 @@ export function openBot(id: string, actions: BotActions) {
   if (!first) return;
   const body = h('div.body.stack');
   const sub = h('p.sub');
+  const mark = h('span.bot-modal-mark');
   const paint = () => {
     const b = bot();
     if (!b) {
@@ -135,6 +137,8 @@ export function openBot(id: string, actions: BotActions) {
       return;
     }
     const w = b.worker;
+    mark.classList.toggle('is-grokbot', !!b.grokBot);
+    mark.replaceChildren(b.grokBot ? grokBotLogo(22) : colorDot(w.color));
     sub.textContent = `${b.grokBot ? 'Grok Bot · runs externally' : 'Runs externally'} · last used ${lastUsedWords(b.lastUsedAt, Date.now())}`;
     const status = h('div.row', {}, h('span.pill', { class: w.status }, STATUS_LABEL[w.status] ?? w.status), h('span.grow', {}, botLine(b)));
     const team = b.team.length
@@ -167,7 +171,7 @@ export function openBot(id: string, actions: BotActions) {
       h('div.section', {}, h('div.eyebrow', {}, missionTeamLine(b.team) ?? 'Team'), team),
     );
   };
-  const el = h('div.modal', { role: 'dialog', 'aria-label': first.worker.name }, h('header', {}, colorDot(first.worker.color), h('div.titles', {}, h('h2', {}, first.worker.name), sub)), body);
+  const el = h('div.modal', { role: 'dialog', 'aria-label': first.worker.name }, h('header', {}, mark, h('div.titles', {}, h('h2', {}, first.worker.name), sub)), body);
   const unsubscribe = store.on('missionControl', paint);
   const modal = openModal(el, { onClose: unsubscribe });
   paint();

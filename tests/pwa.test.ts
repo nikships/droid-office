@@ -36,6 +36,9 @@ test('the manifest supplies the favicon, both PNG sizes and a separate maskable 
     if (icon.type === 'image/png') assert.equal(pngSize(icon.src), icon.sizes, icon.src);
   }
   assert.equal(pngSize('/icons/apple-touch-icon.png'), '180x180');
+  const grokbot = readFileSync(new URL('icons/grokbot.webp', publicDir));
+  assert.equal(grokbot.subarray(0, 4).toString(), 'RIFF');
+  assert.equal(grokbot.subarray(8, 12).toString(), 'WEBP');
 });
 
 test('the companion installs separately and opens the dashboard without credentials or worker links', () => {

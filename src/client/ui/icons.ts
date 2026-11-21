@@ -54,6 +54,21 @@ const PATHS = {
 
 export type IconName = keyof typeof PATHS;
 
+export const GROKBOT_LOGO = '/icons/grokbot.webp';
+
+/** The Grok Bot avatar for webhook-push external bots, hidden from screen readers next to the bot's name. */
+export function grokBotLogo(size = 20): HTMLImageElement {
+  const img = document.createElement('img');
+  img.src = GROKBOT_LOGO;
+  img.alt = '';
+  img.width = size;
+  img.height = size;
+  img.draggable = false;
+  img.setAttribute('aria-hidden', 'true');
+  img.className = 'grokbot-logo';
+  return img;
+}
+
 /** A 24-unit stroke icon as an inline SVG, `size` pixels square, hidden from screen readers. */
 export function icon(name: IconName, size = 16): SVGSVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

@@ -109,6 +109,7 @@ import ai.factory.droidoffice.ui.home.WorkerActionsSheet
 import ai.factory.droidoffice.ui.home.deskLabel
 import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.ui.mission.AgentTile
+import ai.factory.droidoffice.ui.mission.BotTile
 import ai.factory.droidoffice.ui.mission.OrchestratorTint
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
@@ -642,7 +643,7 @@ private fun BuildingWorkerCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 when {
                     isOrchestrator -> AgentTile(OfficeIcons.Orbit, if (loud) Palette.Danger else OrchestratorTint, small = true)
-                    isBot -> AgentTile(OfficeIcons.Antenna, if (state.asleep) Palette.TextSecondary else statusLook(state).color, small = true)
+                    isBot -> BotTile(row.grokBot, if (state.asleep) Palette.TextSecondary else statusLook(state).color, small = true)
                     else -> WorkerDot(parseColor(w.color), state, 10.dp)
                 }
                 Column(Modifier.weight(1f).padding(start = if (isOrchestrator || isBot) 10.dp else 4.dp)) {
