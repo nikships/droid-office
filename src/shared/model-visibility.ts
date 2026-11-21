@@ -12,3 +12,11 @@ export function offeredModels<T extends { id: string }>(models: T[], hidden: rea
   const ids = new Set(hidden);
   return models.filter((model) => !ids.has(model.id) || picked.has(model.id));
 }
+
+/** How many models currently in the catalogue are hidden, ignoring stale ids that no longer exist. */
+export function countHiddenModels(models: readonly { id: string }[], hidden: readonly string[]): number {
+  const ids = new Set(hidden);
+  let count = 0;
+  for (const model of models) if (ids.has(model.id)) count++;
+  return count;
+}

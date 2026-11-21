@@ -1,3 +1,4 @@
+import { countHiddenModels } from '../../shared/model-visibility';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h } from './dom';
@@ -6,11 +7,12 @@ import { modelLogo } from './model-logo';
 import { droidCatalogue, pickerModel, type DroidModelOption } from './models';
 
 /** The desktop owns this list; picker results on every connected device follow it. */
-export function hiddenModelSettings(net: Net): { element: HTMLElement; dispose: () => void } {
+export function hiddenModelSettings(net: Net, onHiddenCount?: (count: number | undefined) => void): { element: HTMLElement; dispose: () => void } {
   let models: DroidModelOption[] = [];
   let loading = true;
   let failed = false;
   let disposed = false;
+  let loadedAirgapped = Boolean(store.setup.airgapped);
   const search = h('input.input.grow', { type: 'search', placeholder: 'Search models or providers…', 'aria-label': 'Search model visibility' });
   const count = h('small', { role: 'status' });
   const error = h('p.field-error', { hidden: true });
@@ -27,13 +29,13 @@ export function hiddenModelSettings(net: Net): { element: HTMLElement; dispose: 
   const paint = () => {
     if (disposed) return;
     const hidden = new Set(store.hiddenModels);
+    const hiddenCount = countHiddenModels(models, store.hiddenModels);
+    onHiddenCount?.(loading || failed ? undefined : hiddenCount);
     const focused = list.contains(document.activeElement) ? document.activeElement?.id : undefined;
-    const knownIds = new Set(models.map((m) => m.id));
-    const source: DroidModelOption[] = [...models, ...store.hiddenModels.filter((id) => !knownIds.has(id)).map((id) => ({ id, displayName: id }))];
     const query = search.value.trim().toLowerCase();
-    const matches = source.filter((m) => `${m.id} ${m.displayName} ${pickerModel(m).group} ${m.provider ?? ''}`.toLowerCase().includes(query));
-    count.textContent = loading ? 'Loading models…' : `${source.length - hidden.size} shown · ${hidden.size} hidden`;
-    all.disabled = !hidden.size;
+    const matches = models.filter((m) => `${m.id} ${m.displayName} ${pickerModel(m).group} ${m.provider ?? ''}`.toLowerCase().includes(query));
+    count.textContent = loading ? 'Loading models…' : failed ? 'Could not load models.' : `${models.length - hiddenCount} shown · ${hiddenCount} hidden`;
+    all.disabled = loading || failed || !hiddenCount;
     retry.classList.toggle('hidden', !failed);
     list.replaceChildren(
       ...matches.map((m) => {
@@ -52,6 +54,7 @@ export function hiddenModelSettings(net: Net): { element: HTMLElement; dispose: 
     if (focused) document.getElementById(focused)?.focus({ preventScroll: true });
   };
   async function load() {
+    loadedAirgapped = Boolean(store.setup.airgapped);
     loading = true;
     failed = false;
     paint();
@@ -64,13 +67,17 @@ export function hiddenModelSettings(net: Net): { element: HTMLElement; dispose: 
     paint();
   }
   search.addEventListener('input', paint);
-  const off = store.on('hiddenModels', paint);
+  const offHidden = store.on('hiddenModels', paint);
+  const offSetup = store.on('setup', () => {
+    if (Boolean(store.setup.airgapped) !== loadedAirgapped) void load();
+  });
   void load();
   return {
     element: h('div.stack.tight', {}, h('div.row', {}, search, all), h('div.row', {}, count, retry), error, list),
     dispose: () => {
       disposed = true;
-      off();
+      offHidden();
+      offSetup();
     },
   };
 }

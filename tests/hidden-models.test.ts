@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { HiddenModels } from '../src/server/hidden-models.js';
-import { offeredModels, visibleModels } from '../src/shared/model-visibility.js';
+import { countHiddenModels, offeredModels, visibleModels } from '../src/shared/model-visibility.js';
 import { sectionsFor } from '../src/client/ui/model-search.js';
 import { store } from '../src/client/state.js';
 
@@ -81,6 +81,13 @@ test('offeredModels hides unpicked models while preserving already-picked hidden
   assert.deepEqual(offeredModels(models, ['gpt-6.1-sol'], new Set()), [models[1], models[2]]);
   assert.deepEqual(offeredModels(models, ['gpt-6.1-sol'], new Set(['gpt-6.1-sol'])), models);
   assert.deepEqual(offeredModels(models, [], new Set()), models);
+});
+
+test('countHiddenModels counts only models present in the current catalogue', () => {
+  const models = [{ id: 'gpt-6.1-sol' }, { id: 'claude-opus-5-5' }, { id: 'custom:droidproxy:gemini-3.8-flash-high' }];
+  assert.equal(countHiddenModels(models, ['gpt-6.1-sol', 'custom:droidproxy:fable-5', 'custom:droidproxy:gpt-6.1-sol']), 1);
+  assert.equal(countHiddenModels(models, ['custom:droidproxy:fable-5', 'custom:meta:muse-spark-1.3']), 0);
+  assert.equal(countHiddenModels(models, ['gpt-6.1-sol', 'gpt-6.1-sol', 'claude-opus-5-5']), 2);
 });
 
 test('live hidden-model messages update the web store and notify open pickers', () => {

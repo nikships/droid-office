@@ -45,7 +45,7 @@ test('airgapped discovery drops hosted models, Router, legacy models and unsafe 
   assert.equal(airgappedModelError(true, undefined, { ...source, defaultModel: source.models[0].id }), undefined);
 });
 
-test('Droid catalogue lists custom models with their display names and efforts', (t) => {
+test('Droid catalogue lists custom models with their display names and efforts, dropping stale custom favorites and defaults', (t) => {
   const file = settingsFile(t, {
     customModels: [
       { id: 'custom:droidproxy:gpt-6-sol', displayName: 'DroidProxy: GPT 6 Sol', defaultReasoningEffort: 'xhigh', supportedReasoningEfforts: ['low', 'xhigh', 'bogus'] },
@@ -54,17 +54,30 @@ test('Droid catalogue lists custom models with their display names and efforts',
       { id: '', displayName: 'empty' },
       { nope: true },
     ],
-    sessionDefaultSettings: { model: 'custom:droidproxy:muse-spark-1.3-contributor', reasoningEffort: 'max' },
-    modelFavorites: ['glm-5.3-flash', 'custom:droidproxy:gpt-6-sol'],
+    sessionDefaultSettings: { model: 'claude-sonnet-5-5', reasoningEffort: 'max' },
+    modelFavorites: ['glm-5.3-flash', 'custom:droidproxy:gpt-6-sol', 'custom:droidproxy:fable-5', 'custom:meta:muse-spark-1.3'],
   });
   const catalogue = readDroidModels(file);
   assert.deepEqual(catalogue.models, [
     { id: 'custom:droidproxy:gpt-6-sol', displayName: 'DroidProxy: GPT 6 Sol', custom: true, defaultReasoningEffort: 'xhigh', supportedReasoningEfforts: ['low', 'xhigh'] },
-    { id: 'custom:droidproxy:muse-spark-1.3-contributor', displayName: 'custom:droidproxy:muse-spark-1.3-contributor' },
+    { id: 'claude-sonnet-5-5', displayName: 'claude-sonnet-5-5' },
     { id: 'glm-5.3-flash', displayName: 'glm-5.3-flash' },
   ]);
-  assert.equal(catalogue.defaultModel, 'custom:droidproxy:muse-spark-1.3-contributor');
+  assert.equal(catalogue.defaultModel, 'claude-sonnet-5-5');
   assert.equal(catalogue.defaultReasoningEffort, 'max');
+
+  const staleDefault = readDroidModels(
+    settingsFile(t, {
+      customModels: [{ id: 'custom:droidproxy:gpt-6-sol', displayName: 'DroidProxy: GPT 6 Sol' }],
+      sessionDefaultSettings: { model: 'custom:droidproxy:fable-5', reasoningEffort: 'high' },
+    }),
+  );
+  assert.deepEqual(
+    staleDefault.models.map((m) => m.id),
+    ['custom:droidproxy:gpt-6-sol'],
+  );
+  assert.equal(staleDefault.defaultModel, undefined);
+  assert.equal(staleDefault.defaultReasoningEffort, 'high');
 });
 
 test('Droid catalogue tolerates missing, corrupt, or model-less settings', (t) => {
@@ -136,11 +149,11 @@ test('the cached discovery catalogue retains Droid-disabled entries without addi
   assert.deepEqual((await onlyDisabled.get()).models, []);
 });
 
-test("Droid catalogue lists droid's own models and keeps settings-only ids and the settings default", async (t) => {
+test("Droid catalogue trusts droid's own model list and drops stale favorites, disabled models and removed defaults", async (t) => {
   const file = settingsFile(t, {
     customModels: [{ id: 'custom:a', displayName: 'A' }],
     sessionDefaultSettings: { model: 'glm-5.3', reasoningEffort: 'high' },
-    modelFavorites: ['custom:gone'],
+    modelFavorites: ['custom:gone', 'retired-builtin', 'off-model'],
   });
   const asked: string[][] = [];
   const catalogue = createDroidModelCatalogue({
@@ -152,6 +165,7 @@ test("Droid catalogue lists droid's own models and keeps settings-only ids and t
       return Promise.resolve([
         { id: 'glm-5.3', displayName: 'GLM-5.3' },
         { id: 'custom:a', displayName: 'A (droid)', isCustom: true },
+        { id: 'off-model', displayName: 'Off', disabled: true },
       ]);
     },
   });
@@ -161,12 +175,42 @@ test("Droid catalogue lists droid's own models and keeps settings-only ids and t
     listed.models.map((m) => [m.id, m.displayName]),
     [
       ['custom:a', 'A (droid)'],
-      ['custom:gone', 'custom:gone'],
       ['glm-5.3', 'GLM-5.3'],
     ],
   );
   assert.equal(listed.defaultModel, 'glm-5.3');
   assert.equal(listed.defaultReasoningEffort, 'high');
+
+  const staleDefault = createDroidModelCatalogue({
+    settingsPath: settingsFile(t, {
+      sessionDefaultSettings: { model: 'retired-builtin', reasoningEffort: 'xhigh' },
+      modelFavorites: ['off-model'],
+    }),
+    lister: () =>
+      Promise.resolve([
+        { id: 'glm-5.3', displayName: 'GLM-5.3' },
+        { id: 'off-model', displayName: 'Off', disabled: true },
+      ]),
+  });
+  const afterStale = await staleDefault.get();
+  assert.deepEqual(
+    afterStale.models.map((m) => m.id),
+    ['glm-5.3'],
+  );
+  assert.equal(afterStale.defaultModel, undefined);
+  assert.equal(afterStale.defaultReasoningEffort, 'xhigh');
+
+  const onlyDisabledWithFav = createDroidModelCatalogue({
+    settingsPath: settingsFile(t, {
+      sessionDefaultSettings: { model: 'off-model', reasoningEffort: 'high' },
+      modelFavorites: ['off-model'],
+    }),
+    lister: () => Promise.resolve([{ id: 'off-model', displayName: 'Off', disabled: true }]),
+  });
+  const afterDisabled = await onlyDisabledWithFav.get();
+  assert.deepEqual(afterDisabled.models, []);
+  assert.equal(afterDisabled.defaultModel, undefined);
+  assert.deepEqual(afterDisabled.disabledModels, [{ id: 'off-model', displayName: 'Off', disabled: true }]);
 });
 
 test('Droid catalogue falls back to settings when droid cannot list models', async (t) => {

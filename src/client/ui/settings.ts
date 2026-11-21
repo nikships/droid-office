@@ -1204,13 +1204,16 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     net.send({ t: 'prompts.agent', choice: null });
   });
 
-  const modelVisibility = hiddenModelSettings(net);
-  const pickerModels = disclosure('Choose models', modelVisibility.element);
-  const paintPickerModels = () => {
-    const n = store.hiddenModels.length;
-    pickerModels.meta.textContent = n ? `${n} hidden` : 'All shown';
+  let pickerMeta: HTMLElement | undefined;
+  let pickerHiddenCount: number | undefined;
+  const paintPickerModels = (n: number | undefined) => {
+    pickerHiddenCount = n;
+    if (pickerMeta) pickerMeta.textContent = n === undefined ? '' : n ? `${n} hidden` : 'All shown';
   };
-  paintPickerModels();
+  const modelVisibility = hiddenModelSettings(net, paintPickerModels);
+  const pickerModels = disclosure('Choose models', modelVisibility.element);
+  pickerMeta = pickerModels.meta;
+  paintPickerModels(pickerHiddenCount);
 
   // ---- Subagents & visits -------------------------------------------------------------------------
   const subSet = (patch: Partial<SubagentSettings>) => net.send({ t: 'subagents.set', settings: { ...subagentSettings(), ...patch } });
@@ -1642,7 +1645,6 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     store.on('missionControl', paintOrchestrator),
     store.on('prompts', paintOrchestrator),
     store.on('workerLabels', paintLabels),
-    store.on('hiddenModels', paintPickerModels),
     ...offWorktreeSetup,
   ];
   const modal = openModal(el, {

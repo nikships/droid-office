@@ -96,9 +96,10 @@ function multiplier(value: unknown): number | undefined {
 
 /**
  * The models droid can run, from its own settings file: every `customModels` entry, plus the
- * session default and favorited ids when settings names ones that aren't custom models (built-ins
- * like `glm-5.3-flash` never appear in `customModels`). A bad id in an overlay silently runs the
- * default model instead, so only well-shaped ids are listed.
+ * session default and favorited built-in ids when settings names ones that aren't custom models
+ * (built-ins like `glm-5.3-flash` never appear in `customModels`; stale `custom:*` ids that are no
+ * longer in `customModels` are dropped). A bad id in an overlay silently runs the default model
+ * instead, so only well-shaped ids are listed.
  */
 const settingsCache = new Map<string, { stamp: string; value: DroidModelCatalogue }>();
 
@@ -146,11 +147,15 @@ export function readDroidModels(settingsPath: string = DROID_SETTINGS_PATH): Dro
     add(e.id, e.displayName, effort(e.defaultReasoningEffort) ?? effort(e.reasoningEffort), efforts(e.supportedReasoningEfforts), true);
   }
   const session = raw.sessionDefaultSettings as Record<string, unknown> | undefined;
-  const defaultModel = isValidDroidModel(session?.model) ? (session.model as string) : undefined;
+  const rawDefault = isValidDroidModel(session?.model) ? (session.model as string) : undefined;
+  const defaultModel = rawDefault && (!rawDefault.startsWith('custom:') || seen.has(rawDefault)) ? rawDefault : undefined;
   const defaultReasoningEffort = effort(session?.reasoningEffort);
   if (defaultModel) add(defaultModel);
   const favorites = Array.isArray(raw.modelFavorites) ? raw.modelFavorites : [];
-  for (const fav of favorites) add(fav);
+  for (const fav of favorites) {
+    if (typeof fav === 'string' && fav.startsWith('custom:')) continue;
+    add(fav);
+  }
   const result: DroidModelCatalogue = { models, ...(defaultModel ? { defaultModel } : {}), ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}) };
   if (stamp) {
     if (settingsCache.size >= 16) {
@@ -233,9 +238,9 @@ export interface DroidCatalogue {
 
 /**
  * Droid's full model list, falling back to what settings names when droid can't answer (an old
- * droid, or none on PATH). Settings still decide the default model, and any settings-only id
- * (a favorite droid no longer lists) stays offered. Cached briefly: models change when the user
- * edits them, not mid-hire.
+ * droid, or none on PATH). When droid answers, its list is authoritative: stale favorites and
+ * retired/disabled ids in settings are never re-injected. Cached briefly: models change when the
+ * user edits them, not mid-hire.
  */
 export function createDroidModelCatalogue(options: DroidCatalogueOptions = {}): DroidCatalogue {
   const { command = 'droid', cwd = homedir(), settingsPath = DROID_SETTINGS_PATH, lister = listDroidModels, now = Date.now } = options;
@@ -245,19 +250,34 @@ export function createDroidModelCatalogue(options: DroidCatalogueOptions = {}): 
     const settings = readDroidModels(settingsPath);
     let listed: DroidModelOption[] = [];
     let disabled: DroidModelOption[] = [];
+    let selectable = new Set<string>();
     try {
       const raw = await lister(typeof command === 'function' ? command() : command, cwd);
       listed = parseDroidModelList(raw);
-      const selectable = new Set(listed.map((m) => m.id));
+      selectable = new Set(listed.map((m) => m.id));
       disabled = parseDroidModelList(raw, true).filter((m) => m.disabled && !selectable.has(m.id));
     } catch {
       // Settings alone are still a usable list.
     }
     const discovery = disabled.length ? { disabledModels: disabled } : {};
-    if (!listed.length) return { ...settings, ...discovery };
-    const known = new Set(listed.map((m) => m.id));
-    const extra = settings.models.filter((m) => !known.has(m.id));
-    return { ...settings, ...discovery, models: [...listed.filter((m) => m.custom), ...extra, ...listed.filter((m) => !m.custom)] };
+    if (!listed.length) {
+      const disabledIds = new Set(disabled.map((m) => m.id));
+      const models = disabledIds.size ? settings.models.filter((m) => !disabledIds.has(m.id)) : settings.models;
+      const defaultModel = settings.defaultModel && !disabledIds.has(settings.defaultModel) ? settings.defaultModel : undefined;
+      return {
+        models,
+        ...(defaultModel ? { defaultModel } : {}),
+        ...(settings.defaultReasoningEffort ? { defaultReasoningEffort: settings.defaultReasoningEffort } : {}),
+        ...discovery,
+      };
+    }
+    const defaultModel = settings.defaultModel && selectable.has(settings.defaultModel) ? settings.defaultModel : undefined;
+    return {
+      models: listed,
+      ...(defaultModel ? { defaultModel } : {}),
+      ...(settings.defaultReasoningEffort ? { defaultReasoningEffort: settings.defaultReasoningEffort } : {}),
+      ...discovery,
+    };
   };
   return {
     peek: () => cached?.catalogue,
