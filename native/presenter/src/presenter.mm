@@ -408,6 +408,7 @@ class Core : public std::enable_shared_from_this<Core> {
   }
 
   void pauseIfIdle() {
+    if (direct) return;
     linkPaused.store(true);
     {
       std::lock_guard<std::mutex> g(lock);
@@ -420,18 +421,18 @@ class Core : public std::enable_shared_from_this<Core> {
   }
 
   void wake() {
-    if (!linkPaused.exchange(false)) return;
+    if (direct || !linkPaused.exchange(false)) return;
     auto self = shared_from_this();
-    CFRunLoopPerformBlock(runLoop, kCFRunLoopCommonModes, ^{
+    onLinkThread(^{
       if (@available(macOS 14.0, *)) {
         self->lastFrameAt = CACurrentMediaTime();
         self->link.paused = NO;
       }
     });
-    CFRunLoopWakeUp(runLoop);
   }
 
   void onLinkThread(void (^block)(void)) {
+    if (closed.load() || !runLoop) return;
     CFRunLoopPerformBlock(runLoop, kCFRunLoopCommonModes, block);
     CFRunLoopWakeUp(runLoop);
   }
@@ -605,10 +606,17 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
     for (id o : core->observers)
       if (o) [NSNotificationCenter.defaultCenter removeObserver:o];
     if (core->runLoop) {
-      CFRunLoopStop(core->runLoop);
-      CFRunLoopWakeUp(core->runLoop);
+      CFRunLoopRef rl = core->runLoop;
+      CFRunLoopPerformBlock(rl, kCFRunLoopCommonModes, ^{
+        CFRunLoopStop(rl);
+      });
+      CFRunLoopStop(rl);
+      CFRunLoopWakeUp(rl);
     }
     while (core->thread && core->thread.isExecuting) usleep(1000);
+    core->runLoop = nullptr;
+    core->thread = nil;
+    if (@available(macOS 14.0, *)) core->link = nil;
     DOPresenterView *view = core->view;
     view.eventSink = nil;
     [view removeFromSuperview];
@@ -638,7 +646,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
   // submit(id: number, ioSurface: Buffer, frameCount?: number)
   Napi::Value Submit(const Napi::CallbackInfo &info) {
     Napi::Env env = info.Env();
-    if (shutdown) return env.Undefined();
+    if (!core || shutdown) return env.Undefined();
     if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsBuffer() || info[1].As<Napi::Buffer<uint8_t>>().Length() < sizeof(void *)) {
       Napi::TypeError::New(env, "submit(id: number, ioSurface: Buffer)").ThrowAsJavaScriptException();
       return env.Undefined();
@@ -722,9 +730,12 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
   }
 
   // setPacing({ fps: number, followDisplay: boolean }): the display link rate. fps 0 means the display's own rate.
+  // Only `link` mode runs a CAMetalDisplayLink thread; in `direct` and `paced` modes there is no link run loop.
   Napi::Value SetPacing(const Napi::CallbackInfo &info) {
+    if (!core || shutdown || core->direct || !core->runLoop) return info.Env().Undefined();
+    if (info.Length() < 1 || !info[0].IsObject()) return info.Env().Undefined();
     Napi::Object o = info[0].As<Napi::Object>();
-    double fps = o.Has("fps") ? o.Get("fps").ToNumber().DoubleValue() : 0;
+    double fps = o.Has("fps") && o.Get("fps").IsNumber() ? o.Get("fps").ToNumber().DoubleValue() : 0;
     bool follow = !o.Has("followDisplay") || o.Get("followDisplay").ToBoolean().Value();
     NSScreen *screen = core->view.window.screen ?: NSScreen.mainScreen;
     double maxFps = screen.maximumFramesPerSecond > 0 ? screen.maximumFramesPerSecond : 60;
@@ -739,6 +750,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
   }
 
   Napi::Value SetHdr(const Napi::CallbackInfo &info) {
+    if (!core || shutdown) return info.Env().Undefined();
     bool on = info[0].ToBoolean().Value();
     CAMetalLayer *layer = core->layer;
     layer.wantsExtendedDynamicRangeContent = on && core->layerFormat == MTLPixelFormatRGBA16Float;
@@ -746,16 +758,19 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
   }
 
   Napi::Value SetDisplaySync(const Napi::CallbackInfo &info) {
+    if (!core || shutdown) return info.Env().Undefined();
     core->layer.displaySyncEnabled = info[0].ToBoolean().Value();
     return info.Env().Undefined();
   }
 
   Napi::Value Focus(const Napi::CallbackInfo &info) {
+    if (!core || shutdown) return info.Env().Undefined();
     [core->view.window makeFirstResponder:core->view];
     return info.Env().Undefined();
   }
 
   Napi::Value DisplayInfo(const Napi::CallbackInfo &info) {
+    if (!core) return info.Env().Undefined();
     NSMutableDictionary *d = [displayInfoFor(core->view.window) mutableCopy];
     d[@"visible"] = @((core->view.window.occlusionState & NSWindowOcclusionStateVisible) != 0);
     d[@"pixelFormat"] = core->layerFormat == MTLPixelFormatRGBA16Float ? @"rgbaf16" : @"bgra8";
@@ -769,6 +784,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
   // order, stride 6: id, submittedAt, tickAt, targetPresentation, presentedAt, gpuMs (seconds on the CACurrentMediaTime clock, gpu in ms).
   Napi::Value Stats(const Napi::CallbackInfo &info) {
     Napi::Env env = info.Env();
+    if (!core) return env.Undefined();
     bool reset = info.Length() > 0 && info[0].IsObject() && info[0].As<Napi::Object>().Get("reset").ToBoolean().Value();
     Counters c;
     std::vector<Sample> ordered;
@@ -821,6 +837,7 @@ class Presenter : public Napi::ObjectWrap<Presenter> {
   // capture(cb): reads back the next presented frame as { width, height, pixelFormat, data }. For tests and measurement only.
   Napi::Value Capture(const Napi::CallbackInfo &info) {
     Napi::Env env = info.Env();
+    if (!core || shutdown) return env.Undefined();
     if (info.Length() < 1 || !info[0].IsFunction()) {
       Napi::TypeError::New(env, "capture(callback)").ThrowAsJavaScriptException();
       return env.Undefined();
