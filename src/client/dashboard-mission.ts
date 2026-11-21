@@ -190,8 +190,12 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
       r.open.title = [w.name, role, status, line, ...meta].filter(Boolean).join(' · ');
       r.open.setAttribute('aria-label', `Open ${w.name}, ${role}, ${status}: ${line}`);
       r.split?.setAttribute('aria-label', `Open ${w.name} in a new pane`);
+      let mark: Element;
+      if (orchestrator) mark = icon('satellite', 13);
+      else if (agent.grokBot) mark = grokBotLogo(20);
+      else mark = icon('bot', 13);
       r.open.replaceChildren(
-        h('span.dash-mission-mark', { 'data-status': blocked ? 'blocked' : w.status, 'aria-hidden': 'true' }, orchestrator ? icon('satellite', 13) : agent.grokBot ? grokBotLogo(20) : icon('bot', 13), workerDot(w)),
+        h('span.dash-mission-mark', { 'data-status': blocked ? 'blocked' : w.status, 'aria-hidden': 'true' }, mark, workerDot(w)),
         h(
           'span.dash-row-main',
           {},

@@ -137,14 +137,11 @@ test('all-workers directory filters, opens cross-floor workers, and keeps focus 
   await page.evaluate(() => {
     const w = window as any;
     w.state.rows[4].grokBot = false;
-    w.paint();
-  });
-  await page.evaluate(() => {
-    const w = window as any;
     w.state.rows[0].worker.name = `<script>alert("unsafe")</script>${'Long name '.repeat(20)}`;
     w.state.rows[0].worker.worktree = { branch: `office/${'long-branch-'.repeat(30)}` };
     w.paint();
   });
+  assert.equal(await page.locator('[data-worker=bot] img.grokbot-logo').count(), 0);
   assert.equal(await page.locator('.dash-building script').count(), 0);
   for (const [width, height] of [
     [1440, 900],

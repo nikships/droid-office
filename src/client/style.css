@@ -2579,13 +2579,12 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dash-mission-mark.sm { width: 18px; height: 18px; }
 .dash-mission-mark.lg { width: 36px; height: 36px; border-radius: var(--radius-lg); }
 .dash-mission-bot .dash-mission-mark { color: var(--text-secondary); }
-.dash-mission-mark > .grokbot-logo { width: 100%; height: 100%; }
+:is(.dash-mission-mark, .bot-modal-mark) > .grokbot-logo { width: 100%; height: 100%; }
 .dash-mission-mark.lg > .grokbot-logo { border-radius: calc(var(--radius-lg) - 1px); }
 .dash-mission-mark > .dash-dot { position: absolute; right: -3px; bottom: -3px; width: 7px; height: 7px; }
 .dash-mission-mark.lg > .dash-dot { width: 9px; height: 9px; }
 .bot-modal-mark { display: inline-flex; align-items: center; flex: none; }
 .bot-modal-mark.is-grokbot { width: 24px; height: 24px; border: 1px solid var(--border-strong); border-radius: var(--radius); }
-.bot-modal-mark > .grokbot-logo { width: 100%; height: 100%; }
 .dash-mission-row.blocked .dash-row-doing { color: var(--warning); }
 .dash-mission-key { flex: none; margin: 0; }
 .dash-mission-off { display: flex; align-items: center; gap: var(--space-2); width: 100%; margin-bottom: var(--space-1); padding: var(--space-2); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); background: none; color: var(--text-secondary); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--duration) var(--ease), color var(--duration) var(--ease); }
