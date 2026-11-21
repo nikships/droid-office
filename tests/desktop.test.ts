@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { glBackend, gpuReport } from '../src/desktop/gpu.ts';
-import { linkAction } from '../src/desktop/links.ts';
+import { companionNavigation, linkAction } from '../src/desktop/links.ts';
 import { logTail, probePort, startOffice } from '../src/desktop/office.ts';
 import { officeRuntime } from '../src/desktop/runtime.ts';
 import { DEFAULT_PORT, defaultOfficeDir, isolatedPortOk, loadSettings, officeArgs, saveSettings, startedInProject } from '../src/desktop/settings.ts';
@@ -402,4 +402,22 @@ test('a run with its own userData attaches only to a running office, never on th
   assert.equal(isolatedPortOk(4677, 'free'), false);
   assert.equal(isolatedPortOk(4677, 'other'), false);
   assert.equal(isolatedPortOk(DEFAULT_PORT, 'office'), false);
+});
+
+test('companion navigation cannot escape into files, custom schemes or other office endpoints', () => {
+  const origin = 'http://localhost:4600/';
+  for (const url of ['http://localhost:4600/dashboard', 'http://localhost:4600/dashboard#worker=lead']) assert.equal(companionNavigation(url, origin), 'allow');
+  for (const url of ['https://example.com/', 'mailto:owner@example.com', 'http://example.com/']) assert.equal(companionNavigation(url, origin), 'external');
+  for (const url of [
+    'file:///etc/passwd',
+    'javascript:alert(1)',
+    'droid-office://thread/a?floor=b',
+    'http://localhost:4600/',
+    'http://localhost:4600/api/status',
+    'http://localhost:4600/dashboard?d=token',
+    'http://user:pass@localhost:4600/dashboard',
+    'not a URL',
+  ]) {
+    assert.equal(companionNavigation(url, origin), 'deny', url);
+  }
 });

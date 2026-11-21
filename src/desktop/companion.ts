@@ -1,6 +1,6 @@
 import { BrowserWindow, shell } from 'electron';
 import { COMPANION_CHROME } from './companion-chrome.js';
-import { companionNavigation } from './finder-links.js';
+import { companionNavigation } from './links.js';
 import { companionCommand, sendCompanionCommand } from './companion-commands.js';
 
 /** The dashboard in an ordinary Electron window, without the walkable office's Metal presenter. `main.ts` loads the page and owns the window. */
