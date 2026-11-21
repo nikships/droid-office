@@ -16,7 +16,6 @@ A 3D browser and Mac office where one owner hires Droid workers at desks and wor
 | Setup & Subscriptions: Droid install and sign-in, welcome, DroidProxy, quota, pace and model eligibility, Artificial Analysis benchmarks | [docs/subscriptions.md](docs/subscriptions.md) |
 | Office MCP: worker tools for teams, subagents, visits, questions and Whiteboards | [docs/office-mcp.md](docs/office-mcp.md) |
 | Mission Control: Orchestrator, external Tailscale bots, remote MCP | [docs/mission-control.md](docs/mission-control.md) |
-| Finder: Mac FinderSync extension, dispatch prompt, Keychain bridge, `/api/finder/*` | [docs/finder.md](docs/finder.md) |
 
 ## Repository map
 
@@ -27,7 +26,7 @@ Each directory with local rules carries its own `AGENTS.md`:
 | `src/server/`, `src/server/office-mcp/` | Node daemon (CLI, workers, PTY host, hooks, boards, pipelines, floors) and Office MCP tools |
 | `src/shared/` | Pure ES2022 types and logic shared by server and client (`protocol.ts`, `prompts.ts`, `layout.ts`) |
 | `src/client/` | Vite app: `ui/` (DOM modals and panels), `world/` (three.js scene), `/dashboard` (web companion) |
-| `src/desktop/`, `native/`, `build/`, `electron-builder.yml` | Mac Electron main process, Objective-C++ Metal presenter, Swift Finder bundles, signing and packaging |
+| `src/desktop/`, `native/`, `build/`, `electron-builder.yml` | Mac Electron main process, Objective-C++ Metal presenter, signing and packaging |
 | `android/` | Kotlin/Compose phone and tablet companion (independent Gradle build) |
 | `website/` | Public React/Vite marketing site workspace (`firebase.json`) |
 | `bin/`, `tests/`, `tools/`, `deploy/`, `docs/` | CLI entry, `node:test` suites, asset generators and frame benchmarks, AWS EC2 scripts, user guide and specs |

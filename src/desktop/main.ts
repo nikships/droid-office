@@ -7,9 +7,7 @@ import { downloadBrowser } from './browser.js';
 import { createCompanionWindow } from './companion.js';
 import { companionWindowMenu, sendCompanionCommand } from './companion-commands.js';
 import { contextMenu, editMenu } from './edit-menu.js';
-import { finderBridgeArgs, parseThreadLink } from './finder-links.js';
 import { leaveFullScreen } from './full-screen.js';
-import { explainFinder, openFinderSettings } from './finder.js';
 import { gpuReport } from './gpu.js';
 import { linkAction, windowOpenAction } from './links.js';
 import { fetchStatus, type Office, probePort, startOffice } from './office.js';
@@ -45,41 +43,10 @@ app.setPath('userData', userDataSwitch || path.join(app.getPath('appData'), 'com
 if (userDataSwitch) app.setPath('logs', path.join(userDataSwitch, 'logs'));
 /** A run with its own userData is a test run: it only shows an office that is already up, and never moves, updates or installs anything. */
 const isolated = Boolean(userDataSwitch);
-const finderEnabled = app.isPackaged && !isolated && !isStartupCheck();
 function hideDockIfNoWindows() {
   if (!appWindow()) app.dock?.hide();
 }
 
-/** A Finder thread link that arrived before the office could take it; the next window that opens on the office shows it. */
-let pendingThread: WorkerLink | undefined;
-/**
- * A Finder thread goes to the app's one window: the one that is open, or else the mode the owner last used
- * (`settings.mode`). Never a window of its own.
- */
-function receiveThread(raw: string): boolean {
-  if (!finderEnabled) return false;
-  const link = parseThreadLink(raw);
-  if (!link) return false;
-  const worker: WorkerLink = { worker: link.lead, floor: link.floor, view: 'thread' };
-  if (officeUrl && !opening && !switching) {
-    openWorker(worker);
-    return true;
-  }
-  pendingThread = worker;
-  windowWanted = true;
-  if (!starting) openWindow();
-  return true;
-}
-
-function takePendingThread(): string {
-  const link = pendingThread;
-  pendingThread = undefined;
-  return link ? workerHash(link) : '';
-}
-app.on('open-url', (event, url) => {
-  event.preventDefault();
-  receiveThread(url);
-});
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 const updateWindowsFile = path.join(app.getPath('userData'), 'update-windows.json');
 const logDir = app.getPath('logs');
@@ -344,7 +311,7 @@ async function openOffice() {
       office = await startOffice({
         runtime: officeRuntime(process.execPath),
         cli: path.join(app.getAppPath(), 'bin', 'droid-office.js'),
-        args: [...officeArgs(dir, port), ...finderBridgeArgs(app.getAppPath(), app.isPackaged, isolated)],
+        args: [...officeArgs(dir, port)],
         port,
         env: officeEnv,
         log: officeLog,
@@ -359,11 +326,9 @@ async function openOffice() {
       });
     }
     opening = false;
-    show(officePage(takePendingThread()));
-    if (finderEnabled && office) void explainFinder(app.getPath('userData')).catch(() => {});
+    show(officePage());
     void refreshTray();
   } catch (err) {
-    pendingThread = undefined;
     windowWanted = true;
     officeUrl = undefined;
     opening = false;
@@ -447,7 +412,7 @@ function openWindow() {
     current.base.focus();
     return;
   }
-  if (officeUrl && !opening) return createWindow(true, takePendingThread());
+  if (officeUrl && !opening) return createWindow(true);
   createWindow(false);
   if (opening) show(page('Opening the office…'));
   else void openOffice();
@@ -698,7 +663,6 @@ function menu(): Menu {
         { label: switchLabel(settings.mode ?? 'office'), click: () => trayAction('switch') },
         { label: 'Restart Office', click: () => void restartOffice() },
         { label: 'Change Office Folder…', click: () => void changeOfficeDir() },
-        ...(finderEnabled ? [{ label: 'Finder Extension Settings…', click: () => openFinderSettings() }] : []),
         { type: 'separator' },
         { label: 'Show Office Log', click: () => shell.showItemInFolder(officeLog) },
         { label: 'Show GPU Report', click: () => void writeGpuReport().then(() => shell.showItemInFolder(gpuLog)) },
@@ -739,9 +703,7 @@ function menu(): Menu {
 if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', (_event, argv) => {
-    if (!argv.some((arg) => receiveThread(arg))) openWindow();
-  });
+  app.on('second-instance', () => openWindow());
   app.on('activate', () => {
     if (starting) return;
     openWindow();
@@ -766,12 +728,8 @@ if (!isStartupCheck() && !app.requestSingleInstanceLock()) {
     .then(async () => {
       enforceRequirements();
       if (isStartupCheck()) return runStartupCheck();
-      if (finderEnabled) {
-        app.setAsDefaultProtocolClient('droid-office');
-        for (const arg of process.argv) receiveThread(arg);
-      }
       const updateWindows = takeUpdateWindows(updateWindowsFile);
-      if (updateWindows && !pendingThread) windowWanted = updateWindows.open;
+      if (updateWindows) windowWanted = updateWindows.open;
       if (updateWindows?.mode && updateWindows.mode !== settings.mode) {
         settings = { ...settings, mode: updateWindows.mode };
         saveSettings(settingsFile, settings);
