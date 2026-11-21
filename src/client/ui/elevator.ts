@@ -6,9 +6,8 @@ import { store } from '../state';
 import { createAddFloorSection, routeAddFloorMessage } from './add-floor';
 import { h, openModal, type Modal } from './dom';
 import { floorNo, floorStats } from './floormenu';
-import { floorDragHandle, floorReorder } from './floor-reorder';
+import { floorDragHandle, floorRemoveButton, floorReorder } from './floor-reorder';
 import { emptyState, windowHeader } from './kit';
-import { confirmDialog } from './prompt';
 
 // The elevator's panel: a button for every floor (every project), and "add a project", which lists the
 // git checkouts already in the office's workspace folder and makes the one you pick a new floor, right
@@ -73,22 +72,7 @@ export function openElevator(opts: ElevatorOptions): void {
   };
 
   /** The floor's button, with a 🗑 beside it to take it off the building (an empty slot where it can't be, so the rows line up). */
-  const floorRow = (f: FloorInfo, i: number) => {
-    const btn = floorButton(f, i);
-    const off = h('button.btn.icon.ghost.floor-off', { type: 'button', title: `Take ${f.name} off the building`, 'aria-label': `Remove ${f.name}` }, '🗑');
-    off.addEventListener('click', () => confirmRemove(f));
-    return h('div.list-row.floor-row', { role: 'listitem', 'data-floor-id': f.id, class: f.id === store.floor ? 'here on' : '' }, floorDragHandle(f.name), btn, f.home ? h('span.floor-off-slot') : off);
-  };
-
-  const confirmRemove = (f: FloorInfo) => {
-    const next = store.floors.find((o) => o.id !== f.id);
-    const workers = f.workers ? `Its ${f.workers} worker${f.workers === 1 ? '' : 's'} stop${f.workers === 1 ? 's' : ''}. ` : '';
-    const ride = f.id === store.floor ? `You ride the elevator to ${next ? next.name : 'the lobby'}. ` : '';
-    const own = f.local ? ' The office keeps its own settings there too, so it carries on as before, just without this floor.' : '';
-    confirmDialog(`Take ${f.name} off the building?`, `${workers}${ride}Nothing is deleted: its ${f.plain ? 'folder' : 'checkout'} stays in ${f.dir}, .droid-office folder and all.${own}`, 'Remove floor', () =>
-      net.send({ t: 'floor.remove', floor: f.id }),
-    );
-  };
+  const floorRow = (f: FloorInfo, i: number) => h('div.list-row.floor-row', { role: 'listitem', 'data-floor-id': f.id, class: f.id === store.floor ? 'here on' : '' }, floorDragHandle(f.name), floorButton(f, i), floorRemoveButton(f, net));
 
   /** The roof, over every floor. */
   const roofButton = () => {

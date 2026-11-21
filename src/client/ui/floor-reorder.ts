@@ -1,10 +1,35 @@
+import type { FloorInfo } from '../../shared/protocol';
 import type { Net } from '../net';
 import { store } from '../state';
 import { claimEscape, h, openModal, toast } from './dom';
 import { windowHeader } from './kit';
+import { confirmDialog } from './prompt';
 
 export function floorDragHandle(name: string): HTMLButtonElement {
   return h('button.btn.icon.ghost.floor-drag', { type: 'button', 'data-floor-drag': '', 'aria-label': `Reorder ${name}`, title: 'Drag to reorder. Arrow keys move this floor.' }, '⠿');
+}
+
+/**
+ * Asks, then takes the floor off the building. Its folder and .droid-office state stay on disk.
+ * [companion]: the web companion has no elevator, so the note on where you go says it plainly.
+ */
+export function confirmFloorRemove(f: FloorInfo, net: Net, companion = false): void {
+  const next = store.floors.find((o) => o.id !== f.id);
+  const workers = f.workers ? `Its ${f.workers} worker${f.workers === 1 ? '' : 's'} stop${f.workers === 1 ? 's' : ''}. ` : '';
+  const to = next ? next.name : 'the lobby';
+  const ride = f.id !== store.floor ? '' : companion ? `You go to ${to}. ` : `You ride the elevator to ${to}. `;
+  const own = f.local ? ' The office keeps its own settings there too, so it carries on as before, just without this floor.' : '';
+  confirmDialog(`Take ${f.name} off the building?`, `${workers}${ride}Nothing is deleted: its ${f.plain ? 'folder' : 'checkout'} stays in ${f.dir}, .droid-office folder and all.${own}`, 'Remove floor', () =>
+    net.send({ t: 'floor.remove', floor: f.id }),
+  );
+}
+
+/** The 🗑 button that takes a floor off the building (an empty slot for the home floor, so the rows line up). */
+export function floorRemoveButton(f: FloorInfo, net: Net, companion = false): HTMLElement {
+  if (f.home) return h('span.floor-off-slot');
+  const off = h('button.btn.icon.ghost.floor-off', { type: 'button', title: `Take ${f.name} off the building`, 'aria-label': `Remove ${f.name}` }, '🗑');
+  off.addEventListener('click', () => confirmFloorRemove(f, net, companion));
+  return off;
 }
 
 /** Pointer events work with a mouse, pen and touch, unlike native HTML drag-and-drop. */
@@ -160,20 +185,47 @@ export function floorReorder(list: HTMLElement, net: Net, reversed = false): () 
 
 export function openFloorOrder(net: Net): void {
   const list = h('div.list.boxed.floor-order-list', { 'aria-label': 'Floor order' });
-  const render = () =>
+  // The row that last had focus. A removed floor's confirm dialog gives focus back to nothing, so the
+  // next render puts it on the floor in that place (or the new last one) instead of the page.
+  let focusAt = -1;
+  list.addEventListener('focusin', (e) => {
+    const row = (e.target as Element).closest<HTMLElement>('[data-floor-id]');
+    focusAt = row ? [...list.querySelectorAll('[data-floor-id]')].indexOf(row) : -1;
+  });
+  const render = () => {
+    const active = document.activeElement;
+    const restore = focusAt >= 0 && (active === document.body || (active !== null && list.contains(active)));
+    const focusedId = active?.closest<HTMLElement>('[data-floor-id]')?.dataset.floorId;
+    const control = active?.matches('.floor-off') ? '.floor-off' : '[data-floor-drag]';
     list.replaceChildren(
       ...store.floors.map((f, i) =>
-        h('div.list-row.floor-reorder-row', { 'data-floor-id': f.id }, floorDragHandle(f.name), h('span.list-main', {}, h('span.list-title', { title: f.name }, f.name)), h('span.key', {}, i < 10 ? `⌘${(i + 1) % 10}` : String(i + 1))),
+        h(
+          'div.list-row.floor-reorder-row',
+          { 'data-floor-id': f.id },
+          floorDragHandle(f.name),
+          h('span.list-main', {}, h('span.list-title', { title: f.name }, f.name)),
+          h('span.key', {}, i < 10 ? `⌘${(i + 1) % 10}` : String(i + 1)),
+          floorRemoveButton(f, net, true),
+        ),
       ),
     );
+    if (!restore) return;
+    const rows = [...list.querySelectorAll<HTMLElement>('[data-floor-id]')];
+    const same = rows.find((r) => r.dataset.floorId === focusedId);
+    if (same) same.querySelector<HTMLElement>(control)?.focus();
+    else rows[Math.min(focusAt, rows.length - 1)]?.querySelector<HTMLElement>('[data-floor-drag]')?.focus();
+  };
   const dispose = floorReorder(list, net);
   const off = store.on('floors', render);
-  const modal = openModal(h('div.modal', {}, windowHeader('Reorder floors', 'Drag the handles. Floor numbers and Command shortcuts change for every device.'), h('div.body', {}, list)), {
-    onClose: () => {
-      dispose();
-      off();
+  const modal = openModal(
+    h('div.modal', {}, windowHeader('Reorder floors', 'Drag the handles to reorder. Floor numbers and Command shortcuts change for every device. 🗑 takes a floor off the building; its folder stays on disk.'), h('div.body', {}, list)),
+    {
+      onClose: () => {
+        dispose();
+        off();
+      },
     },
-  });
+  );
   render();
   modal.el.querySelector<HTMLElement>('[data-floor-drag]')?.focus();
 }

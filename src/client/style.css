@@ -1754,9 +1754,9 @@ a.when:hover { text-decoration: underline; }
 .elevator .floor-btn { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; min-width: 0; width: 100%; text-align: left; padding: 0; font: inherit; color: var(--text); background: none; border: 0; cursor: pointer; }
 .elevator .floor-btn:disabled { cursor: default; color: var(--text); }
 .elevator .floor-row { display: grid; grid-template-columns: var(--control-h) minmax(0, 1fr) var(--control-h); gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); }
-.elevator .floor-off, .elevator .floor-off-slot { width: var(--control-h); height: var(--control-h); }
-.elevator .floor-off { display: grid; place-items: center; padding: 0; font-size: 14px; }
-.elevator .floor-off:hover { border-color: var(--danger); color: var(--danger); background: rgba(239, 68, 68, .08); }
+.elevator .floor-off, .elevator .floor-off-slot, .floor-order-list .floor-off, .floor-order-list .floor-off-slot { flex: none; width: var(--control-h); height: var(--control-h); }
+.elevator .floor-off, .floor-order-list .floor-off { display: grid; place-items: center; padding: 0; font-size: 14px; }
+.elevator .floor-off:hover, .floor-order-list .floor-off:hover { border-color: var(--danger); color: var(--danger); background: rgba(239, 68, 68, .08); }
 .elevator .floor-no { width: 32px; height: 32px; border-radius: var(--radius); display: grid; place-items: center; font: 600 14px var(--font-mono); color: #fff; }
 .elevator .floor-text { display: flex; flex-direction: column; min-width: 0; }
 .elevator .floor-name { font-weight: 600; font-size: 14px; display: flex; gap: 8px; align-items: baseline; }
