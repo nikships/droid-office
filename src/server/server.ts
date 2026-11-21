@@ -70,7 +70,6 @@ import { WorkerLabels } from './worker-labels.js';
 import { LabelModelError, openAiLabel, WorkerLabelModel } from './worker-label-model.js';
 import { WorkerLabelPreferences } from './worker-label-settings.js';
 import { sameEndpointOrigin } from '../shared/worker-labels.js';
-import { FinderDispatch, finderCatalogue, handleFinder, publishFinder } from './finder.js';
 import { RemoteWorkers } from './remote-workers.js';
 import { RemoteOffice } from './remote-office.js';
 import { RemoteMcp } from './remote-mcp-http.js';
@@ -247,9 +246,6 @@ export async function startServer(cfg: Config) {
   const answers = new Answers();
 
   // --- Loopback-only endpoint for authenticated agent events -------------------------------
-  let finder: FinderDispatch | undefined;
-  let finderToken: string | undefined;
-  const finderModels = async () => finderCatalogue(await availableDroidModels(), hiddenModels.state(), prompts.agent()?.model);
   let officeMcp: OfficeMcpServer | undefined;
   const hookServer = http.createServer(async (req, res) => {
     let url: URL;
@@ -258,7 +254,6 @@ export async function startServer(cfg: Config) {
     } catch {
       return send(res, 400, {});
     }
-    if (url.pathname.startsWith('/api/finder/')) return handleFinder(req, res, url.pathname, finderToken, finder, finderModels);
     if (url.pathname === OFFICE_MCP_PATH) {
       if (!officeMcp) return send(res, 503, { error: 'Office MCP is starting' });
       return officeMcp.handle(req, res);
@@ -2599,8 +2594,6 @@ export async function startServer(cfg: Config) {
     threadWatches?.close();
     const labelsStopped = workerLabels.stop();
     hostUpdates.dispose();
-    finder?.stop();
-    finderToken = undefined;
     stopClientTimers();
     clearTimeout(floorsTimer);
     transport.clearOffFloorScreens();
@@ -2627,33 +2620,6 @@ export async function startServer(cfg: Config) {
     httpsGateway.stop();
     return labelsStopped;
   };
-
-  if (cfg.finderBridge) {
-    finder = new FinderDispatch({
-      building,
-      dataDir: cfg.dataDir,
-      officeUrl: () => `${cfg.tls ? 'https' : 'http'}://127.0.0.1:${(server.address() as AddressInfo).port}/`,
-      models: finderModels,
-      dispatch: (def, text, model) => {
-        const floor = floors.get(def.id) ?? openFloor(def);
-        if (!floor) return 'The floor could not be opened. Check the office log.';
-        const result = floor.workers.dispatchWorker(text, model);
-        if (typeof result === 'string') return result;
-        return { leadId: result.info.id, model: result.info.activeModel ?? result.info.model };
-      },
-      changed: () => {
-        // Open newly registered floors immediately so every companion and elevator sees the same registry.
-        for (const def of building.list()) if (!floors.has(def.id)) openFloor(def);
-        floorsChanged();
-      },
-    });
-    try {
-      finderToken = await publishFinder(cfg.finderBridge, `http://127.0.0.1:${hookPort}/`);
-    } catch (err) {
-      shutdown(true);
-      throw err;
-    }
-  }
 
   return {
     server,

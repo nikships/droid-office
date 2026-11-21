@@ -69,6 +69,6 @@ test('the update captures the window before shutdown and restores it before laun
   const restore = main.indexOf('const updateWindows = takeUpdateWindows(updateWindowsFile)');
   assert.ok(restore > main.indexOf('app.requestSingleInstanceLock()'), 'another app instance must not consume the snapshot');
   assert.ok(restore < main.indexOf("show(page('Opening the office…'))", restore), 'the initial splash must honor the saved window state');
-  assert.match(main, /if \(updateWindows && !pendingThread\) windowWanted = updateWindows\.open/);
+  assert.match(main, /if \(updateWindows\) windowWanted = updateWindows\.open/);
   assert.match(main, /await openOffice\(\);\s*starting = false;\s*hideDockIfNoWindows\(\);/);
 });

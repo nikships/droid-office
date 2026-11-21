@@ -15,8 +15,6 @@ export interface Config {
   homeFloor?: string;
   /** Factory skills directory for legacy cleanup and locating mcp.json; unset in tests to leave the user's profile alone. */
   skillsDir?: string;
-  /** Signed native Keychain bridge supplied by the packaged Mac app, never enabled by default. */
-  finderBridge?: string;
   /**
    * Serve external workers' MCP on the tailnet with Tailscale Serve (the CLI sets it unless
    * DROID_OFFICE_REMOTE_MCP=off; unset in tests, so they never touch a tailnet).
@@ -99,9 +97,6 @@ Options:
       --tls-key <file>    ...and this private key (PEM)
       --self-signed       Serve HTTPS with a generated self-signed certificate
       --trust-proxy       Trust X-Forwarded-* headers on the local listener
-      --finder-bridge <file>
-                          Signed macOS Keychain helper for Finder dispatch.
-                          Supplied by the Mac app; disabled when absent
       --max-workers <n>   Run at most this many workers at once, across every
                           floor (env DROID_OFFICE_MAX_WORKERS). Hiring past it
                           is refused. It can be lowered from ⚙️
@@ -216,7 +211,6 @@ export function loadConfig(argv: string[]): Config {
   let tlsKey = '';
   let selfSigned = false;
   let trustProxy = false;
-  let finderBridge: string | undefined;
   let maxWorkers = process.env.DROID_OFFICE_MAX_WORKERS || '';
   let city = process.env.DROID_OFFICE_CITY || '';
   let weather = process.env.DROID_OFFICE_WEATHER || '';
@@ -255,9 +249,6 @@ export function loadConfig(argv: string[]): Config {
         break;
       case '--trust-proxy':
         trustProxy = true;
-        break;
-      case '--finder-bridge':
-        finderBridge = path.resolve(takeValue(argv, i++, a));
         break;
       case '--max-workers':
         maxWorkers = takeValue(argv, i++, a);
@@ -342,7 +333,6 @@ export function loadConfig(argv: string[]): Config {
     agentArgs,
     tls,
     trustProxy,
-    finderBridge,
     maxWorkers: workerLimit,
     city: city.trim() || undefined,
     weather: (weather as Weather) || undefined,

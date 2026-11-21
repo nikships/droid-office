@@ -20,8 +20,7 @@ test('CI checks only the affected platforms and builds every client change into 
   assert.deepEqual(checksFor(['android/app/src/main/java/ai/factory/droidoffice/core/AppUpdate.kt']), { ...none, android: true });
   assert.deepEqual(checksFor(['android/gradle/libs.versions.toml']), { ...none, android: true });
   assert.deepEqual(checksFor(['android/app/src/main/assets/terminal/input.js']), { ...none, node: true, android: true });
-  // The Mac Finder prompt bundles the Android model marks.
-  assert.deepEqual(checksFor(['android/app/src/main/assets/model-icons/gemini.png']), { ...none, node: true, mac: true, android: true });
+  assert.deepEqual(checksFor(['android/app/src/main/assets/model-icons/gemini.png']), { ...none, node: true, android: true });
   assert.deepEqual(checksFor(['website/src/App.tsx']), { ...none, website: true });
   assert.deepEqual(checksFor(['firebase.json', '.firebaserc']), { ...none, website: true });
   assert.deepEqual(checksFor(['tests/desktop.test.ts']), { ...none, node: true });
@@ -207,13 +206,13 @@ test('release versions, packages, signing, bundle smoke checks and uploads only 
     ...jobSteps('release').filter((step) => step.includes('name: Set the release version')),
     ...jobSteps('mac').filter(
       (step) =>
-        !/actions\/checkout|actions\/setup-node|name: Install and build|name: Recover a keychain left by an interrupted run|name: Check the runner's toolchain|name: Restore the runner's keychains|name: Check the native (?:Metal presenter|Finder integration)/.test(
+        !/actions\/checkout|actions\/setup-node|name: Install and build|name: Recover a keychain left by an interrupted run|name: Check the runner's toolchain|name: Restore the runner's keychains|name: Check the native Metal presenter/.test(
           step,
         ),
     ),
     ...jobSteps('android').filter((step) => /name: Set the release version|name: Build the release APK|name: Hand the APK to the publish job/.test(step)),
   ];
-  assert.equal(releaseSteps.length, 15);
+  assert.equal(releaseSteps.length, 13);
   assert.doesNotMatch(workflow, /Build the app unsigned|mac\.identity=null/);
   for (const step of releaseSteps) {
     const label = step.trim().split('\n')[0];
@@ -228,7 +227,7 @@ test('release versions, packages, signing, bundle smoke checks and uploads only 
 test('PRs retain builds, native compilation, coverage, Android tests and checkout smoke checks', () => {
   for (const [job, fragments] of [
     ['release', ['name: Install and build', 'run: npm run lint', 'run: npm run typecheck', 'name: Test with coverage', 'name: Start the office from the checkout']],
-    ['mac', ['name: Install and build', 'name: Check the native Metal presenter', 'name: Check the native Finder integration']],
+    ['mac', ['name: Install and build', 'name: Check the native Metal presenter']],
     ['android', ['name: Unit tests and lint']],
     ['website', ['run: npm run build:website']],
   ] as const) {
