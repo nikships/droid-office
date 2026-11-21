@@ -21,7 +21,7 @@ import { countCtrlEnterInputs, isCancelInput, isClearQueueInput } from '../share
 import { WORKSPACE_FILES, WORKTREES_DIR, Worktrees, describeWork, workspaceOf, type WorktreeCleanup, type WorktreeRef, type WorktreeStart, type WorktreeState } from './worktrees.js';
 import { checkoutDirty, choosePullBase, pushBranch } from './open-pull.js';
 import { normalizeRepo } from '../shared/floors.js';
-import { DESK_BY_ID, nextFreeSeat, type DeskDef } from '../shared/layout.js';
+import { DESK_BY_ID, type DeskDef } from '../shared/layout.js';
 import { officePrompt, type PromptSource } from './prompts.js';
 import { forgeVars, placeholders, PROMPTS, withoutReminders, workerMessageVars } from '../shared/prompts.js';
 import { isAsleep, isBusy } from '../shared/status.js';
@@ -1163,43 +1163,6 @@ export class WorkerManager {
     this.emitUpdate(w);
     this.persist();
     return undefined;
-  }
-
-  /** Finder reuses an ordinary worker it hired; never overwrite a running turn or CLI question. */
-  dispatchWorker(text: string, model?: string): { info: WorkerInfo; hired: boolean } | string {
-    if (this.closing) return 'The office is closing';
-    if (!text.trim()) return 'Empty prompt';
-    const w = [...this.workers.values()].find((x) => x.info.createdBy === 'Finder' && x.info.kind === 'agent' && !x.info.lead && !x.info.remote);
-    if (w) {
-      if (isBusy(w.info.status) || w.launchPrompt || (w.info.lastInputAt !== undefined && Date.now() - w.info.lastInputAt < 2000)) {
-        return 'The Finder worker is busy or waiting on input. Open its thread and try again when it is ready.';
-      }
-      const effectiveModel = model ?? w.info.activeModel ?? w.info.model;
-      const error = validateWorkerModel('agent', effectiveModel) ?? this.modelGate?.(effectiveModel);
-      if (error) return error;
-      if (model && model !== (w.info.activeModel ?? w.info.model)) {
-        if (this.checkLost(w, true)) return lostMessage(w.info);
-        // Model overlays apply at launch, so resume the same conversation rather than typing a CLI command.
-        const proc = w.pty;
-        w.pty = undefined;
-        proc?.kill();
-        w.info.model = model;
-        w.info.effort = undefined;
-        w.info.activeModel = undefined;
-        w.info.activeEffort = undefined;
-      }
-    }
-    if (w) {
-      w.info.lastInputAt = Date.now();
-      const error = w.pty ? this.prompt(w.info.id, text) : this.resume(w.info.id, text);
-      return error ?? { info: w.info, hired: false };
-    }
-    const seat = this.pickSeat(nextFreeSeat);
-    if (!seat) return 'No free desks or bean bags for Finder dispatch';
-    const info = this.spawn(seat.id, 'Finder', text, false, 'agent', model);
-    if (typeof info === 'string') return info;
-    info.lastInputAt = Date.now();
-    return { info, hired: true };
   }
 
   /** Keeps a picture pasted into a prompt that isn't sent yet; its id, or undefined when it isn't a picture or couldn't be kept. */

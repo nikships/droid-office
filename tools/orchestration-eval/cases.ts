@@ -43,8 +43,8 @@ export const EVAL_CASES: EvalCase[] = [
           name: 'Pixel',
           floor: 'droid-office',
           status: 'working',
-          task: { name: 'Finder Keychain', summary: 'Validating keychain token refresh' },
-          activity: 'Running tests/finder.test.ts',
+          task: { name: 'Wake Filter Keychain', summary: 'Validating keychain token refresh' },
+          activity: 'Running tests/wake-filter.test.ts',
         },
         {
           id: 'w-nova',
@@ -237,7 +237,7 @@ export const EVAL_CASES: EvalCase[] = [
   {
     id: 'overlap-existing-worker-and-file-ownership',
     category: 'coordination',
-    description: 'Inspects existing floor workers before hiring, avoids colliding with an active owner-hired worker on src/server/finder.ts, and assigns explicit single-writer file ownership.',
+    description: 'Inspects existing floor workers before hiring, avoids colliding with an active owner-hired worker on src/server/wake-filter.ts, and assigns explicit single-writer file ownership.',
     world: {
       role: 'orchestrator',
       floors: DEFAULT_FLOORS,
@@ -247,22 +247,24 @@ export const EVAL_CASES: EvalCase[] = [
           name: 'Pixel',
           floor: 'droid-office',
           status: 'working',
-          task: { name: 'Finder Status Auth', summary: 'Refactoring /api/finder/status in src/server/finder.ts' },
-          activity: 'Editing src/server/finder.ts',
-          worktree: { path: '.droid-office/worktrees/pixel', branch: 'feat/finder-status', base: '1111111111111111111111111111111111111111' },
-          tail: 'Editing src/server/finder.ts:42 — refactoring handleFinderStatus response headers\nUncommitted edits in src/server/finder.ts',
+          task: { name: 'Wake Filter Status', summary: 'Refactoring /api/wake-filter/status in src/server/wake-filter.ts' },
+          activity: 'Editing src/server/wake-filter.ts',
+          worktree: { path: '.droid-office/worktrees/pixel', branch: 'feat/wake-filter-status', base: '1111111111111111111111111111111111111111' },
+          tail: 'Editing src/server/wake-filter.ts:42 — refactoring handleWakeFilterStatus response headers\nUncommitted edits in src/server/wake-filter.ts',
         },
       ],
     },
     prompt:
-      'Add rate-limit headers to /api/finder/status in src/server/finder.ts, add a new /api/diagnostics endpoint in src/server/diagnostics.ts, and wire any shared response types in src/shared/protocol.ts.\n\nDroid Office notice: The owner sent this from the droid-office floor (/work/droid-office).',
+      'Add rate-limit headers to /api/wake-filter/status in src/server/wake-filter.ts, add a new /api/diagnostics endpoint in src/server/diagnostics.ts, and wire any shared response types in src/shared/protocol.ts.\n\nDroid Office notice: The owner sent this from the droid-office floor (/work/droid-office).',
     maxSteps: 6,
     grade({ calls, state }) {
       const lookedAtPixel = okCalls(calls, 'office_look').some((c) => /pixel|w-pixel/i.test(String(c.args.name ?? '')));
       const rosterRead = okCalls(calls, 'office_roster').length > 0;
-      // Check that no newly hired subagent is told to edit src/server/finder.ts while Pixel is editing it.
-      const collidingFinderHire = state.hiredWorkers.some(
-        (h) => /finder\.ts/i.test(h.brief) && !/(?:do not|don't|never|avoid|leave|out[- ]of[- ]bounds|owned by Pixel|hands off)[^.\n]*finder\.ts|finder\.ts[^.\n]*(?:out[- ]of[- ]bounds|do not|owned by Pixel|untouched)/i.test(h.brief),
+      // Check that no newly hired subagent is told to edit src/server/wake-filter.ts while Pixel is editing it.
+      const collidingWakeFilterHire = state.hiredWorkers.some(
+        (h) =>
+          /wake-filter\.ts/i.test(h.brief) &&
+          !/(?:do not|don't|never|avoid|leave|out[- ]of[- ]bounds|owned by Pixel|hands off)[^.\n]*wake-filter\.ts|wake-filter\.ts[^.\n]*(?:out[- ]of[- ]bounds|do not|owned by Pixel|untouched)/i.test(h.brief),
       );
       const steeredPixelOrDeferred = state.messagedWorkers.some((m) => /pixel/i.test(m.id) && /rate-limit/i.test(m.text));
       const protocolDoubleWrite = state.hiredWorkers.filter((h) => /protocol\.ts/i.test(h.brief) && !/(?:do not|don't|never|read-only|leave)[^.\n]*protocol\.ts/i.test(h.brief)).length > 1;
@@ -273,9 +275,9 @@ export const EVAL_CASES: EvalCase[] = [
           detail: `roster=${rosterRead}, office_look(Pixel)=${lookedAtPixel}`,
         },
         {
-          name: 'avoids-concurrent-edit-collision-on-finder',
-          ok: !collidingFinderHire && steeredPixelOrDeferred,
-          detail: collidingFinderHire ? 'Hired a new worker to edit src/server/finder.ts on top of Pixel.' : 'Handled Pixel overlap cleanly.',
+          name: 'avoids-concurrent-edit-collision-on-wake-filter',
+          ok: !collidingWakeFilterHire && steeredPixelOrDeferred,
+          detail: collidingWakeFilterHire ? 'Hired a new worker to edit src/server/wake-filter.ts on top of Pixel.' : 'Handled Pixel overlap cleanly.',
         },
         {
           name: 'single-writer-ownership-for-shared-protocol',

@@ -450,7 +450,7 @@ test('real MCP transport enforces host, tailnet identity, remote bearer auth, re
   assert.equal(((await wrongKey.json()) as { code: string }).code, 'bad_token', 'a bot that names itself is told its key is wrong, not its id');
   const stranger = await proxyFetch(url, { method: 'POST', headers: { ...headers, Authorization: 'Bearer wrong', 'x-droid-office-worker-id': 'remote-nobody' }, body: '{}' });
   assert.equal(((await stranger.json()) as { code: string }).code, 'unknown_worker_id');
-  for (const route of ['/hooks/droid', '/api/finder/dispatch', '/office/remote-workers', '/']) assert.equal((await fetch(new URL(route, origin), { headers })).status, 404);
+  for (const route of ['/hooks/droid', '/office/remote-workers', '/']) assert.equal((await fetch(new URL(route, origin), { headers })).status, 404);
   const client = new Client({ name: 'remote-test', version: '1' });
   t.after(() => client.close());
   await client.connect(new StreamableHTTPClientTransport(url, { fetch: proxyFetch, requestInit: { headers } }));
