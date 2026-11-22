@@ -4,10 +4,69 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { COMPANION_PATH, companionLink, originKind } from '../src/shared/devices.js';
-import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run } from '../src/shared/protocol.js';
+import { ORCHESTRATOR_ID, type MissionControlState } from '../src/shared/mission-control.js';
+import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run, type WorkerInfo } from '../src/shared/protocol.js';
+import { buildingRoster } from '../src/client/dashboard-building.js';
+import { buildingWaitingCount, companionDocumentTitle } from '../src/client/dashboard-title.js';
 import { previewRows, runColor } from '../src/client/screen-preview.js';
 import { TERM_THEME } from '../src/client/term-theme.js';
+import { officeStatus } from '../src/server/office-status.js';
 import { WebCompanion } from '../src/server/web-companion.js';
+
+function worker(id: string, status: WorkerInfo['status'], fields: Partial<WorkerInfo> = {}): WorkerInfo {
+  return { id, name: id, kind: 'agent', deskId: '', color: '#eee', status, acked: false, createdBy: '', createdAt: 0, cols: 0, rows: 0, open: false, ...fields };
+}
+
+test('the companion title identifies its surface and only prefixes positive waiting counts', () => {
+  assert.equal(companionDocumentTitle('Droid Office', 0, true), 'Droid Office · Companion');
+  assert.equal(companionDocumentTitle('Studio', 4, true), '(4) Studio · Companion');
+  assert.equal(companionDocumentTitle('Studio', 1, false), '(1) Studio · Web companion');
+  assert.equal(companionDocumentTitle('Studio', 0, false), 'Studio · Web companion');
+});
+
+test('the title waiting count matches the badge across live and background floors', () => {
+  const local = [worker('question', 'needs_input', { lead: 'lead', acked: true }), worker('shell', 'needs_input', { kind: 'shell' })];
+  const other = [worker('finished', 'done', { kind: 'cloud' }), worker('acknowledged', 'done', { acked: true }), worker('subagent-finished', 'done', { lead: 'lead' }), worker('lead', 'working')];
+  const building = new Map([
+    ['local', { floor: 'local', workers: [worker('gone', 'needs_input')], pulls: [] }],
+    ['other', { floor: 'other', workers: other, pulls: [] }],
+  ]);
+  const buildingRows = buildingRoster({ floors: [], building, currentFloor: 'local', workers: local });
+  const status = officeStatus(
+    [
+      { id: 'local', name: 'Local', workers: local },
+      { id: 'other', name: 'Other', workers: other },
+    ],
+    [],
+  );
+  assert.equal(status.needsInput + status.done, 2);
+  assert.equal(buildingWaitingCount({ buildingRows }), status.needsInput + status.done);
+});
+
+test('Mission Control counts its Orchestrator once, with or without a team, and does not count bots', () => {
+  const team = [{ id: 'teammate', name: 'Teammate', floor: 'local', floorName: 'Local', status: 'working' as const }];
+  const orchestrator = worker(ORCHESTRATOR_ID, 'done');
+  const mission: MissionControlState = {
+    orchestrator: { settings: { on: true }, team: [], agent: { worker: orchestrator, team: [] } },
+    bots: [{ worker: worker('bot', 'needs_input'), team }],
+  };
+  const rows = () => buildingRoster({ floors: [], building: new Map(), currentFloor: null, workers: [], mission });
+  assert.deepEqual(
+    rows().map((row) => row.worker.id),
+    ['bot'],
+  );
+  assert.equal(buildingWaitingCount({ buildingRows: rows(), mission }), 1);
+  mission.orchestrator.team = team;
+  assert.ok(rows().some((row) => row.worker.id === ORCHESTRATOR_ID));
+  const remote = { worker: worker('remote', 'needs_input', { remote: true }), kind: 'desk' as const, floorId: 'local', floorName: 'Local', depth: 0 };
+  assert.equal(buildingWaitingCount({ buildingRows: [...rows(), remote], mission }), 1);
+  orchestrator.acked = true;
+  assert.equal(buildingWaitingCount({ buildingRows: rows(), mission }), 0);
+  orchestrator.status = 'needs_input';
+  assert.equal(buildingWaitingCount({ buildingRows: rows(), mission }), 1);
+  mission.orchestrator.settings.on = false;
+  assert.equal(buildingWaitingCount({ buildingRows: rows(), mission }), 0);
+});
 
 test('a page knows how it reached the office from its host name', () => {
   for (const host of ['localhost', 'LOCALHOST', 'office.localhost', '127.0.0.1', '127.4.5.6', '::1', '[::1]']) assert.equal(originKind(host), 'local', host);

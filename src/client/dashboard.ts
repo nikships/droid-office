@@ -1,6 +1,5 @@
 import './scrollbars';
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
-import { needsOwnerInput } from '../shared/status';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
 import { ROOF } from '../shared/rooftop';
 import { repoChoices } from '../shared/floors';
@@ -54,6 +53,7 @@ import { createPane, type Pane, type PaneHost, VIEW_KEY } from './dashboard-pane
 import { createWorkerRoster } from './dashboard-roster';
 import { buildingCounts, buildingRoster, type BuildingWorkerRow } from './dashboard-building';
 import { createBuildingView } from './dashboard-building-view';
+import { buildingWaitingCount, companionDocumentTitle } from './dashboard-title';
 import { buildTriageFloors, filterSwitcherFloors, nextUrgentTarget, rankTriageFloors, type TriageFloor, unackedDoneBuildingCount } from './dashboard-triage';
 import { fitTabs } from '../shared/floor-relevance';
 import { createWorkerMenu } from './dashboard-worker-menu';
@@ -66,7 +66,7 @@ import { forgeVars } from '../shared/prompts';
 import { INCLUDE_FILE, SETUP_FILE, describeSetup } from '../shared/worktree-setup';
 import { ORCHESTRATOR_ID } from '../shared/mission-control';
 import { createMissionRoster } from './dashboard-mission';
-import { missionWaiting, missionWorker } from './mission';
+import { missionWorker } from './mission';
 store.decodeBitmaps = false;
 const read = (key: string) => {
   try {
@@ -1026,6 +1026,10 @@ function followWorkerLink() {
     return;
   }
   if (result.step === 'gone') return toast('That worker or floor is no longer available.', 'warn');
+  closeAllModals();
+  showQuiet(false);
+  showLayouts(false);
+  workerMenu.close();
   if (result.link.view === 'thread') ws.views[result.link.worker] = 'thread';
   openHere(result.link.worker, true);
 }
@@ -1286,6 +1290,7 @@ function paintNow() {
   board.hidden = subscriptions.hidden = settingsBtn.hidden = !authorized;
   paintBanner();
   if (!authorized) {
+    document.title = companionDocumentTitle(officeName, 0, nativeCompanion);
     gitPill.hidden = true;
     pulse.hidden = true;
     showQuiet(false);
@@ -1294,6 +1299,7 @@ function paintNow() {
     return paintGate();
   }
   const buildingRows = buildingRoster({ floors: store.floors, building: store.building, currentFloor: store.floor, workers: store.workers.values(), mission: store.missionControl });
+  document.title = companionDocumentTitle(officeName, buildingWaitingCount({ buildingRows, mission: store.missionControl }), nativeCompanion);
   latestBuildingRows = buildingRows;
   paintConsole(up, buildingRows);
   allWorkersCount.textContent = String(buildingRows.length);
@@ -1304,8 +1310,6 @@ function paintNow() {
   boardCount.textContent = String(unread);
   boardCount.classList.toggle('hidden', !unread);
   board.setAttribute('aria-label', unread ? `Whiteboard, ${unread} unread` : 'Whiteboard');
-  const needs = [...store.workers.values()].filter(needsOwnerInput).length + missionWaiting(store.missionControl);
-  document.title = `${needs ? `(${needs}) ` : ''}${officeName} · Web companion`;
   if (fresh && wsFloor === floor) {
     const { gone, filled } = syncWorkspace(ws, ordered(), onFloor, inMission);
     // A building agent leaves no floor: it was turned off or removed, which the office already says.
