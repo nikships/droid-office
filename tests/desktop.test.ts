@@ -6,7 +6,8 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { glBackend, gpuReport } from '../src/desktop/gpu.ts';
-import { companionNavigation, linkAction } from '../src/desktop/links.ts';
+import { companionEditMenu } from '../src/desktop/edit-menu.js';
+import { companionNavigation, companionWindowOpenAction, linkAction } from '../src/desktop/links.ts';
 import { logTail, probePort, startOffice } from '../src/desktop/office.ts';
 import { officeRuntime } from '../src/desktop/runtime.ts';
 import { DEFAULT_PORT, defaultOfficeDir, isolatedPortOk, loadSettings, officeArgs, saveSettings, startedInProject } from '../src/desktop/settings.ts';
@@ -95,6 +96,11 @@ test('settings survive a round trip and ignore what makes no sense', (t) => {
   assert.deepEqual(loadSettings(file), {});
   saveSettings(file, { officeDir: '/x/office', port: 4700, menuBarExplained: true, notify: false, mode: 'companion' });
   assert.deepEqual(loadSettings(file), { officeDir: '/x/office', port: 4700, menuBarExplained: true, notify: false, mode: 'companion' });
+  const companionBounds = { x: -900, y: 36, width: 870, height: 620, maximized: false, fullScreen: true };
+  saveSettings(file, { mode: 'companion', companionBounds });
+  assert.deepEqual(loadSettings(file), { mode: 'companion', companionBounds });
+  writeFileSync(file, JSON.stringify({ mode: 'companion', companionBounds: { ...companionBounds, x: null } }));
+  assert.deepEqual(loadSettings(file), { mode: 'companion' });
   writeFileSync(file, JSON.stringify({ officeDir: 3, port: 99999, menuBarExplained: 'yes', notify: 'no', mode: 'both' }));
   assert.deepEqual(loadSettings(file), {});
   writeFileSync(file, '{not json');
@@ -420,4 +426,20 @@ test('companion navigation cannot escape into files, custom schemes or other off
   ]) {
     assert.equal(companionNavigation(url, origin), 'deny', url);
   }
+});
+
+test('companion new-window links allow the default browser or mail handler, even on the office origin', () => {
+  const officeUrl = 'http://localhost:4600/';
+  for (const url of ['http://localhost:4600/dashboard', 'http://localhost:4600/dashboard?d=link', 'http://example.com/', 'https://example.com/', 'mailto:owner@example.com']) {
+    assert.equal(companionWindowOpenAction(url, officeUrl), 'browser');
+  }
+  for (const url of ['file:///tmp/file', 'javascript:void(0)', 'droid-office://thread/a', 'https://user@example.com', 'https://:pass@example.com', '/dashboard', 'bad URL']) {
+    assert.equal(companionWindowOpenAction(url, officeUrl), 'ignore', url);
+  }
+});
+
+test('the companion Edit menu uses the focused native edit roles instead of fixed target callbacks', () => {
+  const menu = companionEditMenu();
+  assert.equal(menu.label, 'Edit');
+  assert.deepEqual(menu.submenu, [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'pasteAndMatchStyle' }, { role: 'delete' }, { role: 'selectAll' }]);
 });

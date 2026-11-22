@@ -30,6 +30,10 @@ test('companion controls, lower floor bays, popovers and modals opt out of the n
   const display = (selector: string) => page.locator(selector).evaluate((el) => getComputedStyle(el).display);
   assert.equal(await region('.dash-top'), 'drag');
   assert.equal(await padLeft('.dash-top-upper'), '88px');
+  await page.locator('body').evaluate((body) => body.classList.add('companion-fullscreen'));
+  assert.equal(await padLeft('.dash-top-upper'), '12px');
+  await page.locator('body').evaluate((body) => body.classList.remove('companion-fullscreen'));
+  assert.equal(await padLeft('.dash-top-upper'), '88px');
   assert.equal(await padLeft('.dash-top-lower'), '0px');
   assert.equal(await display('.dash-git-pill'), 'none');
   assert.equal(await display('.dash-quiet-bay'), 'none');

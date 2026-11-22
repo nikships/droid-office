@@ -11,6 +11,17 @@ export function windowOpenAction(url: string, officeOrigin: string): 'browser' |
   return linkAction(url, officeOrigin) === 'ignore' ? 'ignore' : 'browser';
 }
 
+/** New companion tabs open outside the app, including links back to the office. Unlike navigation, this needs no office origin. */
+export function companionWindowOpenAction(raw: string, _officeUrl: string): 'browser' | 'ignore' {
+  try {
+    const url = new URL(raw);
+    if (!url.username && !url.password && ['https:', 'http:', 'mailto:'].includes(url.protocol)) return 'browser';
+  } catch {
+    // Invalid URLs must not reach the system handler.
+  }
+  return 'ignore';
+}
+
 /** Only the companion itself may replace the trusted window. External web links go to a browser. */
 export function companionNavigation(raw: string, officeUrl: string): 'allow' | 'external' | 'deny' {
   try {

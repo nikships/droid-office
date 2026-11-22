@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { type CompanionBounds, parseCompanionBounds } from './companion-bounds.js';
 
 /** How the app's one window shows the office: the walkable 3D office, or the web companion (`/dashboard`) in an ordinary window. */
 export type WindowMode = 'office' | 'companion';
@@ -9,6 +10,8 @@ export type WindowMode = 'office' | 'companion';
 export interface DesktopSettings {
   /** Which of the two the window opens as, and what the menu bar's Switch changes. Unset: the 3D office. */
   mode?: WindowMode;
+  /** The companion's normal window frame and presentation state, independent of the 3D office. */
+  companionBounds?: CompanionBounds;
   /** The folder the office keeps its data in. Unset until the first launch asks. */
   officeDir?: string;
   /** The port the app starts the office on. Default: 4600, like `droid-office`. */
@@ -30,6 +33,8 @@ export function loadSettings(file: string): DesktopSettings {
     if (raw.menuBarExplained === true) out.menuBarExplained = true;
     if (typeof raw.notify === 'boolean') out.notify = raw.notify;
     if (raw.mode === 'office' || raw.mode === 'companion') out.mode = raw.mode;
+    const companionBounds = parseCompanionBounds(raw.companionBounds);
+    if (companionBounds) out.companionBounds = companionBounds;
     return out;
   } catch {
     return {};

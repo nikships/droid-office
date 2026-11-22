@@ -1,6 +1,6 @@
 import type { ContextMenuParams, MenuItemConstructorOptions } from 'electron';
 
-/** What the Edit menu and the context menu run on: the offscreen page. A menu role would target the focused window's contents, and the office window has none. */
+/** The page targeted by a context menu or the offscreen presenter's Edit menu. */
 export interface EditTarget {
   undo(): void;
   redo(): void;
@@ -34,14 +34,28 @@ export function editMenu(target: () => EditTarget | undefined): MenuItemConstruc
   };
 }
 
-/** The part of Electron's `context-menu` params the menu is built from. */
-export type ContextParams = Pick<ContextMenuParams, 'linkURL' | 'isEditable' | 'selectionText' | 'editFlags'>;
+/** In companion mode let Electron send Edit shortcuts to the actually focused WebContents. */
+export function companionEditMenu(): MenuItemConstructorOptions {
+  return {
+    label: 'Edit',
+    submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'pasteAndMatchStyle' }, { role: 'delete' }, { role: 'selectAll' }],
+  };
+}
 
-/** The menu for a right click the page did not handle itself: link actions, then the edit commands that apply. Empty when nothing applies. */
-export function contextMenu(params: ContextParams, target: EditTarget, openLink: (url: string) => void, copyText: (text: string) => void): MenuItemConstructorOptions[] {
+/** The part of Electron's `context-menu` params the menu is built from. */
+export type ContextParams = Pick<ContextMenuParams, 'linkURL' | 'isEditable' | 'selectionText' | 'editFlags'> & Partial<Pick<ContextMenuParams, 'misspelledWord' | 'dictionarySuggestions'>>;
+
+/** The menu for a right click the page did not handle: spelling, link actions and editing, as applicable. */
+export function contextMenu(params: ContextParams, target: EditTarget, openLink: (url: string) => void, copyText: (text: string) => void, spell?: { replace(word: string): void; add(word: string): void }): MenuItemConstructorOptions[] {
   const items: MenuItemConstructorOptions[] = [];
   const gap = () => items.length && items[items.length - 1]!.type !== 'separator' && items.push({ type: 'separator' });
+  const { misspelledWord, dictionarySuggestions } = params;
+  if (spell && params.isEditable && misspelledWord) {
+    for (const word of dictionarySuggestions?.slice(0, 5) ?? []) items.push({ label: word, click: () => spell.replace(word) });
+    items.push({ label: 'Add to Dictionary', click: () => spell.add(misspelledWord) });
+  }
   if (params.linkURL) {
+    gap();
     items.push({ label: 'Open Link in Browser', click: () => openLink(params.linkURL) }, { label: 'Copy Link Address', click: () => copyText(params.linkURL) });
   }
   const flags = params.editFlags;
