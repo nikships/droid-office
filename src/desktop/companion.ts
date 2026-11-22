@@ -168,6 +168,7 @@ function recoverCompanion(win: BrowserWindow, { officeUrl, isQuitting = () => fa
   let prompt: { kind: 'crash' | 'hang'; controller: AbortController } | undefined;
   let retries = 0;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let loadFailed = false;
   function resetRetries() {
     clearTimeout(retryTimer);
     retryTimer = undefined;
@@ -231,7 +232,9 @@ function recoverCompanion(win: BrowserWindow, { officeUrl, isQuitting = () => fa
     if (prompt?.kind === 'hang') dismissPrompt();
   });
   contents.on('did-fail-load', (_event, code, _description, failedUrl, isMainFrame) => {
-    if (!isMainFrame || code === -3 || failedUrl.startsWith('data:') || retryTimer || !canRecover() || !officeUrl()) return;
+    if (!isMainFrame || code === -3 || failedUrl.startsWith('data:')) return;
+    loadFailed = true;
+    if (retryTimer || !canRecover() || !officeUrl()) return;
     const delay = loadRetryDelay(retries);
     if (delay === undefined) {
       const url = dashboardUrl();
@@ -248,8 +251,13 @@ function recoverCompanion(win: BrowserWindow, { officeUrl, isQuitting = () => fa
       void contents.loadURL(url).catch(() => {});
     }, delay);
   });
+  // Chromium finishes loading its error document, too, and getURL() still reports /dashboard.
+  // Only a successful main-frame commit followed by did-finish-load clears the retry budget.
+  contents.on('did-navigate', () => {
+    loadFailed = false;
+  });
   contents.on('did-finish-load', () => {
-    if (!contents.getURL().startsWith('chrome-error:')) resetRetries();
+    if (!loadFailed) resetRetries();
   });
   win.once('closed', () => {
     resetRetries();

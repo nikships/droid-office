@@ -295,6 +295,7 @@ test('only main dashboard load failures get three spaced retries and a retryable
   for (const [i, delay] of [500, 1500, 3000].entries()) {
     failLoad(win);
     failLoad(win); // A second event while one retry is pending does not consume another attempt.
+    page.emit('did-finish-load'); // Chromium finishes painting its error document and still reports /dashboard.
     t.mock.timers.tick(delay - 1);
     assert.equal(page.loads.length, i);
     t.mock.timers.tick(1);
@@ -304,12 +305,14 @@ test('only main dashboard load failures get three spaced retries and a retryable
   failLoad(win);
   assert.match(decodeURIComponent(page.loads[3]!), /href="http:\/\/localhost:4677\/dashboard">Retry/);
   assert.deepEqual(warn.mock.calls[0]?.arguments, ['droid-office: companion failed to load after 3 retries (error -102)']);
+  page.emit('did-navigate');
   page.emit('did-finish-load');
   failLoad(win);
   t.mock.timers.tick(500);
   assert.equal(page.loads.at(-1), dashboard);
   assert.equal(page.loads.length, 5);
   failLoad(win);
+  page.emit('did-navigate');
   page.emit('did-finish-load');
   t.mock.timers.tick(6000);
   assert.equal(page.loads.length, 5);
