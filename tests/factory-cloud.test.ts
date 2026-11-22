@@ -122,12 +122,9 @@ test('hire: a model substituted in the create response is reported without refus
 });
 
 test('shared: autonomy, folders, badge and the session link', () => {
-  assert.equal(officeAutonomy([]), 'high');
-  assert.equal(officeAutonomy(['--auto', 'low']), 'high');
-  assert.equal(officeAutonomy(['--auto=medium']), 'high');
-  assert.equal(officeAutonomy(['--auto', 'off']), 'high');
-  assert.equal(officeAutonomy(['--skip-permissions-unsafe']), 'high');
-  assert.equal(officeAutonomy(['--auto', 'sideways']), 'high');
+  for (const args of [[], ['--auto', 'low'], ['--auto=medium'], ['--auto', 'off'], ['--skip-permissions-unsafe'], ['--auto', 'sideways']]) {
+    assert.equal(officeAutonomy(args), 'high');
+  }
 
   const orb = { name: 'orb', providerType: 'e2b', remoteUser: 'factory-user' };
   const mac = { name: 'macbook', providerType: 'byom' };

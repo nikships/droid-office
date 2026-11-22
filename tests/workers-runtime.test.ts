@@ -357,7 +357,12 @@ test('Droid profile sync trusts all directories, enforces high autonomy, preserv
   writeFileSync(badSession, JSON.stringify({ sessionDefaultSettings: 'not-an-object' }));
   assert.match(syncDroidProfile(badSession) ?? '', /expected sessionDefaultSettings/);
 
-  assert.deepEqual(enforcedAgentArgs(['--auto', 'low', '--use-spec', '--disable-builtin-skills', '--auto=medium', '--from-test', '--auto']), ['--disable-builtin-skills', '--from-test']);
+  assert.deepEqual(enforcedAgentArgs(['--auto', 'low', '--settings', '/tmp/user.json', '--settings=/tmp/x.json', '--use-spec', '--use-spec=true', '--disable-builtin-skills', '--auto=medium', '--from-test', '--auto', '--', '--auto']), [
+    '--disable-builtin-skills',
+    '--from-test',
+    '--',
+    '--auto',
+  ]);
 });
 
 test('worker state recovery keeps terminal claims, pending forks, notices and retired seats', (t) => {

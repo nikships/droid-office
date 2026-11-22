@@ -2138,10 +2138,15 @@ export class WorkerManager {
     const commandPath = isShell ? undefined : this.agentPath;
     const args = isShell ? (WIN && !process.env.SHELL ? [] : ['-l']) : enforcedAgentArgs(this.agentArgs);
     if (!isShell) {
-      this.beforeLaunch?.();
-      // Interactive droid takes no --model flag: the model is pinned in its settings overlay.
-      const system = this.settings.systemPromptFile(info);
-      args.unshift('--settings', this.settings.droidSettings(info), ...(system ? ['--append-system-prompt-file', system] : []), '--auto', 'high');
+      try {
+        this.beforeLaunch?.();
+        // Interactive droid takes no --model flag: the model is pinned in its settings overlay.
+        const system = this.settings.systemPromptFile(info);
+        args.unshift('--settings', this.settings.droidSettings(info), ...(system ? ['--append-system-prompt-file', system] : []), '--auto', 'high');
+      } catch (err) {
+        this.startFailed(w, (err as Error).message);
+        return;
+      }
       if (resumeSessionId) args.push('--resume', resumeSessionId);
       else if (w.pendingFork) args.push('--cwd', this.cwd(info), '--fork', w.pendingFork.sessionId);
     }

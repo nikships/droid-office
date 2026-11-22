@@ -3484,9 +3484,7 @@ test('WorkerManager enforces --auto high across fresh, resumed and forked launch
 
   const launches = () => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings'));
   const [first] = await waitFor(launches, (l) => l.length >= 1);
-  assert.equal(first.args.includes('low'), false);
-  assert.equal(first.args.includes('--use-spec'), false);
-  assert.equal(first.args.includes('--auto=medium'), false);
+  for (const banned of ['low', '--use-spec', '--auto=medium']) assert.equal(first.args.includes(banned), false, `stale flag ${banned} survived`);
   assert.deepEqual(first.args.slice(-3), ['--auto', 'high', '--from-test']);
 
   workers.hookReply(worker.id, first.env.hookToken!, 'SessionStart', { session_id: 'droid-high-1', hook_event_name: 'SessionStart' });

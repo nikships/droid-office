@@ -25,11 +25,15 @@ export function enforcedAgentArgs(agentArgs: readonly string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < agentArgs.length; i++) {
     const a = agentArgs[i];
-    if (a === '--auto') {
+    if (a === '--') {
+      out.push(a, ...agentArgs.slice(i + 1));
+      break;
+    }
+    if (a === '--auto' || a === '--settings') {
       if (i + 1 < agentArgs.length && !agentArgs[i + 1].startsWith('-')) i++;
       continue;
     }
-    if (a.startsWith('--auto=') || a === '--use-spec') continue;
+    if (a.startsWith('--auto=') || a.startsWith('--settings=') || a === '--use-spec' || a.startsWith('--use-spec=')) continue;
     out.push(a);
   }
   return out;
@@ -44,8 +48,9 @@ export function trustedRoots(platform: NodeJS.Platform = process.platform, extra
   const roots = new Set<string>(WIN_DRIVES);
   for (const p of extraPaths) {
     if (!p) continue;
-    const root = path.win32.parse(path.win32.resolve(p)).root.toUpperCase();
-    if (root) roots.add(root.endsWith('\\') || root.endsWith('/') ? root.replace(/\//g, '\\') : `${root}\\`);
+    const normalized = path.win32.parse(path.win32.resolve(p)).root.toUpperCase().replace(/\//g, '\\');
+    if (!normalized) continue;
+    roots.add(normalized.endsWith('\\') ? normalized : `${normalized}\\`);
   }
   return [...roots];
 }
@@ -76,11 +81,10 @@ export function syncDroidProfile(file: string | undefined, opts: { platform?: No
   try {
     const raw: unknown = JSON.parse(readFileSync(file, 'utf8'));
     if (!isPlainRecord(raw)) return `Droid Office left ${file} unchanged: expected a JSON settings object.`;
-    if (raw.trustedFolders !== undefined && !isPlainRecord(raw.trustedFolders)) {
-      return `Droid Office left ${file} unchanged: expected trustedFolders to be an object.`;
-    }
-    if (raw.sessionDefaultSettings !== undefined && !isPlainRecord(raw.sessionDefaultSettings)) {
-      return `Droid Office left ${file} unchanged: expected sessionDefaultSettings to be an object.`;
+    for (const key of ['trustedFolders', 'sessionDefaultSettings'] as const) {
+      if (raw[key] !== undefined && !isPlainRecord(raw[key])) {
+        return `Droid Office left ${file} unchanged: expected ${key} to be an object.`;
+      }
     }
     current = raw;
   } catch (err) {
@@ -91,11 +95,11 @@ export function syncDroidProfile(file: string | undefined, opts: { platform?: No
   let changed = beforeStamp === undefined;
   const existingTrusted = isPlainRecord(current.trustedFolders) ? current.trustedFolders : {};
   const trustedFolders: Record<string, unknown> = { ...existingTrusted };
-  const trustedAt = (opts.now ?? (() => new Date()))().toISOString();
+  const trustedAt = (opts.now?.() ?? new Date()).toISOString();
   for (const root of roots) {
     const entry = trustedFolders[root];
     if (!isPlainRecord(entry) || typeof entry.trustedAt !== 'string' || !entry.trustedAt.trim()) {
-      trustedFolders[root] = { trustedAt };
+      trustedFolders[root] = { ...(isPlainRecord(entry) ? entry : undefined), trustedAt };
       changed = true;
     }
   }
