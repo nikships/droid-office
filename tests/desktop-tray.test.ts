@@ -1,6 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { type OfficeStatus, parseStatus, type StatusWaiting, statusLines, switchLabel, listCut, type TrayItem, trayMenu, trayTitle, trayTooltip, type TrayView, WaitingWatch, waitingNotice, workerHash } from '../src/desktop/tray-model.ts';
+import {
+  type OfficeStatus,
+  parseStatus,
+  shouldNotifyWaiting,
+  type StatusWaiting,
+  statusLines,
+  switchLabel,
+  listCut,
+  type TrayItem,
+  trayMenu,
+  trayTitle,
+  trayTooltip,
+  type TrayView,
+  WaitingWatch,
+  waitingNotice,
+  workerHash,
+} from '../src/desktop/tray-model.ts';
 import { officeStatus, STATUS_WAITING_MAX } from '../src/server/office-status.ts';
 import { linkStep, parseWorkerLink } from '../src/client/worker-link.ts';
 
@@ -120,12 +136,25 @@ test('the menu offers only what the office can do in its state', () => {
   assert.equal(item(companion, 'Switch to 3D Office')?.action, 'switch');
   assert.equal(item(running, 'Check for Updates…')?.sublabel, 'Version 0.1.420');
   assert.equal(item(running, 'Notify When Workers Wait on You')?.checked, true);
+  assert.equal(item(running, 'Notify When Workers Wait on You')?.sublabel, 'When the window is closed or unfocused');
   assert.equal(item({ ...running, notify: false }, 'Notify When Workers Wait on You')?.checked, false);
   assert.deepEqual(enabled({ ...running, status: undefined, external: true }), { ...all, restart: false, quitStoppingWorkers: false });
   const stopped: TrayView = { state: 'stopped', ...base };
   assert.deepEqual(enabled(stopped), { ...all, quitStoppingWorkers: false });
   assert.ok(labels(stopped).includes('Start Office'));
   assert.deepEqual(enabled({ state: 'starting', ...base }), { ...all, open: false, restart: false, quitStoppingWorkers: false });
+});
+
+test('worker wait notifications respect settings, support, and window focus', () => {
+  const closed = { enabled: true, supported: true, windowOpen: false, windowFocused: false };
+  for (const mode of ['office', 'companion'] as const) {
+    const state = { ...closed, mode };
+    assert.equal(shouldNotifyWaiting(state), true, `closed ${mode}`);
+    assert.equal(shouldNotifyWaiting({ ...state, enabled: false }), false, `disabled ${mode}`);
+    assert.equal(shouldNotifyWaiting({ ...state, supported: false }), false, `unsupported ${mode}`);
+    assert.equal(shouldNotifyWaiting({ ...state, windowOpen: true }), mode === 'companion', `unfocused ${mode}`);
+    assert.equal(shouldNotifyWaiting({ ...state, windowOpen: true, windowFocused: true }), false, `focused ${mode}`);
+  }
 });
 
 test('a notification goes out only for a wait that started since the last status', () => {

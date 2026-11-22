@@ -10,12 +10,15 @@ test('native close chords distinguish Shift and leave unrelated shortcuts untouc
   for (const override of [{ type: 'keyUp' as const }, { meta: false }, { control: true }, { alt: true }, { key: 'q' }]) assert.equal(companionCommand({ ...input, ...override }), undefined);
 });
 
-test('companion Window menu never closes the app via either W accelerator', () => {
+test('companion Window menu routes close by focus and only sends home from the companion', () => {
   const actions: string[] = [];
-  const menu = companionWindowMenu(
-    (command) => actions.push(command),
-    () => actions.push('window'),
-  );
+  let focused = true;
+  const menu = companionWindowMenu({
+    isCompanionFocused: () => focused,
+    run: (command) => actions.push(command),
+    closeCompanion: () => actions.push('companion-window'),
+    closeSecondary: () => actions.push('secondary-window'),
+  });
   assert.deepEqual(
     menu.map((item) => [item.label, item.accelerator]),
     [
@@ -24,8 +27,18 @@ test('companion Window menu never closes the app via either W accelerator', () =
       ['Close Window', undefined],
     ],
   );
-  for (const item of menu) (item.click as () => void)();
-  assert.deepEqual(actions, ['close-pane', 'send-home', 'window']);
+  const [closePane, sendHome, closeWindow] = menu.map((item) => item.click as () => void);
+  closePane!();
+  sendHome!();
+  assert.deepEqual(actions, ['close-pane', 'send-home']);
+
+  focused = false;
+  closePane!();
+  sendHome!();
+  assert.deepEqual(actions, ['close-pane', 'send-home', 'secondary-window']);
+
+  closeWindow!();
+  assert.deepEqual(actions, ['close-pane', 'send-home', 'secondary-window', 'companion-window']);
 });
 
 test('command delivery reaches only the current office dashboard and tolerates teardown', async () => {

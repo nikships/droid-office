@@ -36,7 +36,7 @@ export interface TrayView {
   mode: WindowMode;
   /** The app is showing an office it didn't start (a terminal's `npm start`), which quitting leaves running. */
   external: boolean;
-  /** Whether the app notifies while its window is closed and a worker starts to wait on the owner. */
+  /** Whether the app can notify when a worker starts to wait on the owner. */
   notify: boolean;
   /** The app's version, for Check for Updates. */
   version: string;
@@ -148,12 +148,18 @@ export function trayMenu(v: TrayView): TrayItem[] {
     { type: 'separator' },
     { label: v.state === 'stopped' ? 'Start Office' : 'Restart Office', enabled: v.state !== 'starting' && !v.external, action: 'restart' },
     { type: 'separator' },
-    { label: 'Notify When Workers Wait on You', enabled: true, sublabel: 'Unless the 3D office is open', checked: v.notify, action: 'notify' },
+    { label: 'Notify When Workers Wait on You', enabled: true, sublabel: 'When the window is closed or unfocused', checked: v.notify, action: 'notify' },
     { label: 'Check for Updates…', enabled: true, sublabel: `Version ${v.version}`, action: 'updates' },
     { type: 'separator' },
     { label: 'Quit Droid Office', enabled: true, action: 'quit' },
     { label: 'Quit and Stop Workers…', enabled: running && !v.external, action: 'quitStoppingWorkers' },
   ];
+}
+
+/** The 3D page handles its own background notifications; the companion only needs them out of focus. */
+export function shouldNotifyWaiting(state: { enabled: boolean; supported: boolean; mode: WindowMode; windowOpen: boolean; windowFocused: boolean }): boolean {
+  if (!state.enabled || !state.supported) return false;
+  return !state.windowOpen || (state.mode === 'companion' && !state.windowFocused);
 }
 
 /** Where a waiting worker is: Mission Control for a building agent, else its floor once there is more than one. */

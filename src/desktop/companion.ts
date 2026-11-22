@@ -152,8 +152,8 @@ function loadRetryDelay(attempt: number): number | undefined {
 function loadErrorPage(url: string): string {
   const retry = url.replaceAll('&', '&amp;').replaceAll('"', '&quot;');
   const html = `<!doctype html><meta charset="utf-8"><title>Droid Office · Companion</title>
-<body style="margin:0;height:100vh;display:grid;place-items:center;background:#050505;color:#e8e8e8;font:16px system-ui,sans-serif">
-<div style="text-align:center"><p>The companion couldn’t load the office.</p><a style="color:#ef6f2e" href="${retry}">Retry</a></div></body>`;
+<body style="margin:0;height:100vh;display:grid;place-items:center;background:#050505;color:#e8e8e8;font:16px system-ui,sans-serif;-webkit-app-region:drag">
+<div style="text-align:center"><p>The companion couldn’t load the office.</p><a style="color:#ef6f2e;-webkit-app-region:no-drag" href="${retry}">Retry</a></div></body>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 

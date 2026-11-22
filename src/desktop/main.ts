@@ -2,11 +2,11 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, type BaseWindow, clipboard, dialog, Menu, type MenuItemConstructorOptions, Notification, powerMonitor, shell, type WebContents } from 'electron';
+import { app, type BaseWindow, BrowserWindow, clipboard, dialog, Menu, type MenuItemConstructorOptions, Notification, powerMonitor, shell, type WebContents } from 'electron';
 import { downloadBrowser } from './browser.js';
 import { createCompanionWindow } from './companion.js';
 import { companionWindowMenu, sendCompanionCommand } from './companion-commands.js';
-import { contextMenu, editMenu } from './edit-menu.js';
+import { companionEditMenu, contextMenu, editMenu } from './edit-menu.js';
 import { leaveFullScreen } from './full-screen.js';
 import { gpuReport } from './gpu.js';
 import { linkAction, windowOpenAction } from './links.js';
@@ -21,7 +21,7 @@ import { DEFAULT_PORT, defaultOfficeDir, type DesktopSettings, isolatedPortOk, l
 import { desktopEnv } from './shell-path.js';
 import { enforceRequirements, isStartupCheck, runStartupCheck, StartupAborted } from './startup.js';
 import { OfficeTray } from './tray.js';
-import { listCut, type OfficeStatus, parseStatus, switchLabel, type TrayAction, trayTitle, type TrayView, WaitingWatch, waitingNotice, type WorkerLink, workerHash } from './tray-model.js';
+import { listCut, type OfficeStatus, parseStatus, shouldNotifyWaiting, switchLabel, type TrayAction, trayTitle, type TrayView, WaitingWatch, waitingNotice, type WorkerLink, workerHash } from './tray-model.js';
 import { Updates } from './updates.js';
 import { serveHostUpdates } from './update-ipc.js';
 import { saveUpdateWindows, takeUpdateWindows } from './update-windows.js';
@@ -84,7 +84,7 @@ let starting = true;
  * icon and the phones and browsers connected to it keep running, and a restart doesn't open it again.
  */
 let windowWanted = true;
-/** Set while switchMode waits for the window it is replacing to leave full screen. */
+/** Set while switchMode exits full screen and closes the window it is replacing. */
 let switching = false;
 /** Set by Cmd+Q, which closes the window to the menu bar without the "Leave the office?" prompt. */
 let leavingToMenuBar = false;
@@ -97,8 +97,9 @@ const waitingWatch = new WaitingWatch();
 let watchedUrl: string | undefined;
 /** The status asked for last: an answer to an older request is dropped. */
 let trayRequest = 0;
-/** The notification up for each waiting worker, taken down once it stops waiting or the window opens. */
+/** The notification up for each waiting worker, taken down once it stops waiting or the window gains focus. */
 const notices = new Map<string, Notification>();
+let overflowNotice: Notification | undefined;
 /** How many new waits get a notification each of their own at once. */
 const NOTICES_AT_ONCE = 3;
 
@@ -117,9 +118,9 @@ const updates = new Updates({
 function page(title: string, detail = ''): string {
   const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]!);
   const html = `<!doctype html><meta charset="utf-8"><title>Droid Office</title>
-<body style="margin:0;height:100vh;display:grid;place-items:center;background:${BACKGROUND};color:#e8e8e8;font:15px -apple-system,system-ui,sans-serif">
+<body style="margin:0;height:100vh;display:grid;place-items:center;background:${BACKGROUND};color:#e8e8e8;font:15px -apple-system,system-ui,sans-serif;-webkit-app-region:drag">
 <div style="text-align:center;max-width:720px;padding:24px"><div style="font:600 13px ui-monospace,monospace;letter-spacing:.2em;color:#ef6f2e">DROID OFFICE</div>
-<p style="font-size:20px;margin:18px 0 10px">${esc(title)}</p><pre style="white-space:pre-wrap;text-align:left;color:#9a9a9a;font:12px ui-monospace,monospace">${esc(detail)}</pre></div></body>`;
+<p style="font-size:20px;margin:18px 0 10px">${esc(title)}</p><pre style="white-space:pre-wrap;text-align:left;color:#9a9a9a;font:12px ui-monospace,monospace;-webkit-app-region:no-drag">${esc(detail)}</pre></div></body>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
@@ -145,6 +146,7 @@ function createWindow(loadOffice = true, hash = '') {
   void app.dock?.show();
   const created = companionMode() ? openCompanion() : openPresenter();
   win = created;
+  created.base.on('focus', () => clearNotices());
   created.base.on('closed', () => {
     if (win !== created) return;
     win = undefined;
@@ -159,7 +161,16 @@ function createWindow(loadOffice = true, hash = '') {
 }
 
 function openCompanion(): { base: BaseWindow; contents: WebContents } {
-  const base = createCompanionWindow(() => officeUrl);
+  const base = createCompanionWindow({
+    officeUrl: () => officeUrl,
+    isQuitting: () => quitting,
+    isSwitching: () => switching,
+    bounds: settings.companionBounds,
+    onBoundsChange: (companionBounds) => {
+      settings = { ...settings, companionBounds };
+      saveSettings(settingsFile, settings);
+    },
+  });
   return { base, contents: base.webContents };
 }
 
@@ -408,6 +419,7 @@ function openWindow() {
   const current = appWindow();
   if (current) {
     if (officeUrl && current.contents.isCrashed()) void current.contents.loadURL(officePage()).catch(() => {});
+    if (current.base.isMinimized()) current.base.restore();
     current.base.show();
     current.base.focus();
     return;
@@ -432,10 +444,10 @@ async function switchMode() {
     try {
       // Out of full screen before the next window opens, or its Space stays behind as an empty black one (see leaveFullScreen).
       await leaveFullScreen(old.base);
+      if (!old.base.isDestroyed()) old.base.close();
     } finally {
       switching = false;
     }
-    if (!old.base.isDestroyed()) old.base.close();
   }
   void refreshTray();
   // Before startup has chosen the folder and the environment, only the window changes: openOffice runs once, from startup, and loads this mode's page.
@@ -455,6 +467,7 @@ function openWorker(link: WorkerLink) {
   clearNotices();
   const current = appWindow();
   if (!current) return createWindow(true, hash);
+  if (current.base.isMinimized()) current.base.restore();
   current.base.show();
   current.base.focus();
   // Both pages read the hash as it changes (src/client/main.ts, dashboard.ts); any other page (an error, the splash) is replaced.
@@ -473,12 +486,11 @@ function onOffice(url: string): boolean {
 function clearNotices() {
   for (const n of notices.values()) n.close();
   notices.clear();
+  overflowNotice?.close();
+  overflowNotice = undefined;
 }
 
-/**
- * Unless the 3D office is open, a worker that starts to wait on the owner gets a notification, as the office page
- * gives one while it's in the background (src/client/notify.ts). The 3D page does that itself; the companion page doesn't.
- */
+/** Notify about new waits when the window is closed or the companion is in the background. */
 function noticeWaiting(status: OfficeStatus | undefined) {
   const fresh = waitingWatch.next(status);
   // A failed fetch or a cut-off list says nothing about who stopped waiting.
@@ -490,7 +502,9 @@ function noticeWaiting(status: OfficeStatus | undefined) {
       notices.delete(id);
     }
   }
-  if (!status || settings.notify === false || (appWindow() && !companionMode()) || !Notification.isSupported()) return;
+  if (!status) return;
+  const current = appWindow();
+  if (!shouldNotifyWaiting({ enabled: settings.notify !== false, supported: Notification.isSupported(), mode: settings.mode ?? 'office', windowOpen: Boolean(current), windowFocused: Boolean(current?.base.isFocused()) })) return;
   for (const w of fresh.slice(0, NOTICES_AT_ONCE)) {
     notices.get(w.id)?.close();
     const n = new Notification(waitingNotice(w, status.floors));
@@ -506,8 +520,13 @@ function noticeWaiting(status: OfficeStatus | undefined) {
   }
   const rest = fresh.length - NOTICES_AT_ONCE;
   if (rest > 0) {
+    overflowNotice?.close();
     const n = new Notification({ title: `${rest} more worker${rest === 1 ? '' : 's'} waiting on you`, body: '' });
     n.on('click', () => openWindow());
+    n.on('close', () => {
+      if (overflowNotice === n) overflowNotice = undefined;
+    });
+    overflowNotice = n;
     n.show();
   }
 }
@@ -655,8 +674,8 @@ function menu(): Menu {
         { label: `Quit ${app.name}`, accelerator: 'Alt+CmdOrCtrl+Q', click: () => app.quit() },
       ],
     },
-    // Not Electron's edit roles: the page is offscreen and never the focused web contents, so they would find nothing to act on.
-    editMenu(contents),
+    // The offscreen 3D page is never the focused web contents, so its Edit menu needs an explicit target.
+    companionMode() ? companionEditMenu() : editMenu(contents),
     {
       label: 'Office',
       submenu: [
@@ -674,6 +693,21 @@ function menu(): Menu {
         { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => contents()?.reload() },
         { label: 'Force Reload', accelerator: 'Shift+CmdOrCtrl+R', click: () => contents()?.reloadIgnoringCache() },
         { label: 'Toggle Developer Tools', accelerator: 'Alt+CmdOrCtrl+I', click: () => contents()?.toggleDevTools() },
+        ...(companionMode()
+          ? [
+              {
+                label: 'Actual Size',
+                accelerator: 'CmdOrCtrl+0',
+                click: () => {
+                  const c = contents();
+                  if (c && !c.isDestroyed()) {
+                    c.setZoomLevel(0);
+                    c.setZoomFactor(1);
+                  }
+                },
+              },
+            ]
+          : []),
         { type: 'separator' },
         { label: 'Toggle Full Screen', accelerator: 'Ctrl+CmdOrCtrl+F', click: () => base()?.setFullScreen(!base()?.isFullScreen()) },
       ],
@@ -685,12 +719,18 @@ function menu(): Menu {
         { label: 'Minimize', accelerator: 'CmdOrCtrl+M', click: () => base()?.minimize() },
         { label: 'Zoom', click: () => (base()?.isMaximized() ? base()?.unmaximize() : base()?.maximize()) },
         ...(companionMode()
-          ? companionWindowMenu(
-              (command) => {
-                if (base()?.isFocused()) sendCompanionCommand(contents(), officeUrl, command);
+          ? companionWindowMenu({
+              isCompanionFocused: () => Boolean(base()?.isFocused()),
+              run: (command) => sendCompanionCommand(contents(), officeUrl, command),
+              closeCompanion: () => base()?.close(),
+              closeSecondary: () => {
+                const focused = BrowserWindow.getFocusedWindow();
+                if (!focused) return;
+                // Electron reports the inspected window when its detached DevTools has focus.
+                if (focused.webContents.isDevToolsFocused()) focused.webContents.closeDevTools();
+                else if (focused !== base()) focused.close();
               },
-              () => base()?.close(),
-            )
+            })
           : [{ label: 'Close', accelerator: 'CmdOrCtrl+W', click: () => base()?.close() }]),
         { type: 'separator' },
         { role: 'front' },

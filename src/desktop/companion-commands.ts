@@ -24,10 +24,23 @@ export function sendCompanionCommand(target: CommandTarget | undefined, officeUr
   }
 }
 
-export function companionWindowMenu(run: (command: CompanionCommand) => void, close: () => void): MenuItemConstructorOptions[] {
+interface CompanionWindowMenuActions {
+  isCompanionFocused(): boolean;
+  run(command: CompanionCommand): void;
+  closeCompanion(): void;
+  closeSecondary(): void;
+}
+
+export function companionWindowMenu({ isCompanionFocused, run, closeCompanion, closeSecondary }: CompanionWindowMenuActions): MenuItemConstructorOptions[] {
   return [
-    { label: 'Close Pane', accelerator: 'Cmd+W', click: () => run('close-pane') },
-    { label: 'Send Home…', accelerator: 'Shift+Cmd+W', click: () => run('send-home') },
-    { label: 'Close Window', click: close },
+    { label: 'Close Pane', accelerator: 'Cmd+W', click: () => (isCompanionFocused() ? run('close-pane') : closeSecondary()) },
+    {
+      label: 'Send Home…',
+      accelerator: 'Shift+Cmd+W',
+      click: () => {
+        if (isCompanionFocused()) run('send-home');
+      },
+    },
+    { label: 'Close Window', click: closeCompanion },
   ];
 }
