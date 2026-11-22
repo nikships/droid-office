@@ -10,12 +10,16 @@ test('native close chords distinguish Shift and leave unrelated shortcuts untouc
   for (const override of [{ type: 'keyUp' as const }, { meta: false }, { control: true }, { alt: true }, { key: 'q' }]) assert.equal(companionCommand({ ...input, ...override }), undefined);
 });
 
-test('companion Window menu routes close by focus and only sends home from the companion', () => {
+test('companion Window menu routes close by focus and falls back to closing on non-dashboard pages', () => {
   const actions: string[] = [];
   let focused = true;
+  let delivered = true;
   const menu = companionWindowMenu({
     isCompanionFocused: () => focused,
-    run: (command) => actions.push(command),
+    run: (command) => {
+      actions.push(command);
+      return delivered;
+    },
     closeCompanion: () => actions.push('companion-window'),
     closeSecondary: () => actions.push('secondary-window'),
   });
@@ -32,13 +36,18 @@ test('companion Window menu routes close by focus and only sends home from the c
   sendHome!();
   assert.deepEqual(actions, ['close-pane', 'send-home']);
 
+  delivered = false;
+  closePane!();
+  assert.deepEqual(actions, ['close-pane', 'send-home', 'close-pane', 'companion-window']);
+
+  delivered = true;
   focused = false;
   closePane!();
   sendHome!();
-  assert.deepEqual(actions, ['close-pane', 'send-home', 'secondary-window']);
+  assert.deepEqual(actions, ['close-pane', 'send-home', 'close-pane', 'companion-window', 'secondary-window']);
 
   closeWindow!();
-  assert.deepEqual(actions, ['close-pane', 'send-home', 'secondary-window', 'companion-window']);
+  assert.deepEqual(actions, ['close-pane', 'send-home', 'close-pane', 'companion-window', 'secondary-window', 'companion-window']);
 });
 
 test('command delivery reaches only the current office dashboard and tolerates teardown', async () => {
@@ -50,35 +59,41 @@ test('command delivery reaches only the current office dashboard and tolerates t
     isDestroyed: () => destroyed,
     executeJavaScript: async (source: string) => runInNewContext(source, { Event, window: { dispatchEvent: (e: Event) => events.push(e.type) } }),
   };
-  sendCompanionCommand(target, 'http://localhost:4677', 'close-pane');
-  sendCompanionCommand(target, 'http://localhost:4677', 'send-home');
+  assert.equal(sendCompanionCommand(target, 'http://localhost:4677', 'close-pane'), true);
+  assert.equal(sendCompanionCommand(target, 'http://localhost:4677', 'send-home'), true);
   assert.deepEqual(events, ['droid-office:close-pane', 'droid-office:send-home']);
-  for (url of ['http://localhost:4677/', 'https://example.com/dashboard', 'data:text/html,startup', 'invalid']) sendCompanionCommand(target, 'http://localhost:4677', 'close-pane');
+  for (url of ['http://localhost:4677/', 'https://example.com/dashboard', 'data:text/html,startup', 'invalid']) assert.equal(sendCompanionCommand(target, 'http://localhost:4677', 'close-pane'), false);
   url = 'http://localhost:4677/dashboard';
   destroyed = true;
-  sendCompanionCommand(target, url, 'close-pane');
+  assert.equal(sendCompanionCommand(target, url, 'close-pane'), false);
   destroyed = false;
-  sendCompanionCommand(undefined, url, 'close-pane');
-  sendCompanionCommand(target, undefined, 'close-pane');
-  sendCompanionCommand(
-    {
-      ...target,
-      getURL: () => {
-        throw Error('gone');
+  assert.equal(sendCompanionCommand(undefined, url, 'close-pane'), false);
+  assert.equal(sendCompanionCommand(target, undefined, 'close-pane'), false);
+  assert.equal(
+    sendCompanionCommand(
+      {
+        ...target,
+        getURL: () => {
+          throw Error('gone');
+        },
       },
-    },
-    url,
-    'close-pane',
+      url,
+      'close-pane',
+    ),
+    false,
   );
-  sendCompanionCommand(
-    {
-      ...target,
-      executeJavaScript: async () => {
-        throw Error('gone');
+  assert.equal(
+    sendCompanionCommand(
+      {
+        ...target,
+        executeJavaScript: async () => {
+          throw Error('gone');
+        },
       },
-    },
-    url,
-    'close-pane',
+      url,
+      'close-pane',
+    ),
+    true,
   );
   await Promise.resolve();
   assert.equal(events.length, 2);

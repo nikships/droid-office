@@ -121,6 +121,7 @@ export class BrowserWindow extends EventEmitter {
   };
   show = () => this.calls.push('show');
   focus = () => this.calls.push('focus');
+  close = () => this.calls.push('close');
   setFullScreen = (fullScreen: boolean) => {
     this.calls.push(`fullScreen:${fullScreen}`);
     this.fullScreen = fullScreen;
@@ -333,9 +334,13 @@ test('renderer crashes reload once, then prompt once, and Reload restarts the cr
   quitting = false;
   gone('clean-exit');
   assert.deepEqual(page.loads, []);
-  page.url = 'about:blank';
+  page.url = 'data:text/html,error';
   gone();
   assert.deepEqual(page.loads, [dashboard]);
+  const badUrlWin = await create({ officeUrl: () => 'javascript:alert(1)' });
+  badUrlWin.webContents.url = 'about:blank';
+  badUrlWin.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  assert.deepEqual(badUrlWin.webContents.loads, []);
   page.url = dashboard;
   gone();
   gone();
@@ -383,4 +388,19 @@ test('hung renderers can wait or force recovery, with stale dialogs dismissed on
   assert.deepEqual(pending.at(-1)?.options.buttons, ['Reload', 'Quit']);
   win.emit('closed');
   assert.equal(pending.at(-1)?.options.signal?.aborted, true);
+});
+
+test('Cmd+W closes the window when the companion is showing a non-dashboard page', { skip }, async () => {
+  const win = await create();
+  const page = win.webContents;
+  const press = (shift = false) => {
+    let prevented = false;
+    page.emit('before-input-event', { preventDefault: () => (prevented = true) }, { type: 'keyDown', key: shift ? 'W' : 'w', meta: true, control: false, alt: false, shift, isAutoRepeat: false });
+    return prevented;
+  };
+  page.url = 'data:text/html,splash';
+  assert.equal(press(true), true);
+  assert.deepEqual(win.calls, []);
+  assert.equal(press(false), true);
+  assert.deepEqual(win.calls, ['close']);
 });

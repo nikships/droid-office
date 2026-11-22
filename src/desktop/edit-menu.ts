@@ -48,7 +48,9 @@ export type ContextParams = Pick<ContextMenuParams, 'linkURL' | 'isEditable' | '
 /** The menu for a right click the page did not handle: spelling, link actions and editing, as applicable. */
 export function contextMenu(params: ContextParams, target: EditTarget, openLink: (url: string) => void, copyText: (text: string) => void, spell?: { replace(word: string): void; add(word: string): void }): MenuItemConstructorOptions[] {
   const items: MenuItemConstructorOptions[] = [];
-  const gap = () => items.length && items[items.length - 1]!.type !== 'separator' && items.push({ type: 'separator' });
+  const gap = () => {
+    if (items.length > 0 && items.at(-1)?.type !== 'separator') items.push({ type: 'separator' });
+  };
   const { misspelledWord, dictionarySuggestions } = params;
   if (spell && params.isEditable && misspelledWord) {
     for (const word of dictionarySuggestions?.slice(0, 5) ?? []) items.push({ label: word, click: () => spell.replace(word) });

@@ -51,7 +51,7 @@ export function createCompanionWindow(optionsOrUrl: CompanionWindowOptions | (()
     if (!command) return;
     // Stop both page input and the menu accelerator; a held key must not close successive panes.
     event.preventDefault();
-    if (!input.isAutoRepeat) sendCompanionCommand(contents, officeUrl(), command);
+    if (!input.isAutoRepeat && !sendCompanionCommand(contents, officeUrl(), command) && command === 'close-pane') win.close();
   });
   contents.setWindowOpenHandler(({ url }) => {
     openLink(url);
@@ -131,16 +131,10 @@ function trackCompanionBounds(win: BrowserWindow, restored: ResolvedCompanionBou
   win.once('ready-to-show', () => {
     if (isQuitting?.() || isSwitching?.()) return;
     ready = true;
-    if (restored.fullScreen) {
-      win.show();
-      win.setFullScreen(true);
-    } else if (restored.maximized) {
-      win.maximize();
-      win.show();
-    } else {
-      win.show();
-      win.focus();
-    }
+    if (restored.maximized && !restored.fullScreen) win.maximize();
+    win.show();
+    if (restored.fullScreen) win.setFullScreen(true);
+    else if (!restored.maximized) win.focus();
   });
 }
 
@@ -161,8 +155,14 @@ function recoverCompanion(win: BrowserWindow, { officeUrl, isQuitting = () => fa
   const contents = win.webContents;
   const canRecover = () => !win.isDestroyed() && !contents.isDestroyed() && !isQuitting() && !isSwitching?.();
   const dashboardUrl = () => {
-    const url = officeUrl();
-    return url ? new URL('/dashboard', url).toString() : undefined;
+    try {
+      const url = officeUrl();
+      if (!url) return undefined;
+      const dashboard = new URL('/dashboard', url);
+      return ['http:', 'https:'].includes(dashboard.protocol) ? dashboard.toString() : undefined;
+    } catch {
+      return undefined;
+    }
   };
   const crashes = new CrashPolicy();
   let prompt: { kind: 'crash' | 'hang'; controller: AbortController } | undefined;
@@ -177,7 +177,7 @@ function recoverCompanion(win: BrowserWindow, { officeUrl, isQuitting = () => fa
   function reload() {
     resetRetries();
     const current = contents.getURL();
-    if (current && current !== 'about:blank' && !current.startsWith('chrome-error:')) {
+    if (current && current !== 'about:blank' && !current.startsWith('chrome-error:') && !current.startsWith('data:')) {
       contents.reload();
     } else {
       const url = dashboardUrl();
@@ -244,9 +244,8 @@ function recoverCompanion(win: BrowserWindow, { officeUrl, isQuitting = () => fa
     }
     retryTimer = setTimeout(() => {
       retryTimer = undefined;
-      if (!canRecover()) return;
       const url = dashboardUrl();
-      if (!url) return;
+      if (!canRecover() || !url) return;
       retries++;
       void contents.loadURL(url).catch(() => {});
     }, delay);

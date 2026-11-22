@@ -3624,7 +3624,7 @@ button.wt-change-path:hover { color: var(--accent); text-decoration: underline; 
   .dash-body { grid-template-columns: 220px minmax(0, 1fr); }
   .dash-keys > span { white-space: normal; }
   .dash-keys .key { flex: none; }
-  @container pane (160px <= width <= 240px) {
+  @container pane (min-width: 160px) and (max-width: 240px) {
     .dash-pane-close { display: inline-flex; }
   }
 }
