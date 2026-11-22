@@ -316,15 +316,14 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
       nodes.push(h('div.mp-head', { role: 'presentation' }, s.key.startsWith('g:') ? (s.models[0]?.glyph ? pinwheel() : providerLogo(s.label)) : null, s.label, h('small', {}, s.flat ? '' : String(s.models.length))));
       for (const m of s.models) nodes.push(row(m.id, m, !!s.flat));
     }
-    if (opts.allowCustom && !opts.customOnly?.() && (!store.hideNativeModels || typed.startsWith('custom:')) && isCustomId(typed) && !known(typed) && !store.hiddenModels.includes(typed)) {
+    const typedIsHidden = store.hiddenModels.includes(typed) || (store.hideNativeModels && !typed.startsWith('custom:'));
+    if (opts.allowCustom && !opts.customOnly?.() && isCustomId(typed) && !known(typed) && !typedIsHidden) {
       customValue = typed;
       nodes.push(row(CUSTOM, undefined, false));
     }
-    const emptyText = typed
-      ? `Nothing is called “${typed}”. Clear the search or pick another group.`
-      : store.hideNativeModels
-        ? 'Native Factory models are hidden in Settings → Models, and no custom models are configured.'
-        : 'The list is empty.';
+    let emptyText = 'The list is empty.';
+    if (typed) emptyText = `Nothing is called “${typed}”. Clear the search or pick another group.`;
+    else if (store.hideNativeModels) emptyText = 'Native Factory models are hidden in Settings → Models, and no custom models are configured.';
     ui.list.replaceChildren(...(nodes.length ? nodes : [h('div.mp-empty', {}, h('b', {}, 'No model matches'), h('span', {}, emptyText))]));
     const total = models.length;
     ui.count.textContent = typed || scope ? `${rows.filter((r) => r.model).length} of ${total}` : `${total} models`;
@@ -379,7 +378,8 @@ export function modelPicker(opts: ModelPickerOptions): ModelPicker {
 
   function choose(next: string) {
     const target = next ? known(next) : undefined;
-    if (next && (store.hiddenModels.includes(next) || (store.hideNativeModels && (target ? !target.custom : !next.startsWith('custom:'))))) return;
+    const isNative = target ? !target.custom : !next.startsWith('custom:');
+    if (next && (store.hiddenModels.includes(next) || (store.hideNativeModels && isNative))) return;
     if (next && !canPick(target)) return;
     const changed = next !== value;
     value = next;

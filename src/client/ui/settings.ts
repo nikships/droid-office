@@ -1209,11 +1209,18 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     'Hide native Factory models',
     () => store.hideNativeModels,
     (hidden) => {
-      void net.request({ t: 'models.hideNative', hidden }).then((result) => {
-        hideNativeError.hidden = result.ok;
-        hideNativeError.textContent = result.ok ? '' : (result.error ?? 'Could not save model visibility.');
-        if (!result.ok) hideNative.paint();
-      });
+      void net
+        .request({ t: 'models.hideNative', hidden })
+        .then((result) => {
+          hideNativeError.hidden = result.ok;
+          hideNativeError.textContent = result.ok ? '' : (result.error ?? 'Could not save model visibility.');
+          if (!result.ok) hideNative.paint();
+        })
+        .catch((err) => {
+          hideNativeError.hidden = false;
+          hideNativeError.textContent = (err instanceof Error ? err.message : String(err)) || 'Could not save model visibility.';
+          hideNative.paint();
+        });
     },
   );
   hideNative.paint();
@@ -1471,12 +1478,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
           ? [card('Remember models at desks', { desc: desc('Remember each desk’s model and effort in this browser. When off, new hires use the default worker. Saved choices return if you turn it back on.'), control: rememberDesks.el })]
           : []),
         card('Hide native Factory models', {
-          desc: h(
-            'span.stack.tight',
-            {},
-            h('small', {}, 'Automatically hide Factory’s built-in models so menus and pickers only show DroidProxy and your other custom models. Running workers and saved defaults stay as they are.'),
-            hideNativeError,
-          ),
+          desc: h('span.stack.tight', {}, desc('Automatically hide Factory’s built-in models so menus and pickers only show DroidProxy and your other custom models. Running workers and saved defaults stay as they are.'), hideNativeError),
           control: hideNative.el,
         }),
         card('Models shown in pickers', { desc: desc('Hide the models you never use from every picker on desktop, web and Android. Running workers and saved defaults stay as they are.'), below: [pickerModels] }),

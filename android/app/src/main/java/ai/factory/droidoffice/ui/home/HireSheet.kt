@@ -129,13 +129,14 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
         val last = graph.store.snapshot.value.settings
         val hiddenNow = connection.hiddenModels.value
         val hideNativeNow = connection.hideNativeModels.value
-        val offered = { m: ai.factory.droidoffice.net.ModelOption -> (!c.customOnly || m.custom) && (!hideNativeNow || m.custom) && m.id !in hiddenNow }
+        fun isOffered(custom: Boolean, id: String) = (custom || (!c.customOnly && !hideNativeNow)) && id !in hiddenNow
+        fun isListedAndOffered(id: String) = c.models.firstOrNull { it.id == id }?.let { isOffered(it.custom, it.id) } == true
         val remembered = last.hireModel?.takeIf { id ->
             ModelSearch.customId(id) && id !in hiddenNow &&
-                (c.models.firstOrNull { it.id == id }?.let(offered) ?: (!c.customOnly && (!hideNativeNow || id.startsWith("custom:"))))
+                (isListedAndOffered(id) || (!c.customOnly && (!hideNativeNow || id.startsWith("custom:"))))
         }
-        val preferredDefault = c.defaultModel?.takeIf { id -> c.models.firstOrNull { it.id == id }?.let(offered) == true }
-        if (modelId == null) modelId = remembered ?: preferredDefault ?: c.models.firstOrNull { !it.legacy && offered(it) }?.id
+        val preferredDefault = c.defaultModel?.takeIf(::isListedAndOffered)
+        if (modelId == null) modelId = remembered ?: preferredDefault ?: c.models.firstOrNull { !it.legacy && isOffered(it.custom, it.id) }?.id
         if (effort == null) effort = last.hireEffort.takeIf { remembered != null && modelId == remembered }
             ?: c.models.firstOrNull { it.id == modelId }?.defaultReasoningEffort ?: c.defaultReasoningEffort
     }

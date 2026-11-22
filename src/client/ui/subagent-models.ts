@@ -90,7 +90,12 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
         { title: id },
         h('span.list-icon', {}, box),
         modelLogo({ id, name: m?.displayName, provider: m?.provider }),
-        h('span.list-main', {}, h('span.list-title', {}, name), h('span.list-meta', {}, isModelHidden({ id, custom: m?.custom }, store.hiddenModels, store.hideNativeModels) ? `${line} · hidden from pickers` : line)),
+        h(
+          'span.list-main',
+          {},
+          h('span.list-title', {}, name),
+          h('span.list-meta', {}, isModelHidden({ id, custom: m?.custom ?? id.startsWith('custom:') }, store.hiddenModels, store.hideNativeModels) ? `${line} · hidden from pickers` : line),
+        ),
         !m?.custom && m?.tokenMultiplier !== undefined ? h('span.list-end', {}, multiplierLabel(m.tokenMultiplier)) : null,
       ),
       note,

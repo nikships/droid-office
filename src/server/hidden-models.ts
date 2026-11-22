@@ -14,13 +14,9 @@ export class HiddenModels {
     this.file = path.join(dataDir, 'hidden-models.json');
     try {
       const saved: unknown = JSON.parse(readFileSync(this.file, 'utf8'));
-      if (Array.isArray(saved)) {
-        this.ids = [...new Set(saved.filter(isValidDroidModel))].slice(0, MAX_HIDDEN_MODELS);
-      } else if (saved && typeof saved === 'object') {
-        const raw = saved as { ids?: unknown; hideNative?: unknown };
-        if (Array.isArray(raw.ids)) this.ids = [...new Set(raw.ids.filter(isValidDroidModel))].slice(0, MAX_HIDDEN_MODELS);
-        this.nativeHidden = raw.hideNative === true;
-      }
+      const raw: { ids?: unknown; hideNative?: unknown } = Array.isArray(saved) ? { ids: saved } : saved && typeof saved === 'object' ? (saved as { ids?: unknown; hideNative?: unknown }) : {};
+      if (Array.isArray(raw.ids)) this.ids = [...new Set(raw.ids.filter(isValidDroidModel))].slice(0, MAX_HIDDEN_MODELS);
+      this.nativeHidden = raw.hideNative === true;
     } catch {
       // All models are shown until a preference has been saved.
     }

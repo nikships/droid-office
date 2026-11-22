@@ -91,7 +91,7 @@ export function pickerModel(m: DroidModelOption): PickerModel {
 
 /** A model the catalogue does not list (a remembered pick, a lost list) so the choice is not silently dropped. */
 function unlisted(id: string): PickerModel {
-  return { id, name: withoutGlyph(droidDisplayName(id)), scope: 'Not listed', group: 'Not listed', unavailable: true };
+  return { id, ...(id.startsWith('custom:') ? { custom: true } : {}), name: withoutGlyph(droidDisplayName(id)), scope: 'Not listed', group: 'Not listed', unavailable: true };
 }
 
 const SETTINGS_DEFAULT: NoneOption = { label: 'Default', note: 'Droid settings' };
@@ -386,10 +386,11 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
     void fetchCatalogue()
       .then(({ models }) => {
         const resolved = models.find((m) => m.id === selected);
-        const keep = selected && (key === undefined || !isModelHidden({ id: selected, custom: resolved ? Boolean(resolved.custom) : selected.startsWith('custom:') }, store.hiddenModels, store.hideNativeModels)) ? selected : undefined;
+        const hidden = key !== undefined && !!selected && isModelHidden({ id: selected, custom: resolved ? Boolean(resolved.custom) : selected.startsWith('custom:') }, store.hiddenModels, store.hideNativeModels);
+        const keep = !selected || hidden ? undefined : selected;
         // A remembered id the catalogue no longer lists is still offered unless hidden, so the choice isn't silently dropped.
         const listed = models.map(pickerModel);
-        picker.setModels(keep && !store.setup.airgapped && !store.hideNativeModels && !resolved ? [unlisted(keep), ...listed] : listed, defaultOption(defaultModel(), models));
+        picker.setModels(keep && !store.setup.airgapped && !resolved ? [unlisted(keep), ...listed] : listed, defaultOption(defaultModel(), models));
         picker.set(keep ?? '');
         hint.textContent = models.length ? OVERRIDE_HINT : 'No Droid models found in the office settings — the worker runs the global default.';
         applyEfforts();
