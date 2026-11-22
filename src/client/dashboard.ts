@@ -623,6 +623,7 @@ function openBesideHere(id: string) {
   openInSplit(ws, id);
   fillPanes(ws, staff());
   changed();
+  panes[ws.focused]?.focusContent();
 }
 async function loadTerminal() {
   if (!terminal) {
@@ -663,6 +664,7 @@ const paneHost: PaneHost = {
     if (!usable(id, floor)) return;
     assign(ws, i, id);
     changed();
+    if (ws.maximized === null || ws.maximized === i) panes[i]?.focusContent();
   },
   swap(from, to) {
     if (!Number.isInteger(from) || from < 0 || from >= SLOT_COUNT[ws.layout]) return;
