@@ -508,7 +508,7 @@ test('runner: runs /wiki in a fresh worktree with the key only in the child’s 
     `/wiki ${WIKI_UPLOAD_RULE}`,
   ]);
   assert.match(WIKI_UPLOAD_RULE, /--upload-to factory, never with github/);
-  assert.deepEqual(JSON.parse(readFileSync(settings, 'utf8')), { subagentModelSettings: { lightModel: 'glm-5.3-flash', mediumModel: 'glm-5.3-flash', heavyModel: 'glm-5.3-flash' } });
+  assert.deepEqual(JSON.parse(readFileSync(settings, 'utf8')), { subagentAutonomyLevel: 'high', subagentModelSettings: { lightModel: 'glm-5.3-flash', mediumModel: 'glm-5.3-flash', heavyModel: 'glm-5.3-flash' } });
   assert.equal(job.model, 'glm-5.3-flash');
   assert.equal(s.options.cwd, worktree);
   assert.deepEqual(s.options.env, { PATH: '/usr/bin', HOME: '/home/o', ...wikiGitBlock('git@github.com:acme/app.git'), FACTORY_API_KEY: KEY });
@@ -794,6 +794,7 @@ test('models: droid’s list with each one’s efforts, and the settings that pu
   ]);
   assert.deepEqual(parseDroidModels('Usage: droid exec\n'), []);
   assert.deepEqual(wikiRunSettings(models[2]), {
+    subagentAutonomyLevel: 'high',
     subagentModelSettings: {
       lightModel: 'glm-5.3-flash',
       lightReasoningEffort: 'high',

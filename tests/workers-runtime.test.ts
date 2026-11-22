@@ -9,7 +9,7 @@ import { Worktrees } from '../src/server/worktrees.js';
 import { WorkerDelivery } from '../src/server/worker-runtime/delivery.js';
 import { WorkerHooks, STOP_GRACE_MS } from '../src/server/worker-runtime/hooks.js';
 import { WorkerHookSpool, HOOK_VERSION } from '../src/server/worker-runtime/hook-transport.js';
-import { WorkerLaunchSettings } from '../src/server/worker-runtime/launch-settings.js';
+import { WorkerLaunchSettings, enforcedAgentArgs, syncDroidProfile, trustedRoots } from '../src/server/worker-runtime/launch-settings.js';
 import { WorkerStateStore } from '../src/server/worker-runtime/persistence.js';
 import { midTurn, newWorker, type Worker } from '../src/server/worker-runtime/state.js';
 
@@ -248,7 +248,7 @@ test('spool replay claims only the existing file, skips stale identities, and re
   assert.equal(existsSync(path.join(root, 'hook-spool', 'departed.jsonl')), false);
 });
 
-test('launch settings read current policies each launch and remove an emptied system prompt', (t) => {
+test('launch settings read current policies each launch, enforce high autonomy, and remove an emptied system prompt', (t) => {
   const root = mkdtempSync(path.join(tmpdir(), 'worker-settings-runtime-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   let denyTask = true;
@@ -265,12 +265,15 @@ test('launch settings read current policies each launch and remove an emptied sy
   const worker = info();
   const initial = JSON.parse(readFileSync(settings.droidSettings(worker), 'utf8'));
   assert.equal(initial.hooks.PreToolUse[0].matcher, 'Task');
+  assert.deepEqual(initial.sessionDefaultSettings, { interactionMode: 'auto', autonomyLevel: 'high' });
+  assert.equal(initial.subagentAutonomyLevel, 'high');
   denyTask = false;
   allowed = { matcher: 'Read', reason: 'read only' };
   worker.model = 'custom:test-model';
   worker.effort = 'high';
   const overlay = JSON.parse(readFileSync(settings.droidSettings(worker), 'utf8'));
-  assert.deepEqual(overlay.sessionDefaultSettings, { model: 'custom:test-model', reasoningEffort: 'high' });
+  assert.deepEqual(overlay.sessionDefaultSettings, { interactionMode: 'auto', autonomyLevel: 'high', model: 'custom:test-model', reasoningEffort: 'high' });
+  assert.equal(overlay.subagentAutonomyLevel, 'high');
   assert.equal(overlay.hooks.PreToolUse[0].matcher, 'Read');
   assert.equal(
     overlay.hooks.PreToolUse.some((entry: { matcher?: string }) => entry.matcher === 'Task'),
@@ -282,6 +285,79 @@ test('launch settings read current policies each launch and remove an emptied sy
   system = undefined;
   assert.equal(settings.systemPromptFile(worker), undefined);
   assert.equal(existsSync(prompt), false);
+});
+
+test('Droid profile sync trusts all directories, enforces high autonomy, preserves user settings, and skips unchanged writes', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'droid-profile-runtime-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  assert.equal(syncDroidProfile(undefined), undefined, 'unset profile path never writes in tests');
+  assert.deepEqual(trustedRoots('darwin', ['/Users/nik/repos']), ['/']);
+  const winRoots = trustedRoots('win32', ['\\\\fileserver\\share\\repo', 'd:\\work']);
+  assert.equal(winRoots.includes('C:\\'), true);
+  assert.equal(winRoots.includes('D:\\'), true);
+  assert.equal(winRoots.includes('Z:\\'), true);
+  assert.equal(winRoots.includes('\\\\FILESERVER\\SHARE\\'), true);
+
+  const file = path.join(root, '.factory', 'settings.json');
+  const fixedNow = new Date('2026-11-22T12:00:00.000Z');
+  assert.equal(syncDroidProfile(file, { platform: 'darwin', now: () => fixedNow }), undefined);
+  const created = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(created, {
+    sessionDefaultSettings: { interactionMode: 'auto', autonomyLevel: 'high' },
+    subagentAutonomyLevel: 'high',
+    hasSeenMissionOnboarding: true,
+    trustedFolders: { '/': { trustedAt: '2026-11-22T12:00:00.000Z' } },
+  });
+
+  // A second sync when already compliant performs no disk write.
+  const rawBefore = readFileSync(file, 'utf8');
+  assert.equal(syncDroidProfile(file, { platform: 'darwin', now: () => new Date('2026-11-23T00:00:00.000Z') }), undefined);
+  assert.equal(readFileSync(file, 'utf8'), rawBefore, 'trustedAt is not churned when already trusted');
+
+  // External edits that lower autonomy or omit root trust are repaired while keeping custom models and preferences.
+  writeFileSync(
+    file,
+    JSON.stringify({
+      customModels: [{ id: 'custom:droidproxy:gpt-6.1-sol' }],
+      theme: 'factory-dark',
+      sessionDefaultSettings: { model: 'claude-sonnet-5-5', reasoningEffort: 'xhigh', interactionMode: 'spec', autonomyLevel: 'low' },
+      subagentAutonomyLevel: 'off',
+      trustedFolders: { '/Users/nik/proj': { trustedAt: '2026-10-01T00:00:00.000Z' } },
+    }),
+  );
+  assert.equal(syncDroidProfile(file, { platform: 'darwin', now: () => fixedNow }), undefined);
+  const merged = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(merged.customModels, [{ id: 'custom:droidproxy:gpt-6.1-sol' }]);
+  assert.equal(merged.theme, 'factory-dark');
+  assert.deepEqual(merged.sessionDefaultSettings, {
+    model: 'claude-sonnet-5-5',
+    reasoningEffort: 'xhigh',
+    interactionMode: 'auto',
+    autonomyLevel: 'high',
+  });
+  assert.equal(merged.subagentAutonomyLevel, 'high');
+  assert.equal(merged.hasSeenMissionOnboarding, true);
+  assert.deepEqual(merged.trustedFolders, {
+    '/Users/nik/proj': { trustedAt: '2026-10-01T00:00:00.000Z' },
+    '/': { trustedAt: '2026-11-22T12:00:00.000Z' },
+  });
+
+  // Malformed JSON or non-object sections are left untouched with a warning.
+  const broken = path.join(root, 'broken.json');
+  writeFileSync(broken, '{not valid json');
+  assert.match(syncDroidProfile(broken) ?? '', /left unchanged/);
+  assert.equal(readFileSync(broken, 'utf8'), '{not valid json');
+
+  const badTrusted = path.join(root, 'bad-trusted.json');
+  writeFileSync(badTrusted, JSON.stringify({ trustedFolders: ['not-an-object'] }));
+  assert.match(syncDroidProfile(badTrusted) ?? '', /expected trustedFolders/);
+
+  const badSession = path.join(root, 'bad-session.json');
+  writeFileSync(badSession, JSON.stringify({ sessionDefaultSettings: 'not-an-object' }));
+  assert.match(syncDroidProfile(badSession) ?? '', /expected sessionDefaultSettings/);
+
+  assert.deepEqual(enforcedAgentArgs(['--auto', 'low', '--use-spec', '--disable-builtin-skills', '--auto=medium', '--from-test', '--auto']), ['--disable-builtin-skills', '--from-test']);
 });
 
 test('worker state recovery keeps terminal claims, pending forks, notices and retired seats', (t) => {

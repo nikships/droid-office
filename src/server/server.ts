@@ -14,7 +14,7 @@ import { TailscaleWatch } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
 import { TailnetHttps } from './tailnet-https.js';
 import type { PairedDevice } from '../shared/devices.js';
-import { MAX_REPOS, childEnv, resolveAgent, type RepoSource } from './workers.js';
+import { MAX_REPOS, childEnv, resolveAgent, syncDroidProfile, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
 import { createDroidCommandCatalogue } from './droid-commands.js';
 import { airgappedModelError, createDroidModelCatalogue, customModelCatalogue, readDroidModels } from './droid-models.js';
@@ -315,6 +315,12 @@ export async function startServer(cfg: Config) {
   });
   // Office tools and how workers hire subagents, on every floor (Settings).
   for (const problem of removeBundledSkills(cfg.skillsDir)) console.warn(problem);
+  const droidSettingsFile = cfg.skillsDir ? path.join(path.dirname(cfg.skillsDir), 'settings.json') : undefined;
+  const syncDroidSettings = () => {
+    const problem = syncDroidProfile(droidSettingsFile, { extraPaths: [cfg.dir, cfg.projectsDir, ...[...floors.values()].map((f) => f.dir)] });
+    if (problem) console.warn(problem);
+  };
+  syncDroidSettings();
   const hookUrl = `http://127.0.0.1:${hookPort}`;
   let mcpProfile = Promise.resolve();
   const syncOfficeMcp = (on: boolean) => {
@@ -329,8 +335,11 @@ export async function startServer(cfg: Config) {
     missionChanged();
   });
   syncOfficeMcp(subagents.settings.officeMcp);
-  // Another office that held the shared profile entry may stop: take it over then.
-  setInterval(() => syncOfficeMcp(subagents.settings.officeMcp), 30_000).unref();
+  // Another office that held the shared profile entry may stop: take it over then, and re-verify Droid's trust/autonomy defaults.
+  setInterval(() => {
+    syncDroidSettings();
+    syncOfficeMcp(subagents.settings.officeMcp);
+  }, 30_000).unref();
 
   // --- Mission Control: the building's agents, with no desk on any floor (docs/mission-control.md) ---
   const orchestrator = new Orchestrator({
@@ -359,6 +368,7 @@ export async function startServer(cfg: Config) {
     },
     toast: (text, level) => toastAll(text, level),
   });
+  orchestrator.workers.beforeLaunch = syncDroidSettings;
   /** A worker's own manager: its floor's, or the Orchestrator's. */
   const workersOf = (workerId: string) => (workerId === ORCHESTRATOR_ID ? orchestrator.workers : workerFloor(workerId)?.workers);
   const buildingAgents: BuildingAgents = {
@@ -652,6 +662,7 @@ export async function startServer(cfg: Config) {
     toast: (text, level) => toastAll(text, level),
     agentChanged: (file) => {
       agentPath = file;
+      syncDroidSettings();
       droidModels.forget();
       droidCommands.forget();
       for (const f of floors.values()) f.workers.setAgentPath(file);
@@ -672,6 +683,7 @@ export async function startServer(cfg: Config) {
     },
     toast: (text, level) => toastAll(text, level),
     modelsChanged: () => {
+      syncDroidSettings();
       droidModels.forget();
       setup.message('office', { t: 'setup.check' });
       missionChanged();
@@ -716,6 +728,7 @@ export async function startServer(cfg: Config) {
     building: buildingAgents,
     agentCmd: cfg.agentCmd,
     agentArgs: cfg.agentArgs,
+    beforeLaunch: syncDroidSettings,
     hook: { url: `http://127.0.0.1:${hookPort}`, token: '' },
     capacity: machine,
     jira,
@@ -845,6 +858,7 @@ export async function startServer(cfg: Config) {
     try {
       const floor = new Floor(def, floorContext);
       floors.set(def.id, floor);
+      syncDroidSettings();
       remoteOffice.syncWatches();
       for (const worker of floor.everyone()) {
         broadcast({ t: 'building.worker', floor: floor.id, worker });

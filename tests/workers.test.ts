@@ -349,7 +349,7 @@ test('Droid workers launch with their own hook overlay and resume the correct se
     )
   ).find((r) => r.kind === 'droid' && r.args.includes('--settings'))!;
   const systemFile = path.join(f.data, `system-${worker.id}.md`);
-  assert.deepEqual(first.args.slice(0, 5), ['--settings', path.join(f.data, 'droid-hooks.json'), '--append-system-prompt-file', systemFile, '--from-test']);
+  assert.deepEqual(first.args.slice(0, 7), ['--settings', path.join(f.data, 'droid-hooks.json'), '--append-system-prompt-file', systemFile, '--auto', 'high', '--from-test']);
   const system = readFileSync(systemFile, 'utf8');
   assert.match(system, new RegExp(`^You're ${worker.name}, a worker in Droid Office`));
   assert.match(system, /team_hire/);
@@ -509,9 +509,10 @@ test('Droid workers pin their model and effort in a per-worker settings overlay,
   assert.equal(overlay.sessionDefaultSettings.model, 'custom:droidproxy:gpt-6-sol');
   assert.equal(overlay.sessionDefaultSettings.reasoningEffort, 'high');
   assert.match(overlay.hooks.SessionStart[0].hooks[0].command, /\/hooks\/droid/);
-  // The shared hooks file stays model-free for workers without an override.
+  // The shared hooks file enforces high autonomy while staying model-free for workers without an override.
   const shared = JSON.parse(readFileSync(path.join(f.data, 'droid-hooks.json'), 'utf8'));
-  assert.equal(shared.sessionDefaultSettings, undefined);
+  assert.deepEqual(shared.sessionDefaultSettings, { interactionMode: 'auto', autonomyLevel: 'high' });
+  assert.equal(shared.subagentAutonomyLevel, 'high');
 
   workers.shutdown();
   const restored = manager(f, []);
@@ -3439,7 +3440,7 @@ test('switchModel drives /model in a running session, pins the model for a resum
   );
   assert.equal(workers.resume(worker.id), undefined);
   const [, second] = await waitFor(launches, (l) => l.length >= 2);
-  assert.deepEqual(pinned(second), { model: 'gpt-6.1-sol', reasoningEffort: 'high' }, 'a resume keeps the switched model');
+  assert.deepEqual(pinned(second), { interactionMode: 'auto', autonomyLevel: 'high', model: 'gpt-6.1-sol', reasoningEffort: 'high' }, 'a resume keeps the switched model');
 
   process.kill(second.pid, 'SIGTERM');
   await waitFor(
@@ -3451,9 +3452,59 @@ test('switchModel drives /model in a running session, pins the model for a resum
   assert.equal(driven.length, calls, 'an asleep worker has no picker to drive');
   assert.equal(workers.resume(worker.id), undefined);
   const [, , third] = await waitFor(launches, (l) => l.length >= 3);
-  assert.deepEqual(pinned(third), { model: 'custom:droidproxy:gpt-6.1-sol' });
+  assert.deepEqual(pinned(third), { interactionMode: 'auto', autonomyLevel: 'high', model: 'custom:droidproxy:gpt-6.1-sol' });
   assert.ok('error' in (await workers.switchModel(worker.id, { id: 'bad model\nid', name: 'x' })), 'an id Droid could not take is refused');
   workers.modelGate = (model) => (model === 'gpt-6.1-sol' ? 'GPT-6.1 Sol is out of quota' : undefined);
   assert.deepEqual(await workers.switchModel(worker.id, { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol' }), { error: 'GPT-6.1 Sol is out of quota' }, 'the office’s model gate applies as it does to a hire');
   assert.equal(workers.get(worker.id)?.model, 'custom:droidproxy:gpt-6.1-sol');
+});
+
+test('WorkerManager enforces --auto high across fresh, resumed and forked launches and syncs profile before Droid spawns', async (t) => {
+  const f = fixture();
+  isolateAgentEnvironment(f, t);
+  const previous = process.env.FAKE_AGENT_LOG;
+  process.env.FAKE_AGENT_LOG = f.log;
+  t.after(() => {
+    f.close();
+    if (previous === undefined) delete process.env.FAKE_AGENT_LOG;
+    else process.env.FAKE_AGENT_LOG = previous;
+  });
+  let synced = 0;
+  const workers = managed(f, f.root, f.data, f.droid, ['--auto', 'low', '--use-spec', '--auto=medium', '--from-test'], { url: 'http://127.0.0.1:1', token: '' }, events([]), undefined, undefined, undefined, true);
+  workers.beforeLaunch = () => {
+    synced++;
+  };
+  const shell = workers.spawn('desk-4', 'owner', undefined, false, 'shell');
+  assert.equal(typeof shell, 'object');
+  assert.equal(synced, 0, 'shells never run Droid profile sync');
+
+  const worker = workers.spawn('desk-1', 'owner', 'ship it');
+  if (typeof worker === 'string') throw new Error(worker);
+  assert.equal(synced, 1);
+
+  const launches = () => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings'));
+  const [first] = await waitFor(launches, (l) => l.length >= 1);
+  assert.equal(first.args.includes('low'), false);
+  assert.equal(first.args.includes('--use-spec'), false);
+  assert.equal(first.args.includes('--auto=medium'), false);
+  assert.deepEqual(first.args.slice(-3), ['--auto', 'high', '--from-test']);
+
+  workers.hookReply(worker.id, first.env.hookToken!, 'SessionStart', { session_id: 'droid-high-1', hook_event_name: 'SessionStart' });
+  const forked = await workers.fork(worker.id, 'owner', 'forked task');
+  if (typeof forked === 'string') throw new Error(forked);
+  assert.equal(synced, 2);
+  const [, forkLaunch] = await waitFor(launches, (l) => l.length >= 2);
+  assert.ok(forkLaunch.args.includes('--auto') && forkLaunch.args[forkLaunch.args.indexOf('--auto') + 1] === 'high');
+  assert.deepEqual(forkLaunch.args.slice(-2), ['--fork', 'droid-high-1']);
+
+  process.kill(first.pid, 'SIGTERM');
+  await waitFor(
+    () => workers.get(worker.id)?.status,
+    (status) => status === 'exited',
+  );
+  assert.equal(workers.resume(worker.id), undefined);
+  assert.equal(synced, 3);
+  const [, , resumedLaunch] = await waitFor(launches, (l) => l.length >= 3);
+  assert.ok(resumedLaunch.args.includes('--auto') && resumedLaunch.args[resumedLaunch.args.indexOf('--auto') + 1] === 'high');
+  assert.deepEqual(resumedLaunch.args.slice(-2), ['--resume', 'droid-high-1']);
 });

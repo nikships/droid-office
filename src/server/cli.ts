@@ -16,13 +16,14 @@ if (argv[0] === 'browser') {
   process.exit(await browserCommand(argv.slice(1)));
 }
 
-const [{ renderUnicodeCompact }, { loadConfig, ensureSelfSigned }, { startServer }, { tildify }, { FACTORY_SKILLS_DIR }, { COMPANION_PATH }] = await Promise.all([
+const [{ renderUnicodeCompact }, { loadConfig, ensureSelfSigned }, { startServer }, { tildify }, { FACTORY_SKILLS_DIR }, { COMPANION_PATH }, { enforcedAgentArgs }] = await Promise.all([
   import('uqr'),
   import('./config.js'),
   import('./server.js'),
   import('./building.js'),
   import('./subagents.js'),
   import('../shared/devices.js'),
+  import('./workers.js'),
 ]);
 
 const cfg = loadConfig(argv);
@@ -82,7 +83,7 @@ console.log(`
 
   ${localUrl}
 ${office.companion() ? `\n  🌐  Web companion, in any browser on this machine: ${localUrl}${COMPANION_PATH} (links for other computers: ⚙️ Settings → Phone & web → Web companion)\n` : ''}
-  agent: ${[agent ?? `${cfg.agentCmd} (via login shell)`, ...cfg.agentArgs].join(' ')}`);
+  agent: ${[agent ?? `${cfg.agentCmd} (via login shell)`, '--auto', 'high', ...enforcedAgentArgs(cfg.agentArgs)].join(' ')}`);
 // Local startup stays fast. Only the remote QR code waits for Serve to finish.
 await office.httpsReady;
 const pairing = await office.pairing().catch(() => undefined);

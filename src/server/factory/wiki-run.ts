@@ -238,7 +238,7 @@ export function wikiRunSettings(model: Pick<DroidModel, 'id' | 'defaultEffort'>)
     s[`${tier}Model`] = model.id;
     if (model.defaultEffort) s[`${tier}ReasoningEffort`] = model.defaultEffort;
   }
-  return { subagentModelSettings: s };
+  return { subagentAutonomyLevel: 'high', subagentModelSettings: s };
 }
 
 /**

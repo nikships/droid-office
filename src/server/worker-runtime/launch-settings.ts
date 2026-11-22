@@ -1,4 +1,5 @@
-import { writeFileSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { WorkerInfo } from '../../shared/protocol.js';
 import { officePrompt, type PromptSource } from '../prompts.js';
@@ -6,6 +7,141 @@ import { PROMPTS, WORKER_TEAM_LEAD, WORKER_TEAM_SUBAGENT, WORKER_VISITS, workerB
 import type { Worktrees } from '../worktrees.js';
 import { hookScript, HOOK_EVENTS, HOOK_VERSION } from './hook-transport.js';
 import { runAsNode, shq } from './process.js';
+
+const ENFORCED_SESSION_DEFAULTS = { interactionMode: 'auto', autonomyLevel: 'high' } as const;
+const ENFORCED_SUBAGENT_AUTONOMY = 'high';
+const WIN_DRIVES = Array.from({ length: 26 }, (_, i) => `${String.fromCharCode(65 + i)}:\\`);
+const verifiedProfileStamps = new Map<string, string>();
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Strips autonomy and spec-mode flags from `--agent-args` so Droid Office always enforces
+ * `--auto high` in normal execution mode while preserving unrelated extra flags.
+ */
+export function enforcedAgentArgs(agentArgs: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < agentArgs.length; i++) {
+    const a = agentArgs[i];
+    if (a === '--auto') {
+      if (i + 1 < agentArgs.length && !agentArgs[i + 1].startsWith('-')) i++;
+      continue;
+    }
+    if (a.startsWith('--auto=') || a === '--use-spec') continue;
+    out.push(a);
+  }
+  return out;
+}
+
+/**
+ * Filesystem roots that cover every directory on the machine in Droid's `trustedFolders`:
+ * `/` on POSIX, and `A:\`..`Z:\` plus any extra UNC/drive roots on Windows.
+ */
+export function trustedRoots(platform: NodeJS.Platform = process.platform, extraPaths: readonly string[] = []): string[] {
+  if (platform !== 'win32') return ['/'];
+  const roots = new Set<string>(WIN_DRIVES);
+  for (const p of extraPaths) {
+    if (!p) continue;
+    const root = path.win32.parse(path.win32.resolve(p)).root.toUpperCase();
+    if (root) roots.add(root.endsWith('\\') || root.endsWith('/') ? root.replace(/\//g, '\\') : `${root}\\`);
+  }
+  return [...roots];
+}
+
+function fileStamp(file: string): string | undefined {
+  try {
+    const info = statSync(file);
+    return `${info.ino}:${info.size}:${info.mtimeMs}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Enforces high autonomy (`interactionMode: "auto"`, `autonomyLevel: "high"`, `subagentAutonomyLevel: "high"`),
+ * universal folder trust (`trustedFolders`), and dismissed mission onboarding in Droid's user `settings.json`,
+ * preserving all existing models and preferences. Unset `file` disables profile writes in unit tests.
+ */
+export function syncDroidProfile(file: string | undefined, opts: { platform?: NodeJS.Platform; extraPaths?: readonly string[]; now?: () => Date } = {}): string | undefined {
+  if (!file) return undefined;
+  const platform = opts.platform ?? process.platform;
+  const roots = trustedRoots(platform, opts.extraPaths);
+  const cacheKey = `${file}\0${roots.join('\0')}`;
+  const beforeStamp = fileStamp(file);
+  if (beforeStamp !== undefined && verifiedProfileStamps.get(cacheKey) === beforeStamp) return undefined;
+
+  let current: Record<string, unknown>;
+  try {
+    const raw: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    if (!isPlainRecord(raw)) return `Droid Office left ${file} unchanged: expected a JSON settings object.`;
+    if (raw.trustedFolders !== undefined && !isPlainRecord(raw.trustedFolders)) {
+      return `Droid Office left ${file} unchanged: expected trustedFolders to be an object.`;
+    }
+    if (raw.sessionDefaultSettings !== undefined && !isPlainRecord(raw.sessionDefaultSettings)) {
+      return `Droid Office left ${file} unchanged: expected sessionDefaultSettings to be an object.`;
+    }
+    current = raw;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return `Droid Office could not read ${file}; it was left unchanged.`;
+    current = {};
+  }
+
+  let changed = beforeStamp === undefined;
+  const existingTrusted = isPlainRecord(current.trustedFolders) ? current.trustedFolders : {};
+  const trustedFolders: Record<string, unknown> = { ...existingTrusted };
+  const trustedAt = (opts.now ?? (() => new Date()))().toISOString();
+  for (const root of roots) {
+    const entry = trustedFolders[root];
+    if (!isPlainRecord(entry) || typeof entry.trustedAt !== 'string' || !entry.trustedAt.trim()) {
+      trustedFolders[root] = { trustedAt };
+      changed = true;
+    }
+  }
+
+  const existingSession = isPlainRecord(current.sessionDefaultSettings) ? current.sessionDefaultSettings : {};
+  if (existingSession.interactionMode !== ENFORCED_SESSION_DEFAULTS.interactionMode || existingSession.autonomyLevel !== ENFORCED_SESSION_DEFAULTS.autonomyLevel) {
+    changed = true;
+  }
+  const sessionDefaultSettings: Record<string, unknown> = {
+    ...existingSession,
+    ...ENFORCED_SESSION_DEFAULTS,
+  };
+
+  if (current.subagentAutonomyLevel !== ENFORCED_SUBAGENT_AUTONOMY || current.hasSeenMissionOnboarding !== true) {
+    changed = true;
+  }
+
+  if (!changed) {
+    if (beforeStamp !== undefined) verifiedProfileStamps.set(cacheKey, beforeStamp);
+    return undefined;
+  }
+
+  const next: Record<string, unknown> = {
+    ...current,
+    sessionDefaultSettings,
+    subagentAutonomyLevel: ENFORCED_SUBAGENT_AUTONOMY,
+    hasSeenMissionOnboarding: true,
+    trustedFolders,
+  };
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  try {
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+    renameSync(tmp, file);
+    const afterStamp = fileStamp(file);
+    if (afterStamp !== undefined) verifiedProfileStamps.set(cacheKey, afterStamp);
+    return undefined;
+  } catch (err) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // ignore cleanup failure
+    }
+    return `Droid Office could not update ${file}: ${(err as Error).message}`;
+  }
+}
 
 interface LaunchSettingsContext {
   denyTask(): boolean;
@@ -65,22 +201,21 @@ export class WorkerLaunchSettings {
   /** Droid reads its hooks once, at start: written again before each launch, so a change in Settings reaches the next one. */
   private writeDroidSettings() {
     this.droidHooks = this.hookEntries();
-    writeFileSync(this.droidSettingsPath, JSON.stringify({ hooks: this.droidHooks }, null, 2), { mode: 0o600 });
+    writeFileSync(this.droidSettingsPath, JSON.stringify({ hooks: this.droidHooks, sessionDefaultSettings: { ...ENFORCED_SESSION_DEFAULTS }, subagentAutonomyLevel: ENFORCED_SUBAGENT_AUTONOMY }, null, 2), { mode: 0o600 });
   }
   /**
-   * The settings file a Droid worker launches with. Interactive droid has no --model flag: a
-   * worker with a model or effort pinned gets its own overlay with the office hooks and a
-   * sessionDefaultSettings override, merged for that process only, so the global default is
-   * untouched. Rewritten on every launch, so a resume pins the same model again.
+   * The settings file a Droid worker launches with: office hooks plus enforced high autonomy, and
+   * when a model or effort is pinned for this worker, its own overlay merged for that process only.
+   * Rewritten on every launch, so a resume pins the same model and autonomy again.
    */
   droidSettings(info: WorkerInfo): string {
     this.writeDroidSettings();
     if (info.model === undefined && info.effort === undefined) return this.droidSettingsPath;
     const file = path.join(this.dataDir, `droid-${info.id}.json`);
-    const sessionDefaultSettings: Record<string, string> = {};
+    const sessionDefaultSettings: Record<string, string> = { ...ENFORCED_SESSION_DEFAULTS };
     if (info.model !== undefined) sessionDefaultSettings.model = info.model;
     if (info.effort !== undefined) sessionDefaultSettings.reasoningEffort = info.effort;
-    writeFileSync(file, JSON.stringify({ hooks: this.droidHooks, sessionDefaultSettings }, null, 2), { mode: 0o600 });
+    writeFileSync(file, JSON.stringify({ hooks: this.droidHooks, sessionDefaultSettings, subagentAutonomyLevel: ENFORCED_SUBAGENT_AUTONOMY }, null, 2), { mode: 0o600 });
     return file;
   }
 

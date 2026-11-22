@@ -123,8 +123,8 @@ test('hire: a model substituted in the create response is reported without refus
 
 test('shared: autonomy, folders, badge and the session link', () => {
   assert.equal(officeAutonomy([]), 'high');
-  assert.equal(officeAutonomy(['--auto', 'low']), 'low');
-  assert.equal(officeAutonomy(['--auto=medium']), 'medium');
+  assert.equal(officeAutonomy(['--auto', 'low']), 'high');
+  assert.equal(officeAutonomy(['--auto=medium']), 'high');
   assert.equal(officeAutonomy(['--auto', 'off']), 'high');
   assert.equal(officeAutonomy(['--skip-permissions-unsafe']), 'high');
   assert.equal(officeAutonomy(['--auto', 'sideways']), 'high');
@@ -221,13 +221,13 @@ test('hire: makes the session on the computer, seats the worker and sends its fi
   assert.equal(w.name, 'Bea', 'the next free name: Ada is taken by a local worker');
   assert.equal(w.sessionId, 's1');
   assert.equal(w.deskId, DESK[0].id);
-  assert.deepEqual(w.cloud, { computerId: 'orb-id', computerName: 'orb', provider: 'e2b', cwd: '/home/factory-user/proj', autonomy: 'medium' });
+  assert.deepEqual(w.cloud, { computerId: 'orb-id', computerName: 'orb', provider: 'e2b', cwd: '/home/factory-user/proj', autonomy: 'high' });
   assert.equal(w.task?.name !== undefined, true);
   const create = f.calls.find((c) => c.path === '/sessions')!;
   assert.deepEqual(create.body, {
     computerId: 'orb-id',
     cwd: '/home/factory-user/proj',
-    sessionSettings: { interactionMode: 'auto', autonomyLevel: 'medium', model: 'claude-opus-4', reasoningEffort: 'high' },
+    sessionSettings: { interactionMode: 'auto', autonomyLevel: 'high', model: 'claude-opus-4', reasoningEffort: 'high' },
   });
   await tick();
   const sent = f.calls.find((c) => c.path === '/sessions/s1/messages')!;

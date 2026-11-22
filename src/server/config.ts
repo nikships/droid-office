@@ -92,7 +92,7 @@ Options:
   -H, --host <addr>       Legacy option; the local listener always binds 127.0.0.1.
                           Remote access uses Tailscale HTTPS only.
       --agent <cmd>       The Droid command (default "droid", env DROID_OFFICE_AGENT)
-      --agent-args <str>  Extra args for Droid, e.g. "--auto medium"
+      --agent-args <str>  Extra args for Droid, e.g. "--disable-builtin-skills"
       --tls-cert <file>   Serve HTTPS with this certificate (PEM)
       --tls-key <file>    ...and this private key (PEM)
       --self-signed       Serve HTTPS with a generated self-signed certificate

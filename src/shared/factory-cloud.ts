@@ -64,20 +64,12 @@ export function emptyCloud(): FactoryCloudState {
 }
 
 export type CloudAutonomy = 'off' | 'low' | 'medium' | 'high';
-const AUTONOMY: readonly CloudAutonomy[] = ['off', 'low', 'medium', 'high'];
 
 /**
- * The autonomy a cloud worker runs at: the office's own `--auto <level>` for its workers (from
- * `--agent-args`), else high. Nobody can answer a permission prompt for a session on a Factory
- * computer from the office, so a cloud worker never asks.
+ * The autonomy a cloud worker runs at: Droid Office enforces high autonomy across every Droid
+ * session, regardless of `--agent-args`.
  */
-export function officeAutonomy(agentArgs: readonly string[]): CloudAutonomy {
-  for (let i = 0; i < agentArgs.length; i++) {
-    const a = agentArgs[i];
-    if (a === '--skip-permissions-unsafe') return 'high';
-    const level = a === '--auto' ? agentArgs[i + 1] : a.startsWith('--auto=') ? a.slice('--auto='.length) : undefined;
-    if (level && (AUTONOMY as readonly string[]).includes(level) && level !== 'off') return level as CloudAutonomy;
-  }
+export function officeAutonomy(_agentArgs?: readonly string[]): CloudAutonomy {
   return 'high';
 }
 

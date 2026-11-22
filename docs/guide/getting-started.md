@@ -110,7 +110,7 @@ droid-office [dir] [options]
   -p, --port <n>          Port (default 4600, env PORT)
   -H, --host <addr>       Legacy option; the local listener always binds 127.0.0.1
       --agent <cmd>       The Droid command (default "droid", env DROID_OFFICE_AGENT)
-      --agent-args <str>  Extra args for Droid, e.g. "--auto medium"
+      --agent-args <str>  Extra args for Droid, e.g. "--disable-builtin-skills"
       --tls-cert <file>   Serve HTTPS with this cert…
       --tls-key <file>    …and key
       --self-signed       Serve HTTPS with a generated self-signed cert

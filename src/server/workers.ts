@@ -51,12 +51,12 @@ import { newWorker, midTurn, screenRows, type Worker } from './worker-runtime/st
 import { WorkerDelivery } from './worker-runtime/delivery.js';
 import { WorkerHooks, STOP_GRACE_MS } from './worker-runtime/hooks.js';
 import { WorkerHookSpool, HOOK_VERSION, SPOOL_MAX_BYTES, SPOOL_RECHECK_MS, safeEq } from './worker-runtime/hook-transport.js';
-import { WorkerLaunchSettings } from './worker-runtime/launch-settings.js';
+import { WorkerLaunchSettings, enforcedAgentArgs, syncDroidProfile, trustedRoots } from './worker-runtime/launch-settings.js';
 import { childEnv, runAsNode, defaultShell, setupLine, setupFailedNote, resolveAgent, WIN, shellRun, shq } from './worker-runtime/process.js';
 import { WorkerStateStore } from './worker-runtime/persistence.js';
 import { truncate } from './worker-runtime/activity.js';
 
-export { STOP_GRACE_MS, HOOK_VERSION, SPOOL_MAX_BYTES, childEnv, runAsNode, defaultShell, setupLine, setupFailedNote, resolveAgent };
+export { STOP_GRACE_MS, HOOK_VERSION, SPOOL_MAX_BYTES, childEnv, runAsNode, defaultShell, setupLine, setupFailedNote, resolveAgent, enforcedAgentArgs, syncDroidProfile, trustedRoots };
 
 type HeadlessTerminal = InstanceType<typeof headless.Terminal>;
 type Worktree = NonNullable<WorkerInfo['worktree']>;
@@ -228,6 +228,8 @@ export class WorkerManager {
   allowTools?: { matcher: string; reason: string };
   /** A worker that stays asleep when the floor wakes everyone (the Orchestrator while it is off). */
   asleep?: (info: WorkerInfo) => boolean;
+  /** Runs before spawning a Droid session so user-level Droid trust and autonomy settings stay enforced. */
+  beforeLaunch?: () => void;
   private settling = false;
   private spoolTimer?: NodeJS.Timeout;
 
@@ -2134,11 +2136,12 @@ export class WorkerManager {
     const isShell = info.kind === 'shell';
     const command = this.command(info);
     const commandPath = isShell ? undefined : this.agentPath;
-    const args = isShell ? (WIN && !process.env.SHELL ? [] : ['-l']) : [...this.agentArgs];
+    const args = isShell ? (WIN && !process.env.SHELL ? [] : ['-l']) : enforcedAgentArgs(this.agentArgs);
     if (!isShell) {
+      this.beforeLaunch?.();
       // Interactive droid takes no --model flag: the model is pinned in its settings overlay.
       const system = this.settings.systemPromptFile(info);
-      args.unshift('--settings', this.settings.droidSettings(info), ...(system ? ['--append-system-prompt-file', system] : []));
+      args.unshift('--settings', this.settings.droidSettings(info), ...(system ? ['--append-system-prompt-file', system] : []), '--auto', 'high');
       if (resumeSessionId) args.push('--resume', resumeSessionId);
       else if (w.pendingFork) args.push('--cwd', this.cwd(info), '--fork', w.pendingFork.sessionId);
     }

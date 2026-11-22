@@ -8,7 +8,7 @@ import { excludeFromGit } from './config.js';
 import { isProtectedBaseBranch, readHeadBranch } from './floor-watch.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
 import { OfficeShell } from './office-shell.js';
-import { COLORS, NAMES, WorkerManager, type HookEnv } from './workers.js';
+import { COLORS, NAMES, WorkerManager, enforcedAgentArgs, type HookEnv } from './workers.js';
 import { CloudWorkers } from './cloud-workers.js';
 import type { SharedDropImages } from './drops.js';
 import { GitHub, MergeWatch } from './github.js';
@@ -59,6 +59,7 @@ export interface FloorContext {
   building?: BuildingAgents;
   agentCmd: string;
   agentArgs: string[];
+  beforeLaunch?(): void;
   hook: HookEnv;
   /** The office's worker limit, across every floor. */
   capacity: Capacity;
@@ -177,7 +178,7 @@ export function projectInfo(dir: string, name: string, agentCmd: string, agentAr
     branch,
     remote,
     forge,
-    agentCmd: [agentCmd, ...agentArgs].join(' '),
+    agentCmd: [agentCmd, '--auto', 'high', ...enforcedAgentArgs(agentArgs)].join(' '),
   };
 }
 
@@ -390,6 +391,7 @@ export class Floor {
       const s = ctx.subagents();
       return s.denyTask && s.on && s.officeMcp;
     };
+    this.workers.beforeLaunch = () => ctx.beforeLaunch?.();
     this.workers.beforeStop = (info) => this.team.beforeStop(info);
     this.workers.nextTurn = (info) => this.team.nextTurn(info.id);
 
