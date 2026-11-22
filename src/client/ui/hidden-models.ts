@@ -29,25 +29,29 @@ export function hiddenModelSettings(net: Net, onHiddenCount?: (count: number | u
   const paint = () => {
     if (disposed) return;
     const hidden = new Set(store.hiddenModels);
-    const hiddenCount = countHiddenModels(models, store.hiddenModels);
+    const hideNative = store.hideNativeModels;
+    const hiddenCount = countHiddenModels(models, store.hiddenModels, hideNative);
     onHiddenCount?.(loading || failed ? undefined : hiddenCount);
     const focused = list.contains(document.activeElement) ? document.activeElement?.id : undefined;
     const query = search.value.trim().toLowerCase();
     const matches = models.filter((m) => `${m.id} ${m.displayName} ${pickerModel(m).group} ${m.provider ?? ''}`.toLowerCase().includes(query));
     count.textContent = loading ? 'Loading models…' : failed ? 'Could not load models.' : `${models.length - hiddenCount} shown · ${hiddenCount} hidden`;
-    all.disabled = loading || failed || !hiddenCount;
+    all.disabled = loading || failed || (!hiddenCount && !hideNative);
     retry.classList.toggle('hidden', !failed);
     list.replaceChildren(
       ...matches.map((m) => {
         const shown = pickerModel(m);
-        const control = toggle({ id: `model-visibility-${m.id}`, label: `Show ${shown.name}`, bare: true, checked: !hidden.has(m.id), onChange: (on) => void send(m.id, !on) });
-        return h(
-          'div.list-row',
-          {},
-          modelLogo({ id: m.id, name: m.displayName, provider: m.provider }),
-          h('div.list-main', {}, h('div.list-title', { title: shown.name }, shown.name), h('div.list-meta', { title: m.id }, `${shown.group} · ${m.id}`)),
-          control,
-        );
+        const autoHidden = hideNative && !m.custom;
+        const control = toggle({
+          id: `model-visibility-${m.id}`,
+          label: `Show ${shown.name}`,
+          bare: true,
+          checked: !autoHidden && !hidden.has(m.id),
+          disabled: autoHidden,
+          onChange: (on) => void send(m.id, !on),
+        });
+        const meta = autoHidden ? `${shown.group} · ${m.id} · hidden with native Factory models` : `${shown.group} · ${m.id}`;
+        return h('div.list-row', {}, modelLogo({ id: m.id, name: m.displayName, provider: m.provider }), h('div.list-main', {}, h('div.list-title', { title: shown.name }, shown.name), h('div.list-meta', { title: meta }, meta)), control);
       }),
       ...(matches.length ? [] : [h('p', {}, loading ? 'Loading Droid models…' : failed ? 'Could not load models. Retry to load the list.' : query ? 'No models match your search.' : 'No Droid models found.')]),
     );

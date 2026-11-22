@@ -300,6 +300,7 @@ export class Store {
   /** How workers hire subagents (⚙️ Settings → Subagents & visits), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
   hiddenModels: string[] = [];
+  hideNativeModels = false;
   workerLabels: WorkerLabelState = { settings: { ...WORKER_LABEL_DEFAULTS }, running: 0, queued: 0 };
   workerAnswerMultiSelect = false;
   /** Each floor's Whiteboard as this window has it, with the owner's batches until they're committed (see whiteboard-sync.ts). */
@@ -436,6 +437,7 @@ export class Store {
         this.freshMain = msg.freshMain ?? { on: true };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
         this.hiddenModels = msg.hiddenModels ?? [];
+        this.hideNativeModels = msg.hideNativeModels === true;
         this.workerLabels = msg.workerLabels ?? { settings: { ...WORKER_LABEL_DEFAULTS }, running: 0, queued: 0 };
         this.emit('workerLabels');
         this.workerAnswerMultiSelect = msg.workerAnswerMultiSelect === true;
@@ -691,6 +693,7 @@ export class Store {
         break;
       case 'models.hidden':
         this.hiddenModels = msg.ids;
+        this.hideNativeModels = msg.hideNative === true;
         this.emit('hiddenModels');
         break;
       case 'workerLabels':

@@ -501,14 +501,26 @@ test('hidden models sync to every device and new connections, with invalid chang
   const phone = socket(t, base, 'client=mobile');
   const welcome = await desktop.wait('welcome');
   assert.deepEqual(welcome.hiddenModels, []);
+  assert.equal(welcome.hideNativeModels, false);
   assert.equal(welcome.workerAnswerMultiSelect, true);
   await web.wait('welcome');
   await phone.wait('welcome');
   desktop.send({ t: 'models.hide', id: 'gpt-6.1-sol', hidden: true, requestId: 'hide-model' });
   assert.equal((await desktop.wait('action.result', (m) => m.requestId === 'hide-model')).ok, true);
   for (const client of [desktop, web, phone]) assert.deepEqual((await client.wait('models.hidden')).ids, ['gpt-6.1-sol']);
+  desktop.send({ t: 'models.hideNative', hidden: true, requestId: 'hide-native' });
+  assert.equal((await desktop.wait('action.result', (m) => m.requestId === 'hide-native')).ok, true);
+  for (const client of [desktop, web, phone]) {
+    const msg = await client.wait('models.hidden', (m) => m.hideNative === true);
+    assert.deepEqual(msg.ids, ['gpt-6.1-sol']);
+  }
   const fresh = socket(t, base, '');
-  assert.deepEqual((await fresh.wait('welcome')).hiddenModels, ['gpt-6.1-sol']);
+  const freshWelcome = await fresh.wait('welcome');
+  assert.deepEqual(freshWelcome.hiddenModels, ['gpt-6.1-sol']);
+  assert.equal(freshWelcome.hideNativeModels, true);
+  desktop.ws.send(JSON.stringify({ t: 'models.hideNative', hidden: 'yes', requestId: 'invalid-native' }));
+  await desktop.wait('toast', (m) => m.text.includes('native Factory models'));
+  assert.equal((await desktop.wait('action.result', (m) => m.requestId === 'invalid-native')).ok, false);
   desktop.ws.send(JSON.stringify({ t: 'models.hide', id: 'two words', hidden: true, requestId: 'invalid-model' }));
   await desktop.wait('toast', (m) => m.text.includes('valid model'));
   assert.equal((await desktop.wait('action.result', (m) => m.requestId === 'invalid-model')).ok, false);
@@ -519,9 +531,12 @@ test('hidden models sync to every device and new connections, with invalid chang
   assert.equal(failed.ok, false);
   assert.match(failed.error ?? '', /Could not save/);
   rmSync(temporary, { recursive: true });
-  assert.deepEqual(JSON.parse(readFileSync(path.join(dir, '.droid-office/hidden-models.json'), 'utf8')), ['gpt-6.1-sol']);
+  assert.deepEqual(JSON.parse(readFileSync(path.join(dir, '.droid-office/hidden-models.json'), 'utf8')), {
+    hideNative: true,
+    ids: ['gpt-6.1-sol'],
+  });
   desktop.send({ t: 'models.hide', id: null, hidden: false });
-  for (const client of [desktop, web, phone]) await client.wait('models.hidden', (m) => m.ids.length === 0);
+  for (const client of [desktop, web, phone]) await client.wait('models.hidden', (m) => m.ids.length === 0 && m.hideNative === false);
 });
 
 test('host update routes require office access and same-origin writes, with clear source-host fallback', async (t) => {

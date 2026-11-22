@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { HUD_DEFAULTS, loadSettings } from '../src/client/state.js';
+import { HUD_DEFAULTS, loadSettings, store } from '../src/client/state.js';
 import { rememberedChoice } from '../src/client/ui/models.js';
 
 const mem = new Map<string, string>();
@@ -57,4 +57,26 @@ test('desk model memory defaults on and can be disabled without losing saved cho
   assert.deepEqual(rememberedChoice('ask-models'), { model: 'model-b' });
   mem.set('droid-office.settings', JSON.stringify({ rememberDeskModels: true }));
   assert.deepEqual(rememberedChoice('desk:desk-1'), { model: 'model-a', effort: 'high' });
+});
+
+test('remembered desk and hire choices skip hidden and native Factory models while preserving custom DroidProxy choices', () => {
+  mem.clear();
+  mem.set('droid-office.droid-model.desk:desk-1', 'gpt-6.1-sol');
+  mem.set('droid-office.droid-effort.desk:desk-1', 'high');
+  mem.set('droid-office.droid-model.desk:desk-2', 'custom:droidproxy:gpt-6.1-sol');
+  const beforeHidden = store.hiddenModels;
+  const beforeNative = store.hideNativeModels;
+  try {
+    store.hideNativeModels = true;
+    assert.deepEqual(rememberedChoice('desk:desk-1'), { effort: 'high' });
+    assert.deepEqual(rememberedChoice('desk:desk-2'), { model: 'custom:droidproxy:gpt-6.1-sol' });
+    store.hiddenModels = ['custom:droidproxy:gpt-6.1-sol'];
+    assert.deepEqual(rememberedChoice('desk:desk-2'), {});
+    store.hiddenModels = [];
+    store.hideNativeModels = false;
+    assert.deepEqual(rememberedChoice('desk:desk-1'), { model: 'gpt-6.1-sol', effort: 'high' });
+  } finally {
+    store.hiddenModels = beforeHidden;
+    store.hideNativeModels = beforeNative;
+  }
 });

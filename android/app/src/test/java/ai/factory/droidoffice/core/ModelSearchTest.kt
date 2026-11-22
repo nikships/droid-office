@@ -5,12 +5,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ModelSearchTest {
-    @Test fun hiddenModelsNeverAppearInSearchScopesOrRecentsAndCanBeRestored() {
+    @Test fun hiddenModelsAndNativeFactoryHidingNeverAppearInSearchScopesOrRecentsAndCanBeRestored() {
         val hidden = setOf("custom:droidproxy:gpt-6.1-sol", "gpt-6.1-sol")
         val visible = ModelSearch.visible(models, hidden)
         assertEquals(models.size - 2, visible.size)
         assertTrue(ModelSearch.sections(visible, "gpt", "", hidden.toList()).isEmpty())
         assertFalse(ModelSearch.scopes(visible).any { it.name == "OpenAI" })
+        val customOnly = ModelSearch.visible(models, emptySet(), hideNative = true)
+        assertEquals(4, customOnly.size)
+        assertTrue(customOnly.all { it.custom })
+        assertEquals(listOf("Yours"), ModelSearch.scopes(customOnly).map { it.name })
+        assertEquals(listOf("DroidProxy", "Zen", "OpenRouter"), ModelSearch.sections(customOnly, "", "", listOf("gpt-6.1-sol")).map { it.label })
+        assertEquals(3, ModelSearch.visible(models, setOf("custom:openrouter:kimi-k3.1-pro"), hideNative = true).size)
         assertEquals(models, ModelSearch.visible(models, emptySet()))
         assertEquals(8, models.size)
     }

@@ -1,5 +1,5 @@
 import { SUBAGENT_MODEL_NOTE_MAX, type SubagentModel } from '../../shared/protocol';
-import { offeredModels } from '../../shared/model-visibility';
+import { isModelHidden, offeredModels } from '../../shared/model-visibility';
 import { watchFactory } from '../factory';
 import { store } from '../state';
 import { withoutGlyph } from '../world/glyph';
@@ -50,7 +50,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
     saveBtn.toggleAttribute('disabled', !changed);
     revert.classList.toggle('hidden', !changed);
     anyBtn.classList.toggle('hidden', !saved?.length && !picked.size);
-    const total = offeredModels(models, store.hiddenModels, new Set(picked.keys())).length;
+    const total = offeredModels(models, store.hiddenModels, new Set(picked.keys()), store.hideNativeModels).length;
     count.textContent = loaded === 'loading' ? 'Loading Droid models…' : picked.size ? `${picked.size} picked${total ? ` of ${total}` : ''}` : loaded === 'failed' ? 'Model list unavailable' : `None picked: leads can run any of ${total}`;
   };
 
@@ -90,7 +90,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
         { title: id },
         h('span.list-icon', {}, box),
         modelLogo({ id, name: m?.displayName, provider: m?.provider }),
-        h('span.list-main', {}, h('span.list-title', {}, name), h('span.list-meta', {}, store.hiddenModels.includes(id) ? `${line} · hidden from pickers` : line)),
+        h('span.list-main', {}, h('span.list-title', {}, name), h('span.list-meta', {}, isModelHidden({ id, custom: m?.custom }, store.hiddenModels, store.hideNativeModels) ? `${line} · hidden from pickers` : line)),
         !m?.custom && m?.tokenMultiplier !== undefined ? h('span.list-end', {}, multiplierLabel(m.tokenMultiplier)) : null,
       ),
       note,
@@ -101,7 +101,7 @@ export function subagentModelPicker(save: (models: SubagentModel[] | undefined) 
   const paintList = () => {
     const want = filter.value.trim().toLowerCase();
     // Hidden models are not offered; one picked before it was hidden stays, so it can be unticked.
-    const offered = offeredModels(models, store.hiddenModels, new Set(picked.keys()));
+    const offered = offeredModels(models, store.hiddenModels, new Set(picked.keys()), store.hideNativeModels);
     const known = new Set(offered.map((m) => m.id));
     // The saved picks on top, then own-key models, then cheapest first; one picked that droid no
     // longer lists stays visible. Rows reorder only on a repaint, never under the pointer mid-pick.

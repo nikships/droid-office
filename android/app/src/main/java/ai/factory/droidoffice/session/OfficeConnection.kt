@@ -225,6 +225,8 @@ class OfficeConnection(
 
     private val _hiddenModels = MutableStateFlow<Set<String>>(emptySet())
     val hiddenModels = _hiddenModels.asStateFlow()
+    private val _hideNativeModels = MutableStateFlow(false)
+    val hideNativeModels = _hideNativeModels.asStateFlow()
     private val _subscriptions = MutableStateFlow<ai.factory.droidoffice.core.SubscriptionState?>(null)
     val subscriptions = _subscriptions.asStateFlow()
     private val _factory = MutableStateFlow<ai.factory.droidoffice.core.FactoryState?>(null)
@@ -588,6 +590,7 @@ class OfficeConnection(
         val office = d.office
         if (office == null) {
             _hiddenModels.value = emptySet()
+            _hideNativeModels.value = false
             _subscriptions.value = null
             _factory.value = null
             _availability.value = emptyMap()
@@ -598,6 +601,7 @@ class OfficeConnection(
         }
         if (_data.value.officeId != office.id) {
             _hiddenModels.value = emptySet()
+            _hideNativeModels.value = false
             _subscriptions.value = null
             _factory.value = null
             _availability.value = emptyMap()
@@ -759,6 +763,7 @@ class OfficeConnection(
                 whiteboard.welcome(msg.view.floor)
                 _availability.value = msg.availability
                 _hiddenModels.value = msg.hiddenModels
+                _hideNativeModels.value = msg.hideNativeModels
                 _subscriptions.value = msg.subscriptions
                 _factory.value = msg.factory
                 enter(officeId, msg.view, msg.floors, msg.version, keepOffFloorScreens = false)
@@ -769,7 +774,10 @@ class OfficeConnection(
                 enter(officeId, msg.view, null, null, keepOffFloorScreens = true)
                 msg.view.floor?.let { f -> scope.launch { store.update(officeId) { it.copy(lastFloor = f, project = msg.view.project?.name?.ifBlank { null } ?: it.project) } } }
             }
-            is ServerMsg.HiddenModels -> _hiddenModels.value = msg.ids
+            is ServerMsg.HiddenModels -> {
+                _hiddenModels.value = msg.ids
+                _hideNativeModels.value = msg.hideNative
+            }
             is ServerMsg.Factory -> _factory.value = msg.state
             is ServerMsg.Floors -> _data.update {
                 val valid = msg.floors.map(FloorInfo::id).toSet()

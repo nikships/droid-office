@@ -1033,6 +1033,8 @@ type ClientMessage =
   | { t: 'subagents.set'; settings: SubagentSettings }
   /** Hide one model from every device's picker, or show all with a null id and hidden=false. */
   | { t: 'models.hide'; id: string | null; hidden: boolean }
+  /** Automatically hide all native Factory models so menus and pickers only show custom/DroidProxy models. */
+  | { t: 'models.hideNative'; hidden: boolean }
   | { t: 'workerLabels.set'; settings: WorkerLabelSettings }
   | { t: 'workerLabels.test'; settings: WorkerLabelSettings }
   /** Where the office looks for checkouts from now on; '' goes back to the default. */
@@ -1112,6 +1114,7 @@ export type ServerMsg =
       freshMain: FreshMainState;
       subagents: SubagentsState;
       hiddenModels?: string[];
+      hideNativeModels?: boolean;
       workerLabels?: WorkerLabelState;
       /** Confirmed worker.answer supports a complete checkbox selection and optional custom text. */
       workerAnswerMultiSelect?: boolean;
@@ -1237,7 +1240,7 @@ export type ServerMsg =
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
   | { t: 'freshMain'; state: FreshMainState }
   | { t: 'subagents'; state: SubagentsState }
-  | { t: 'models.hidden'; ids: string[] }
+  | { t: 'models.hidden'; ids: string[]; hideNative?: boolean }
   | { t: 'workerLabels'; state: WorkerLabelState }
   /**
    * Every visit on the floor (see shared/visits.ts), to everyone on it: after `welcome` and

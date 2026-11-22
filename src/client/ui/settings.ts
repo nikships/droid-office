@@ -1204,6 +1204,20 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     net.send({ t: 'prompts.agent', choice: null });
   });
 
+  const hideNativeError = h('p.field-error', { hidden: true });
+  const hideNative = toggle(
+    'Hide native Factory models',
+    () => store.hideNativeModels,
+    (hidden) => {
+      void net.request({ t: 'models.hideNative', hidden }).then((result) => {
+        hideNativeError.hidden = result.ok;
+        hideNativeError.textContent = result.ok ? '' : (result.error ?? 'Could not save model visibility.');
+        if (!result.ok) hideNative.paint();
+      });
+    },
+  );
+  hideNative.paint();
+
   let pickerMeta: HTMLElement | undefined;
   let pickerHiddenCount: number | undefined;
   const paintPickerModels = (n: number | undefined) => {
@@ -1456,6 +1470,15 @@ export function openSettings(net: Net, opts: SettingsOptions) {
         ...(rememberDesks
           ? [card('Remember models at desks', { desc: desc('Remember each desk’s model and effort in this browser. When off, new hires use the default worker. Saved choices return if you turn it back on.'), control: rememberDesks.el })]
           : []),
+        card('Hide native Factory models', {
+          desc: h(
+            'span.stack.tight',
+            {},
+            h('small', {}, 'Automatically hide Factory’s built-in models so menus and pickers only show DroidProxy and your other custom models. Running workers and saved defaults stay as they are.'),
+            hideNativeError,
+          ),
+          control: hideNative.el,
+        }),
         card('Models shown in pickers', { desc: desc('Hide the models you never use from every picker on desktop, web and Android. Running workers and saved defaults stay as they are.'), below: [pickerModels] }),
       ),
     ],
@@ -1645,6 +1668,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     store.on('missionControl', paintOrchestrator),
     store.on('prompts', paintOrchestrator),
     store.on('workerLabels', paintLabels),
+    store.on('hiddenModels', () => hideNative.paint()),
     ...offWorktreeSetup,
   ];
   const modal = openModal(el, {

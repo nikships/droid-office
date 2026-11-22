@@ -1070,6 +1070,7 @@ export async function startServer(cfg: Config) {
       freshMain: freshMain.state(),
       subagents: subagents.state(),
       hiddenModels: hiddenModels.state(),
+      hideNativeModels: hiddenModels.hideNative(),
       workerLabels: workerLabels.state(),
       workerAnswerMultiSelect: true,
       threadActions: true,
@@ -2119,7 +2120,14 @@ export async function startServer(cfg: Config) {
       case 'models.hide': {
         const error = hiddenModels.set(msg.id, msg.hidden);
         if (error) return stop(error);
-        broadcast({ t: 'models.hidden', ids: hiddenModels.state() });
+        broadcast({ t: 'models.hidden', ids: hiddenModels.state(), hideNative: hiddenModels.hideNative() });
+        done();
+        break;
+      }
+      case 'models.hideNative': {
+        const error = hiddenModels.setHideNative(msg.hidden);
+        if (error) return stop(error);
+        broadcast({ t: 'models.hidden', ids: hiddenModels.state(), hideNative: hiddenModels.hideNative() });
         done();
         break;
       }

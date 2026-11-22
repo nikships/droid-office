@@ -252,9 +252,9 @@ data class FloorRoster(
 )
 
 sealed interface ServerMsg {
-    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet(), val workerAnswerMultiSelect: Boolean = false, val threadActions: Boolean = false, val factory: FactoryState? = null, val missionControl: MissionControlState? = null, val building: List<FloorRoster>? = null) : ServerMsg
+    data class Welcome(val connection: String, val arrival: Arrival, val floors: List<FloorInfo>, val version: String, val view: FloorView, val availability: Map<String, ModelAvailability> = emptyMap(), val subscriptions: SubscriptionState? = null, val hiddenModels: Set<String> = emptySet(), val hideNativeModels: Boolean = false, val workerAnswerMultiSelect: Boolean = false, val threadActions: Boolean = false, val factory: FactoryState? = null, val missionControl: MissionControlState? = null, val building: List<FloorRoster>? = null) : ServerMsg
     data class ActionResult(val requestId: String, val ok: Boolean, val error: String?) : ServerMsg
-    data class HiddenModels(val ids: Set<String>) : ServerMsg
+    data class HiddenModels(val ids: Set<String>, val hideNative: Boolean = false) : ServerMsg
     /** Raw Factory state, including token-limit windows; OfficeJson tolerates newer unknown fields. */
     data class Factory(val state: FactoryState) : ServerMsg
     /** Which Claude, ChatGPT and other plan models can run now. */
@@ -332,6 +332,7 @@ object Protocol {
             availability = Availability.parse(o["subscriptions"]),
             subscriptions = Subscriptions.parse(o["subscriptions"]),
             hiddenModels = strings(o["hiddenModels"]),
+            hideNativeModels = o.bool("hideNativeModels") == true,
             workerAnswerMultiSelect = o.bool("workerAnswerMultiSelect") == true,
             threadActions = o.bool("threadActions") == true,
             factory = FactoryCloud.parse(o["factory"]),
@@ -357,7 +358,7 @@ object Protocol {
             val floor = o.str("floor")?.takeIf { it.isNotBlank() } ?: return ServerMsg.Ignored(t)
             ServerMsg.BuildingPulls(floor, pulls(o["pulls"]))
         }
-        "models.hidden" -> ServerMsg.HiddenModels(strings(o["ids"]))
+        "models.hidden" -> ServerMsg.HiddenModels(strings(o["ids"]), o.bool("hideNative") == true)
         "factory" -> FactoryCloud.parse(o["state"])?.let { ServerMsg.Factory(it) } ?: ServerMsg.Ignored(t)
         "subscriptions" -> ServerMsg.Subscriptions(Availability.parse(o["state"]), Subscriptions.parse(o["state"]))
         "worker.update" -> ServerMsg.WorkerUpdate(OfficeJson.decodeFromJsonElement(o.getValue("worker")))

@@ -31,11 +31,19 @@ class ProtocolTest {
 
     @Test
     fun hiddenModelsArriveOnWelcomeAndLiveUpdatesWithOldOfficesShowingAll() {
-        assertTrue((Protocol.decode(welcome) as ServerMsg.Welcome).hiddenModels.isEmpty())
-        val updated = welcome.replace(""""pulls":""", """"hiddenModels":["gpt-6.1-sol","gpt-6.1-sol"],"pulls":""")
-        assertEquals(setOf("gpt-6.1-sol"), (Protocol.decode(updated) as ServerMsg.Welcome).hiddenModels)
-        assertEquals(setOf("gpt-6.1-sol"), (Protocol.decode("""{"t":"models.hidden","ids":["gpt-6.1-sol",null,5]}""") as ServerMsg.HiddenModels).ids)
-        assertTrue((Protocol.decode("""{"t":"models.hidden","ids":[]}""") as ServerMsg.HiddenModels).ids.isEmpty())
+        val initial = Protocol.decode(welcome) as ServerMsg.Welcome
+        assertTrue(initial.hiddenModels.isEmpty())
+        assertFalse(initial.hideNativeModels)
+        val updated = welcome.replace(""""pulls":""", """"hiddenModels":["gpt-6.1-sol","gpt-6.1-sol"],"hideNativeModels":true,"pulls":""")
+        val decodedUpdated = Protocol.decode(updated) as ServerMsg.Welcome
+        assertEquals(setOf("gpt-6.1-sol"), decodedUpdated.hiddenModels)
+        assertTrue(decodedUpdated.hideNativeModels)
+        val live = Protocol.decode("""{"t":"models.hidden","ids":["gpt-6.1-sol",null,5],"hideNative":true}""") as ServerMsg.HiddenModels
+        assertEquals(setOf("gpt-6.1-sol"), live.ids)
+        assertTrue(live.hideNative)
+        val cleared = Protocol.decode("""{"t":"models.hidden","ids":[]}""") as ServerMsg.HiddenModels
+        assertTrue(cleared.ids.isEmpty())
+        assertFalse(cleared.hideNative)
     }
 
     @Test

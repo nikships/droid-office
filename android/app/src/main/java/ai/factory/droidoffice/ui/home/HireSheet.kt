@@ -125,10 +125,17 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
         catalogue = connection.models()
         loadingModels = false
         val c = catalogue ?: return@LaunchedEffect
-        // Start on what the last Droid was hired with, when this office still offers it.
+        // Start on what the last Droid was hired with, when this office still offers it and hasn't hidden it.
         val last = graph.store.snapshot.value.settings
-        val remembered = last.hireModel?.takeIf { ModelSearch.customId(it) && (!c.customOnly || c.models.any { m -> m.custom && m.id == it }) }
-        if (modelId == null) modelId = remembered ?: c.defaultModel ?: c.models.firstOrNull { !it.legacy }?.id
+        val hiddenNow = connection.hiddenModels.value
+        val hideNativeNow = connection.hideNativeModels.value
+        val offered = { m: ai.factory.droidoffice.net.ModelOption -> (!c.customOnly || m.custom) && (!hideNativeNow || m.custom) && m.id !in hiddenNow }
+        val remembered = last.hireModel?.takeIf { id ->
+            ModelSearch.customId(id) && id !in hiddenNow &&
+                (c.models.firstOrNull { it.id == id }?.let(offered) ?: (!c.customOnly && (!hideNativeNow || id.startsWith("custom:"))))
+        }
+        val preferredDefault = c.defaultModel?.takeIf { id -> c.models.firstOrNull { it.id == id }?.let(offered) == true }
+        if (modelId == null) modelId = remembered ?: preferredDefault ?: c.models.firstOrNull { !it.legacy && offered(it) }?.id
         if (effort == null) effort = last.hireEffort.takeIf { remembered != null && modelId == remembered }
             ?: c.models.firstOrNull { it.id == modelId }?.defaultReasoningEffort ?: c.defaultReasoningEffort
     }

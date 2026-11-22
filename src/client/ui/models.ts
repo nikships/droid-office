@@ -1,3 +1,4 @@
+import { isModelHidden } from '../../shared/model-visibility';
 import type { AgentChoice, AgentEffort } from '../../shared/protocol';
 import { isLabelEffort, type LabelEffort } from '../../shared/worker-labels';
 import { AGENT_EFFORTS } from '../../shared/protocol';
@@ -266,11 +267,17 @@ export function modelBadgeNode(model: string | undefined, effort: AgentEffort | 
 /** Remembers the last model/effort chosen at a picker's key (a desk, or a fixed key). */
 const choiceKey = (kind: 'model' | 'effort', key: string) => `droid-office.droid-${kind}.${key}`;
 
+function rememberedAllowed(id: string): boolean {
+  const known = catalogue?.models.find((m) => m.id === id);
+  const custom = known ? Boolean(known.custom) : id.startsWith('custom:');
+  return (!store.setup.airgapped || custom) && !isModelHidden({ id, custom }, store.hiddenModels, store.hideNativeModels);
+}
+
 function rememberedModel(key: string): string | undefined {
   if (key.startsWith('desk:') && !loadSettings().rememberDeskModels) return undefined;
   try {
     const saved = localStorage.getItem(choiceKey('model', key));
-    if (saved && !/[\s\p{Cc}\p{Cf}]/u.test(saved)) return saved;
+    if (saved && !/[\s\p{Cc}\p{Cf}]/u.test(saved) && rememberedAllowed(saved)) return saved;
   } catch {
     // storage blocked
   }
@@ -378,10 +385,12 @@ function buildFields(id: string, key: string | undefined, initialModel: string |
     hint.textContent = catalogue ? OVERRIDE_HINT : LOADING_HINT;
     void fetchCatalogue()
       .then(({ models }) => {
-        // A remembered id the catalogue no longer lists is still offered, so the choice isn't silently dropped.
+        const resolved = models.find((m) => m.id === selected);
+        const keep = selected && (key === undefined || !isModelHidden({ id: selected, custom: resolved ? Boolean(resolved.custom) : selected.startsWith('custom:') }, store.hiddenModels, store.hideNativeModels)) ? selected : undefined;
+        // A remembered id the catalogue no longer lists is still offered unless hidden, so the choice isn't silently dropped.
         const listed = models.map(pickerModel);
-        picker.setModels(selected && !store.setup.airgapped && !models.some((m) => m.id === selected) ? [unlisted(selected), ...listed] : listed, defaultOption(defaultModel(), models));
-        picker.set(selected ?? '');
+        picker.setModels(keep && !store.setup.airgapped && !store.hideNativeModels && !resolved ? [unlisted(keep), ...listed] : listed, defaultOption(defaultModel(), models));
+        picker.set(keep ?? '');
         hint.textContent = models.length ? OVERRIDE_HINT : 'No Droid models found in the office settings — the worker runs the global default.';
         applyEfforts();
       })

@@ -64,6 +64,7 @@ test('every setting is in a category', () => {
     ['Worktree setup', 'workers'],
     ['Default worker', 'models'],
     ['Remember models at desks', 'models'],
+    ['Hide native Factory models', 'models'],
     ['Models shown in pickers', 'models'],
     ['Subagents', 'subagents'],
     ['Office MCP', 'subagents'],
@@ -135,7 +136,15 @@ test('search finds a setting by name, pane or keyword, every word required', () 
     { pane: 'connections', title: 'Jira' },
     { pane: 'connections', title: "This floor's Jira epic" },
   ]);
-  assert.deepEqual(searchSettings('hide models'), [{ pane: 'models', title: 'Models shown in pickers' }]);
+  assert.deepEqual(searchSettings('hide models'), [
+    { pane: 'models', title: 'Hide native Factory models' },
+    { pane: 'models', title: 'Models shown in pickers' },
+  ]);
+  assert.deepEqual(searchSettings('native factory'), [{ pane: 'models', title: 'Hide native Factory models' }]);
+  assert.deepEqual(searchSettings('droidproxy models'), [
+    { pane: 'models', title: 'Hide native Factory models' },
+    { pane: 'connections', title: 'Models in Droid' },
+  ]);
   assert.deepEqual(searchSettings('subagent prompts'), [{ pane: 'workers', title: 'Prompts' }]);
   assert.deepEqual(searchSettings('droid sign in'), [{ pane: 'connections', title: 'Droid' }]);
   assert.deepEqual(searchSettings('host update'), [{ pane: 'office', title: 'Host desktop app' }]);
@@ -278,7 +287,10 @@ test('a companion’s search and arrow keys stay among its own settings', () => 
   assert.deepEqual(searchSettings('volume', 'companion'), []);
   assert.deepEqual(searchSettings('outside', 'companion'), []);
   assert.deepEqual(searchSettings('hot reload', 'companion'), []);
-  assert.deepEqual(searchSettings('hide models', 'companion'), [{ pane: 'models', title: 'Models shown in pickers' }]);
+  assert.deepEqual(searchSettings('hide models', 'companion'), [
+    { pane: 'models', title: 'Hide native Factory models' },
+    { pane: 'models', title: 'Models shown in pickers' },
+  ]);
   assert.deepEqual(searchSettings('host update', 'companion'), [{ pane: 'office', title: 'Host desktop app' }]);
   assert.deepEqual(searchSettings('openclaw', 'companion'), []);
   assert.deepEqual(searchSettings('openclaw', 'mac-companion'), [{ pane: 'phone', title: 'Tailscale MCP' }]);

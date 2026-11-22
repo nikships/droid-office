@@ -85,6 +85,7 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
     val graph = LocalGraph.current
     val stored by graph.store.snapshot.collectAsStateWithLifecycle()
     val hidden by graph.connection.hiddenModels.collectAsStateWithLifecycle()
+    val hideNative by graph.connection.hideNativeModels.collectAsStateWithLifecycle()
     val coroutine = rememberCoroutineScope()
     var open by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -109,14 +110,14 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
         Icon(Icons.Default.KeyboardArrowDown, null, tint = Palette.TextSecondary)
     }
     if (!open || catalogue == null) return
-    val models = remember(catalogue, hidden) { ModelSearch.visible(catalogue.models.map { it.pick() }, hidden) }
+    val models = remember(catalogue, hidden, hideNative) { ModelSearch.visible(catalogue.models.map { it.pick() }, hidden, hideNative) }
     val recent = stored.settings.recentModels.filter { !Availability.cannotRun(availability[it]) }
     val sections = remember(models, query, scope, recent) { ModelSearch.sections(models, query, scope, recent) }
     val listState = rememberLazyListState()
     LaunchedEffect(query, scope) { listState.scrollToItem(0) }
     fun choose(option: ModelOption) {
         if (catalogue.customOnly && catalogue.models.none { it.custom && it.id == option.id }) return
-        if (option.id in hidden) return
+        if ((hideNative && !option.custom) || option.id in hidden) return
         if (Availability.cannotRun(availability[option.id])) return
         open = false
         coroutine.launch { graph.store.settings { it.copy(recentModels = ModelSearch.recent(it.recentModels, option.id)) } }
@@ -176,7 +177,7 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
                     }
                 }
                 val typed = query.trim()
-                if (!catalogue.customOnly && ModelSearch.customId(typed) && typed !in hidden && models.none { it.id == typed }) {
+                if (!catalogue.customOnly && (!hideNative || typed.startsWith("custom:")) && ModelSearch.customId(typed) && typed !in hidden && catalogue.models.none { it.id == typed }) {
                     item(key = "custom") {
                         TextButton(onClick = { choose(ModelOption(typed, typed, custom = true)) }, modifier = Modifier.fillMaxWidth().tagged(Tags.Hire.MODEL_CUSTOM)) {
                             ModelLogo(typed, modifier = Modifier.size(20.dp))
@@ -185,7 +186,12 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
                         }
                     }
                 } else if (sections.isEmpty()) {
-                    item { Text("No model matches. Clear the search or choose another group.", modifier = Modifier.padding(20.dp), style = MaterialTheme.typography.bodyMedium) }
+                    val emptyMessage = if (query.isBlank() && scope.isEmpty() && hideNative) {
+                        "Native Factory models are hidden in Settings → Models, and no custom models are configured."
+                    } else {
+                        "No model matches. Clear the search or choose another group."
+                    }
+                    item { Text(emptyMessage, modifier = Modifier.padding(20.dp), style = MaterialTheme.typography.bodyMedium) }
                 }
             }
         }

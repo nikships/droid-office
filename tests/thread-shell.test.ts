@@ -113,7 +113,18 @@ async function mountShell(t: TestContext) {
   const page = await context.newPage();
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  const bundle = buildSync({ entryPoints: [fileURLToPath(new URL('../src/client/ui/worker-thread.ts', import.meta.url))], bundle: true, format: 'iife', globalName: 'ThreadUI', write: false, target: 'es2022' }).outputFiles[0].text;
+  const bundle = buildSync({
+    stdin: {
+      contents: `export { mountWorkerThread } from './src/client/ui/worker-thread.ts'; export { store } from './src/client/state.ts';`,
+      resolveDir: fileURLToPath(new URL('..', import.meta.url)),
+      loader: 'ts',
+    },
+    bundle: true,
+    format: 'iife',
+    globalName: 'ThreadUI',
+    write: false,
+    target: 'es2022',
+  }).outputFiles[0].text;
   await page.setContent('<!doctype html><div id="toasts"></div><div id="modal-root"></div>');
   await page.addStyleTag({ content: readFileSync(new URL('../src/client/style.css', import.meta.url), 'utf8') });
   await page.addScriptTag({ content: bundle });
@@ -130,7 +141,10 @@ async function mountShell(t: TestContext) {
         return true;
       },
       onMessage(fn: any) {
-        w.receive = fn;
+        w.receive = (msg: any) => {
+          if (msg.t === 'models.hidden') w.ThreadUI.store.apply(msg);
+          fn(msg);
+        };
         return () => {};
       },
     };
@@ -291,6 +305,7 @@ test('the model chip changes the model and reasoning effort through worker.setti
       new Response(
         JSON.stringify({
           models: [
+            { id: 'custom:droidproxy:opus-5-5', displayName: 'DroidProxy: Opus 5.5', custom: true },
             { id: 'opus-5-5', displayName: 'Opus 5.5', supportedReasoningEfforts: ['low', 'medium', 'high'] },
             { id: 'sonnet-5-5', displayName: 'Sonnet 5.5' },
           ],
@@ -316,6 +331,10 @@ test('the model chip changes the model and reasoning effort through worker.setti
     ['model', 'sonnet-5-5'],
   ]);
   await page.locator('.wt-model').click();
+  await page.evaluate(() => (window as any).receive({ t: 'models.hidden', ids: [], hideNative: true }));
+  await page.getByRole('menuitemradio', { name: 'DroidProxy: Opus 5.5' }).waitFor();
+  assert.equal(await page.getByRole('menuitemradio', { name: 'Sonnet 5.5' }).count(), 0);
+  await page.evaluate(() => (window as any).receive({ t: 'models.hidden', ids: [], hideNative: false }));
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('.wt-settings-menu').isVisible(), false);
   assert.deepEqual(errors, []);
