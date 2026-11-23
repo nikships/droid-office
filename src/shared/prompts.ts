@@ -429,7 +429,7 @@ const DEFS = {
     used: 'Typed to a lead at rest when its subagents report, finish their turn, need input or leave, or given to a busy lead as its turn ends (⚙️ Settings → Subagents & visits → Waking the lead).',
     vars: { news: 'What happened, one sentence per subagent: "Pixel reported back. Nova finished its turn."' },
     needs: ['news'],
-    text: 'Droid Office notice: team update\n{{news}}\n\nOffice guidance: Call `team_status` and `questions_list` together first, inspect `worker_diff` and record `team_review` on reported work, unblock technical questions (`question_answer`) while leaving terminal permission prompts untouched to report to the owner, immediately relay schema/API changes to working siblings (`team_message`), and if two finished branches share a contract, merge the foundational branch and direct the second subagent to rebase and align before landing. This is a status notice, not a message from a worker.',
+    text: 'Droid Office notice: team update\n{{news}}\n\nOffice guidance: Call `team_status` and `questions_list` together first, inspect `worker_diff` and record `team_review` on reported work, unblock technical questions (`question_answer`) while leaving terminal permission prompts untouched to report to the owner, immediately relay schema/API changes to working siblings (`team_message`), and if two finished branches share a contract, merge the foundational branch and direct the second subagent to rebase and align before landing. Once the work of a subagent is merged, delivered or no longer needed, send it home with `team_dismiss` instead of leaving it idle. This is a status notice, not a message from a worker.',
   },
   'subagent.report': {
     group: 'subagents',
