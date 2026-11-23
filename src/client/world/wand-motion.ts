@@ -83,13 +83,10 @@ const SPARKS = Array.from({ length: 16 }, (_, i) => [0.24 + i * 0.075, 'spark'] 
 /** When Ship it pops its confetti: the snap forward after the wind-up. */
 export const CONFETTI_AT = 0.5;
 
-/**
- * Keys every 25 ms tracing `turns` circles of radius `r` round `c` from `from` to `to` seconds,
- * linear between them so the loop doesn't stop at each key: `Math.cos` for x, `Math.sin` for y.
- */
-const circle = (from: number, to: number, turns: number, r: number, c: number, f: (a: number) => number): Key[] => {
+/** Sample a sine wave every 25 ms; linear interpolation keeps the wrist moving between keys. */
+const wave = (from: number, to: number, turns: number, amplitude: number, center: number): Key[] => {
   const n = Math.round((to - from) / 0.025);
-  return Array.from({ length: n + 1 }, (_, i) => [from + ((to - from) * i) / n, c + r * f((i / n) * turns * TAU), 'linear'] as const);
+  return Array.from({ length: n + 1 }, (_, i) => [from + ((to - from) * i) / n, center + amplitude * Math.sin((i / n) * turns * TAU), 'linear'] as const);
 };
 
 /** The moves. Each starts and ends on the ready pose (the twirl may end whole turns round). */
@@ -414,8 +411,8 @@ export const WAND_MOVES: Record<WandMoveId, WandMove> = {
   sparkler: {
     seconds: 1.6,
     tracks: {
-      x: [[0, 0], ...circle(0.24, 1.36, 1, 0.069, -0.06, Math.sin), [1.6, 0]],
-      y: [[0, 0], ...circle(0.24, 1.36, 2, 0.034, 0.035, Math.sin), [1.6, 0]],
+      x: [[0, 0], ...wave(0.24, 1.36, 1, 0.069, -0.06), [1.6, 0]],
+      y: [[0, 0], ...wave(0.24, 1.36, 2, 0.034, 0.035), [1.6, 0]],
       z: [
         [0, 0],
         [0.24, 0.03, 'out'],
@@ -428,7 +425,7 @@ export const WAND_MOVES: Record<WandMoveId, WandMove> = {
         [1.36, 0.2],
         [1.6, 0],
       ],
-      yaw: [[0, 0], ...circle(0.24, 1.36, 1, -0.16, 0.15, Math.sin), [1.6, 0]],
+      yaw: [[0, 0], ...wave(0.24, 1.36, 1, -0.16, 0.15), [1.6, 0]],
       spin: [
         [0, 0],
         [0.2, 1],

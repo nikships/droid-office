@@ -191,6 +191,19 @@ function measureHold(hands: Hands) {
   };
 }
 
+test('Sparkler projects two distinct lobes that cross at the center', () => {
+  const tip = (phase: number) => {
+    const hands = heldWand();
+    hands.setWandPose(sampleWandMove(WAND_MOVES.sparkler, 0.24 + 1.12 * phase));
+    hands.update(1 / 60, 0, input);
+    return measureHold(hands).tip;
+  };
+  const center = tip(0);
+  for (const phase of [0.5, 1]) assert.ok(tip(phase).distanceTo(center) < 0.01, 'returns to the crossing');
+  assert.ok((tip(0.25).x - center.x) * (tip(0.75).x - center.x) < -0.005, 'lobes sit on opposite sides');
+  for (const start of [0, 0.5]) assert.ok(Math.abs(tip(start + 0.125).y - tip(start + 0.375).y) > 0.08, 'each lobe has height');
+});
+
 test('at the ready the wand stands up out of a thumb-up fist low on the right, leaning forward', () => {
   const h = measureHold(heldWand());
   assert.ok(h.dir.angleTo(WAND_HOLD.dir) < 0.03, `pointing along WAND_HOLD.dir (off by ${h.dir.angleTo(WAND_HOLD.dir).toFixed(3)} rad)`);

@@ -160,11 +160,7 @@ export interface WandDrive {
   lumos: number;
 }
 
-/**
- * One wand in a hand. The body, the rotor on its hub, the emitter and the ten segments of the
- * progress bar, each segment with its own material so it can light on its own; a glow at the tip
- * and a light that throws it on the glove holding it. update() turns the rotor and lights the rest.
- */
+/** Each wand owns its crystal and index materials, so one charge never lights another wand. */
 export class Wand {
   readonly group = new THREE.Group();
   /** The rotor's hub, turned about +Z. */
@@ -250,7 +246,7 @@ export class Wand {
     this.segments.forEach((mat, i) => {
       const live = i < on || i === sweep;
       mat.color.set(live ? ORANGE : SEGMENT_OFF);
-      mat.emissive.set(live ? ORANGE : '#000000').multiplyScalar(live ? (i === sweep && i >= on ? 0.5 : 1.1) : 0);
+      mat.emissive.set(live ? ORANGE : '#000000').multiplyScalar(i === sweep && i >= on ? 0.5 : 1.1);
     });
   }
 
