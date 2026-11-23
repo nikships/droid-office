@@ -112,7 +112,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
   let dismissedError: unknown = null;
   let readTimer = 0;
   let lastView: CardView | undefined;
-  let marksVisible = true;
+  let marksVisible = false;
   /** The grid is picking cards to delete together rather than opening them. */
   let selecting = false;
   const selected = new Set<string>();
@@ -462,7 +462,12 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
         cardUrl: (nonce) => sync.cardUrl(floor, c.id, nonce),
         fileUrl,
         live: () => sync.state(floor) === 'live',
-        selectMark: (kind, id) => kind === 'thread' && panel?.focusThread(id),
+        selectMark: (kind, id) => {
+          if (kind !== 'thread') return;
+          // A thread's replies live in the side panel, so opening one brings the panel back.
+          setMarksVisible(true);
+          panel?.focusThread(id);
+        },
         changed: () => paintToolbar(),
         located: () => {
           const now = board() && card ? findCard(board()!, card) : undefined;
@@ -510,11 +515,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
         {
           type: 'button',
           title: 'Show or hide comments and marks',
-          onclick: () => {
-            marksVisible = !marksVisible;
-            main.querySelector('.wb-art')?.classList.toggle('marks-hidden', !marksVisible);
-            paintToolbar();
-          },
+          onclick: () => setMarksVisible(!marksVisible),
         },
         'Marks',
       ),
@@ -544,6 +545,12 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
       tb.label,
       tb.fs,
     );
+  }
+
+  function setMarksVisible(on: boolean) {
+    marksVisible = on;
+    main.querySelector('.wb-art')?.classList.toggle('marks-hidden', !on);
+    paintToolbar();
   }
 
   function paintToolbar() {
