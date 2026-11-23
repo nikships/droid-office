@@ -94,18 +94,17 @@ const circle = (from: number, to: number, turns: number, r: number, c: number, f
 
 /** The moves. Each starts and ends on the ready pose (the twirl may end whole turns round). */
 export const WAND_MOVES: Record<WandMoveId, WandMove> = {
-  // Up from below with one twirl through the fingers, the rotor spinning up and the progress bar
-  // sweeping along as it boots, caught at the ready with the emitter blinking on.
+  // Present the crown broadside, then turn it toward the crosshair as the circles align.
   draw: {
     seconds: 0.72,
     tracks: {
       out: [
         [0, 0],
-        [0.32, 1, 'out'],
+        [0.26, 1, 'out'],
       ],
       y: [
         [0, 0],
-        [0.32, 0.03, 'out'],
+        [0.28, 0.045, 'out'],
         [0.5, -0.008],
         [0.72, 0],
       ],
@@ -116,13 +115,16 @@ export const WAND_MOVES: Record<WandMoveId, WandMove> = {
         [0.72, 0],
       ],
       roll: [
-        [0, 0.5],
-        [0.36, -0.15],
+        [0, -0.85],
+        [0.32, -0.36],
+        [0.55, 0.12],
         [0.72, 0],
       ],
-      twirl: [
-        [0.04, -TAU],
-        [0.42, 0, 'inOut'],
+      yaw: [
+        [0, 0.82],
+        [0.28, 0.63, 'out'],
+        [0.52, -0.1],
+        [0.72, 0],
       ],
       spin: [
         [0, 0],
@@ -408,13 +410,12 @@ export const WAND_MOVES: Record<WandMoveId, WandMove> = {
       [0.78, 'flick'],
     ],
   },
-  // Held up in front of you like a sparkler, the tip spitting sparks as it writes two loops in the
-  // air, the progress bar burning down as it goes.
+  // Trace a sideways figure eight: the vertical motion crosses twice per horizontal revolution.
   sparkler: {
     seconds: 1.6,
     tracks: {
-      x: [[0, 0], ...circle(0.24, 1.36, 2, 0.03, -0.06, Math.cos), [1.6, 0]],
-      y: [[0, 0], ...circle(0.24, 1.36, 2, 0.03, 0.035, Math.sin), [1.6, 0]],
+      x: [[0, 0], ...circle(0.24, 1.36, 1, 0.069, -0.06, Math.sin), [1.6, 0]],
+      y: [[0, 0], ...circle(0.24, 1.36, 2, 0.034, 0.035, Math.sin), [1.6, 0]],
       z: [
         [0, 0],
         [0.24, 0.03, 'out'],
@@ -427,12 +428,7 @@ export const WAND_MOVES: Record<WandMoveId, WandMove> = {
         [1.36, 0.2],
         [1.6, 0],
       ],
-      yaw: [
-        [0, 0],
-        [0.24, 0.15, 'out'],
-        [1.36, 0.15],
-        [1.6, 0],
-      ],
+      yaw: [[0, 0], ...circle(0.24, 1.36, 1, -0.16, 0.15, Math.sin), [1.6, 0]],
       spin: [
         [0, 0],
         [0.2, 1],
@@ -545,9 +541,9 @@ export const WAND_MOVES: Record<WandMoveId, WandMove> = {
       ],
       yaw: [
         [0, 0],
-        [0.4, 0.45],
-        [1.2, 0.6],
-        [2.0, 0.4],
+        [0.4, 0.7],
+        [1.2, 0.86],
+        [2.0, 0.68],
         [2.4, 0],
       ],
       pitch: [
@@ -558,9 +554,9 @@ export const WAND_MOVES: Record<WandMoveId, WandMove> = {
       ],
       roll: [
         [0, 0],
-        [0.4, -0.5],
-        [1.2, 0.3],
-        [2.0, -0.2],
+        [0.4, -0.64],
+        [1.55, 0.55],
+        [2.0, 0.38],
         [2.4, 0],
       ],
       charge: [

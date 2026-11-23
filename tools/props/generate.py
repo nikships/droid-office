@@ -4126,21 +4126,11 @@ WAND = {
     # Back of the pommel and the tip of the emitter.
     "back_z": -64.0,
     "tip_z": 284.0,
-    # The grip the fist closes round: an octagon this far to a corner, from its back to its front.
+    # The grip the fist closes round: a faceted handle this far to a corner, from its back to its front.
     "grip_r": 9.3,
     "grip_z": (-48.6, 37.0),
-    # The rotor (the pinwheel at the tip) spins on the shaft's axis here, inside its guard ring.
-    "rotor_z": 274.5,
-    "rotor_d": 16.0,
-    "guard_r": 8.4,
-    # The orange emitter in front of the rotor's hub, where a spell leaves the wand.
-    "core_z": 278.2,
-    "core_r": 2.3,
-    # The progress bar along the first stage: how many segments, where the first starts, each one's length and the gap after it.
+    "rotor_z": 248.0,
     "segments": 10,
-    "segments_z": 66.0,
-    "segment_len": 4.6,
-    "segment_gap": 2.2,
 }
 
 
@@ -4255,33 +4245,6 @@ def lathe(name, profile, sides=24, closed=False, phase=0.0):
     return link_bmesh(name, bm)
 
 
-def inlay(name, z0, z1, radius, half_width, proud, columns=4):
-    """A strip laid along the top (+Y) of a turned part from z0 to z1 mm, `half_width` mm either
-    side of the top, curved to the surface `radius(z)` and standing `proud` mm off it, with walls
-    down below the surface so no edge floats."""
-    bm = bmesh.new()
-    rows = [z0, z1]
-    grid = []
-    for z in rows:
-        r = radius(z)
-        span = half_width / r
-        top, low = [], []
-        for i in range(columns + 1):
-            a = math.pi / 2 - span + 2 * span * i / columns
-            top.append(bm.verts.new(((r + proud) * math.cos(a) / 1000, (r + proud) * math.sin(a) / 1000, z / 1000)))
-            low.append(bm.verts.new(((r - 0.25) * math.cos(a) / 1000, (r - 0.25) * math.sin(a) / 1000, z / 1000)))
-        grid.append((top, low))
-    (t0, l0), (t1, l1) = grid
-    for i in range(columns):
-        bm.faces.new((t0[i], t0[i + 1], t1[i + 1], t1[i]))
-        bm.faces.new((l0[i + 1], l0[i], l1[i], l1[i + 1]))
-    bm.faces.new((t0[0], t1[0], l1[0], l0[0]))
-    bm.faces.new((t0[-1], l0[-1], l1[-1], t1[-1]))
-    bm.faces.new(list(reversed(t0)) + l0)
-    bm.faces.new(t1 + list(reversed(l1)))
-    return link_bmesh(name, bm)
-
-
 def factory_glyph_path():
     """The pinwheel's SVG path and viewBox, read from the client so the two never drift."""
     src = open(os.path.join(REPO, "src", "client", "world", "glyph.ts")).read()
@@ -4363,7 +4326,7 @@ def glyph_solid(name, diameter, depth, curve=5):
 
 
 def grip_profile():
-    """The grip's (z, r): an octagon with a slight belly where the palm sits, ringed with
+    """The grip's (z, r): a slight belly where the palm sits, ringed with
     machined grooves fore and aft of the fist so it reads as a tool, not a stick."""
     z0, z1 = WAND["grip_z"]
     r0 = WAND["grip_r"]
@@ -4388,96 +4351,83 @@ def grip_profile():
 
 @prop("wand", "hand", recenter=False, multipart=True, draco=False)
 def build_wand():
-    """The droid wand: a vibe-coding wizard's wand built like a Factory tool. A machined steel
-    pommel with the pinwheel inlaid in its end, an orange signal ring, a grooved octagonal
-    graphite grip, a steel ferrule, a three-stage telescoping graphite shaft with steel collars,
-    and at the tip a ducted Factory rotor (the pinwheel itself) on its hub, in front of which an
-    orange emitter glows when a spell leaves the wand.
-
-    The body is one mesh in wand space. `wand-rotor` (the pinwheel) and `wand-core` (the emitter)
-    are authored round their own middles on the shaft's axis, so the client hangs them where
-    WAND has them and spins the rotor and lights the core (wand.ts).
-    """
-    graphite = material("WandGraphite", "#1c1c1c", roughness=0.42, metallic=0.35)
-    grip = material("WandGrip", "#0d0d0d", roughness=0.85)
-    steel = material("WandSteel", "#4a4a4a", roughness=0.32, metallic=0.85)
-    light = material("WandLight", "#e8e8e8", roughness=0.3, metallic=0.6)
-    orange = material("WandOrange", "#ee6018", roughness=0.5, emission="#ee6018", emission_strength=0.35)
+    """Vesper: a graphite pocket orrery around a suspended signal crystal.
+    All parts export assembled. The client pivots the two graduated circles about rotor_z."""
     w = WAND
-    back = w["back_z"]
+    enamel = material("WandEnamel", "#303030", roughness=0.48, metallic=0.36)
+    grip = material("WandGrip", "#101010", roughness=0.76)
+    steel = material("WandSteel", "#8c8c8c", roughness=0.29, metallic=0.66)
+    edge = material("WandEdge", "#eeeeee", roughness=0.24, metallic=0.55)
+    glass = material("WandGlass", "#ee6018", roughness=0.21, emission="#ee6018", emission_strength=0.42)
     body = []
 
-    # Pommel: a machined cap with a chamfered back edge and a hairline groove, the pinwheel
-    # inlaid in light steel across its end, and the orange signal ring where it meets the grip.
-    pommel = lathe("Pommel", [(back, 0.0), (back, 7.4), (back + 0.5, 8.7), (back + 1.6, 9.6), (back + 3.2, 10.1), (back + 6.4, 10.1), (back + 6.8, 9.6), (back + 7.6, 9.6), (back + 8.0, 10.1), (back + 12.6, 10.1), (back + 13.4, 9.7), (-49.8, 9.7)], sides=32)
-    body.append((finish(pommel, steel), None))
-    emblem = glyph_solid("PommelGlyph", 12.8, 0.8)
-    emblem.data.transform(Matrix.Rotation(math.pi, 4, "Y"))
-    emblem.location = (0, 0, (back - 0.25) / 1000)
-    body.append((finish(emblem, light), None))
-    ring = lathe("SignalRing", [(-49.9, 8.9), (-49.9, 9.9), (-48.5, 9.9), (-48.5, 8.9)], sides=32, closed=True)
-    body.append((finish(ring, orange), None))
+    def turned(name, profile, mat, sides=20):
+        body.append((lathe(name, profile, sides=sides), mat))
 
-    # Grip: eight flats (one facing up, so the hand reads its angle), grooved fore and aft.
-    body.append((finish(lathe("Grip", grip_profile(), sides=8, phase=math.pi / 8), grip), None))
+    turned("Counterweight", [(w["back_z"], 2), (-61, 7), (-57, 10.8), (-53, 10.8), (-50, 8.3), (-48, 8.3)], steel, 10)
+    turned("PommelEnamel", [(-59, 9.2), (-57.5, 11), (-55, 11.4), (-53, 11)], enamel, 10)
+    turned("Leather", grip_profile(), grip, 12)
+    turned("Ferrule", [(36, 8.2), (38, 10), (40, 10), (41, 9), (46, 9), (49, 11), (52, 11), (55, 8)], steel)
+    turned("Enamel", [(53, 7.8), (57, 9), (74, 8.5), (99, 6.5), (147, 5.4), (181, 5.8), (202, 8.2), (213, 6.5)], enamel)
+    turned("Calyx", [(195, 6), (199, 8), (201, 8.8), (204, 8), (209, 9.5), (212, 8), (217, 4), (226, 0)], steel, 12)
+    for z, r in [(41.5, 9.2), (45, 9.2), (55.5, 8.8), (180, 6.2), (183, 6.5), (204, 8.8)]:
+        turned("Bead", [(z-0.6, r-0.4), (z, r+0.4), (z+0.7, r-0.4)], edge)
+    # Twin winding wires cross the ten enamel chapter rings of the power reserve.
+    for side in range(2):
+        points = []
+        for j in range(53):
+            u = j / 52
+            a = math.pi * side + math.tau * 1.35 * u
+            r = np.interp(u, [0, 0.14, 0.33, 0.73, 1], [9, 8.55, 6.6, 5.55, 5.9])
+            points.append((math.cos(a)*r/1000, math.sin(a)*r/1000, (57+124*u)/1000))
+        body.append((tube_path("Filigree", points, 0.00078, sides=6, frame_axis=(0, 0, 1)), edge))
 
-    # Ferrule: a steel neck stepping down from the grip to the shaft, with two hairline grooves,
-    # and the orange power ring where the shaft goes in.
-    z1 = w["grip_z"][1]
-    ferrule = lathe(
-        "Ferrule",
-        [(z1 - 0.3, 0.0), (z1 - 0.3, 8.2), (z1 + 0.6, 8.9), (z1 + 6.0, 8.9), (z1 + 6.3, 8.3), (z1 + 7.1, 8.3), (z1 + 7.4, 8.8), (z1 + 10.0, 8.6), (z1 + 16.5, 6.4), (z1 + 17.0, 6.0), (z1 + 19.0, 6.0)],
-        sides=32,
-    )
-    body.append((finish(ferrule, steel), None))
-    body.append((finish(lathe("PowerRing", [(z1 + 19.0, 5.2), (z1 + 19.0, 6.1), (z1 + 20.4, 6.1), (z1 + 20.4, 5.2)], sides=32, closed=True), orange), None))
-
-    # Shaft: three telescoping graphite stages, each stepping into the next through a steel collar,
-    # with a light hairline ring partway down each stage.
-    stages = [(z1 + 20.4, 141.0, 5.5, 4.7), (141.0, 210.0, 4.2, 3.6), (210.0, 258.0, 3.25, 2.75)]
-    for n, (za, zb, ra, rb) in enumerate(stages):
-        body.append((finish(lathe(f"Stage{n}", [(za, 0.0), (za, ra), (zb, rb), (zb, 0.0)], sides=24), graphite), None))
-        # Clear of the progress bar on the first stage, partway down the others.
-        u = 0.045 if n == 0 else 0.55
-        mid = za + (zb - za) * u
-        rm = ra + (rb - ra) * u
-        body.append((finish(lathe(f"Hairline{n}", [(mid - 0.3, rm - 0.2), (mid - 0.3, rm + 0.18), (mid + 0.3, rm + 0.18), (mid + 0.3, rm - 0.2)], sides=24, closed=True), light), None))
-    for n, (z, r) in enumerate(((141.0, 5.1), (210.0, 3.95))):
-        collar = lathe(f"Collar{n}", [(z - 3.2, 0.0), (z - 3.2, r - 0.3), (z - 2.8, r), (z + 1.6, r), (z + 2.2, r - 0.45), (z + 2.2, 0.0)], sides=24)
-        body.append((finish(collar, steel), None))
-
-    # The progress bar: ten orange segments inlaid along the top of the first stage, which the
-    # client lights one after another as a spell charges, like a build ticking along.
-    za, zb, ra, rb = stages[0]
-    seg_z0, seg_len, seg_gap = w["segments_z"], w["segment_len"], w["segment_gap"]
-    segments = []
-    for n in range(w["segments"]):
-        z0 = seg_z0 + n * (seg_len + seg_gap)
-        segments.append((f"wand-segment-{n}", inlay(f"Segment{n}", z0, z0 + seg_len, lambda z: ra + (rb - ra) * (z - za) / (zb - za), 0.6, 0.22), orange))
-    # Its track: a graphite channel the segments sit in, a hair proud of the shaft.
-    track_z1 = seg_z0 + w["segments"] * (seg_len + seg_gap) - seg_gap
-    body.append((finish(inlay("Track", seg_z0 - 1.4, track_z1 + 1.4, lambda z: ra + (rb - ra) * (z - za) / (zb - za), 0.95, 0.1), steel), None))
-
-    # Tip: a flared steel neck into the hub, the rotor's axle, and a thin guard ring round the
-    # rotor on three struts, like a droid's ducted fan.
-    rz = w["rotor_z"]
-    neck = lathe("Neck", [(257.0, 0.0), (257.0, 2.8), (262.0, 2.9), (265.5, 3.7), (267.5, 3.7), (268.4, 3.2), (269.0, 2.0), (rz - 1.3, 1.45), (rz - 1.0, 1.05), (w["core_z"] - 0.6, 0.95), (w["core_z"] - 0.6, 0.0)], sides=24)
-    body.append((finish(neck, steel), None))
-    guard_r = w["guard_r"]
-    guard = lathe("Guard", [(rz - 1.25, guard_r - 0.42), (rz - 1.25, guard_r + 0.42), (rz + 1.25, guard_r + 0.42), (rz + 1.25, guard_r - 0.42)], sides=48, closed=True)
-    body.append((finish(guard, steel), None))
+    # Three swept, diamond-section leaves: broad shoulders taper to hooked steel nibs.
     for n in range(3):
-        a = math.pi / 2 + math.tau * n / 3
-        c, s = math.cos(a), math.sin(a)
-        strut = tube_path(f"Strut{n}", [(3.4 * c / 1000, 3.4 * s / 1000, 266.5 / 1000), ((guard_r - 0.3) * c / 1000, (guard_r - 0.3) * s / 1000, (rz - 0.9) / 1000)], 0.42 / 1000, sides=6)
-        body.append((finish(strut, steel), None))
+        rings = []
+        for z, radius, width, depth, twist in [
+            (199, 6.4, 2.3, 1.2, 0), (210, 9, 4.1, 2, 0.08), (226, 18.5, 4.8, 2.5, 0.24),
+            (244, 27, 3.7, 1.9, 0.49), (257, 28, 2.4, 1.6, 0.64), (267, 23, 0.45, 0.45, 0.81),
+        ]:
+            a = math.tau*n/3 + twist
+            rings.append([((math.cos(a)*(radius+d)-math.sin(a)*s)/1000,
+                           (math.sin(a)*(radius+d)+math.cos(a)*s)/1000, z/1000)
+                          for s, d in [(0,depth), (width,0), (0,-depth), (-width,0)]])
+        leaf = _loft_closed("MeridianLeaf", rings)
+        leaf.data.materials.append(steel)
+        leaf.data.materials.append(edge)
+        for face in leaf.data.polygons:
+            face.use_smooth = False
+            face.material_index = int(face.index % 4 == 0)
+        body.append(leaf)
 
-    rotor = glyph_solid("Rotor", w["rotor_d"], 1.6)
-    # The emitter: a six-sided crystal pointing down the shaft, in front of the rotor's hub.
-    cr = w["core_r"]
-    core = lathe("Core", [(-cr * 0.9, 0.0), (-cr * 0.35, cr), (cr * 0.55, cr), (w["tip_z"] - w["core_z"], 0.0)], sides=6, phase=math.pi / 6)
-    loose_parts = [("wand-rotor", rotor, light), ("wand-core", core, orange)]
-    return body, loose_parts + segments
+    # Engraved hour divisions cut directly into each circle's bevelled silhouette.
+    def chapter(name, radius, teeth, tilt):
+        verts, faces = [], []
+        for k in range(teeth * 4):
+            a = math.tau * k / (teeth * 4)
+            tooth = (1.9 if k // 4 % 3 == 0 else 0.8) if k % 4 in (0, 1) else 0
+            for r, h in [(radius-1, -0.8), (radius+tooth, -0.8), (radius+tooth+0.5, 0),
+                         (radius+tooth, 0.8), (radius-1, 0.8)]:
+                x, y = r*math.cos(a), r*math.sin(a)
+                verts.append((x/1000, (y*math.cos(tilt)-h*math.sin(tilt))/1000,
+                              (w["rotor_z"]+y*math.sin(tilt)+h*math.cos(tilt))/1000))
+        for k in range(teeth * 4):
+            for j in range(5):
+                i, ni = k*5, (k+1) % (teeth*4)*5
+                faces.append((i+j, ni+j, ni+(j+1)%5, i+(j+1)%5))
+        return solid_mesh(name, verts, faces)
+
+    core = lathe("NorthStar", [(217, 0), (237, 6), (247, 10.5), (253, 8.5), (w["tip_z"], 0)], sides=5, phase=0.35)
+    loose = [("wand-rotor", chapter("Ecliptic", 21, 18, 0.97), steel),
+             ("wand-meridian", chapter("Equator", 15.8, 12, -0.83), edge),
+             ("wand-core", core, glass)]
+    for n in range(w["segments"]):
+        z = 68 + 10.5*n
+        r = np.interp(z, [57, 74, 99, 147, 181], [9, 8.5, 6.5, 5.4, 5.8])
+        band = lathe("Index", [(z-1, r-0.3), (z-0.6, r+0.4), (z+1.4, r+0.4), (z+2, r-0.3)], sides=20)
+        loose.append((f"wand-segment-{n}", band, enamel))
+    return body, loose
 
 
 @prop("rooftop-planter", "rooftop", "landscape", recenter=False, keep_uvs=True)
@@ -5150,6 +5100,7 @@ def export(objs, name: str, draco: bool = True) -> str:
         filepath=path,
         export_format="GLB",
         use_selection=True,
+        use_active_scene=True,
         export_apply=True,
         export_yup=True,
         export_materials="EXPORT",

@@ -33,8 +33,8 @@ test('wand.glb points along +Z, from the pommel behind the fist out to the emitt
   assert.ok(Math.abs(box.min.z - WAND_BACK) < 0.003, `pommel at ${box.min.z}`);
   assert.ok(box.max.z > WAND_TIP.z - 0.006 && box.max.z < WAND_TIP.z + 0.004, `tip at ${box.max.z}`);
   const size = box.getSize(new THREE.Vector3());
-  assert.ok(size.x < 0.03 && size.y < 0.03, `slim: ${size.x.toFixed(3)} × ${size.y.toFixed(3)}`);
-  for (const part of ['wand-shaft', 'wand-grip', 'wand-steel', 'wand-rings', 'wand-rotor', 'wand-core']) assert.ok(w.group.getObjectByName(part), part);
+  assert.ok(size.x > 0.046 && size.x < 0.06 && size.y > 0.046 && size.y < 0.06, `orrery crown: ${size.x.toFixed(3)} × ${size.y.toFixed(3)}`);
+  for (const part of ['wand-enamel', 'wand-grip', 'wand-steel', 'wand-filigree', 'wand-rotor', 'wand-meridian', 'wand-core']) assert.ok(w.group.getObjectByName(part), part);
   for (let i = 0; i < WAND_SEGMENTS; i++) assert.ok(w.group.getObjectByName(`wand-segment-${i}`), `segment ${i}`);
   assert.equal(w.group.getObjectByName('wand-rotor')!.parent, w.rotor, 'the rotor turns on its hub');
   w.dispose();
@@ -47,10 +47,10 @@ test('the grip is a round handle GRIP_R thick between GRIP_Z, the shaft thinner 
   const g = grip.geometry.boundingBox!;
   assert.ok(Math.abs(g.max.x - GRIP_R) < 0.0015 && Math.abs(g.min.y + GRIP_R) < 0.0015, `grip radius ${g.max.x}`);
   assert.ok(g.min.z >= GRIP_Z[0] - 0.002 && g.max.z <= GRIP_Z[1] + 0.002, `grip ${g.min.z} … ${g.max.z}`);
-  const shaft = w.group.getObjectByName('wand-shaft') as THREE.Mesh;
+  const shaft = w.group.getObjectByName('wand-enamel') as THREE.Mesh;
   const pos = shaft.geometry.getAttribute('position');
   let widest = 0;
-  for (let i = 0; i < pos.count; i++) if (pos.getZ(i) > 0.12) widest = Math.max(widest, Math.hypot(pos.getX(i), pos.getY(i)));
+  for (let i = 0; i < pos.count; i++) if (pos.getZ(i) > 0.12 && pos.getZ(i) < 0.19) widest = Math.max(widest, Math.hypot(pos.getX(i), pos.getY(i)));
   assert.ok(widest > 0 && widest < GRIP_R * 0.8, `shaft ${widest}`);
   w.dispose();
 });
@@ -74,6 +74,17 @@ test('the progress bar lights a segment per tenth of charge, and the rotor spins
   w.update(0.1, { spin: 1, glow: 1, charge: 1, lumos: 0 });
   assert.ok(Math.abs(w.rotor.rotation.z - before) > slow * 10, 'flat out is far faster than idling');
   assert.ok(lit().every(Boolean));
+  const inner = w.group.getObjectByName('wand-meridian') as THREE.Mesh;
+  assert.ok(inner.parent!.rotation.z > 0 && w.rotor.rotation.z < 0, 'the circles counter-rotate');
+  for (const ring of [inner, w.rotor.children[0] as THREE.Mesh]) {
+    ring.updateWorldMatrix(true, false);
+    const verts = ring.geometry.attributes.position;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < verts.count; i++) {
+      v.fromBufferAttribute(verts, i).applyMatrix4(ring.matrixWorld);
+      assert.ok(Math.abs(v.z - 0.248) < 0.001, 'both steel circles align on the bearing at full charge');
+    }
+  }
   w.dispose();
 });
 

@@ -133,7 +133,7 @@ export function createSidearm(host: SidearmHost) {
    * covers zero through four point lights, so a dark wand can skip point-light shading entirely
    * without compiling a shader when it lights up.
    */
-  const wandLight = new THREE.PointLight('#ffc49a', 0, 7, 1.6);
+  const wandLight = new THREE.PointLight('#eeeeee', 0, 7, 1.6);
   wandLight.visible = false;
   scene.add(wandLight);
   /** The tip's trail of light through the air. */

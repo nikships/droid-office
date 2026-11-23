@@ -5,14 +5,11 @@ import { toonUnique } from './toon';
 
 /**
  * The droid wand: what `7` puts in your hand unless you opted into the .44 Magnum (Settings → You).
- * A vibe-coding wizard's wand built like a Factory tool, from `wand.glb` (tools/props/generate.py):
- * a steel pommel with the pinwheel inlaid in its end, an orange signal ring, a grooved octagonal
- * graphite grip, a telescoping graphite shaft with a ten-segment orange progress bar along it,
- * and at the tip the pinwheel itself as a ducted rotor, with an orange emitter crystal in front.
+ * Vesper, a pocket orrery from `wand.glb` (tools/props/generate.py). Two graduated steel rings
+ * counter-rotate around a shard of star-glass. Charging brings both rings into the same plane.
  *
  * Wand space, in meters: the origin is the middle of the grip, where the fist closes; the shaft
- * runs out along +Z and +Y is up (the progress bar is on top). The rotor spins, the emitter
- * lights and the progress bar fills while you hold it (Wand.update).
+ * runs out along +Z and +Y is up. Ten enamel indices show the power reserve from any angle.
  *
  * Also here: the spells' effects in the world (SpellBolt, SpellImpact, TipTrail, Sparkles)
  * in Factory's palette: orange, white and steel.
@@ -26,12 +23,10 @@ export type Sidearm = 'wand' | 'magnum';
 /** The point of the emitter crystal, where a spell leaves the wand. */
 export const WAND_TIP = new THREE.Vector3(0, 0, 0.284);
 /** The middle of the emitter crystal. */
-const CORE_AT = new THREE.Vector3(0, 0, 0.2782);
-/** The rotor's hub, on the shaft's axis. */
-const ROTOR_AT = new THREE.Vector3(0, 0, 0.2745);
+const CORE_AT = new THREE.Vector3(0, 0, 0.248);
 /** The back of the pommel. */
 export const WAND_BACK = -0.064;
-/** The grip's radius to a corner of its octagon, and where it runs, back to front. */
+/** The grip's radius at the palm, and where it runs, back to front. */
 export const GRIP_R = 0.0093;
 export const GRIP_Z: readonly [number, number] = [-0.0486, 0.037];
 /** How many segments the progress bar has. */
@@ -39,29 +34,28 @@ export const WAND_SEGMENTS = 10;
 
 /** Factory's orange, its bright hover and deep variants, and the off-white the glyph is drawn in. */
 const ORANGE = '#ee6018';
-const ORANGE_HOT = '#ff8a4a';
+const ORANGE_HOT = '#ef6f2e';
 const ORANGE_DEEP = '#d15010';
 const WHITE = '#eeeeee';
-/** An unlit segment of the progress bar: the orange, dark. */
-const SEGMENT_OFF = '#3d1605';
+const SEGMENT_OFF = '#303030';
 
 /** How fast the rotor turns, idling and flat out, in radians a second. */
-const ROTOR_IDLE = 2.2;
-const ROTOR_FULL = 46;
+const ROTOR_IDLE = 0.65;
+const ROTOR_FULL = 8.5;
 
 /** What each part of wand.glb is called in a wand, by its material in the generator. */
 const PARTS: Record<string, string> = {
-  WandGraphite: 'wand-shaft',
+  WandEnamel: 'wand-enamel',
   WandGrip: 'wand-grip',
   WandSteel: 'wand-steel',
-  WandLight: 'wand-inlay',
-  WandOrange: 'wand-rings',
+  WandEdge: 'wand-filigree',
 };
 
 /** wand.glb's meshes, toon-shaded, which every wand shares. Segments get their own material per wand. */
 interface Model {
   body: THREE.Mesh[];
   rotor: THREE.Mesh[];
+  meridian: THREE.Mesh[];
   core: THREE.Mesh[];
   segments: THREE.Mesh[];
 }
@@ -73,8 +67,7 @@ const waiting = new Set<Wand>();
 
 /**
  * Takes wand.glb's scene (as GLTFLoader gives it) as the model every wand is made from, and fills
- * in any wand made before it arrived. Its materials become toon ones of the same colors; the
- * orange ones glow a little, the way the office's own orange trim does.
+ * in any wand made before it arrived. Its materials become toon ones of the same colors.
  */
 export function setWandModel(scene: THREE.Object3D) {
   const toons = new Map<string, THREE.MeshToonMaterial>();
@@ -84,7 +77,6 @@ export function setWandModel(scene: THREE.Object3D) {
     if (!material) {
       material = toonUnique(from.color);
       material.name = from.name;
-      if (from.name === 'WandOrange') material.emissive.set(ORANGE_DEEP).multiplyScalar(0.55);
       toons.set(from.name, material);
       shared.add(material);
     }
@@ -93,13 +85,14 @@ export function setWandModel(scene: THREE.Object3D) {
     shared.add(source.geometry);
     return mesh;
   };
-  const next: Model = { body: [], rotor: [], core: [], segments: [] };
+  const next: Model = { body: [], rotor: [], meridian: [], core: [], segments: [] };
   scene.updateMatrixWorld(true);
   scene.traverse((o) => {
     if (!(o instanceof THREE.Mesh)) return;
     // A node's mesh may come as its own object or, with one material, as the node itself.
     const node = o.name.startsWith('wand-') ? o.name : (o.parent?.name ?? '');
     if (node === 'wand-rotor') next.rotor.push(part(o, 'wand-rotor'));
+    else if (node === 'wand-meridian') next.meridian.push(part(o, node));
     else if (node === 'wand-core') next.core.push(part(o, 'wand-core'));
     else if (node.startsWith('wand-segment-')) next.segments[Number(node.slice('wand-segment-'.length))] = part(o, node);
     else next.body.push(part(o));
@@ -176,30 +169,25 @@ export class Wand {
   readonly group = new THREE.Group();
   /** The rotor's hub, turned about +Z. */
   readonly rotor = new THREE.Group();
+  private meridian = new THREE.Group();
   /** The point of the emitter: spells leave from here. */
   readonly tip = new THREE.Object3D();
   private core = new THREE.Group();
   private segments: THREE.MeshToonMaterial[] = [];
   private coreMat: THREE.MeshToonMaterial | null = null;
-  private halo: THREE.Sprite;
-  private spark: THREE.Sprite;
   private light: THREE.PointLight;
   private t = Math.random() * 10;
 
   constructor() {
     this.group.name = 'wand';
     this.rotor.name = 'wand-rotor-hub';
-    this.rotor.position.copy(ROTOR_AT);
-    this.core.position.copy(CORE_AT);
+    for (const pivot of [this.rotor, this.meridian, this.core]) {
+      pivot.position.copy(CORE_AT);
+      pivot.rotation.order = 'ZXY';
+    }
     this.tip.position.copy(WAND_TIP);
-    this.group.add(this.rotor, this.core, this.tip);
-    // The emitter's glow: a soft orange bloom round it, a hot white point in its middle.
-    this.halo = glowSprite(ORANGE, 0.05, 0);
-    this.spark = glowSprite('#fff4ea', 0.018, 0);
-    this.halo.position.copy(CORE_AT);
-    this.spark.position.copy(CORE_AT);
-    this.group.add(this.halo, this.spark);
-    this.light = new THREE.PointLight('#ffb27a', 0, 0.8, 2);
+    this.group.add(this.rotor, this.meridian, this.core, this.tip);
+    this.light = new THREE.PointLight('#eeeeee', 0, 0.8, 2);
     this.light.position.copy(WAND_TIP);
     this.group.add(this.light);
     if (model) this.fill();
@@ -217,9 +205,18 @@ export class Wand {
     if (!m || this.whole) return;
     const copy = (s: THREE.Mesh, material: THREE.Material = s.material as THREE.Material) => Object.assign(new THREE.Mesh(s.geometry, material), { name: s.name });
     this.group.add(...m.body.map((s) => copy(s)));
-    this.rotor.add(...m.rotor.map((s) => copy(s)));
+    // The GLB is assembled even in an ordinary viewer. Rebase its moving parts at their bearing.
+    const mount = (pivot: THREE.Group, meshes: THREE.Mesh[], material?: THREE.Material) => {
+      for (const source of meshes) {
+        const mesh = copy(source, material);
+        mesh.position.sub(CORE_AT);
+        pivot.add(mesh);
+      }
+    };
+    mount(this.rotor, m.rotor);
+    mount(this.meridian, m.meridian);
     this.coreMat = toonUnique(ORANGE);
-    this.core.add(...m.core.map((s) => copy(s, this.coreMat!)));
+    mount(this.core, m.core, this.coreMat);
     for (const s of m.segments) {
       const mat = toonUnique(SEGMENT_OFF);
       this.segments.push(mat);
@@ -234,15 +231,17 @@ export class Wand {
 
   update(dt: number, d: WandDrive) {
     this.t += dt;
-    this.rotor.rotation.z -= dt * (ROTOR_IDLE + (ROTOR_FULL - ROTOR_IDLE) * d.spin * d.spin + 9 * d.lumos);
+    const advance = dt * (ROTOR_IDLE + (ROTOR_FULL - ROTOR_IDLE) * d.spin * d.spin + 1.2 * d.lumos);
+    this.rotor.rotation.z -= advance;
+    this.meridian.rotation.z += advance * 1.42;
+    this.core.rotation.z += advance * 0.35;
+    // Cancel the authored inclinations when charged: the star sights through concentric circles.
+    this.rotor.rotation.x = -0.97 * d.charge;
+    this.meridian.rotation.x = 0.83 * d.charge;
     // The emitter breathes gently while idle, and burns bright with a spell or Lumos.
     const idle = 0.18 + 0.06 * Math.sin(this.t * 2.6);
     const lit = Math.min(1, Math.max(idle, d.glow, d.lumos * 0.85));
-    if (this.coreMat) this.coreMat.emissive.set(ORANGE_HOT).multiplyScalar(0.25 + 1.4 * lit);
-    this.halo.material.opacity = Math.min(1, 0.15 + lit * 0.9);
-    this.halo.scale.setScalar(0.03 + 0.05 * d.glow + 0.07 * d.lumos);
-    this.spark.material.opacity = Math.min(1, lit * 1.2);
-    this.spark.scale.setScalar(0.012 + 0.02 * Math.max(d.glow, d.lumos));
+    if (this.coreMat) this.coreMat.emissive.set(ORANGE_HOT).multiplyScalar(0.13 + 0.64 * lit);
     this.light.intensity = 0.02 + 0.5 * d.glow + 0.35 * d.lumos;
     this.light.distance = 0.6 + 0.6 * d.lumos;
     // The bar fills from the grip toward the tip; with the wand idle a single segment sweeps along it, like a build waiting.
@@ -251,7 +250,7 @@ export class Wand {
     this.segments.forEach((mat, i) => {
       const live = i < on || i === sweep;
       mat.color.set(live ? ORANGE : SEGMENT_OFF);
-      mat.emissive.set(live ? ORANGE_HOT : '#000000').multiplyScalar(live ? (i === sweep && i >= on ? 0.5 : 1.1) : 0);
+      mat.emissive.set(live ? ORANGE : '#000000').multiplyScalar(live ? (i === sweep && i >= on ? 0.5 : 1.1) : 0);
     });
   }
 
@@ -279,7 +278,7 @@ export const SPELL_HIT = ['#ffffff', ORANGE, ORANGE_HOT, '#ffd8c2', WHITE];
 /** A spell fizzling out on a wall or the floor: orange, steel and white. */
 const SPELL_MISS = [ORANGE, '#8c8c8c', '#ffffff'];
 /** Sparks shaken off the tip as it casts. */
-export const SPELL_TIP = ['#ffffff', ORANGE_HOT, ORANGE];
+export const SPELL_TIP = [WHITE, ORANGE_HOT, ORANGE];
 /** A super cast burns pale gold instead of the ordinary orange. */
 export const SPELL_SUPER = ['#ffffff', '#fff0bd', '#ffc16b', ORANGE_HOT];
 /** Ship it's confetti: Factory's oranges, white and steel. */
@@ -384,7 +383,7 @@ export class SpellBolt {
     this.dir = to.clone().sub(from).normalize();
     this.across.crossVectors(this.dir, Math.abs(this.dir.y) > 0.95 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0)).normalize();
     this.up.crossVectors(this.across, this.dir).normalize();
-    this.bloom = glowSprite(superShot ? '#ffc16b' : ORANGE, superShot ? 0.32 : 0.16, 0.95);
+    this.bloom = glowSprite(superShot ? WHITE : ORANGE, superShot ? 0.32 : 0.16, 0.95);
     this.head = glowSprite('#ffffff', superShot ? 0.095 : 0.055, 1);
     for (let i = 0; i < TAIL * (superShot ? 2 : 1); i++) {
       const p = (i % TAIL) / TAIL;
@@ -392,7 +391,7 @@ export class SpellBolt {
     }
     this.streak = new THREE.Mesh(
       new THREE.CylinderGeometry(superShot ? 0.008 : 0.0035, superShot ? 0.008 : 0.0035, 1, 5).rotateX(Math.PI / 2).translate(0, 0, -0.5),
-      new THREE.MeshBasicMaterial({ color: superShot ? '#fff0bd' : ORANGE_HOT, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }),
+      new THREE.MeshBasicMaterial({ color: superShot ? WHITE : ORANGE_HOT, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }),
     );
     this.group.add(this.streak, ...this.tail, this.bloom, this.head);
     this.place(0);
@@ -484,7 +483,7 @@ export class SpellImpact {
     this.size = (hit ? 0.5 : 0.32) * (superShot ? 1.65 : 1);
     const face = (normal ?? new THREE.Vector3(0, 1, 0)).clone().normalize();
     const additive = (color: string, opacity: number) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
-    this.sigil = new THREE.Mesh((sigilGeo ??= glyphFlat(1, 6)), additive(superShot ? '#fff0bd' : ORANGE_HOT, 1));
+    this.sigil = new THREE.Mesh((sigilGeo ??= glyphFlat(1, 6)), additive(superShot ? WHITE : ORANGE_HOT, 1));
     this.ring = new THREE.Mesh((ringGeo ??= new THREE.RingGeometry(0.96, 1, 48)), additive(WHITE, 0.9));
     const mark = new THREE.Group();
     mark.add(this.sigil, this.ring);

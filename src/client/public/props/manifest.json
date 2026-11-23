@@ -480,16 +480,16 @@
     "width": 0.7142
   },
   "wand": {
-    "bytes": 240788,
-    "depth": 0.3422,
-    "height": 0.0202,
+    "bytes": 301104,
+    "depth": 0.348,
+    "height": 0.048,
     "materials": 5,
     "tags": [
       "hand"
     ],
-    "triangles": 7014,
+    "triangles": 6828,
     "url": "/props/wand.glb",
-    "width": 0.0202
+    "width": 0.0527
   },
   "workbench": {
     "bytes": 40980,
