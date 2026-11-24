@@ -76,6 +76,49 @@ class SlashCommandsTest {
     }
 
     @Test
+    fun midPromptSlashOffersSkillsInPlaceAndIgnoresPathsUrlsAndComments() {
+        val all = SlashCommands.all(
+            listOf(
+                DroidCommand("deploy", "Custom command: deploy", "command"),
+                DroidCommand("full-send", "Drive a change end-to-end", "skill"),
+                DroidCommand("full-stop", "Drive a change and stop", "skill"),
+                DroidCommand("full", "Short exact skill", "skill"),
+                DroidCommand("sol-loop", "Run a Sol review loop", "skill"),
+            ),
+        )
+        assertEquals(SlashCommands.Query(0, 5, "full", true), SlashCommands.find("/full", 5))
+        assertEquals(SlashCommands.Query(8, 13, "full", false), SlashCommands.find("fix bug /full", 13))
+        assertEquals(SlashCommands.Query(9, 10, "", false), SlashCommands.find("fix bug\n\n/", 10))
+        assertEquals(SlashCommands.Query(4, 14, "fu", false), SlashCommands.find("fix /full-send now", 7))
+
+        // Paths, URLs, comments, JSX, punctuation, and mid-word slashes return null.
+        for (sample in listOf("https://example.com/full", "src/client/ui", "UI/UX", "1/2", "(/full", "fix /etc/hosts", "fix //comment", "fix /* comment", "<Tag />", "/full ")) {
+            assertNull(sample, SlashCommands.find(sample, sample.length))
+        }
+        assertNull(SlashCommands.find("/etc/hosts", 4))
+        assertNull(SlashCommands.find("//", 1))
+        assertNull(SlashCommands.find("/full", 0))
+
+        // Mid-prompt offers skills only (never built-ins or custom commands), with exact match first.
+        assertEquals(listOf("full-send", "full-stop", "full", "sol-loop"), SlashCommands.suggestions("fix bug\n\n/", all).map { it.name })
+        assertEquals(listOf("full", "full-send", "full-stop"), SlashCommands.suggestions("fix bug /full", all).map { it.name })
+        assertEquals(emptyList<String>(), SlashCommands.suggestions("fix bug /dep", all).map { it.name })
+        assertEquals(emptyList<String>(), SlashCommands.suggestions("fix bug /mod", all).map { it.name })
+
+        // Leading non-skill slash command owns the message; leading skill or plain unresolved path allows inline skills.
+        assertEquals(emptyList<String>(), SlashCommands.suggestions("/model /full", all).map { it.name })
+        assertEquals(emptyList<String>(), SlashCommands.suggestions("/deploy /full", all).map { it.name })
+        assertEquals(listOf("full", "full-send", "full-stop"), SlashCommands.suggestions("/tmp is where logs are; /full", all).map { it.name })
+        assertEquals(listOf("sol-loop"), SlashCommands.suggestions("/full-send then /sol", all).map { it.name })
+        assertEquals(listOf("sol-loop"), SlashCommands.suggestions("/etc/hosts is wrong, /sol", all).map { it.name })
+
+        // apply replaces only the active slash token without duplicating an existing trailing space.
+        assertEquals(SlashCommands.Applied("fix bug\n\n/full-send ", 20), SlashCommands.apply("fix bug\n\n/full", 9, 14, "full-send"))
+        assertEquals(SlashCommands.Applied("fix /full-send please", 15), SlashCommands.apply("fix /fu please", 4, 7, "full-send"))
+        assertEquals(SlashCommands.Applied("/full-send check", 11), SlashCommands.apply("/full-sen check", 0, 9, "full-send"))
+    }
+
+    @Test
     fun midTurnOnlyDroidsMidTurnCommandsRunAndExitNeverDoes() {
         assertNull(SlashCommands.refusal("hello", "Atlas", busy = true))
         assertNull(SlashCommands.refusal("/model", "Atlas", busy = false))

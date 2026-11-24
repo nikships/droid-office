@@ -146,20 +146,85 @@ export function slashRefusal(draft: string, name: string, busy: boolean, command
   return undefined;
 }
 
+export interface SlashQuery {
+  start: number;
+  end: number;
+  query: string;
+  /** True when `/` starts the first non-whitespace token in the draft. */
+  atStart: boolean;
+}
+
+const SLASH_TOKEN_REST = /^[a-z0-9._:-]*$/i;
+
 /**
- * The commands to offer while the owner types one: only while the draft is a `/` and the start of a
- * name, with no space yet. Names that start with what's typed come first, then aliases, then names
- * that contain it.
+ * Detects an active `/<query>` token at `cursor`: at the start of the draft or after whitespace,
+ * with no whitespace or second `/` inside the token and only valid command-name characters.
+ * Returns `null` for URLs (`https://...`), relative or absolute paths (`src/a`, `/etc/hosts`),
+ * code comments (`//`, `/*`), JSX (`/>`), or cursors outside a slash token.
  */
-export function slashSuggestions(draft: string, commands: readonly SlashCommand[] = SLASH_COMMANDS): SlashCommand[] {
-  const m = /^\/([^\s/]*)$/.exec(draft.trimStart());
-  if (!m) return [];
-  const typed = m[1].toLowerCase();
+export function findSlashQuery(value: string, cursor: number = value.length): SlashQuery | null {
+  if (!value) return null;
+  const pos = Math.max(0, Math.min(value.length, Math.trunc(cursor)));
+  let start = pos;
+  while (start > 0 && !/\s/.test(value[start - 1])) start--;
+  if (start >= pos || value[start] !== '/') return null;
+
+  let end = pos;
+  while (end < value.length && !/\s/.test(value[end])) end++;
+
+  const tokenRest = value.slice(start + 1, end);
+  if (!SLASH_TOKEN_REST.test(tokenRest)) return null;
+
+  const query = value.slice(start + 1, pos);
+  const atStart = !/\S/.test(value.slice(0, start));
+  return { start, end, query, atStart };
+}
+
+/**
+ * Replaces the slash token `[start, end)` in `value` with `/<name> ` (avoiding a duplicate space
+ * when one already follows) and places the cursor right after that space.
+ */
+export function applySlash(value: string, start: number, end: number, name: string): { value: string; cursor: number } {
+  const s = Math.max(0, Math.min(value.length, Math.trunc(start)));
+  const e = Math.max(s, Math.min(value.length, Math.trunc(end)));
+  const clean = name.trim().replace(/^\/+/, '');
+  const hasSpaceAfter = e < value.length && value[e] === ' ';
+  const inserted = hasSpaceAfter ? `/${clean}` : `/${clean} `;
+  return {
+    value: `${value.slice(0, s)}${inserted}${value.slice(e)}`,
+    cursor: s + 1 + clean.length + 1,
+  };
+}
+
+/**
+ * The commands to offer while the owner types a `/` token at `cursor` (defaults to the end of
+ * `draft`): at the start of the draft, built-ins, custom commands, and skills are all offered;
+ * mid-draft (after whitespace following earlier text) or when `inlineOnly` is true (a prepended
+ * context precedes the draft), only skills are offered, unless the draft starts with a resolved
+ * non-skill slash command (which owns the rest of the message in Droid). Exact matches come first,
+ * then names that start with what's typed, then aliases, then names containing it.
+ */
+export function slashSuggestions(draft: string, commands: readonly SlashCommand[] = SLASH_COMMANDS, cursor: number = draft.length, inlineOnly = false): SlashCommand[] {
+  const found = findSlashQuery(draft, cursor);
+  if (!found) return [];
+  let pool = commands;
+  if (inlineOnly || !found.atStart) {
+    if (!inlineOnly) {
+      const leading = slashOf(draft, commands);
+      if (leading?.command && leading.command.source !== 'skill') return [];
+    }
+    pool = commands.filter((c) => c.source === 'skill');
+  }
+  const typed = found.query.toLowerCase();
   const rank = (c: SlashCommand) => {
     const name = c.name.toLowerCase();
-    return name.startsWith(typed) ? 0 : c.aliases?.some((a) => a.startsWith(typed)) ? 1 : name.includes(typed) ? 2 : -1;
+    if (typed && name === typed) return 0;
+    if (name.startsWith(typed)) return 1;
+    if (c.aliases?.some((a) => a.startsWith(typed))) return 2;
+    if (name.includes(typed)) return 3;
+    return -1;
   };
-  return commands
+  return pool
     .map((c, i) => ({ c, r: rank(c), i }))
     .filter((x) => x.r >= 0)
     .sort((a, b) => a.r - b.r || a.i - b.i)

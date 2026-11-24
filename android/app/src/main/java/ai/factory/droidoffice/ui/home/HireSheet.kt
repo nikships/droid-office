@@ -297,12 +297,14 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
                             }
                         }
                     }
-                    val suggestions = if (cloud || mentionItems.isNotEmpty()) emptyList() else SlashCommands.suggestions(prompt.text, slashList)
+                    val slashQuery = if (!cloud && mention == null && prompt.selection.collapsed) SlashCommands.find(prompt.text, prompt.selection.end) else null
+                    val suggestions = if (slashQuery != null) SlashCommands.suggestions(prompt.text, slashList, prompt.selection.end) else emptyList()
                     AnimatedVisibility(suggestions.isNotEmpty()) {
                         Box(Modifier.padding(top = 8.dp)) {
                             SlashMenu(suggestions, thread = true, busy = false) { c ->
-                                val filled = "/${c.name} "
-                                editPrompt(TextFieldValue(filled, selection = TextRange(filled.length)))
+                                val q = SlashCommands.find(prompt.text, prompt.selection.end) ?: slashQuery ?: return@SlashMenu
+                                val next = SlashCommands.apply(prompt.text, q.start, q.end, c.name)
+                                editPrompt(TextFieldValue(next.value, selection = TextRange(next.cursor)))
                             }
                         }
                     }

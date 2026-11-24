@@ -94,8 +94,12 @@ object SlashCommands {
         return ALL + extra
     }
 
+    data class Query(val start: Int, val end: Int, val query: String, val atStart: Boolean)
+
+    data class Applied(val value: String, val cursor: Int)
+
     private val NAME = Regex("""^/([^\s/]*)(?=\s|$)""")
-    private val TYPING = Regex("""^/([^\s/]*)$""")
+    private val TOKEN_REST = Regex("""^[a-zA-Z0-9._:-]*$""")
     private val ARGUMENT = Regex("""\s\S""")
     private val COMMAND = Regex("""^/\S+\s*""")
 
@@ -131,18 +135,64 @@ object SlashCommands {
     /** A connected Factory account opens the office sheet, even when limits are unreadable or not applicable. */
     fun nativeLimits(draft: String, connected: Boolean): Boolean = connected && of(draft)?.second?.name == "limits"
 
-    /** The commands to offer while a `/` and the start of a name are typed: prefix matches, then aliases, then names containing it. */
-    fun suggestions(draft: String, commands: List<Command> = ALL): List<Command> {
-        val typed = TYPING.find(draft.trimStart())?.groupValues?.get(1)?.lowercase() ?: return emptyList()
+    /**
+     * The `/<query>` token at [cursor]: at the start of the draft or after whitespace, with no
+     * whitespace or second `/` inside and only valid command-name characters. Null for URLs, paths
+     * (`/etc/hosts`, `src/a`), comments, JSX (`/>`), or cursors outside a slash token.
+     */
+    fun find(value: String, cursor: Int = value.length): Query? {
+        if (value.isEmpty()) return null
+        val pos = cursor.coerceIn(0, value.length)
+        var start = pos
+        while (start > 0 && !value[start - 1].isWhitespace()) start--
+        if (start >= pos || value[start] != '/') return null
+        var end = pos
+        while (end < value.length && !value[end].isWhitespace()) end++
+        val tokenRest = value.substring(start + 1, end)
+        if (!TOKEN_REST.matches(tokenRest)) return null
+        val query = value.substring(start + 1, pos)
+        val atStart = (0 until start).all { value[it].isWhitespace() }
+        return Query(start, end, query, atStart)
+    }
+
+    /**
+     * Replaces the slash token `[start, end)` in [value] with `/<name> ` (avoiding a duplicate
+     * space when one already follows) and places the cursor right after that space.
+     */
+    fun apply(value: String, start: Int, end: Int, name: String): Applied {
+        val s = start.coerceIn(0, value.length)
+        val e = end.coerceIn(s, value.length)
+        val clean = name.trim().trimStart('/')
+        val hasSpaceAfter = e < value.length && value[e] == ' '
+        val inserted = if (hasSpaceAfter) "/$clean" else "/$clean "
+        return Applied(value.substring(0, s) + inserted + value.substring(e), s + 1 + clean.length + 1)
+    }
+
+    /**
+     * The commands to offer while a `/` token is typed at [cursor]: all commands at the start of
+     * the draft, and skills only mid-draft (suppressed when the draft starts with a non-skill
+     * slash command). Exact matches come first, then prefix matches, aliases, and substrings.
+     */
+    fun suggestions(draft: String, commands: List<Command> = ALL, cursor: Int = draft.length): List<Command> {
+        val found = find(draft, cursor) ?: return emptyList()
+        val pool = if (found.atStart) {
+            commands
+        } else {
+            val leading = of(draft, commands)
+            if (leading?.second != null && leading.second?.source != Source.Skill) return emptyList()
+            commands.filter { it.source == Source.Skill }
+        }
+        val typed = found.query.lowercase()
         fun rank(c: Command) = c.name.lowercase().let { name ->
             when {
-                name.startsWith(typed) -> 0
-                c.aliases.any { it.startsWith(typed) } -> 1
-                typed in name -> 2
+                typed.isNotEmpty() && name == typed -> 0
+                name.startsWith(typed) -> 1
+                c.aliases.any { it.startsWith(typed) } -> 2
+                typed in name -> 3
                 else -> -1
             }
         }
-        return commands.withIndex().map { Triple(it.value, rank(it.value), it.index) }
+        return pool.withIndex().map { Triple(it.value, rank(it.value), it.index) }
             .filter { it.second >= 0 }
             .sortedWith(compareBy({ it.second }, { it.third }))
             .map { it.first }

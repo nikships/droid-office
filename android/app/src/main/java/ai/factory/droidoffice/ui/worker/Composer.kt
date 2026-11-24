@@ -324,11 +324,13 @@ fun Composer(
                 focus.requestFocus()
             }
         }
-        val suggestions = if (w.isShell || mentions.isNotEmpty()) emptyList() else SlashCommands.suggestions(text, slashList)
+        val slashQuery = if (!w.isShell && !w.isCloud && mention == null && value.selection.collapsed) SlashCommands.find(text, value.selection.end) else null
+        val suggestions = if (slashQuery != null) SlashCommands.suggestions(text, slashList, value.selection.end) else emptyList()
         AnimatedVisibility(suggestions.isNotEmpty()) {
-            SlashMenu(suggestions, thread, w.state.busy) { c ->
-                val filled = "/${c.name} "
-                edit(TextFieldValue(filled, selection = TextRange(filled.length)))
+            SlashMenu(suggestions, thread, w.state.busy && slashQuery?.atStart == true) { c ->
+                val q = SlashCommands.find(value.text, value.selection.end) ?: slashQuery ?: return@SlashMenu
+                val next = SlashCommands.apply(value.text, q.start, q.end, c.name)
+                edit(TextFieldValue(next.value, selection = TextRange(next.cursor)))
                 focus.requestFocus()
             }
         }

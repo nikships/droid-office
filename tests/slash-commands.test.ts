@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { nativeCopy, nativeLimits, sideQuestion, SLASH_COMMANDS, slashCommands, slashKind, slashOf, slashRefusal, slashSuggestions } from '../src/shared/slash-commands.js';
+import { applySlash, findSlashQuery, nativeCopy, nativeLimits, sideQuestion, SLASH_COMMANDS, slashCommands, slashKind, slashOf, slashRefusal, slashSuggestions } from '../src/shared/slash-commands.js';
 
 test('the Android app lists the same slash commands', () => {
   const kotlin = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/core/SlashCommands.kt', import.meta.url), 'utf8');
@@ -105,4 +105,72 @@ test('a bare /copy opens the Thread’s copy menu and /btw asks its side questio
   assert.equal(sideQuestion('/btw'), '');
   assert.equal(sideQuestion('what /btw'), undefined);
   assert.equal(sideQuestion('/model'), undefined);
+});
+
+test('findSlashQuery, applySlash, and mid-prompt slashSuggestions offer skills in place and ignore paths/URLs/comments', () => {
+  const all = slashCommands([
+    { name: 'deploy', description: 'Custom command: deploy', source: 'command' },
+    { name: 'full-send', description: 'Drive a change end-to-end', source: 'skill' },
+    { name: 'full-stop', description: 'Drive a change and stop', source: 'skill' },
+    { name: 'full', description: 'Short exact skill', source: 'skill' },
+    { name: 'sol-loop', description: 'Run a Sol review loop', source: 'skill' },
+  ]);
+
+  assert.deepEqual(findSlashQuery('/full', 5), { start: 0, end: 5, query: 'full', atStart: true });
+  assert.deepEqual(findSlashQuery('  /full', 7), { start: 2, end: 7, query: 'full', atStart: true });
+  assert.deepEqual(findSlashQuery('fix bug /full', 13), { start: 8, end: 13, query: 'full', atStart: false });
+  assert.deepEqual(findSlashQuery('fix bug\n\n/', 10), { start: 9, end: 10, query: '', atStart: false });
+  assert.deepEqual(findSlashQuery('fix /full-send now', 7), { start: 4, end: 14, query: 'fu', atStart: false });
+
+  // Paths, URLs, comments, JSX, mid-word slashes, and trailing spaces return null.
+  for (const sample of ['https://example.com/full', 'src/client/ui', 'UI/UX', '1/2', '(/full', '"/full', 'fix /etc/hosts', 'fix //comment', 'fix /*', '<Tag />', '/full ', '']) {
+    assert.equal(findSlashQuery(sample, sample.length), null, `expected null for ${JSON.stringify(sample)}`);
+  }
+  assert.equal(findSlashQuery('/etc/hosts', 4), null);
+  assert.equal(findSlashQuery('//', 1), null);
+  assert.equal(findSlashQuery('/full', 0), null);
+
+  // Mid-prompt offers skills only (never built-ins or custom commands), with exact match first.
+  assert.deepEqual(
+    slashSuggestions('fix bug\n\n/', all).map((c) => c.name),
+    ['full-send', 'full-stop', 'full', 'sol-loop'],
+  );
+  assert.deepEqual(
+    slashSuggestions('fix bug /full', all).map((c) => c.name),
+    ['full', 'full-send', 'full-stop'],
+  );
+  assert.deepEqual(slashSuggestions('fix bug /dep', all), []);
+  assert.deepEqual(slashSuggestions('fix bug /mod', all), []);
+
+  // Leading non-skill slash command owns the message; leading skill or plain unresolved path allows inline skills.
+  assert.deepEqual(slashSuggestions('/model /full', all), []);
+  assert.deepEqual(slashSuggestions('/deploy /full', all), []);
+  assert.deepEqual(
+    slashSuggestions('/tmp is where logs are; /full', all).map((c) => c.name),
+    ['full', 'full-send', 'full-stop'],
+  );
+  assert.deepEqual(
+    slashSuggestions('/full-send then /sol', all).map((c) => c.name),
+    ['sol-loop'],
+  );
+  assert.deepEqual(
+    slashSuggestions('/etc/hosts is wrong, /sol', all).map((c) => c.name),
+    ['sol-loop'],
+  );
+
+  // inlineOnly (e.g. Ask modal with prepended context) treats the whole draft as inline skills.
+  assert.deepEqual(
+    slashSuggestions('/model and then /full', all, undefined, true).map((c) => c.name),
+    ['full', 'full-send', 'full-stop'],
+  );
+  assert.deepEqual(slashSuggestions('/mod', all, undefined, true), []);
+
+  // Cursor inside an earlier slash token replaces only that token without duplicating spaces.
+  assert.deepEqual(
+    slashSuggestions('fix /fu please', all, 7).map((c) => c.name),
+    ['full-send', 'full-stop', 'full'],
+  );
+  assert.deepEqual(applySlash('fix bug\n\n/full', 9, 14, 'full-send'), { value: 'fix bug\n\n/full-send ', cursor: 20 });
+  assert.deepEqual(applySlash('fix /fu please', 4, 7, 'full-send'), { value: 'fix /full-send please', cursor: 15 });
+  assert.deepEqual(applySlash('/full-sen check', 0, 9, 'full-send'), { value: '/full-send check', cursor: 11 });
 });

@@ -60,6 +60,7 @@ export function openAsk(opts: AskOptions) {
         floor: opts.floor,
         workerId: to ?? undefined,
         slash: !cloud,
+        inlineOnly: Boolean(opts.context?.trim()),
         mentions: !cloud && Boolean(to || opts.floor),
         pastes: true,
       };
@@ -155,8 +156,9 @@ export function openAsk(opts: AskOptions) {
       return;
     }
     const target = to ? opts.workers.find((w) => w.id === to) : undefined;
+    const fullPrompt = opts.context ? `${opts.context}\n\n${text}` : text;
     if (!target?.cloud) {
-      const slashError = slashRefusal(text, target?.name ?? (to ? 'this worker' : 'the new worker'), false, assist.slashList());
+      const slashError = slashRefusal(fullPrompt, target?.name ?? (to ? 'this worker' : 'the new worker'), false, assist.slashList());
       if (slashError) {
         refusedNote.textContent = slashError;
         refusedNote.classList.remove('hidden');
@@ -188,15 +190,7 @@ export function openAsk(opts: AskOptions) {
         // storage blocked
       }
     }
-    opts.onSubmit(
-      opts.context ? `${opts.context}\n\n${text}` : text,
-      to,
-      !to && opts.worktreeOption && wtBox.checked,
-      !to ? models?.model() : undefined,
-      !to ? models?.effort() : undefined,
-      !to && opts.worktreeOption && wtBox.checked ? repos.value() : undefined,
-      picked,
-    );
+    opts.onSubmit(fullPrompt, to, !to && opts.worktreeOption && wtBox.checked, !to ? models?.model() : undefined, !to ? models?.effort() : undefined, !to && opts.worktreeOption && wtBox.checked ? repos.value() : undefined, picked);
   };
   form.addEventListener('submit', (e) => {
     e.preventDefault();

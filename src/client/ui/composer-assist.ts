@@ -2,7 +2,7 @@
 // `/` slash command autocomplete, `@` workspace file mentions, and large paste chips.
 // Free of window/document calls at import time so Node unit tests import it directly.
 
-import { nativeLimits, slashCommands, slashOf, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
+import { applySlash, findSlashQuery, nativeLimits, slashCommands, slashSuggestions, type DroidSlashCommand, type SlashCommand, type SlashQuery } from '../../shared/slash-commands';
 import { withToken } from '../token';
 import { h } from './dom';
 import { icon } from './icons';
@@ -27,6 +27,8 @@ export interface ComposerAssistScope {
   workerId?: string;
   /** Whether Droid `/` slash command autocomplete is active. */
   slash: boolean;
+  /** True when hidden context is prepended before the editable draft (treat the entire draft as inline skills). */
+  inlineOnly?: boolean;
   /** Whether `@` workspace file mention autocomplete is active. */
   mentions: boolean;
   /** Whether large pastes collapse into expandable chips (defaults to true). */
@@ -92,11 +94,13 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
   let filesQueryKey = '';
   let latestFilteredFiles: { query: string; key: string; files: string[]; dirs: string[] } | undefined;
 
-  // Droid's slash commands, offered while a draft is a `/` and the start of a name.
+  // Droid's slash commands, offered at the start of a draft (all commands) or after whitespace mid-draft (skills).
   const slashMenu = h('div.wt-slash', { role: 'listbox', 'aria-label': 'Slash commands', hidden: true });
   let slashShown: SlashCommand[] = [];
   let slashCursor = 0;
-  let slashClosed = false;
+  let activeSlash: SlashQuery | null = null;
+  let activeSlashKey = '';
+  let slashDismissedKey = '';
   let slashScopeKey = '';
   let slashAsked = 0;
   let slashAbort: AbortController | undefined;
@@ -268,11 +272,52 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
       });
   };
 
+  const closeSlash = () => {
+    slashShown = [];
+    slashCursor = 0;
+    activeSlash = null;
+    activeSlashKey = '';
+    slashMenu.hidden = true;
+    slashMenu.replaceChildren();
+    syncInputExpandedAria();
+  };
+
   const paintSlash = () => {
     const s = opts.scope();
-    slashShown = !s.slash || slashClosed || input.disabled ? [] : slashSuggestions(input.value, slashEntries);
+    if (!s.slash || input.disabled) {
+      slashDismissedKey = '';
+      closeSlash();
+      return;
+    }
+    const selStart = input.selectionStart ?? input.value.length;
+    const selEnd = input.selectionEnd ?? selStart;
+    if (selStart !== selEnd) {
+      closeSlash();
+      return;
+    }
+    const found = findSlashQuery(input.value, selStart);
+    if (!found) {
+      slashDismissedKey = '';
+      closeSlash();
+      return;
+    }
+    const tokenKey = `${found.start}:${found.query}`;
+    if (slashDismissedKey === tokenKey) {
+      closeSlash();
+      return;
+    }
+    loadSlash();
+    if (tokenKey !== activeSlashKey) {
+      slashCursor = 0;
+      slashMenu.scrollTop = 0;
+    }
+    activeSlash = found;
+    activeSlashKey = tokenKey;
+    const inlineOnly = Boolean(s.inlineOnly);
+    slashShown = slashSuggestions(input.value, slashEntries, selStart, inlineOnly);
     slashCursor = Math.min(slashCursor, Math.max(0, slashShown.length - 1));
     slashMenu.hidden = !slashShown.length;
+    slashMenu.setAttribute('aria-label', found.atStart && !inlineOnly ? 'Slash commands' : 'Skills');
     syncInputExpandedAria();
     const connected = opts.factoryConnected?.() ?? false;
     slashMenu.replaceChildren(
@@ -285,7 +330,7 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
             tabindex: -1,
             'aria-selected': String(i === slashCursor),
             onmousedown: (event: Event) => event.preventDefault(),
-            onclick: () => pickSlash(command),
+            onclick: () => pickSlash(command, tokenKey),
           },
           h('span.wt-slash-name', {}, `/${command.name}`),
           h('span.wt-slash-desc', { title: command.argumentHint ? `${command.description}\n/${command.name} ${command.argumentHint}` : command.description }, command.description),
@@ -329,11 +374,10 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
 
   const onInput = () => {
     paintPastes();
-    slashClosed = false;
+    slashDismissedKey = '';
     slashCursor = 0;
     mentionDismissedKey = '';
     mentionCursor = 0;
-    if (input.value.trimStart().startsWith('/')) loadSlash();
     paintSlash();
     paintMention();
     slashMenu.scrollTop = 0;
@@ -366,13 +410,32 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
     opts.onChange?.(expand());
   };
 
-  const pickSlash = (command: SlashCommand) => {
-    input.value = `/${command.name} `;
+  const pickSlash = (command: SlashCommand, expectedTokenKey?: string) => {
+    const selStart = input.selectionStart ?? input.value.length;
+    const selEnd = input.selectionEnd ?? selStart;
+    if (selStart !== selEnd) {
+      closeSlash();
+      return;
+    }
+    const queryNow = findSlashQuery(input.value, selStart);
+    if (!queryNow) {
+      closeSlash();
+      return;
+    }
+    if (expectedTokenKey && `${queryNow.start}:${queryNow.query}` !== expectedTokenKey) {
+      paintSlash();
+      return;
+    }
+    const next = applySlash(input.value, queryNow.start, queryNow.end, command.name);
+    input.value = next.value;
     paintPastes();
+    slashDismissedKey = '';
+    slashCursor = 0;
     input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
+    input.setSelectionRange(next.cursor, next.cursor);
     paintSlash();
     paintMention();
+    slashMenu.scrollTop = 0;
     opts.onChange?.(expand());
   };
 
@@ -388,13 +451,24 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
     opts.onChange?.(expand());
   };
 
-  const onClick = () => paintMention();
+  const onSelection = () => {
+    paintSlash();
+    paintMention();
+  };
   const onKeyup = (event: KeyboardEvent) => {
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') paintMention();
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') {
+      paintSlash();
+      paintMention();
+    } else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !slashShown.length && !mentionShown.length) {
+      paintSlash();
+      paintMention();
+    }
   };
 
   input.addEventListener('paste', onPaste);
-  input.addEventListener('click', onClick);
+  input.addEventListener('click', onSelection);
+  input.addEventListener('select', onSelection);
+  input.addEventListener('selectionchange', onSelection);
   input.addEventListener('keyup', onKeyup);
 
   const dismissMenu = (): boolean => {
@@ -404,7 +478,7 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
       return true;
     }
     if (slashShown.length) {
-      slashClosed = true;
+      if (activeSlash) slashDismissedKey = `${activeSlash.start}:${activeSlash.query}`;
       paintSlash();
       return true;
     }
@@ -433,9 +507,21 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
         return true;
       }
     }
-    if (slashShown.length) {
-      const typed = slashOf(input.value)?.name;
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+    const isSlashKey = event.key === 'Escape' || (plain && (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Tab' || event.key === 'Enter'));
+    if (isSlashKey) {
+      const selStart = input.selectionStart ?? input.value.length;
+      const selEnd = input.selectionEnd ?? selStart;
+      const liveSlash = selStart === selEnd ? findSlashQuery(input.value, selStart) : null;
+      if (!liveSlash) {
+        if (slashShown.length) closeSlash();
+        return false;
+      }
+      const liveKey = `${liveSlash.start}:${liveSlash.query}`;
+      if (liveKey !== activeSlashKey) paintSlash();
+      if (!slashShown.length) return false;
+      const typed = liveSlash.query.toLowerCase();
+      if (plain && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
         event.preventDefault();
         slashCursor = (slashCursor + (event.key === 'ArrowDown' ? 1 : slashShown.length - 1)) % slashShown.length;
         paintSlash();
@@ -448,10 +534,11 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
         dismissMenu();
         return true;
       }
-      // Tab, or Enter on a name only partly typed, completes it; Enter on a whole name sends it.
-      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && slashShown[slashCursor].name !== typed)) {
+      const exactAtEnd = selStart === liveSlash.end && slashShown[slashCursor].name.toLowerCase() === typed;
+      // Tab, or Enter on a partial or mid-token name, completes it; Enter on a whole name at token end sends it.
+      if (plain && (event.key === 'Tab' || (event.key === 'Enter' && !exactAtEnd))) {
         event.preventDefault();
-        pickSlash(slashShown[slashCursor]);
+        pickSlash(slashShown[slashCursor], liveKey);
         return true;
       }
     }
@@ -471,16 +558,16 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
       slashEntries = slashCommands();
       slashScopeKey = '';
       slashAsked = 0;
-      if (opts.preloadSlash || input.value.trimStart().startsWith('/')) loadSlash();
+      if (opts.preloadSlash || findSlashQuery(input.value, input.selectionStart ?? input.value.length)) loadSlash();
     }
     paintSlash();
     if (!canMentionFiles(s)) closeMention();
     else paintMention();
   };
 
-  const startsAsSlash = input.value.trimStart().startsWith('/');
-  if (opts.preloadSlash || startsAsSlash) loadSlash();
-  if (startsAsSlash) paintSlash();
+  const hasInitialSlash = Boolean(findSlashQuery(input.value, input.selectionStart ?? input.value.length));
+  if (opts.preloadSlash || hasInitialSlash) loadSlash();
+  if (hasInitialSlash) paintSlash();
 
   return {
     mentionMenu,
@@ -495,7 +582,9 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
     closeMention,
     reset() {
       paintPastes();
-      paintSlash();
+      slashDismissedKey = '';
+      mentionDismissedKey = '';
+      closeSlash();
       closeMention();
     },
     dismissMenu,
@@ -508,7 +597,9 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
       slashAbort?.abort();
       slashAbort = undefined;
       input.removeEventListener('paste', onPaste);
-      input.removeEventListener('click', onClick);
+      input.removeEventListener('click', onSelection);
+      input.removeEventListener('select', onSelection);
+      input.removeEventListener('selectionchange', onSelection);
       input.removeEventListener('keyup', onKeyup);
     },
   };
