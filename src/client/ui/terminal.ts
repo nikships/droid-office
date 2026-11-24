@@ -23,6 +23,7 @@ import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { loadFonts, TERM_FONT } from '../fonts';
 import { attachKittyTerminal, type ExpandedKittyImage } from '../term-kitty';
 import { attachPixelScroll } from '../term-pixel-scroll';
+import { attachTerminalScrollbar } from '../term-scrollbar';
 import { wantsCsiEnter } from '../term-keys';
 import { viewPicture } from './picture-viewer';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
@@ -307,6 +308,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       ),
   });
   const pixel = attachPixelScroll(term);
+  attachTerminalScrollbar(term);
 
   const offQueries = suppressMirrorQueries(term);
   const focus = focusReports();
@@ -787,6 +789,7 @@ export function openOfficeShell(net: Net) {
       ),
   });
   const pixel = attachPixelScroll(term);
+  attachTerminalScrollbar(term);
 
   let opened = false;
   let shared = false;

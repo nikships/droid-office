@@ -23,11 +23,30 @@ test('office and companion share slim scroll-only accent scrollbars on both axes
   assert.match(rule('::-webkit-scrollbar-thumb'), /border-radius:\s*999px;/);
   assert.match(rule('.user-scrolling::-webkit-scrollbar-thumb'), /background:\s*var\(--accent\);/);
   assert.match(rule('::-webkit-scrollbar-button'), /display:\s*none;/);
-  assert.match(rule('.xterm .xterm-scrollable-element > .scrollbar > .slider'), /background:\s*var\(--accent\)/);
-  assert.match(rule('.xterm .xterm-scrollable-element > .scrollbar > .slider'), /border:\s*4\.75px solid transparent;/);
-  assert.match(rule('.xterm .xterm-scrollable-element > .scrollbar'), /pointer-events:\s*auto;/);
-  assert.match(rule('.xterm:not(.user-scrolling) .xterm-scrollable-element > .scrollbar'), /opacity:\s*0;/);
-  assert.match(rule('.xterm.user-scrolling .xterm-scrollable-element > .scrollbar'), /opacity:\s*1;/);
+});
+
+test('terminal scrollbar is hidden unless scrollable and uses a minimal neutral hairline pill', () => {
+  assert.match(rule('.xterm .xterm-viewport'), /scrollbar-width:\s*none;/);
+  assert.match(rule('.xterm .xterm-viewport::-webkit-scrollbar'), /display:\s*none;/);
+  assert.match(css, /\.xterm \.xterm-scrollable-element > \.scrollbar,\n\.xterm \.xterm-scrollable-element > \.scrollbar\.vertical \{ opacity: 0; pointer-events: none; background: transparent; transition: none; \}/);
+  const scrollableBar = rule('.xterm.term-scrollable .xterm-scrollable-element > .scrollbar.vertical');
+  assert.match(scrollableBar, /pointer-events:\s*auto;/);
+  assert.match(scrollableBar, /z-index:\s*11;/);
+  assert.match(scrollableBar, /transition:\s*opacity 280ms var\(--ease\);/);
+  assert.match(rule('.xterm.term-scrollable.term-scrollbar-quiet .xterm-scrollable-element > .scrollbar.vertical'), /transition:\s*none;/);
+  assert.match(rule('.xterm .xterm-scrollable-element > .scrollbar > .slider'), /background:\s*transparent\s*!important;/);
+  const pill = rule('.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider::before');
+  assert.match(pill, /width:\s*3px;/);
+  assert.match(pill, /border-radius:\s*999px;/);
+  assert.match(pill, /background:\s*rgba\(255,\s*255,\s*255,\s*\.22\);/);
+  assert.doesNotMatch(pill, /var\(--accent\)/);
+  const hoverPill = rule('.xterm.term-scrollable .xterm-scrollable-element > .scrollbar.vertical:hover > .slider::before');
+  assert.match(hoverPill, /width:\s*5px;/);
+  assert.match(hoverPill, /background:\s*rgba\(255,\s*255,\s*255,\s*\.42\);/);
+  assert.match(css, /\.xterm\.term-scrollable\.term-scrolling\s+\.xterm-scrollable-element\s*>\s*\.scrollbar\.vertical/);
+  assert.match(css, /\.xterm\.term-scrollable\.term-scrollbar-drag\s+\.xterm-scrollable-element\s*>\s*\.scrollbar\.vertical/);
+  assert.match(css, /\.xterm\.term-scrollable\s+\.xterm-scrollable-element\s*>\s*\.scrollbar\.vertical:hover/);
+  assert.doesNotMatch(css, /\.xterm(?::not\(\.user-scrolling\)|\.user-scrolling)/);
 });
 
 test('standard scrollbar styling cannot override WebKit styling outside the fallback', () => {

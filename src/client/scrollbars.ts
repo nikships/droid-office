@@ -14,14 +14,12 @@ function showScrollbar(element: Element) {
   );
 }
 
-function input(event: Event) {
+function input() {
   lastInput = performance.now();
-  // xterm scrolls its own virtual viewport, which does not always emit a DOM
-  // scroll event. Its scrollbar is a child of the terminal, not a native one.
-  if (event.target instanceof Element && (event.type !== 'pointerdown' || event.target.closest('.scrollbar'))) {
-    const terminal = event.target.closest('.xterm');
-    if (terminal) showScrollbar(terminal);
-  }
+}
+
+function isEditable(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest('input, textarea, select, [contenteditable], .xterm');
 }
 
 document.addEventListener('wheel', input, { capture: true, passive: true });
@@ -30,14 +28,16 @@ document.addEventListener('pointerdown', input, true);
 document.addEventListener(
   'keydown',
   (event) => {
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Tab'].includes(event.key)) input(event);
+    if (isEditable(event.target)) return;
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Tab'].includes(event.key)) input();
   },
   true,
 );
 document.addEventListener(
   'scroll',
   (event) => {
-    if (performance.now() - lastInput < 1000 && event.target instanceof Element) showScrollbar(event.target);
+    // xterm terminals manage their own minimal scrollbar in term-scrollbar.ts.
+    if (performance.now() - lastInput < 1000 && event.target instanceof Element && !event.target.closest('.xterm')) showScrollbar(event.target);
   },
   true,
 );

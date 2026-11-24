@@ -8,6 +8,7 @@ import type { Net } from '../net';
 import { store, words } from '../state';
 import { attachKittyTerminal } from '../term-kitty';
 import { attachPixelScroll } from '../term-pixel-scroll';
+import { attachTerminalScrollbar } from '../term-scrollbar';
 import { withToken } from '../token';
 import { TERM_THEME } from '../term-theme';
 import { h, openModal, toast, type Modal } from './dom';
@@ -211,6 +212,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     t.unicode.activeVersion = '11';
     attachKittyTerminal(t);
     attachPixelScroll(t);
+    attachTerminalScrollbar(t);
     // Keys belong to the window (T, Esc), never to the program in the terminal.
     t.attachCustomKeyEventHandler(() => false);
     term = t;
