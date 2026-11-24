@@ -2,7 +2,7 @@ import { readDroidPending } from '../../shared/droid-queue';
 import { ORCHESTRATOR_ID } from '../../shared/mission-control';
 import { PROMPT_MAX } from '../../shared/prompts';
 import type { ClientMsg, ServerMsg, WorkerInfo } from '../../shared/protocol';
-import { nativeCopy, nativeLimits, slashCommands, slashOf, slashRefusal, slashSuggestions, type DroidSlashCommand, type SlashCommand } from '../../shared/slash-commands';
+import { nativeCopy, nativeLimits, slashOf, slashRefusal } from '../../shared/slash-commands';
 import { isAsleep, isBusy, needsOwnerInput } from '../../shared/status';
 import { latestThreadPlan, type ActivePlan, type ThreadBlock, type ThreadRow } from '../../shared/thread-presentation';
 import { statusMode, thinkingSeconds, thoughtLabel } from '../../shared/thread-status';
@@ -32,14 +32,14 @@ import { mountThreadStatusRow } from './thread-status-row';
 import { openFilePreviewModal, threadFileImageUrl } from './file-preview';
 import { icon } from './icons';
 import { promptImages } from './images';
-import { expandPastes, insertQuote, isLargePaste, livePastes, type PastedText, pastedText, replacePaste } from './thread-compose';
+import { attachComposerAssist } from './composer-assist';
+import { insertQuote } from './thread-compose';
 import { renderTurnChanges, setDisclosureOpen, type ThreadCardRenderContext } from './thread-diff-view';
 import { refreshLiveOutput, renderThreadActivity } from './thread-tool-activity';
 import { onThreadViewPrefs, threadViewPrefs, threadViewRowKey, threadViewVars } from './thread-view-prefs';
 import { openImageLightbox } from './thread-md-lightbox';
 import { attachQuoteReply } from './thread-md-quote';
 import { threadMarkdown, threadUserMarkdown, type WorkspacePathRef } from './thread-markdown';
-import { applyMention, findMentionQuery, rankWorkspacePaths, type MentionQuery, type WorkspaceMentionItem } from './thread-mention';
 
 export interface WorkerThread {
   element: HTMLElement;
@@ -88,7 +88,6 @@ export interface ThreadOptions {
 
 const RECONCILE_INTERVAL_MS = 15_000;
 const STARTUP_RETRY_MS = 1_500;
-const FILES_CACHE_TTL_MS = 10_000;
 
 /**
  * A digest of the fields a row renders from, cached per entry. The office re-sends a page's entries as
@@ -120,14 +119,6 @@ const hasDelegateCard = (row: ThreadRow) => row.kind === 'activity' && row.block
 const localQueues = new Map<string, ThreadQueue>();
 
 const shortcut = (key: string, label: string) => h('span.wt-shortcut', {}, h('span.key', {}, key), label);
-
-interface WorkspaceFilesCache {
-  key: string;
-  at: number;
-  files: string[];
-  dirs: string[];
-  truncated: boolean;
-}
 
 /**
  * A worker's conversation: a local session's JSONL, or a cloud worker's Factory session, which the
@@ -462,273 +453,28 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const input = h('textarea.wt-input', { rows: 1, maxlength: 20000, placeholder: `Reply to ${worker.name}…`, 'aria-label': `Message to ${worker.name}` });
   input.value = opts.draft;
 
-  // @file mention listbox
-  const mentionMenu = h('div.wt-mention', { role: 'listbox', 'aria-label': 'Workspace files', hidden: true });
-  let mentionShown: WorkspaceMentionItem[] = [];
-  let mentionCursor = 0;
-  let activeMention: MentionQuery | null = null;
-  let mentionDismissedKey = '';
-  let filesCache: WorkspaceFilesCache | undefined;
-  let filesAbort: AbortController | undefined;
-  let filesQueryKey = '';
-  let latestFilteredFiles: { query: string; key: string; files: string[]; dirs: string[] } | undefined;
-
-  const canMentionFiles = () => !cloud && worker.kind === 'agent' && !input.disabled && !worker.lost;
-
-  const syncInputExpandedAria = () => {
-    input.setAttribute('aria-expanded', String(Boolean(slashShown.length || mentionShown.length)));
-  };
-
-  const closeMention = () => {
-    mentionShown = [];
-    mentionCursor = 0;
-    activeMention = null;
-    mentionMenu.hidden = true;
-    mentionMenu.replaceChildren();
-    syncInputExpandedAria();
-  };
-
-  const fetchWorkspaceFiles = (query: string) => {
-    const scopeKey = `${opts.floor ?? ''}:${worker.id}`;
-    const now = Date.now();
-    const validBase = filesCache && filesCache.key === scopeKey && now - filesCache.at < FILES_CACHE_TTL_MS ? filesCache : undefined;
-    const needServerFilter = Boolean(query && validBase?.truncated);
-    if (validBase && !needServerFilter) return;
-
-    const reqQuery = needServerFilter ? query : '';
-    const fetchKey = `${scopeKey}:${reqQuery}`;
-    if (filesQueryKey === fetchKey && filesAbort) return;
-
-    filesAbort?.abort();
-    const controller = new AbortController();
-    filesAbort = controller;
-    filesQueryKey = fetchKey;
-
-    const params = new URLSearchParams({
-      floor: opts.floor ?? '',
-      worker: worker.id,
-      ...(reqQuery ? { q: reqQuery } : {}),
-    });
-
-    void fetch(withToken(`/api/thread/files?${params}`), {
-      credentials: 'same-origin',
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error('Could not list workspace files');
-        return res.json() as Promise<{ files?: unknown; dirs?: unknown; truncated?: unknown }>;
-      })
-      .then((body) => {
-        if (disposed || controller.signal.aborted) return;
-        const files = Array.isArray(body?.files) ? body.files.filter((x): x is string => typeof x === 'string') : [];
-        const dirs = Array.isArray(body?.dirs) ? body.dirs.filter((x): x is string => typeof x === 'string') : [];
-        const truncated = Boolean(body?.truncated);
-        if (!reqQuery) {
-          filesCache = { key: scopeKey, at: Date.now(), files, dirs, truncated };
-          if (truncated && activeMention?.query) {
-            filesAbort = undefined;
-            filesQueryKey = '';
-            fetchWorkspaceFiles(activeMention.query);
-          }
-        } else {
-          latestFilteredFiles = { query: reqQuery, key: scopeKey, files, dirs };
-        }
-        if (filesAbort === controller) {
-          filesAbort = undefined;
-          filesQueryKey = '';
-        }
-        paintMention();
-      })
-      .catch(() => {
-        if (filesAbort === controller) {
-          filesAbort = undefined;
-          filesQueryKey = '';
-        }
-      });
-  };
-
-  const pickMention = (item: WorkspaceMentionItem) => {
-    const queryNow = findMentionQuery(input.value, input.selectionStart ?? input.value.length) ?? activeMention;
-    if (!queryNow) return;
-    const next = applyMention(input.value, queryNow.start, queryNow.end, item.path);
-    input.value = next.value;
-    opts.onDraft(draftText());
-    told = '';
-    mentionDismissedKey = '';
-    mentionCursor = 0;
-    input.focus();
-    input.setSelectionRange(next.cursor, next.cursor);
-    paintSlash();
-    paintMention();
-    mentionMenu.scrollTop = 0;
-    updateControls();
-  };
-
-  const paintMention = () => {
-    if (!canMentionFiles()) {
-      closeMention();
-      return;
-    }
-    const found = findMentionQuery(input.value, input.selectionStart ?? input.value.length);
-    if (!found) {
-      mentionDismissedKey = '';
-      closeMention();
-      return;
-    }
-    const dismissToken = `${found.start}:${found.query}`;
-    if (mentionDismissedKey === dismissToken) {
-      closeMention();
-      return;
-    }
-    activeMention = found;
-    const scopeKey = `${opts.floor ?? ''}:${worker.id}`;
-    fetchWorkspaceFiles(found.query);
-
-    const cached = filesCache?.key === scopeKey ? filesCache : undefined;
-    const validBase = cached && Date.now() - cached.at < FILES_CACHE_TTL_MS ? cached : undefined;
-    const source = found.query && validBase?.truncated && latestFilteredFiles?.key === scopeKey && latestFilteredFiles.query === found.query ? latestFilteredFiles : cached;
-
-    mentionShown = source ? rankWorkspacePaths(source.files, source.dirs, found.query, 12) : [];
-    mentionCursor = Math.min(mentionCursor, Math.max(0, mentionShown.length - 1));
-    mentionMenu.hidden = !mentionShown.length;
-    syncInputExpandedAria();
-
-    mentionMenu.replaceChildren(
-      ...mentionShown.map((item, i) =>
-        h(
-          'button.wt-mention-item',
-          {
-            type: 'button',
-            role: 'option',
-            tabindex: -1,
-            'aria-selected': String(i === mentionCursor),
-            onmousedown: (event: Event) => event.preventDefault(),
-            onclick: () => pickMention(item),
-          },
-          h('span.wt-mention-icon', { 'aria-hidden': 'true' }, icon(item.kind === 'dir' ? 'folder' : 'file', 14)),
-          h('span.wt-mention-path', { title: item.path }, item.path),
-          h('span.wt-mention-tag', {}, item.kind === 'dir' ? 'Folder' : 'File'),
-        ),
-      ),
-    );
-  };
-
-  // Droid's slash commands, offered while a draft is a `/` and the start of a name.
-  const slashMenu = h('div.wt-slash', { role: 'listbox', 'aria-label': 'Slash commands', hidden: true });
-  let slashShown: SlashCommand[] = [];
-  let slashCursor = 0;
-  let slashClosed = false;
-  // The built-in commands at once; the worker's skills and custom commands once its droid lists them.
-  let slashList = cloud ? [] : slashCommands();
-  let slashAsked = 0;
-  const loadSlash = () => {
-    if (cloud || worker.kind !== 'agent' || Date.now() - slashAsked < 60_000) return;
-    slashAsked = Date.now();
-    fetch(withToken(`/api/agents/droid/commands?worker=${encodeURIComponent(worker.id)}`), { credentials: 'same-origin', cache: 'no-store' })
-      .then((res) => {
-        if (!res.ok) throw new Error('Could not load slash commands');
-        return res.json() as Promise<{ commands?: unknown }>;
-      })
-      .then((body) => {
-        if (disposed || !Array.isArray(body?.commands)) return;
-        slashList = slashCommands(body.commands as DroidSlashCommand[]);
-        paintSlash();
-      })
-      .catch(() => {
-        slashAsked = 0;
-      });
-  };
-  const pickSlash = (command: SlashCommand) => {
-    input.value = `/${command.name} `;
-    opts.onDraft(input.value);
-    told = '';
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
-    paintSlash();
-    paintMention();
-    updateControls();
-  };
-  const paintSlash = () => {
-    slashShown = slashClosed || input.disabled ? [] : slashSuggestions(input.value, slashList);
-    slashCursor = Math.min(slashCursor, Math.max(0, slashShown.length - 1));
-    slashMenu.hidden = !slashShown.length;
-    syncInputExpandedAria();
-    slashMenu.replaceChildren(
-      ...slashShown.map((command, i) =>
-        h(
-          'button.wt-slash-item',
-          {
-            type: 'button',
-            role: 'option',
-            tabindex: -1,
-            'aria-selected': String(i === slashCursor),
-            onmousedown: (event: Event) => event.preventDefault(),
-            onclick: () => pickSlash(command),
-          },
-          h('span.wt-slash-name', {}, `/${command.name}`),
-          h('span.wt-slash-desc', { title: command.argumentHint ? `${command.description}\n/${command.name} ${command.argumentHint}` : command.description }, command.description),
-          command.kind === 'tty' && !nativeLimits(`/${command.name}`, store.factory.connection.connected && !store.factory.connection.rejected)
-            ? h('span.wt-slash-tag', { title: 'Opens one of Droid’s dialogs, in Raw TTY' }, 'Raw TTY')
-            : null,
-          command.source ? h('span.wt-slash-tag', { title: command.source === 'skill' ? 'One of this worker’s skills' : 'A custom command' }, command.source === 'skill' ? 'Skill' : 'Command') : null,
-        ),
-      ),
-    );
-  };
-
-  // Large pastes wait in the draft as tokens shown as chips; the draft and the message carry their text.
-  const pastes: PastedText[] = [];
-  let pasteSeq = 0;
-  let pastesKey = '';
-  const draftText = () => expandPastes(input.value, pastes);
-  const pasteChips = h('div.wt-pastes', { role: 'list', 'aria-label': 'Pasted text', hidden: true });
-  const editPaste = (paste: PastedText, replacement: string) => {
-    const next = replacePaste(input.value, paste, replacement);
-    if (!next) return;
-    input.value = next.value;
-    input.focus();
-    input.setSelectionRange(next.cursor, next.cursor);
-    edited();
-  };
-  const paintPastes = () => {
-    const live = livePastes(input.value, pastes);
-    if (live.length !== pastes.length) pastes.splice(0, pastes.length, ...live);
-    const key = pastes.map((paste) => paste.id).join();
-    if (key === pastesKey) return;
-    pastesKey = key;
-    pasteChips.hidden = !pastes.length;
-    pasteChips.replaceChildren(
-      ...pastes.map((paste) => {
-        const size = paste.lines > 1 ? `${paste.lines.toLocaleString('en-US')} lines` : `${paste.text.length.toLocaleString('en-US')} characters`;
-        return h(
-          'div.wt-paste-chip',
-          { role: 'listitem' },
-          h(
-            'button.wt-paste-open',
-            { type: 'button', title: `${paste.text.slice(0, 400)}${paste.text.length > 400 ? '…' : ''}`, 'aria-label': `Pasted text #${paste.id}, ${size}. Expand it into the message`, onclick: () => editPaste(paste, paste.text) },
-            icon('file', 14),
-            h('span.wt-paste-name', {}, `Pasted text #${paste.id}`),
-            h('span.wt-paste-size', {}, size),
-          ),
-          h('button.wt-paste-x', { type: 'button', title: 'Remove', 'aria-label': `Remove pasted text #${paste.id}`, onclick: () => editPaste(paste, '') }, icon('x', 12)),
-        );
-      }),
-    );
-  };
-  input.addEventListener('paste', (event) => {
-    const text = event.clipboardData?.getData('text/plain') ?? '';
-    if (input.disabled || !isLargePaste(text)) return;
-    event.preventDefault();
-    const paste = pastedText(++pasteSeq, text);
-    pastes.push(paste);
-    input.setRangeText(paste.token, input.selectionStart ?? input.value.length, input.selectionEnd ?? input.value.length, 'end');
-    edited();
-  });
-
   // Up and Down walk this conversation's prompts in the input, as Droid's prompt history does.
   let recallAt = -1;
   let recallDraft = '';
+  const assist = attachComposerAssist({
+    input,
+    scope: () => ({
+      floor: opts.floor,
+      workerId: worker.id,
+      slash: !cloud && worker.kind === 'agent',
+      mentions: !cloud && worker.kind === 'agent' && !worker.lost,
+    }),
+    factoryConnected: () => store.factory.connection.connected && !store.factory.connection.rejected,
+    onChange: (draft) => {
+      recallAt = -1;
+      opts.onDraft(draft);
+      told = '';
+      updateControls();
+    },
+  });
+  const { mentionMenu, slashMenu, pasteChips } = assist;
+  const draftText = () => assist.expand();
+
   const recall = (event: KeyboardEvent): boolean => {
     if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return false;
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return false;
@@ -752,28 +498,13 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   };
 
   const edited = () => {
-    paintPastes();
     recallAt = -1;
-    opts.onDraft(draftText());
     told = '';
-    slashClosed = false;
-    slashCursor = 0;
-    mentionDismissedKey = '';
-    mentionCursor = 0;
-    if (input.value.trimStart().startsWith('/')) loadSlash();
-    paintSlash();
-    paintMention();
-    slashMenu.scrollTop = 0;
-    mentionMenu.scrollTop = 0;
+    assist.onInput();
+    opts.onDraft(draftText());
     updateControls();
   };
   input.addEventListener('input', edited);
-  input.addEventListener('click', () => paintMention());
-  input.addEventListener('keyup', (event) => {
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') {
-      paintMention();
-    }
-  });
 
   const images = promptImages(input, worker.id);
   const file = h('input.hidden', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, 'aria-label': 'Choose pictures' });
@@ -1663,8 +1394,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     waitingShown = waiting;
     input.disabled = !allowed || sending || waiting;
     if (input.disabled) {
-      if (slashShown.length) paintSlash();
-      if (mentionShown.length) closeMention();
+      assist.paintSlash();
+      assist.closeMention();
       settingsUi.close();
     }
     attach.disabled = input.disabled;
@@ -1826,11 +1557,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const clearDraft = () => {
     input.value = '';
     recallAt = -1;
-    paintPastes();
     opts.onDraft('');
     told = '';
-    paintSlash();
-    closeMention();
+    assist.reset();
   };
   const submit = async (queueSend = false) => {
     if ((queueSend ? queue.disabled || queue.hidden : send.disabled) || sending) return;
@@ -1848,7 +1577,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       updateControls();
       return;
     }
-    const refused = cloud ? undefined : slashRefusal(text, worker.name, isBusy(worker.status), slashList);
+    const refused = cloud ? undefined : slashRefusal(text, worker.name, isBusy(worker.status), assist.slashList());
     if (refused) {
       told = refused;
       updateControls();
@@ -1923,50 +1652,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
 
   input.addEventListener('keydown', (event) => {
     if (event.isComposing) return;
-    if (mentionShown.length) {
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault();
-        mentionCursor = (mentionCursor + (event.key === 'ArrowDown' ? 1 : mentionShown.length - 1)) % mentionShown.length;
-        paintMention();
-        mentionMenu.children[mentionCursor]?.scrollIntoView({ block: 'nearest' });
-        return;
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        if (activeMention) mentionDismissedKey = `${activeMention.start}:${activeMention.query}`;
-        paintMention();
-        return;
-      }
-      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
-        event.preventDefault();
-        pickMention(mentionShown[mentionCursor]);
-        return;
-      }
-    }
-    if (slashShown.length) {
-      const typed = slashOf(input.value)?.name;
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        event.preventDefault();
-        slashCursor = (slashCursor + (event.key === 'ArrowDown' ? 1 : slashShown.length - 1)) % slashShown.length;
-        paintSlash();
-        slashMenu.children[slashCursor]?.scrollIntoView({ block: 'nearest' });
-        return;
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        slashClosed = true;
-        paintSlash();
-        return;
-      }
-      // Tab, or Enter on a name only partly typed, completes it; Enter on a whole name sends it.
-      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && slashShown[slashCursor].name !== typed)) {
-        event.preventDefault();
-        pickSlash(slashShown[slashCursor]);
-        return;
-      }
-    }
+    if (assist.handleKeydown(event)) return;
     if (recall(event)) {
       event.preventDefault();
       return;
@@ -1987,7 +1673,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
 
   const off = net.onMessage(receive);
   const offFactory = store.on('factory', () => {
-    paintSlash();
+    assist.paintSlash();
     updateControls();
   });
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -2068,6 +1754,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         paintEntries(false);
       }
       worker = next;
+      if (workerChanged) assist.syncScope();
       connected = online;
       if (!online) {
         watchedWorkerId = '';
@@ -2109,7 +1796,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
           });
         }
         read(undefined, 0);
-        loadSlash();
+        assist.loadSlash();
       }
       updateControls();
       readTeam();
@@ -2121,8 +1808,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       syncTimer();
       syncAttach();
       syncWatch();
-      filesAbort?.abort();
-      filesAbort = undefined;
+      assist.dispose();
       paintProgress();
       progress.dispose();
       motion.dispose();

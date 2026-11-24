@@ -1,5 +1,9 @@
+import { PROMPT_MAX } from '../../shared/prompts';
 import type { AgentEffort, WorkerStatus } from '../../shared/protocol';
-import { h, openModal, STATUS_LABEL } from './dom';
+import { slashRefusal } from '../../shared/slash-commands';
+import { store } from '../state';
+import { attachComposerAssist } from './composer-assist';
+import { claimEscape, h, openModal, STATUS_LABEL } from './dom';
 import { promptImages } from './images';
 import { colorDot } from './kit';
 import { agentPicker, type AgentFields } from './models';
@@ -14,6 +18,7 @@ export interface AskWorker {
   name: string;
   color: string;
   status: WorkerStatus;
+  cloud?: boolean;
 }
 
 export interface AskOptions {
@@ -32,6 +37,8 @@ export interface AskOptions {
   modelOption?: boolean;
   /** Other floors' projects a new worker in its own worktree can work in too (see WorkerInfo.repos). */
   repoOptions?: { id: string; name: string }[];
+  /** The floor this prompt is for, so slash commands and `@` workspace files resolve for a new worker. */
+  floor?: string;
   /** `to` is a worker id, or null for a new worker. */
   onSubmit(prompt: string, to: string | null, worktree: boolean, model?: string, effort?: AgentEffort, repos?: string[], images?: string[]): void;
 }
@@ -43,8 +50,32 @@ export function openAsk(opts: AskOptions) {
   let to: string | null = opts.newDesk ? null : (opts.workers[0]?.id ?? null);
   const ta = h('textarea.input', { id: 'ask-prompt', rows: opts.initial ? 9 : 5, placeholder: opts.placeholder ?? 'What should the worker do?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
+  const refusedNote = h('p.note.bad.hidden', { role: 'alert' });
+  const targetIsCloud = () => Boolean(to && opts.workers.find((w) => w.id === to)?.cloud);
+  const assist = attachComposerAssist({
+    input: ta,
+    scope: () => {
+      const cloud = targetIsCloud();
+      return {
+        floor: opts.floor,
+        workerId: to ?? undefined,
+        slash: !cloud,
+        mentions: !cloud && Boolean(to || opts.floor),
+        pastes: true,
+      };
+    },
+    factoryConnected: () => store.factory.connection.connected && !store.factory.connection.rejected,
+    preloadSlash: true,
+    onChange: () => refusedNote.classList.add('hidden'),
+  });
+  ta.addEventListener('keydown', (e) => void assist.handleKeydown(e));
+  const syncInput = () => {
+    refusedNote.classList.add('hidden');
+    assist.onInput();
+  };
+  ta.addEventListener('input', syncInput);
   const images = promptImages(ta);
-  const extras = promptExtras(ta);
+  const extras = promptExtras(ta, { onRecall: syncInput });
   let remembered = false;
   try {
     remembered = localStorage.getItem(WT_KEY) === '1';
@@ -57,7 +88,6 @@ export function openAsk(opts: AskOptions) {
   const modelRow = models ? h('div.group-row.block', {}, models.element) : null;
   const newOpts = h('div.group.prompt-opts', { role: 'group', 'aria-label': 'New worker options' }, modelRow, wtRow, repos.element);
   const submit = h('button.btn.primary', { type: 'submit' });
-  const refusedNote = h('p.note.bad.hidden', { role: 'alert' });
 
   const choices = h('div.seg.ask-to', { role: 'group', 'aria-label': 'Send to' });
   const pick = (id: string | null) => {
@@ -71,6 +101,7 @@ export function openAsk(opts: AskOptions) {
     submit.classList.toggle('accent', !id);
     submit.classList.toggle('primary', !!id);
     refusedNote.classList.add('hidden');
+    assist.syncScope();
   };
   if (opts.newDesk) choices.append(h('button.btn', { type: 'button', 'data-to': '', onclick: () => pick(null) }, `New worker · ${opts.newDesk}`));
   for (const w of opts.workers) {
@@ -88,7 +119,7 @@ export function openAsk(opts: AskOptions) {
       {},
       h('div.field', {}, h('label', {}, 'Send to'), choices),
       opts.context ? h('details.ask-context', {}, h('summary', {}, 'The worker is told first…'), h('pre', {}, opts.context)) : null,
-      h('div.field', {}, h('label', { for: 'ask-prompt' }, 'Prompt'), h('div.prompt-input', {}, extras.element, pictureHint(), images.element)),
+      h('div.field', {}, h('label', { for: 'ask-prompt' }, 'Prompt'), h('div.prompt-composer', {}, h('div.prompt-input', {}, assist.pasteChips, extras.element, pictureHint(), images.element), assist.mentionMenu, assist.slashMenu)),
       newOpts,
       refusedNote,
     ),
@@ -97,9 +128,14 @@ export function openAsk(opts: AskOptions) {
   form.noValidate = true;
   pick(to);
 
+  const releaseEsc = claimEscape(form, () => assist.dismissMenu());
+  const offFactory = store.on('factory', () => assist.paintSlash());
   const modal = openModal(form, {
     onClose: () => {
       images.discard();
+      releaseEsc();
+      offFactory();
+      assist.dispose();
       extras.dispose();
     },
   });
@@ -108,10 +144,24 @@ export function openAsk(opts: AskOptions) {
   let waiting = false;
   const send = () => {
     if (waiting) return;
-    const text = ta.value.trim();
+    const text = assist.expand().trim();
     if (!text && !images.ids().length && !images.busy()) {
       ta.focus();
       return;
+    }
+    if (text.length > PROMPT_MAX) {
+      refusedNote.textContent = `This message is ${text.length.toLocaleString('en-US')} characters, over the ${PROMPT_MAX.toLocaleString('en-US')}-character limit. Remove some pasted text.`;
+      refusedNote.classList.remove('hidden');
+      return;
+    }
+    const target = to ? opts.workers.find((w) => w.id === to) : undefined;
+    if (!target?.cloud) {
+      const slashError = slashRefusal(text, target?.name ?? (to ? 'this worker' : 'the new worker'), false, assist.slashList());
+      if (slashError) {
+        refusedNote.textContent = slashError;
+        refusedNote.classList.remove('hidden');
+        return;
+      }
     }
     // A picture still going up is sent with the prompt once it's there.
     if (images.busy()) {
@@ -153,6 +203,7 @@ export function openAsk(opts: AskOptions) {
     send();
   });
   ta.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented) return;
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       send();

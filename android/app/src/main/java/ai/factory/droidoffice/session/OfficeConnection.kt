@@ -431,7 +431,15 @@ class OfficeConnection(
     suspend fun slashCommands(workerId: String): List<DroidCommand>? {
         val (base, auth) = current ?: return null
         slash[workerId]?.let { (b, at, c) -> if (b == base && System.currentTimeMillis() - at < 60_000) return c }
-        return api.slashCommands(base, auth, workerId)?.also { if (it.isNotEmpty()) slash[workerId] = Triple(base, System.currentTimeMillis(), it) }
+        return api.slashCommands(base, auth, workerId = workerId)?.also { if (it.isNotEmpty()) slash[workerId] = Triple(base, System.currentTimeMillis(), it) }
+    }
+
+    /** The skills and custom commands [floorId]'s folder offers before a worker is hired, cached for a minute. */
+    suspend fun floorSlashCommands(floorId: String): List<DroidCommand>? {
+        val (base, auth) = current ?: return null
+        val key = "floor:$floorId"
+        slash[key]?.let { (b, at, c) -> if (b == base && System.currentTimeMillis() - at < 60_000) return c }
+        return api.slashCommands(base, auth, floorId = floorId)?.also { if (it.isNotEmpty()) slash[key] = Triple(base, System.currentTimeMillis(), it) }
     }
 
     /** The Android app's newest release, as the active office reads it from GitHub with its `gh`. */
@@ -526,7 +534,7 @@ class OfficeConnection(
         return api.webImage(base, auth, url)
     }
 
-    suspend fun threadFiles(floor: String?, worker: String, query: String): ThreadFiles? {
+    suspend fun threadFiles(floor: String?, worker: String?, query: String): ThreadFiles? {
         val (base, auth) = current ?: return null
         return api.threadFiles(base, auth, floor, worker, query)
     }

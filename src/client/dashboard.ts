@@ -1561,6 +1561,7 @@ function hire(deskId = 'auto', targetPane?: number) {
       onDraft: (v) => remember(key, v),
       modelOption: true,
       deskId: deskId === 'auto' ? undefined : deskId,
+      floor: intended,
       imagesOption: true,
       recall: true,
       worktreeOption: !store.currentFloor()?.home && !store.currentFloor()?.plain && !!store.currentFloor()?.branch,
@@ -1636,6 +1637,7 @@ function hireForWorktreeSetup() {
       modelOption: true,
       worktreeOption: true,
       worktreeChecked: true,
+      floor: intended,
       imagesOption: true,
       onSubmit: (text, opts) => action({ t: 'worker.spawn', deskId: 'auto', kind: 'agent', prompt: text, ...opts }, '', intended, 'Droid hired.'),
     });

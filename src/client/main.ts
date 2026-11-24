@@ -1081,6 +1081,7 @@ function promptAtDesk(deskId: string) {
       submitLabel: 'Hire & start',
       modelOption: true,
       worktreeOption: !store.currentFloor()?.home && !!store.project?.branch,
+      floor: store.floor ?? undefined,
       imagesOption: true,
       deskId,
       repoOptions: repoChoices(),
@@ -1106,6 +1107,8 @@ function promptAtDesk(deskId: string) {
     openPrompt({
       title: `💬 Prompt ${w.name}`,
       subtitle: w.status === 'working' ? `${w.name} is busy — your message will be queued in their input box.` : undefined,
+      floor: store.floor ?? undefined,
+      workerId: w.id,
       imagesOption: true,
       onSubmit: (text, o) => net.send({ t: 'worker.prompt', workerId: w.id, prompt: text, images: o.images.length ? o.images : undefined }),
     });
@@ -1124,6 +1127,7 @@ function hireAtDesk(deskId: string) {
     allowEmpty: true,
     modelOption: true,
     worktreeOption: !store.currentFloor()?.home && !!store.project?.branch,
+    floor: store.floor ?? undefined,
     imagesOption: true,
     deskId,
     repoOptions: repoChoices(),
@@ -1148,6 +1152,7 @@ function hireForWorktreeSetup() {
     modelOption: true,
     worktreeOption: true,
     worktreeChecked: true,
+    floor: store.floor ?? undefined,
     imagesOption: true,
     deskId: desk.id,
     onSubmit: (text, o) => hire(desk.id, text, o.worktree, o.model, o.effort, undefined, o.repos, o.images),
@@ -1751,10 +1756,11 @@ function sendToWorker(title: string, text: { context?: string; initial?: string 
     title,
     ...text,
     newDesk: desk ? DESK_BY_ID.get(desk)!.label : undefined,
-    workers: awake.map((w) => ({ id: w.id, name: w.name, color: w.color, status: w.status })),
+    workers: awake.map((w) => ({ id: w.id, name: w.name, color: w.color, status: w.status, cloud: !!w.cloud })),
     worktreeOption: !store.currentFloor()?.home && !!store.project?.branch,
     modelOption: true,
     repoOptions: repoChoices(),
+    floor: store.floor ?? undefined,
     onSubmit: (prompt, to, worktree, model, effort, repos, images) => {
       if (to) net.send({ t: 'worker.prompt', workerId: to, prompt, issue, linear, images: images?.length ? images : undefined });
       else if (desk) hire(desk, prompt, worktree, model, effort, issue, repos, images, linear);

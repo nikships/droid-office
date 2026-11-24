@@ -168,10 +168,15 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         }
     }
 
-    /** The skills and custom commands a worker's droid offers as slash commands; null when the office can't say. */
-    suspend fun slashCommands(base: String, auth: OfficeAuth, workerId: String): List<DroidCommand>? = withContext(Dispatchers.IO) {
+    /** The skills and custom commands a worker's or floor's droid offers as slash commands; null when the office can't say. */
+    suspend fun slashCommands(base: String, auth: OfficeAuth, workerId: String? = null, floorId: String? = null): List<DroidCommand>? = withContext(Dispatchers.IO) {
+        val param = when {
+            workerId != null -> "worker" to workerId
+            floorId != null -> "floor" to floorId
+            else -> return@withContext null
+        }
         try {
-            client.newCall(request(base, "api/agents/droid/commands", auth, "worker" to workerId).get().build()).await().use { res ->
+            client.newCall(request(base, "api/agents/droid/commands", auth, param).get().build()).await().use { res ->
                 if (!res.isSuccessful) null else runCatching { OfficeJson.decodeFromString<DroidCommands>(res.body.string()).commands }.getOrNull()
             }
         } catch (_: IOException) {
@@ -294,11 +299,11 @@ class OfficeApi(base: OkHttpClient = OkHttpClient()) {
         }
     }
 
-    /** A worker's workspace files and folders for `@` mentions (GET /api/thread/files); null when the office can't list them. */
-    suspend fun threadFiles(base: String, auth: OfficeAuth, floor: String?, worker: String, query: String): ThreadFiles? = withContext(Dispatchers.IO) {
+    /** A worker's or floor's workspace files and folders for `@` mentions (GET /api/thread/files); null when the office can't list them. */
+    suspend fun threadFiles(base: String, auth: OfficeAuth, floor: String?, worker: String?, query: String): ThreadFiles? = withContext(Dispatchers.IO) {
         val params = buildList {
             floor?.let { add("floor" to it) }
-            add("worker" to worker)
+            worker?.let { add("worker" to it) }
             if (query.isNotEmpty()) add("q" to query)
         }
         val req = request(base, "api/thread/files", auth, *params.toTypedArray()).header("Cache-Control", "no-store").get().build()

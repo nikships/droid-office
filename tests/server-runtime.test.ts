@@ -244,3 +244,35 @@ test('floor route selection preserves method fallthrough and prefix semantics', 
   }
   for (const route of ['/', '/index.html', '/api/health', '/api/factory', '/api/whiteboard', '/api/linear/image/extra']) assert.equal(isFloorHttpPath(route, 'GET'), false, route);
 });
+
+test('/api/agents/droid/commands resolves worker, orchestrator, and floor folders and 404s unknown or empty targets', async () => {
+  const asked: string[] = [];
+  const { handler } = httpContext({
+    orchestrator: { cwd: '/orch' } as never,
+    floors: new Map([['f1', { id: 'f1', dir: '/repo-floor' } as never]]),
+    workersOf: (id: string) => (id === 'w1' ? ({ agentFolder: () => '/repo-worker' } as never) : undefined),
+    droidCommands: {
+      get: async (cwd?: string) => {
+        asked.push(cwd ?? '');
+        return [{ name: 'full-send', description: 'Ship end to end', source: 'skill' as const }];
+      },
+      forget: () => {},
+    },
+  });
+
+  const hit = async (url: string) => {
+    const r = response();
+    await handler(request(url), r.res);
+    return { status: r.output.status, body: JSON.parse(r.output.body) };
+  };
+
+  assert.equal((await hit('/api/agents/droid/commands?floor=f1')).status, 200);
+  assert.equal((await hit('/api/agents/droid/commands?worker=w1')).status, 200);
+  assert.equal((await hit('/api/agents/droid/commands?worker=orchestrator')).status, 200);
+  assert.deepEqual(asked, ['/repo-floor', '/repo-worker', '/orch']);
+
+  assert.equal((await hit('/api/agents/droid/commands?floor=missing')).status, 404);
+  assert.equal((await hit('/api/agents/droid/commands?floor=f1&worker=')).status, 404);
+  assert.equal((await hit('/api/agents/droid/commands?worker=unknown')).status, 404);
+  assert.equal((await hit('/api/agents/droid/commands')).status, 404);
+});

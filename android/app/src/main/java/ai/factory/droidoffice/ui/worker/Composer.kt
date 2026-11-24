@@ -566,7 +566,7 @@ fun Composer(
  * Thread whether it opens in Raw TTY, where Droid shows its dialogs.
  */
 @Composable
-private fun SlashMenu(commands: List<SlashCommands.Command>, thread: Boolean, busy: Boolean, onPick: (SlashCommands.Command) -> Unit) {
+internal fun SlashMenu(commands: List<SlashCommands.Command>, thread: Boolean, busy: Boolean, onPick: (SlashCommands.Command) -> Unit) {
     val shape = RoundedCornerShape(4.dp)
     val listState = rememberLazyListState()
     LaunchedEffect(commands) { listState.scrollToItem(0) }
@@ -626,7 +626,7 @@ private fun SlashMenu(commands: List<SlashCommands.Command>, thread: Boolean, bu
  * place of its token, and its X removes it.
  */
 @Composable
-private fun PasteChips(pastes: List<ThreadCompose.PastedText>, onEdit: (ThreadCompose.PastedText, String) -> Unit) {
+internal fun PasteChips(pastes: List<ThreadCompose.PastedText>, onEdit: (ThreadCompose.PastedText, String) -> Unit) {
     val shape = RoundedCornerShape(4.dp)
     Row(
         Modifier.horizontalScroll(rememberScrollState()).padding(bottom = 8.dp).tagged(Tags.Worker.PASTES),
@@ -661,8 +661,8 @@ private fun PasteChips(pastes: List<ThreadCompose.PastedText>, onEdit: (ThreadCo
     }
 }
 
-/** A worker's workspace listing for `@` mentions, kept for ten seconds as the web composer keeps it. */
-private class MentionFiles {
+/** A worker's or floor's workspace listing for `@` mentions, kept for ten seconds as the web composer keeps it. */
+internal class MentionFiles {
     var base by mutableStateOf<ThreadFiles?>(null)
         private set
     private var at = 0L
@@ -685,7 +685,7 @@ private const val FILES_TTL_MS = 10_000L
  * puts `@path ` in the draft, and tapping a folder puts `@folder/` there to keep narrowing.
  */
 @Composable
-private fun MentionMenu(items: List<WorkspaceMention.Item>, searching: Boolean, onPick: (WorkspaceMention.Item) -> Unit) {
+internal fun MentionMenu(items: List<WorkspaceMention.Item>, searching: Boolean, onPick: (WorkspaceMention.Item) -> Unit) {
     val shape = RoundedCornerShape(4.dp)
     val listState = rememberLazyListState()
     LaunchedEffect(items) { listState.scrollToItem(0) }

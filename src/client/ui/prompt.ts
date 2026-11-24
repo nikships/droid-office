@@ -1,5 +1,9 @@
+import { PROMPT_MAX } from '../../shared/prompts';
 import type { AgentEffort, LostBranch, ServerMsg, WorktreeCleanup, WorktreeState } from '../../shared/protocol';
-import { h, openModal } from './dom';
+import { slashRefusal } from '../../shared/slash-commands';
+import { store } from '../state';
+import { attachComposerAssist, type ComposerAssist } from './composer-assist';
+import { claimEscape, h, openModal } from './dom';
 import { promptImages, type PromptImages } from './images';
 import { choices as optionCards, groupRow, toggle, windowHeader } from './kit';
 import { agentPicker, type AgentFields } from './models';
@@ -26,6 +30,10 @@ export interface PromptOptions {
   imagesOption?: boolean;
   /** The prompt's recipient, so its pictures are staged in the right worker's home. */
   workerId?: string;
+  /** The floor this prompt is for, so slash commands and `@` workspace files resolve before a worker exists. */
+  floor?: string;
+  /** Enable Thread-style composer assist (`/` slash commands, `@` workspace files, large paste chips); defaults to on for agent prompts. */
+  composer?: boolean;
   /**
    * Prompt history. On unless this box is a shell command, a commit message, or a
    * pull-request description (`recall: false`). Not tied to pictures.
@@ -109,8 +117,36 @@ export function pictureHint(): HTMLElement {
 export function openPrompt(opts: PromptOptions) {
   const ta = h('textarea.input', { rows: opts.modelOption ? 5 : 4, placeholder: opts.placeholder ?? 'What should the worker work on?', 'aria-label': 'Prompt' }) as HTMLTextAreaElement;
   ta.value = opts.initial ?? '';
+  const failed = h('p.note.bad.hidden', { role: 'alert' });
+  let isCloud = Boolean(opts.runsOn?.choice());
+  const useComposer = opts.composer ?? Boolean(opts.modelOption || opts.imagesOption);
+  const assist: ComposerAssist | null = useComposer
+    ? attachComposerAssist({
+        input: ta,
+        scope: () => ({
+          floor: opts.floor,
+          workerId: opts.workerId,
+          slash: !isCloud,
+          mentions: !isCloud && Boolean(opts.workerId || opts.floor),
+          pastes: true,
+        }),
+        factoryConnected: () => store.factory.connection.connected && !store.factory.connection.rejected,
+        preloadSlash: true,
+        onChange: (draft) => {
+          failed.classList.add('hidden');
+          opts.onDraft?.(draft);
+        },
+      })
+    : null;
+  // Register autocomplete navigation before prompt history recall and Enter-to-submit.
+  if (assist) ta.addEventListener('keydown', (e) => void assist.handleKeydown(e));
   const images: PromptImages | null = opts.imagesOption ? promptImages(ta, opts.workerId) : null;
-  ta.addEventListener('input', () => opts.onDraft?.(ta.value));
+  const syncInput = () => {
+    failed.classList.add('hidden');
+    assist?.onInput();
+    opts.onDraft?.(assist ? assist.expand() : ta.value);
+  };
+  ta.addEventListener('input', syncInput);
   const file = images ? h('input.hidden', { type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', multiple: true, 'aria-label': 'Choose pictures' }) : null;
   file?.addEventListener('change', () => {
     images?.add([...(file.files ?? [])]);
@@ -118,7 +154,7 @@ export function openPrompt(opts: PromptOptions) {
   });
   const add = images ? h('button.btn.sm', { type: 'button', onclick: () => file?.click() }, 'Attach pictures') : null;
   const queue = opts.queueOption ? h('button.btn', { type: 'button', title: 'Send once the current turn is over', onclick: () => send(true) }, 'Queue') : null;
-  const extras = opts.recall === false ? null : promptExtras(ta);
+  const extras = opts.recall === false ? null : promptExtras(ta, { onRecall: syncInput });
   const wt = worktreeRow('wt-toggle', opts.worktreeChecked ?? worktreePref());
   const wtBox = wt.box;
   const wtRow = opts.worktreeOption ? wt.row : null;
@@ -127,25 +163,21 @@ export function openPrompt(opts: PromptOptions) {
   // Hiring is the one "make it happen" action, in the accent; a prompt to a worker already there is a plain send.
   const submit = h(opts.modelOption ? 'button.btn.accent' : 'button.btn.primary', { type: 'submit' }, opts.submitLabel ?? 'Send');
   const cancel = h('button.btn.ghost', { type: 'button' }, 'Cancel');
-  const failed = h('p.note.bad.hidden', { role: 'alert' });
   // A worker on a Factory computer works in a folder there: no worktree here, no other floors.
   opts.runsOn?.onChange((cloud) => {
+    isCloud = cloud;
     wtRow?.classList.toggle('hidden', cloud);
     repos.element?.classList.toggle('hidden', cloud);
+    assist?.syncScope();
   });
   const rows = [models ? h('div.group-row.block', {}, models.element) : null, ...(opts.runsOn?.rows ?? []), wtRow, repos.element].filter((r): r is HTMLElement => !!r);
+  const promptInput = h('div.prompt-input', {}, assist?.pasteChips ?? null, extras?.element ?? ta, images ? h('div.prompt-attach', {}, pictureHint(), add) : null, file, images?.element ?? null);
+  const composer = assist ? h('div.prompt-composer', {}, promptInput, assist.mentionMenu, assist.slashMenu) : promptInput;
   const form = h(
     'form.modal.prompt-box',
     { role: 'dialog', 'aria-label': opts.title },
     windowHeader(opts.title, opts.subtitle, ...(opts.actions ?? [])),
-    h(
-      'div.body.stack',
-      {},
-      opts.warning ? h('p.note.bad', { role: 'alert' }, opts.warning) : null,
-      h('div.prompt-input', {}, extras?.element ?? ta, images ? h('div.prompt-attach', {}, pictureHint(), add) : null, file, images?.element ?? null),
-      rows.length ? h('div.group.prompt-opts', { role: 'group', 'aria-label': 'Options' }, ...rows) : null,
-      failed,
-    ),
+    h('div.body.stack', {}, opts.warning ? h('p.note.bad', { role: 'alert' }, opts.warning) : null, composer, rows.length ? h('div.group.prompt-opts', { role: 'group', 'aria-label': 'Options' }, ...rows) : null, failed),
     h('footer', {}, sendHint(false), cancel, queue, submit),
   ) as HTMLFormElement;
   form.noValidate = true;
@@ -153,10 +185,15 @@ export function openPrompt(opts: PromptOptions) {
   let waiting = false;
   let submitted = false;
   const failedText = (error: unknown) => (error instanceof Error ? error.message : 'Failed. Nothing was sent.');
+  const releaseEsc = assist ? claimEscape(form, () => assist.dismissMenu()) : undefined;
+  const offFactory = assist ? store.on('factory', () => assist.paintSlash()) : undefined;
   const modal = openModal(form, {
     onClose: () => {
       if (submitted) images?.take();
       else images?.discard();
+      releaseEsc?.();
+      offFactory?.();
+      assist?.dispose();
       extras?.dispose();
     },
   });
@@ -164,10 +201,23 @@ export function openPrompt(opts: PromptOptions) {
   cancel.addEventListener('click', () => modal.close());
   const send = (queueSend = false) => {
     if (waiting || !form.isConnected) return;
-    const text = ta.value.trim();
+    const text = (assist ? assist.expand() : ta.value).trim();
     if (!text && !images?.ids().length && !images?.busy() && !opts.allowEmpty) {
       ta.focus();
       return;
+    }
+    if (assist && text.length > PROMPT_MAX) {
+      failed.textContent = `This message is ${text.length.toLocaleString('en-US')} characters, over the ${PROMPT_MAX.toLocaleString('en-US')}-character limit. Remove some pasted text.`;
+      failed.classList.remove('hidden');
+      return;
+    }
+    if (assist && !isCloud) {
+      const slashError = slashRefusal(text, opts.workerId ? 'this worker' : 'the new worker', false, assist.slashList());
+      if (slashError) {
+        failed.textContent = slashError;
+        failed.classList.remove('hidden');
+        return;
+      }
     }
     // A picture still going up is sent with the prompt once it's there.
     if (images?.busy()) {
@@ -273,6 +323,7 @@ export function openPrompt(opts: PromptOptions) {
     send();
   });
   ta.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented) return;
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       send();
