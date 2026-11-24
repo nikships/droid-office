@@ -188,12 +188,9 @@ export class WorkerHooks {
     }
     const cancelled = w.cancelAt !== undefined && Date.now() - w.cancelAt < CANCEL_MS;
     if (replies && !cancelled && report.stop_hook_active !== true && (w.info.status === 'working' || w.info.status === 'needs_input')) {
-      const more = this.context.beforeStop(w.info);
-      if (w.outbox.length || more) {
-        const notes = this.context.delivery.takeOutbox(w);
-        if (more) notes.push(more);
-        return JSON.stringify({ decision: 'block', reason: officeSays(notes.join('\n\n')) });
-      }
+      const reminder = this.context.beforeStop(w.info);
+      const notes = [...this.context.delivery.takeOutbox(w), ...(reminder ? [reminder] : [])];
+      if (notes.length) return JSON.stringify({ decision: 'block', reason: officeSays(notes.join('\n\n')) });
     }
     // Already at rest: a queued turn that used no tools ended. It doesn't finish (and ding) again.
     if (w.info.status !== 'working' && (w.info.status !== 'needs_input' || w.bootBlocked)) return undefined;

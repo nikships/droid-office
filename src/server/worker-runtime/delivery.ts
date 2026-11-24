@@ -480,7 +480,6 @@ export class WorkerDelivery {
   takeOutbox(w: Worker): string[] {
     clearTimeout(w.outboxTimer);
     w.outboxTimer = undefined;
-    if (!w.outbox.length) return [];
     const notes = w.outbox;
     w.outbox = [];
     return notes;
@@ -503,7 +502,6 @@ export class WorkerDelivery {
       return;
     }
     const notes = this.takeOutbox(w);
-    if (!notes.length) return;
     this.prompt(w.info.id, notes.join('\n\n'));
     this.context.persist();
   }
