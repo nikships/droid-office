@@ -478,7 +478,16 @@ test('terminal scrollbar in Chromium stays hidden during typing and without scro
 
   // 5. Horizontal wheel or in-bounds selection drag followed by capped-scrollback trimming stays hidden.
   await page.mouse.wheel(0, -160);
-  await page.waitForTimeout(SCROLLBAR_HIDE_MS + 400);
+  // Smooth scrolling can extend the reveal; wait for the actual fade to finish.
+  await page.waitForFunction(() => (window as any).inspect().classes.includes('term-scrolling'), null, { timeout: 3000 });
+  await page.waitForFunction(
+    () => {
+      const state = (window as any).inspect();
+      return !state.classes.includes('term-scrolling') && state.opacity === 0;
+    },
+    null,
+    { timeout: 3000 },
+  );
   const beforeTrim = await page.evaluate(() => (window as any).inspect());
   assert.equal(beforeTrim.opacity, 0);
   assert.ok(beforeTrim.viewportY < beforeTrim.baseY);
