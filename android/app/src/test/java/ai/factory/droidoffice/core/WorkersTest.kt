@@ -131,5 +131,8 @@ class WorkersTest {
         assertEquals("Ship it" to null, Workers.headline("Ship it", null))
         assertEquals(null to "Working", Workers.headline(null, "Working"))
         assertEquals("…" to "Anything", Workers.headline("…", "Anything"))
+        assertEquals("Fix login" to "Fix login bug in the auth module", Workers.headline("Fix login", "Fix login bug in the auth module"))
+        assertEquals(null to "hello", Workers.headline("   ", "hello"))
+        assertEquals("Ship it" to null, Workers.headline("Ship it", "  "))
     }
 }

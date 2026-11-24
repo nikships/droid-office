@@ -119,7 +119,7 @@ import ai.factory.droidoffice.ui.components.GlyphMark
 import ai.factory.droidoffice.ui.components.PrimaryButton
 import ai.factory.droidoffice.ui.components.RouteBadge
 import ai.factory.droidoffice.ui.components.Spinner
-import ai.factory.droidoffice.ui.components.StatusPill
+import ai.factory.droidoffice.ui.components.StatusIcon
 import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.parseColor
@@ -666,7 +666,7 @@ internal fun WorkerCard(row: WorkerRow, pulls: List<GhPull>, now: Long, selected
                         if (w.isCloud) CardMark(OfficeIcons.Cloud, "Cloud worker")
                         if (row.subagents > 0) CardMark(OfficeIcons.Workers, if (row.subagents == 1) "1 subagent" else "${row.subagents} subagents", count = row.subagents)
                         Spacer(Modifier.width(8.dp))
-                        StatusPill(state, acked = w.acked, tag = Tags.Home.CARD_STATUS, compact = true)
+                        StatusIcon(state, acked = w.acked, tag = Tags.Home.CARD_STATUS)
                     }
                     val effort = Workers.effort(w)?.takeIf { !w.isShell && model != null }
                     val rest = meta(w, now)

@@ -97,7 +97,7 @@ import ai.factory.droidoffice.ui.components.HireFab
 import ai.factory.droidoffice.ui.components.PrimaryButton
 import ai.factory.droidoffice.ui.components.RouteBadge
 import ai.factory.droidoffice.ui.components.Spinner
-import ai.factory.droidoffice.ui.components.StatusPill
+import ai.factory.droidoffice.ui.components.StatusIcon
 import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.WorkerModelLogo
 import ai.factory.droidoffice.ui.components.panel
@@ -354,7 +354,7 @@ private fun WorkersRosterPane(
                                 val heading = if (data.floors.size > 1) "All floors · ${view.rows.size}" else "Roster · ${view.rows.size}"
                                 Eyebrow(
                                     heading,
-                                    Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = if (primaryAsk != null || sent.isNotEmpty()) 8.dp else 2.dp, bottom = 2.dp),
+                                    Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 2.dp),
                                 )
                             }
                         }
@@ -661,13 +661,7 @@ private fun BuildingWorkerCard(
                         val subCount = if (row.subagents > 0) row.subagents else row.teamCount
                         if (subCount > 0) CardMark(OfficeIcons.Workers, if (subCount == 1) "1 subagent" else "$subCount subagents", count = subCount)
                         Spacer(Modifier.width(8.dp))
-                        StatusPill(
-                            state,
-                            acked = w.acked,
-                            tag = Tags.Workers.CARD_STATUS,
-                            compact = true,
-                            blocked = row.blocked != null,
-                        )
+                        StatusIcon(state, acked = w.acked, tag = Tags.Workers.CARD_STATUS, blocked = row.blocked != null)
                     }
 
                     // Model + effort dial + duration line
@@ -734,11 +728,12 @@ private fun BuildingWorkerCard(
                 extraRepos.takeIf { it.isNotEmpty() }?.let { "+${it.size} repo${if (it.size == 1) "" else "s"}" },
             ).joinToString(" · ").takeIf { it.isNotBlank() }
             // Which desk it sits at matters in the 3D office, not on a phone; a cloud worker's computer does.
-            val seat = if (w.isCloud && !isOrchestrator && !isBot) w.cloud?.where else null
+            val seat = if (w.isCloud && !isOrchestrator && !isBot) w.cloud?.where?.takeIf { it.isNotBlank() } else null
+            val lead = row.leadName?.takeIf { it.isNotBlank() }
             val leadHint = when {
-                row.leadName.equals(w.name, ignoreCase = true) -> null
-                row.depth == 0 && !row.leadName.isNullOrBlank() -> "via ${row.leadName}"
-                row.depth > 0 && row.crossFloorLead && !row.leadName.isNullOrBlank() -> "from ${row.leadName}"
+                lead == null -> null
+                row.depth == 0 -> "via $lead"
+                row.crossFloorLead -> "from $lead"
                 else -> null
             }
             val onCurrentFloor = row.kind == RosterKind.Desk && row.floorId != null && row.floorId == activeFloorId && multiFloor

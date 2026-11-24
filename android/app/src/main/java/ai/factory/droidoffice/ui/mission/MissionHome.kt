@@ -66,7 +66,7 @@ import ai.factory.droidoffice.net.nameOf
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.EffortDialMark
 import ai.factory.droidoffice.ui.components.Eyebrow
-import ai.factory.droidoffice.ui.components.StatusPill
+import ai.factory.droidoffice.ui.components.StatusIcon
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.parseColor
 import ai.factory.droidoffice.ui.components.statusLook
@@ -162,7 +162,7 @@ private fun OrchestratorCard(agent: MissionAgent?, team: List<MissionTeamMember>
                     Text(ORCHESTRATOR_NAME, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.weight(1f))
                     Spacer(Modifier.width(6.dp))
                     // Blocked says why in its line, in the warning colour, so the row needs no pill as well.
-                    if (blocked == null) StatusPill(state, acked = w?.acked ?: true, tag = Tags.Mission.ORCHESTRATOR_STATUS, compact = true)
+                    if (blocked == null) StatusIcon(state, acked = w?.acked ?: true, tag = Tags.Mission.ORCHESTRATOR_STATUS)
                 }
                 val model = w?.let(Workers::modelId)?.let(catalogue::nameOf)?.let(Models::plainName)
                 val effort = w?.let(Workers::effort)?.takeIf { model != null }

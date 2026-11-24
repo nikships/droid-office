@@ -124,7 +124,7 @@ import ai.factory.droidoffice.ui.LocalSnackbarLift
 import ai.factory.droidoffice.ui.components.EffortDialMark
 import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.Spinner
-import ai.factory.droidoffice.ui.components.StatusPill
+import ai.factory.droidoffice.ui.components.StatusIcon
 import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.paneInsets
@@ -673,7 +673,7 @@ private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack:
             }
         }
         // Out of reach, the last status the office sent may be long gone: the offline notice says so instead.
-        if (connected) StatusPill(w.state, acked = w.acked, tag = Tags.Worker.STATUS, blocked = blocked)
+        if (connected) StatusIcon(w.state, Modifier.padding(horizontal = 6.dp), acked = w.acked, tag = Tags.Worker.STATUS, blocked = blocked, size = 20.dp)
         if (mission) IconButton(onClick = onSendHome, modifier = Modifier.tagged(Tags.Orchestrator.MENU)) {
             Icon(Icons.Default.MoreVert, "Orchestrator settings", tint = Palette.TextSecondary)
         } else IconButton(onClick = onSendHome, modifier = Modifier.tagged(Tags.Worker.SEND_HOME)) {

@@ -32,7 +32,7 @@ import ai.factory.droidoffice.core.WhiteboardPing
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.components.Eyebrow
-import ai.factory.droidoffice.ui.components.StatusPill
+import ai.factory.droidoffice.ui.components.StatusIcon
 import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.parseColor
@@ -95,7 +95,7 @@ fun PingSheet(onDismiss: () -> Unit, author: String? = null) {
                             Text(on.joinToString(" · "), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (check is PingCheck.No) Text(check.reason, style = MaterialTheme.typography.bodySmall, color = if (check.busy) Palette.Warning else Palette.TextTertiary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
-                        StatusPill(w.state, acked = w.acked)
+                        StatusIcon(w.state, acked = w.acked)
                     }
                 }
             }

@@ -107,12 +107,16 @@ object Workers {
     fun headline(w: WorkerInfo): Pair<String?, String?> = headline(title(w), detail(w))
 
     fun headline(title: String?, detail: String?): Pair<String?, String?> {
-        if (title == null || detail == null) return title to detail
-        val head = title.trimEnd().removeSuffix("…").removeSuffix("...").trimEnd()
+        val t = title?.takeIf { it.isNotBlank() }
+        val d = detail?.takeIf { it.isNotBlank() }
+        if (t == null || d == null) return t to d
+        val cut = t.trimEnd().let { it.endsWith("…") || it.endsWith("...") }
+        val head = t.trimEnd().removeSuffix("…").removeSuffix("...").trimEnd()
         return when {
-            detail.trim().equals(title.trim(), ignoreCase = true) -> title to null
-            head.isNotEmpty() && detail.trimStart().startsWith(head, ignoreCase = true) -> detail to null
-            else -> title to detail
+            d.trim().equals(t.trim(), ignoreCase = true) -> t to null
+            // A short task name that the summary happens to start with is still a title of its own.
+            (cut || head.length >= 24) && head.isNotEmpty() && d.trimStart().startsWith(head, ignoreCase = true) -> d to null
+            else -> t to d
         }
     }
 
