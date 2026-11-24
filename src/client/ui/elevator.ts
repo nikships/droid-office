@@ -10,10 +10,10 @@ import { floorDragHandle, floorRemoveButton, floorReorder } from './floor-reorde
 import { emptyState, windowHeader } from './kit';
 
 // The elevator's panel: a button for every floor (every project), and "add a project", which lists the
-// git checkouts already in the office's workspace folder and makes the one you pick a new floor, right
-// where it is: nothing is cloned or copied. Browse picks any other folder, which becomes a plain floor
-// when it isn't a git checkout. The first time the office runs there are no floors, and this is where
-// you start. A floor can be taken off the building here too; its folder stays on disk.
+// git checkouts in the office's workspace folder, lets you paste a GitHub URL to clone into that folder
+// and open in one step, or browse to any other folder (which becomes a plain floor when it isn't a git
+// checkout). The first time the office runs there are no floors, and this is where you start. A floor can
+// be taken off the building here too; its folder stays on disk.
 
 export interface ElevatorOptions {
   net: Net;

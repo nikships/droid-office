@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Building, type FloorDef } from '../src/server/building.js';
-import { MAX_FLOORS } from '../src/shared/floors.js';
+import { MAX_FLOORS, parseGitHubUrl } from '../src/shared/floors.js';
 import { suggestedFolder } from '../src/server/config.js';
 
 function office(t: { after(fn: () => void): void }) {
@@ -550,4 +550,207 @@ test('the home floor is the same directory when it was saved through another pat
   assert.equal(building.hasProjects(), false);
   assert.match(building.remove('home') as string, /always in the building/);
   assert.deepEqual(saved(dataDir), ['home']);
+});
+
+test('parseGitHubUrl recognizes HTTPS, SSH and subpage GitHub URLs while rejecting bare names and local paths', () => {
+  assert.deepEqual(parseGitHubUrl('https://github.com/nikships/droid-office'), {
+    repo: 'nikships/droid-office',
+    owner: 'nikships',
+    name: 'droid-office',
+    cloneUrl: 'https://github.com/nikships/droid-office.git',
+    ssh: false,
+  });
+  assert.deepEqual(parseGitHubUrl('  https://www.github.com/acme/my.app.git  '), {
+    repo: 'acme/my.app',
+    owner: 'acme',
+    name: 'my.app',
+    cloneUrl: 'https://github.com/acme/my.app.git',
+    ssh: false,
+  });
+  assert.equal(parseGitHubUrl('https://github.com/acme/web/tree/main/src?tab=1#top')?.repo, 'acme/web');
+  assert.equal(parseGitHubUrl('https://user:ghp_secret@github.com/acme/private.git')?.cloneUrl, 'https://github.com/acme/private.git');
+  assert.equal(parseGitHubUrl('github.com/acme/web')?.cloneUrl, 'https://github.com/acme/web.git');
+  assert.equal(parseGitHubUrl('git://github.com/acme/web.git')?.cloneUrl, 'https://github.com/acme/web.git');
+  assert.deepEqual(parseGitHubUrl('git@github.com:acme/web.git'), {
+    repo: 'acme/web',
+    owner: 'acme',
+    name: 'web',
+    cloneUrl: 'git@github.com:acme/web.git',
+    ssh: true,
+  });
+  assert.deepEqual(parseGitHubUrl('ssh://git@github.com:22/acme/web'), {
+    repo: 'acme/web',
+    owner: 'acme',
+    name: 'web',
+    cloneUrl: 'git@github.com:acme/web.git',
+    ssh: true,
+  });
+
+  for (const bad of [
+    '',
+    'acme/web',
+    '/Users/nik/repos/droid-office',
+    '~/repos/droid-office',
+    'https://gitlab.com/acme/web',
+    'https://github.com.evil.com/acme/web',
+    'https://github.com/acme',
+    'https://github.com/acme/..',
+    'https://github.com:acme/web',
+    'github.com:acme/web',
+    'https://github.com/acme/web extra',
+  ]) {
+    assert.equal(parseGitHubUrl(bad), undefined, `expected undefined for ${bad}`);
+  }
+});
+
+test('cloneAndAdd clones GitHub URLs into the workspace folder, reuses matching checkouts, falls back to gh, and protects conflicts', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'droid-office-clone-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dataDir = path.join(root, '.droid-office');
+  const work = path.join(root, 'repos');
+  const bin = path.join(root, 'bin');
+  const logFile = path.join(root, 'clone.log');
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(work, { recursive: true });
+  mkdirSync(bin, { recursive: true });
+
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  const gitStub = path.join(bin, 'git');
+  writeFileSync(
+    gitStub,
+    `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  url="$3"
+  dest="$4"
+  echo "git:$url:$dest" >> "${logFile}"
+  case "$url" in
+    *fail-auth*)
+      mkdir -p "$dest"
+      echo "fatal: could not read Username for 'https://github.com': terminal prompts disabled" >&2
+      exit 128
+      ;;
+    *missing-repo*)
+      echo "remote: Repository not found." >&2
+      echo "fatal: repository not found" >&2
+      exit 128
+      ;;
+    *slow-repo*)
+      sleep 0.25
+      "${realGit}" init -q -b main "$dest"
+      "${realGit}" -C "$dest" remote add origin "$url"
+      exit 0
+      ;;
+  esac
+  "${realGit}" init -q -b main "$dest"
+  "${realGit}" -C "$dest" remote add origin "$url"
+  exit 0
+fi
+exec "${realGit}" "$@"
+`,
+    { mode: 0o755 },
+  );
+  const ghStub = path.join(bin, 'gh');
+  writeFileSync(
+    ghStub,
+    `#!/bin/sh
+if [ "$1" = "repo" ] && [ "$2" = "clone" ]; then
+  repo="$3"
+  dest="$4"
+  echo "gh:$repo:$dest" >> "${logFile}"
+  case "$repo" in
+    *fail-auth*)
+      "${realGit}" init -q -b main "$dest"
+      "${realGit}" -C "$dest" remote add origin "https://github.com/$repo.git"
+      exit 0
+      ;;
+  esac
+  echo "GraphQL: Could not resolve to a Repository" >&2
+  exit 1
+fi
+exit 1
+`,
+    { mode: 0o755 },
+  );
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${prevPath ?? ''}`;
+  t.after(() => {
+    process.env.PATH = prevPath;
+  });
+
+  const building = new Building(dataDir, work);
+
+  // 1. Clones an HTTPS URL into projectsDir/<repo> and adds it as a floor.
+  const cloned = await building.cloneAndAdd('https://github.com/acme/starter/tree/main', 'Sam');
+  assert.equal(typeof cloned, 'object', String(cloned));
+  assert.equal((cloned as FloorDef).dir, path.join(work, 'starter'));
+  assert.equal((cloned as FloorDef).repo, 'acme/starter');
+  assert.ok(existsSync(path.join(work, 'starter', '.git')));
+  assert.match(readFileSync(logFile, 'utf8'), /git:https:\/\/github\.com\/acme\/starter\.git:/);
+
+  // 2. Pasting the same URL again sees the existing floor without re-cloning.
+  const dup = await building.cloneAndAdd('https://github.com/acme/starter', 'Sam');
+  assert.match(String(dup), /already has a floor/);
+
+  // 3. Preserves SSH transport for git@github.com URLs.
+  const sshCloned = await building.cloneAndAdd('git@github.com:acme/ssh-app.git', 'Sam');
+  assert.equal(typeof sshCloned, 'object', String(sshCloned));
+  assert.equal((sshCloned as FloorDef).dir, path.join(work, 'ssh-app'));
+  assert.match(readFileSync(logFile, 'utf8'), /git:git@github\.com:acme\/ssh-app\.git:/);
+
+  // 4. Reuses an already-cloned checkout in projectsDir when its origin matches.
+  const preExisting = path.join(work, 'existing');
+  mkdirSync(preExisting, { recursive: true });
+  execFileSync(realGit, ['init', '-q', '-b', 'main', preExisting]);
+  execFileSync(realGit, ['-C', preExisting, 'remote', 'add', 'origin', 'https://github.com/acme/existing.git']);
+  const reused = await building.cloneAndAdd('https://github.com/acme/existing', 'Sam');
+  assert.equal(typeof reused, 'object', String(reused));
+  assert.equal((reused as FloorDef).dir, preExisting);
+  assert.doesNotMatch(readFileSync(logFile, 'utf8'), /acme\/existing/);
+
+  // 5. Refuses cleanly when a folder with the same name already holds a different repo or plain files.
+  const conflict = path.join(work, 'conflict');
+  mkdirSync(conflict, { recursive: true });
+  writeFileSync(path.join(conflict, 'keep.txt'), 'important');
+  const conflictErr = await building.cloneAndAdd('https://github.com/acme/conflict', 'Sam');
+  assert.match(String(conflictErr), /already exists/);
+  assert.equal(readFileSync(path.join(conflict, 'keep.txt'), 'utf8'), 'important');
+
+  // 6. Falls back to `gh repo clone` when HTTPS `git clone` hits an auth prompt error.
+  const viaGh = await building.cloneAndAdd('https://github.com/acme/fail-auth', 'Sam');
+  assert.equal(typeof viaGh, 'object', String(viaGh));
+  assert.equal((viaGh as FloorDef).repo, 'acme/fail-auth');
+  assert.match(readFileSync(logFile, 'utf8'), /gh:acme\/fail-auth:/);
+
+  // 7. Returns a friendly error and cleans up partial state when cloning fails.
+  const missingErr = await building.cloneAndAdd('https://github.com/acme/missing-repo', 'Sam');
+  assert.match(String(missingErr), /Couldn't find acme\/missing-repo on GitHub/);
+  assert.equal(existsSync(path.join(work, 'missing-repo')), false);
+
+  // 8. Concurrent clones into the same directory reject the second request without racing.
+  const [firstSlow, secondSlow] = await Promise.all([building.cloneAndAdd('https://github.com/acme/slow-repo', 'Sam'), building.cloneAndAdd('https://github.com/acme/slow-repo', 'Sam')]);
+  assert.equal(typeof firstSlow, 'object', String(firstSlow));
+  assert.match(String(secondSlow), /Already cloning acme\/slow-repo/);
+});
+
+test('cloneAndAdd rejects when the building is full without cloning onto disk', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'droid-office-clone-full-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dataDir = path.join(root, '.droid-office');
+  const work = path.join(root, 'repos');
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(work, { recursive: true });
+  const fillers: FloorDef[] = Array.from({ length: MAX_FLOORS }, (_, i) => ({
+    id: `slot-${i}`,
+    name: `slot-${i}`,
+    dir: path.join(work, `slot-${i}`),
+    palette: 0,
+    addedBy: 'Sam',
+    addedAt: 1,
+  }));
+  writeFileSync(path.join(dataDir, 'floors.json'), JSON.stringify(fillers));
+  const building = new Building(dataDir, work);
+  const res = await building.cloneAndAdd('https://github.com/acme/one-too-many', 'Sam');
+  assert.match(String(res), /building is full/);
+  assert.equal(existsSync(path.join(work, 'one-too-many')), false);
 });

@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { WebSocket } from 'ws';
-import { filterWorkspaceRepos, isTypedFloorPath, resolveFloorTarget, shortenFloorPath } from '../src/client/ui/add-floor.js';
+import { cloneTargetPath, filterWorkspaceRepos, isTypedFloorPath, resolveFloorTarget, shortenFloorPath } from '../src/client/ui/add-floor.js';
 import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
@@ -28,6 +28,22 @@ async function startFixtureOffice(t: TestContext) {
   const bin = path.join(root, 'bin');
   mkdirSync(bin, { recursive: true });
   // Stub external forge CLIs so floor arrival refreshes never hit the network or hang on auth.
+  const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+  writeFileSync(
+    path.join(bin, 'git'),
+    `#!/bin/sh
+if [ "$1" = "clone" ]; then
+  url="$3"
+  dest="$4"
+  "${realGit}" init -q -b main "$dest"
+  "${realGit}" -C "$dest" -c user.name="Test" -c user.email="test@example.com" commit -q --allow-empty -m "cloned"
+  "${realGit}" -C "$dest" remote add origin "$url"
+  exit 0
+fi
+exec "${realGit}" "$@"
+`,
+    { mode: 0o755 },
+  );
   writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\necho "[]"\n', { mode: 0o755 });
   writeFileSync(path.join(bin, 'glab'), '#!/bin/sh\necho "[]"\n', { mode: 0o755 });
   const prevPath = process.env.PATH;
@@ -136,6 +152,17 @@ test('pure add-floor path and target helpers handle home shortening, search filt
   assert.equal(resolveFloorTarget({ filter: 'acme', selected: null, repos, floors, onEnter: true }), '/Users/nik/Workspace/web');
   // Non-matching relative input submits on Enter so the server returns its validation message.
   assert.equal(resolveFloorTarget({ filter: 'relative/folder', selected: null, repos, floors, onEnter: true }), 'relative/folder');
+
+  // Pasted GitHub URLs match existing checkouts or resolve directly to clone into the workspace folder.
+  assert.equal(cloneTargetPath('~/repos/', 'next.js'), '~/repos/next.js');
+  assert.equal(cloneTargetPath('', 'next.js'), 'next.js');
+  assert.equal(filterWorkspaceRepos(repos, 'https://github.com/acme/web', '~/Workspace', floors).length, 1);
+  // Existing unadded checkout in workspace is reused directly instead of re-cloning.
+  assert.equal(resolveFloorTarget({ filter: 'https://github.com/acme/web', selected: null, repos, floors }), '/Users/nik/Workspace/web');
+  // Already-open floor disables add (its row lets you jump straight to it).
+  assert.equal(resolveFloorTarget({ filter: 'https://github.com/acme/api', selected: null, repos, floors }), undefined);
+  // Uncloned GitHub URL resolves for both button click and Enter.
+  assert.equal(resolveFloorTarget({ filter: '  https://github.com/acme/fresh-repo  ', selected: null, repos, floors }), 'https://github.com/acme/fresh-repo');
 });
 
 test('paired web companion lists repos, browses folders, validates errors, and adds git & plain floors live across clients', async (t) => {
@@ -250,11 +277,25 @@ test('paired web companion lists repos, browses folders, validates errors, and a
   const addedMobile = await companion.wait('floor.added', (m) => m.dir === fx.outsideRepo);
   assert.ok(addedMobile.floor, addedMobile.error);
 
+  // 7. Paste a GitHub URL to clone into the current workspace folder and open as a floor in one step.
+  const ghUrl = 'https://github.com/acme/cloned-app';
+  companion.messages.length = 0;
+  companion.send({ t: 'floor.add', dir: ghUrl, requestId: 'clone-gh' });
+  const addedCloned = await companion.wait('floor.added', (m) => m.dir === ghUrl);
+  const cloneReceipt = await companion.wait('action.result', (m) => m.requestId === 'clone-gh');
+  assert.equal(cloneReceipt.ok, true);
+  assert.ok(addedCloned.floor, addedCloned.error);
+  const clonedFloors = await desktop.wait('floors', (m) => m.floors.some((f) => f.id === addedCloned.floor));
+  const clonedInfo = clonedFloors.floors.find((f) => f.id === addedCloned.floor);
+  assert.equal(clonedInfo?.dir, path.join(fx.extraWorkspace, 'cloned-app'));
+  assert.equal(clonedInfo?.repo, 'acme/cloned-app');
+
   // Saved in floors.json across restarts.
   const savedIds = (JSON.parse(readFileSync(path.join(fx.apiRepo, '.droid-office', 'floors.json'), 'utf8')) as { id: string }[]).map((f) => f.id);
   assert.ok(savedIds.includes(addedWeb.floor));
   assert.ok(savedIds.includes(addedPlain.floor));
   assert.ok(savedIds.includes(addedMobile.floor));
+  assert.ok(savedIds.includes(addedCloned.floor));
 });
 
 const chromium = browserStatus();
@@ -375,6 +416,21 @@ test('web companion UI drives the full Add floor flow live against the real serv
     await dialog.locator(`.list-row.repo[data-repo-dir="${fx.webRepo}"]`).click();
     await dialog.waitFor({ state: 'detached' });
     await page.waitForFunction(() => document.querySelector('.dash-floor-chip.on .dash-floor-name')?.textContent === 'web');
+
+    // Paste a GitHub URL into Add floor: shows clone preview into workspace folder, clones and opens the floor in one step.
+    await page.getByRole('button', { name: 'Add floor' }).click();
+    await dialog.waitFor();
+    await input.fill('https://github.com/acme/brand-new');
+    const cloneRow = dialog.locator('.list-row.clone-row[data-clone-repo="acme/brand-new"]');
+    await cloneRow.waitFor();
+    assert.match(await cloneRow.innerText(), /Clone into .*\/brand-new/);
+    const cloneSubmit = dialog.getByRole('button', { name: 'Clone & add' });
+    assert.equal(await cloneSubmit.isDisabled(), false);
+    await cloneSubmit.click();
+    await dialog.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.querySelector('.dash-floor-chip.on .dash-floor-name')?.textContent === 'brand-new');
+    assert.equal(await page.locator('.dash-side-title').innerText(), 'brand-new');
+    assert.equal(await page.locator('.dash-side-sub').innerText(), 'main');
 
     assert.equal(MAX_FLOORS, 16);
     assert.deepEqual(pageErrors, []);

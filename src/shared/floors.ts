@@ -102,6 +102,52 @@ function gitlabRepo(host: string, rest: string): string | undefined {
   return `${host}/${parts.join('/')}`;
 }
 
+/** A GitHub repository URL pasted to clone into the workspace folder and open as a floor. */
+export interface GitHubCloneUrl {
+  /** Normalized `owner/repo`. */
+  repo: string;
+  owner: string;
+  name: string;
+  /** Canonical clone URL (`https://github.com/owner/repo.git` or `git@github.com:owner/repo.git`). */
+  cloneUrl: string;
+  /** True when the pasted URL uses SSH (`git@github.com:…` or `ssh://…`). */
+  ssh: boolean;
+}
+
+/**
+ * Parses an explicit GitHub repository URL (`https://github.com/owner/repo`, `git@github.com:owner/repo.git`,
+ * `ssh://git@github.com/owner/repo`, `github.com/owner/repo`, or a repo subpage URL like `/tree/main`).
+ * Bare `owner/repo` strings return undefined so local project search and relative-path errors stay unambiguous.
+ */
+export function parseGitHubUrl(value: unknown): GitHubCloneUrl | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 400 || /\s/.test(trimmed)) return undefined;
+  const match = /^(?:(https?|ssh|git):\/\/)?(?:([\w.~%-]+(?::[^/@\s]*)?)@)?(?:www\.)?github\.com(?::\d+)?([/:])(.+)$/i.exec(trimmed);
+  if (!match) return undefined;
+  const scheme = match[1]?.toLowerCase();
+  const userInfo = match[2];
+  const sep = match[3];
+  // Reject scp-style colons on HTTP(S) URLs or scheme-less host strings without user@.
+  if (sep === ':' && (scheme === 'http' || scheme === 'https' || (!scheme && !userInfo))) return undefined;
+  const rest = match[4].replace(/[?#].*$/, '').replace(/^\/+|\/+$/g, '');
+  const parts = rest.split('/');
+  if (parts.length < 2) return undefined;
+  const owner = parts[0];
+  const name = parts[1].replace(/\.git$/i, '');
+  if (!GH_OWNER.test(owner)) return undefined;
+  if (!GH_NAME.test(name) || name === '.' || name === '..') return undefined;
+  const ssh = scheme === 'ssh' || (!scheme && Boolean(userInfo) && sep === ':');
+  const repo = `${owner}/${name}`;
+  return {
+    repo,
+    owner,
+    name,
+    cloneUrl: ssh ? `git@github.com:${repo}.git` : `https://github.com/${repo}.git`,
+    ssh,
+  };
+}
+
 /** GitLab repositories carry their host; GitHub's are plain owner/repo. */
 export function forgeOf(repo: string | undefined): Forge | undefined {
   if (!repo) return undefined;

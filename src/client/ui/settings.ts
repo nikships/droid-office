@@ -1437,7 +1437,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     const { dir, custom } = store.projectsDir;
     dirInput.value = dir;
     dirDefault.classList.toggle('hidden', !custom);
-    dirNote.textContent = 'The elevator lists the git projects in this folder, up to four levels deep, and opens your pick as a floor right where it is. Nothing is cloned or copied.';
+    dirNote.textContent = 'The elevator lists git projects in this folder (up to four levels deep), opens your pick where it is, and clones pasted GitHub URLs here.';
   };
   paintDir();
   const saveDir = () => {

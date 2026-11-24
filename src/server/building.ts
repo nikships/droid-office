@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process';
-import { type Dirent, accessSync, constants, existsSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { type Dirent, accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { FLOOR_PALETTES, MAX_FLOORS, forgeOf, normalizeRepo } from '../shared/floors.js';
+import { FLOOR_PALETTES, MAX_FLOORS, forgeOf, normalizeRepo, parseGitHubUrl } from '../shared/floors.js';
 import { moveFloor } from '../shared/floor-order.js';
 import type { FolderChoice, ProjectsDirState, RepoChoice } from '../shared/protocol.js';
 import { isGitlabHost } from './gitlab.js';
@@ -58,13 +58,16 @@ const SCAN_DEPTH = 4;
 const SCAN_ENTRIES = 20_000;
 /** Folders that hold no projects and are big or private enough to skip when the workspace folder is the home folder. */
 const SCAN_SKIP = new Set(['node_modules', 'Library', 'Applications', 'Movies', 'Music', 'Pictures', 'Downloads', 'AppData']);
+/** Maximum time a single `git clone` / `gh repo clone` is allowed to run before aborting. */
+const CLONE_TIMEOUT_MS = 300_000;
+/** Cap captured stderr/stdout from clone commands so progress bars never exhaust memory. */
+const MAX_CLONE_OUTPUT = 16_384;
 
 /**
  * The floors of the building, saved in <office>/.droid-office/floors.json: which projects there are,
- * where their checkouts live, and how each floor is painted. A floor is a checkout that already
- * exists on the office's machine: the office never clones or copies a repository. The workspace
- * folder (picked in ⚙️ Settings, kept in projects-folder.json) is where it looks for checkouts to
- * offer, and the only place a floor can be added from.
+ * where their checkouts live, and how each floor is painted. Existing folders open in place without
+ * copying; pasting a GitHub repository URL clones into the workspace folder (picked in ⚙️ Settings,
+ * kept in projects-folder.json) and opens it as a floor in one step.
  */
 export class Building {
   private defs: FloorDef[] = [];
@@ -72,6 +75,8 @@ export class Building {
   private pickedFile: string;
   private picked?: PickedDir;
   private repoCache?: { at: number; repos: Promise<RepoChoice[]> };
+  /** Target paths currently being cloned, so concurrent requests never race into the same folder. */
+  private cloning = new Set<string>();
   /** The checkout the office was started in (see ensureLocal), and the repository it's a checkout of. */
   private local?: { dir: string; repo?: string };
   /** The floor that checkout is, while it is one. */
@@ -283,6 +288,68 @@ export class Building {
     }
     this.save();
     return def;
+  }
+
+  /**
+   * Clones a GitHub repository URL into the workspace folder (`projectsDir/<repo>`) and adds it as a floor.
+   * If `projectsDir/<repo>` is already a checkout of the same repository, it is added directly without cloning again.
+   */
+  async cloneAndAdd(rawUrl: string, by: string): Promise<FloorDef | string> {
+    const parsed = parseGitHubUrl(rawUrl);
+    if (!parsed) return 'Use a valid GitHub repository URL, like https://github.com/owner/repo';
+    const root = path.resolve(this.projectsDir);
+    const targetDir = path.resolve(root, parsed.name);
+    if (!within(targetDir, root) || targetDir === root) return 'Invalid repository name';
+
+    if (existsSync(targetDir)) {
+      if (isCheckout(targetDir) && originRepo(targetDir)?.toLowerCase() === parsed.repo.toLowerCase()) {
+        return this.add(targetDir, by);
+      }
+      const existingRepo = isCheckout(targetDir) ? originRepo(targetDir) : undefined;
+      const shown = tildify(targetDir);
+      return existingRepo ? `${shown} already exists (${existingRepo}). Pick another workspace folder or add it directly.` : `${shown} already exists. Remove or rename it, or pick another workspace folder.`;
+    }
+
+    if (this.list().length >= MAX_FLOORS) return `The building is full (${MAX_FLOORS} floors)`;
+    if (this.cloning.has(targetDir)) return `Already cloning ${parsed.repo} into ${tildify(targetDir)}`;
+
+    if (!existsSync(root)) {
+      try {
+        mkdirSync(root, { recursive: true });
+      } catch (err) {
+        return `Couldn't create ${tildify(root)}: ${(err as Error).message}`;
+      }
+    }
+    try {
+      if (!statSync(root).isDirectory()) return `${tildify(root)} isn't a folder`;
+      accessSync(root, constants.R_OK | constants.W_OK | constants.X_OK);
+    } catch {
+      return `${tildify(root)} isn't a folder the office can write to`;
+    }
+
+    this.cloning.add(targetDir);
+    try {
+      const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+      const gitRes = await runCloneCommand('git', ['clone', '--', parsed.cloneUrl, targetDir], root, gitEnv);
+      if (!gitRes.ok || !isCheckout(targetDir)) {
+        cleanupPartialClone(targetDir);
+        if (gitRes.enoent) return "git is not installed on the office's machine";
+        if (!parsed.ssh && shouldFallbackToGh(gitRes.output)) {
+          const ghRes = await runCloneCommand('gh', ['repo', 'clone', parsed.repo, targetDir], root, { ...gitEnv, GH_PROMPT_DISABLED: '1' });
+          if (!ghRes.ok || !isCheckout(targetDir)) {
+            cleanupPartialClone(targetDir);
+            const detail = ghRes.enoent || ghRes.ok ? gitRes.output : ghRes.output || gitRes.output;
+            return friendlyCloneError(parsed.repo, detail, parsed.ssh);
+          }
+        } else {
+          return friendlyCloneError(parsed.repo, gitRes.output, parsed.ssh);
+        }
+      }
+      this.repoCache = undefined;
+      return this.add(targetDir, by);
+    } finally {
+      this.cloning.delete(targetDir);
+    }
   }
 
   /** The floor for this checkout, following symlinks, if one is already saved. */
@@ -572,4 +639,96 @@ async function findCheckouts(root: string): Promise<RepoChoice[]> {
   };
   await visit(root, 0);
   return found.sort((a, b) => (b.activeAt ?? '').localeCompare(a.activeAt ?? '') || a.dir.localeCompare(b.dir));
+}
+
+interface CloneCommandResult {
+  ok: boolean;
+  output: string;
+  enoent?: boolean;
+}
+
+function cleanupPartialClone(targetDir: string) {
+  try {
+    rmSync(targetDir, { recursive: true, force: true });
+  } catch {
+    // best-effort cleanup after failed clone
+  }
+}
+
+function runCloneCommand(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs = CLONE_TIMEOUT_MS): Promise<CloneCommandResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let output = '';
+    let timedOut = false;
+    let killTimer: NodeJS.Timeout | undefined;
+    const finish = (result: CloneCommandResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      resolve(result);
+    };
+    const append = (chunk: Buffer | string) => {
+      output += String(chunk);
+      if (output.length > MAX_CLONE_OUTPUT) output = output.slice(-MAX_CLONE_OUTPUT);
+    };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      return finish({ ok: false, output: (err as Error).message, enoent: code === 'ENOENT' });
+    }
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // already exited
+      }
+      killTimer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // already exited
+        }
+      }, 5000);
+    }, timeoutMs);
+    child.stderr?.on('data', append);
+    child.stdout?.on('data', append);
+    child.on('error', (err) => {
+      const code = (err as NodeJS.ErrnoException).code;
+      finish({ ok: false, output: err.message, enoent: code === 'ENOENT' });
+    });
+    child.on('close', (code) => {
+      if (timedOut) return finish({ ok: false, output: 'Cloning timed out after 5 minutes' });
+      finish({ ok: code === 0, output: output.trim() });
+    });
+  });
+}
+
+function shouldFallbackToGh(raw: string): boolean {
+  return /authentication|could not read username|terminal prompts disabled|repository not found|access denied|permission denied|403|401/i.test(raw);
+}
+
+function friendlyCloneError(repo: string, raw: string, ssh: boolean): string {
+  if (/timed out/i.test(raw)) return `Cloning ${repo} timed out. Try again or clone it manually in a terminal.`;
+  if (/permission denied \(publickey\)|host key verification failed/i.test(raw)) {
+    return `SSH authentication failed for ${repo}. Check your SSH key on the office's machine, or paste the HTTPS URL instead.`;
+  }
+  if (/authentication failed|could not read username|terminal prompts disabled|invalid username or token/i.test(raw)) {
+    return `Couldn't authenticate with GitHub to clone ${repo}. Sign in with \`gh auth login\` or configure git credentials on the office's machine.`;
+  }
+  if (/repository not found|does not exist|could not resolve to a repository/i.test(raw)) {
+    return ssh ? `Couldn't find ${repo} on GitHub. Check the URL and your SSH access to the repository.` : `Couldn't find ${repo} on GitHub. Check the URL and your GitHub access (sign in with \`gh auth login\` for private repositories).`;
+  }
+  if (/could not resolve host|unable to access|failed to connect|network is unreachable/i.test(raw)) {
+    return `Couldn't reach GitHub to clone ${repo}. Check the office's network connection.`;
+  }
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !/^cloning into /i.test(l));
+  const detail = lines.slice(-2).join(' ');
+  return detail ? `Couldn't clone ${repo}: ${detail}` : `Couldn't clone ${repo}`;
 }

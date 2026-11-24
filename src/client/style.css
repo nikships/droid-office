@@ -1770,7 +1770,7 @@ a.when:hover { text-decoration: underline; }
 .add-floor .repo-empty.more { padding: var(--space-2) var(--space-3); }
 .add-floor .dir-line { align-items: flex-start; gap: var(--space-3); }
 .add-floor .dir-change { flex: none; }
-.pill.floor-here { border-color: rgba(238, 96, 24, .45); background: var(--accent-muted); color: var(--accent); }
+.pill.floor-here, .pill.floor-clone { border-color: rgba(238, 96, 24, .45); background: var(--accent-muted); color: var(--accent); }
 .folder-browser .folder-list { max-height: 360px; overflow: auto; }
 .folder-browser .input-group input { flex: 1; min-width: 0; }
 
