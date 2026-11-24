@@ -135,6 +135,7 @@ export const SETTINGS_CARDS = [
   { pane: 'workers', title: 'Workers whose pull request merged', keywords: 'merged pull request go home leave stay worker cleanup' },
   { pane: 'workers', title: 'Worktree setup', keywords: 'worktree setup install command copy files new worker floor' },
   { pane: 'workers', title: 'Prompts', keywords: 'prompts edit wording handoffs reviews sign writer subagent visit brief' },
+  { pane: 'workers', title: 'Bundled skills', keywords: 'bundled skills full-send full-stop council sol-loop file-pr babysit-pr modernize takeover leaving-pr-comments slash commands workflows' },
   { pane: 'workers', title: 'Worker labels', keywords: 'subject task summary activity sign writer model reasoning interval refresh conversation' },
   { pane: 'models', title: 'Default worker', keywords: 'default worker model effort agent new hire' },
   { pane: 'models', title: 'Remember models at desks', keywords: 'remember seat desk model effort hire', on: OFFICE },

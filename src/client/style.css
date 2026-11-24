@@ -562,7 +562,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
    wide list). A button, toggle, select or .seg right after the label stays at the top right as the row's control. */
 .group-row:where(.block) { align-items: flex-start; row-gap: var(--space-3); }
 .group-row:where(.block) > :where(:not(.group-label)) { flex: 1 1 100%; width: 100%; max-width: none; }
-.group-row:where(.block) > :where(.group-label + :is(.btn, .toggle, .seg, select, .pill)) { flex: none; width: auto; max-width: 60%; }
+.group-row:where(.block) > :where(.group-label + :is(.btn, .toggle, .seg, select, .pill, .setting-control)) { flex: none; width: auto; max-width: 60%; }
 /* .group-nest: rows that only mean something with the row above them (a switch's options, the Classic renderer's
    own settings), indented behind a guide line and hidden with that row's choice. */
 .group-nest { display: flex; flex-direction: column; min-width: 0; border-top: 1px solid var(--border); background: linear-gradient(var(--border-strong), var(--border-strong)) no-repeat var(--space-5) var(--space-3) / 1px calc(100% - var(--space-6)); }

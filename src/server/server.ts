@@ -38,6 +38,7 @@ import { Sky } from './sky.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
 import { FreshMain } from './saved-switch.js';
 import { Subagents, removeBundledSkills } from './subagents.js';
+import { BundledSkills } from './bundled-skills.js';
 import { createOfficeMcp, OFFICE_MCP_PATH, syncOfficeMcpConnection, type OfficeMcpServer } from './office-mcp/index.js';
 import type { OwnerOffice } from './office-mcp/owner.js';
 import { formatBlockingSteerWarning } from './worker-queue.js';
@@ -316,6 +317,11 @@ export async function startServer(cfg: Config) {
   });
   // Office tools and how workers hire subagents, on every floor (Settings).
   for (const problem of removeBundledSkills(cfg.skillsDir)) console.warn(problem);
+  const bundledSkills = new BundledSkills(cfg.dataDir, cfg.skillsDir, (state) => {
+    droidCommands.forget();
+    broadcast({ t: 'bundledSkills', state });
+  });
+  for (const problem of bundledSkills.sync()) console.warn(problem);
   const droidSettingsFile = cfg.skillsDir ? path.join(path.dirname(cfg.skillsDir), 'settings.json') : undefined;
   const syncDroidSettings = () => {
     const problem = syncDroidProfile(droidSettingsFile, { extraPaths: [cfg.dir, cfg.projectsDir, ...[...floors.values()].map((f) => f.dir)] });
@@ -1070,6 +1076,7 @@ export async function startServer(cfg: Config) {
       leaveOnMerge: leaveOnMerge.state(),
       freshMain: freshMain.state(),
       subagents: subagents.state(),
+      bundledSkills: bundledSkills.state(),
       hiddenModels: hiddenModels.state(),
       hideNativeModels: hiddenModels.hideNative(),
       workerLabels: workerLabels.state(),
@@ -2127,6 +2134,16 @@ export async function startServer(cfg: Config) {
         if (on === freshMain.on) break;
         freshMain.set(on, who);
         toastAll(on ? `🌿 ${who} set fresh workers to start from the latest main` : `🌿 ${who} set fresh workers to start from the branch the checkout is on`);
+        break;
+      }
+      case 'bundledSkills.set': {
+        const wasOn = bundledSkills.on;
+        const problems = bundledSkills.set({ on: msg.on, disabled: msg.disabled }, who);
+        for (const problem of problems) console.warn(problem);
+        if (problems.length) return stop(problems[0]);
+        if (typeof msg.on === 'boolean' && msg.on !== wasOn) {
+          toastAll(msg.on ? `🧩 ${who} turned bundled skills on` : `🧩 ${who} turned bundled skills off`);
+        }
         break;
       }
       case 'models.hide':

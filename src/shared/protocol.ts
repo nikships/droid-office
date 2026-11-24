@@ -786,6 +786,29 @@ export interface SubagentsState extends SubagentSettings {
   at?: number;
 }
 
+export type BundledSkillStatus = 'installed' | 'disabled' | 'overridden' | 'error';
+
+/** One bundled workflow skill shipped with Droid Office (synced into ~/.factory/skills/). */
+export interface BundledSkillEntry {
+  name: string;
+  description: string;
+  userInvocable: boolean;
+  enabled: boolean;
+  status: BundledSkillStatus;
+  /** Where the user's own skill lives when Droid Office left it untouched instead of overwriting or shadowing it. */
+  overriddenBy?: string;
+  error?: string;
+}
+
+/** Office-wide bundled skills state (⚙️ Settings → Workers → Bundled skills). */
+export interface BundledSkillsState {
+  on: boolean;
+  disabled: string[];
+  skills: BundledSkillEntry[];
+  by?: string;
+  at?: number;
+}
+
 /** Whether the office can render Whiteboard cards to images, and why not when it can't. */
 export interface WhiteboardRendererStatus {
   available: boolean;
@@ -1031,6 +1054,8 @@ type ClientMessage =
   | { t: 'freshMain.set'; on: boolean }
   /** How workers hire subagents (⚙️ Settings → Subagents & visits), for every floor. */
   | { t: 'subagents.set'; settings: SubagentSettings }
+  /** Turn Droid Office's bundled workflow skills on/off, globally or per skill (⚙️ Settings → Workers). */
+  | { t: 'bundledSkills.set'; on?: boolean; disabled?: string[] }
   /** Hide one model from every device's picker, or show all with a null id and hidden=false. */
   | { t: 'models.hide'; id: string | null; hidden: boolean }
   /** Automatically hide all native Factory models so menus and pickers only show custom/DroidProxy models. */
@@ -1113,6 +1138,7 @@ export type ServerMsg =
       leaveOnMerge: LeaveOnMergeState;
       freshMain: FreshMainState;
       subagents: SubagentsState;
+      bundledSkills?: BundledSkillsState;
       hiddenModels?: string[];
       hideNativeModels?: boolean;
       workerLabels?: WorkerLabelState;
@@ -1240,6 +1266,7 @@ export type ServerMsg =
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
   | { t: 'freshMain'; state: FreshMainState }
   | { t: 'subagents'; state: SubagentsState }
+  | { t: 'bundledSkills'; state: BundledSkillsState }
   | { t: 'models.hidden'; ids: string[]; hideNative?: boolean }
   | { t: 'workerLabels'; state: WorkerLabelState }
   /**

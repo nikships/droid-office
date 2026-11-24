@@ -1,5 +1,6 @@
 import type {
   Arrival,
+  BundledSkillsState,
   FloorInfo,
   FloorRoster,
   FloorView,
@@ -67,6 +68,7 @@ export type Topic =
   | 'leaveOnMerge'
   | 'freshMain'
   | 'subagents'
+  | 'bundledSkills'
   | 'hiddenModels'
   | 'workerLabels'
   | 'prompts'
@@ -299,6 +301,8 @@ export class Store {
   freshMain: FreshMainState = { on: true };
   /** How workers hire subagents (⚙️ Settings → Subagents & visits), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
+  /** Bundled workflow skills synced into ~/.factory/skills/ (⚙️ Settings → Workers). */
+  bundledSkills: BundledSkillsState = { on: true, disabled: [], skills: [] };
   hiddenModels: string[] = [];
   hideNativeModels = false;
   workerLabels: WorkerLabelState = { settings: { ...WORKER_LABEL_DEFAULTS }, running: 0, queued: 0 };
@@ -436,6 +440,7 @@ export class Store {
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.freshMain = msg.freshMain ?? { on: true };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
+        this.bundledSkills = msg.bundledSkills ?? { on: true, disabled: [], skills: [] };
         this.hiddenModels = msg.hiddenModels ?? [];
         this.hideNativeModels = msg.hideNativeModels === true;
         this.workerLabels = msg.workerLabels ?? { settings: { ...WORKER_LABEL_DEFAULTS }, running: 0, queued: 0 };
@@ -462,6 +467,7 @@ export class Store {
           'leaveOnMerge',
           'freshMain',
           'subagents',
+          'bundledSkills',
           'prompts',
           'factory',
           'gemini',
@@ -703,6 +709,10 @@ export class Store {
       case 'subagents':
         this.subagents = msg.state;
         this.emit('subagents');
+        break;
+      case 'bundledSkills':
+        this.bundledSkills = msg.state;
+        this.emit('bundledSkills');
         break;
       case 'prompts':
         this.prompts = msg.state;

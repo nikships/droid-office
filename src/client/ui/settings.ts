@@ -1159,6 +1159,66 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   };
   paintPrompts();
 
+  // Bundled workflow skills synced into ~/.factory/skills/ (without overwriting or shadowing user skills).
+  const bundledSkillsOn = toggle(
+    'Bundled skills',
+    () => store.bundledSkills.on,
+    (on) => net.send({ t: 'bundledSkills.set', on }),
+  );
+  const bundledSkillsNote = desc();
+  const bundledSkillsList = h('div.list.boxed', { 'aria-label': 'Bundled skills' });
+  const bundledSkillsDisclosure = disclosure('Choose skills', bundledSkillsList);
+  const paintBundledSkills = () => {
+    const s = store.bundledSkills;
+    bundledSkillsOn.paint();
+    const total = s.skills.length;
+    const installed = s.skills.filter((sk) => sk.status === 'installed').length;
+    const overridden = s.skills.filter((sk) => sk.status === 'overridden').length;
+    const errors = s.skills.filter((sk) => sk.status === 'error').length;
+    bundledSkillsDisclosure.classList.toggle('hidden', total === 0);
+    if (!total) {
+      bundledSkillsNote.textContent = 'No bundled skills found in this installation.';
+      bundledSkillsDisclosure.meta.textContent = '';
+    } else if (!s.on) {
+      bundledSkillsNote.textContent = overridden ? `Off. Your own copies stay untouched (${overridden} overridden).` : 'Off. Droid Office removes only the skills it manages and leaves your own skills alone.';
+      bundledSkillsDisclosure.meta.textContent = `Off · ${total} available`;
+    } else {
+      const parts = [`${installed} of ${total} active`];
+      if (overridden) parts.push(`${overridden} overridden by your copy`);
+      if (errors) parts.push(`${errors} error${errors === 1 ? '' : 's'}`);
+      bundledSkillsNote.textContent = 'Shipping, review and PR workflows synced to ~/.factory/skills/ for every worker (and standalone Droid). Your own copies in ~/.agents/skills/ or ~/.factory/skills/ always win.';
+      bundledSkillsDisclosure.meta.textContent = parts.join(' · ');
+    }
+    const disabledSet = new Set(s.disabled);
+    bundledSkillsList.replaceChildren(
+      ...s.skills.map((sk) => {
+        const label = sk.userInvocable ? `/${sk.name}` : sk.name;
+        const badge = sk.userInvocable ? null : h('span.pill', {}, 'Automatic');
+        let statusText = sk.description;
+        if (sk.status === 'overridden') {
+          statusText = `Your copy at ${sk.overriddenBy ?? 'personal skills'} takes precedence.`;
+        } else if (sk.status === 'error') {
+          statusText = sk.error ?? 'Could not sync this skill.';
+        }
+        const sw = kitToggle({
+          id: `bundled-skill-${sk.name}`,
+          label: `Enable ${sk.name}`,
+          bare: true,
+          checked: s.on && !disabledSet.has(sk.name),
+          disabled: !s.on || sk.status === 'overridden',
+          onChange: (checked) => {
+            const next = new Set(store.bundledSkills.disabled);
+            if (checked) next.delete(sk.name);
+            else next.add(sk.name);
+            net.send({ t: 'bundledSkills.set', disabled: [...next] });
+          },
+        });
+        return h('div.list-row', {}, h('div.list-main', {}, h('div.list-title.row', { title: label }, h('span', {}, label), badge), h('div.list-meta', { title: statusText }, statusText)), sw);
+      }),
+    );
+  };
+  paintBundledSkills();
+
   // Worker labels: the form folds away; its summary says what they're doing now.
   const workerLabels = workerLabelSettings(net);
   const labels = disclosure('Configure', workerLabels.element);
@@ -1467,6 +1527,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       group(
         'Guidance',
         card('Prompts', { desc: promptsNote, control: promptsOpen }),
+        card('Bundled skills', { desc: bundledSkillsNote, control: bundledSkillsOn.el, below: [bundledSkillsDisclosure] }),
         card('Worker labels', { desc: desc('A task subject and a one-line summary over each local worker, written by a small model as it works.'), below: [labels] }),
       ),
     ],
@@ -1665,6 +1726,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     store.on('setup', paintAgent),
     store.on('setup', paintSubagents),
     store.on('prompts', paintPrompts),
+    store.on('bundledSkills', paintBundledSkills),
     store.on('prompts', paintSubagents),
     store.on('subagents', paintSubagents),
     store.on('missionControl', paintOrchestrator),

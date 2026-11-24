@@ -59,6 +59,7 @@ test('every setting is in a category', () => {
     ['Worker labels', 'workers'],
     ['Where fresh workers start', 'workers'],
     ['Prompts', 'workers'],
+    ['Bundled skills', 'workers'],
     ['Worker limit', 'workers'],
     ['Workers whose pull request merged', 'workers'],
     ['Worktree setup', 'workers'],
@@ -155,7 +156,7 @@ test('search finds a setting by name, pane or keyword, every word required', () 
   ]);
   assert.deepEqual(searchSettings('openclaw'), [{ pane: 'phone', title: 'Tailscale MCP' }]);
   assert.deepEqual(searchSettings('whiteboard'), [{ pane: 'subagents', title: 'Office MCP' }]);
-  assert.deepEqual(searchSettings('skill'), []);
+  assert.deepEqual(searchSettings('skill'), [{ pane: 'workers', title: 'Bundled skills' }]);
   assert.deepEqual(searchSettings('mouse'), [
     { pane: 'you', title: 'Look sensitivity' },
     { pane: 'you', title: 'Raw mouse input' },
