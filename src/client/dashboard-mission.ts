@@ -4,9 +4,9 @@
 
 import { missionAgentNeedsOwner, ORCHESTRATOR_ID, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
 import type { WorkerInfo } from '../shared/protocol';
-import { isBusy } from '../shared/status';
+import { isBusy, statusMark } from '../shared/status';
 import { teamCounts } from '../shared/team';
-import { statusDot, workerDot, workingBars, WORKER_MIME } from './dashboard-pane';
+import { statusDot, statusIcon, workerDot, workerStatusIcon, WORKER_MIME } from './dashboard-pane';
 import { reconcileChildren, todoMeter } from './dashboard-roster';
 import { botLine, buildingAgent, orchestratorBlocked, orchestratorLine } from './mission';
 import { h, STATUS_LABEL, timeAgo } from './ui/dom';
@@ -142,7 +142,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
       r.open.title = [m.name, `Subagent of ${agent.worker.name}`, where, status, doing].join(' · ');
       r.open.setAttribute('aria-label', `Open ${m.name}, subagent of ${agent.worker.name} on the ${where}, ${status}: ${doing}`);
       r.open.replaceChildren(
-        statusDot(m.status, here?.color ?? agent.worker.color),
+        statusDot(m.status, here?.color ?? agent.worker.color, true),
         h(
           'span.dash-row-main',
           {},
@@ -152,7 +152,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
             h('span.dash-row-name', {}, m.name),
             h('span.dash-row-floor', { title: where }, m.floorName),
             s.pane(m.id) >= 0 ? h('span.dash-row-pane', { title: `In pane ${s.pane(m.id) + 1}` }, `P${s.pane(m.id) + 1}`) : null,
-            h('span.dash-row-state', {}, m.status === 'needs_input' ? h('span.pill', { class: m.status }, status) : isBusy(m.status) ? workingBars(status) : null),
+            h('span.dash-row-state', {}, statusIcon(statusMark(m.status))),
           ),
           h('span.dash-row-doing', {}, doing),
         ),
@@ -195,7 +195,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
       else if (agent.grokBot) mark = grokBotLogo(20);
       else mark = icon('bot', 13);
       r.open.replaceChildren(
-        h('span.dash-mission-mark', { 'data-status': blocked ? 'blocked' : w.status, 'aria-hidden': 'true' }, mark, workerDot(w)),
+        h('span.dash-mission-mark', { 'data-status': blocked ? 'blocked' : w.status, 'aria-hidden': 'true' }, mark, workerDot(w, true)),
         h(
           'span.dash-row-main',
           {},
@@ -203,15 +203,9 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
             'span.dash-row-top',
             {},
             h('span.dash-row-name', {}, w.name),
-            orchestrator ? null : h('span.dash-row-role', {}, agent.grokBot ? 'Grok Bot' : 'Bot'),
             s.pane(w.id) >= 0 ? h('span.dash-row-pane', { title: `In pane ${s.pane(w.id) + 1}` }, `P${s.pane(w.id) + 1}`) : null,
             orchestrator && s.shortcut && s.pane(w.id) < 0 && !waits && !blocked && !isBusy(w.status) ? h('span.key.dash-mission-key', { title: `Open the Orchestrator (${s.shortcut})` }, s.shortcut) : null,
-            h(
-              'span.dash-row-state',
-              {},
-              // Blocked and an offline bot say so in their line; a pill as well would squeeze the name.
-              blocked ? null : waits ? h('span.pill', { class: w.status }, status) : isBusy(w.status) && w.status !== 'needs_input' ? workingBars(status) : null,
-            ),
+            h('span.dash-row-state', {}, workerStatusIcon(w, undefined, !!blocked)),
           ),
           h('span.dash-row-doing', {}, line),
           todos ? todoMeter(todos) : null,

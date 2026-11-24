@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { WorkerInfo } from '../src/shared/protocol.js';
-import { needsOwnerAttention, needsOwnerInput } from '../src/shared/status.js';
+import { needsOwnerAttention, needsOwnerInput, STATUS_MARK_WORD, statusMark } from '../src/shared/status.js';
 import { waitingOnSomeone, DesktopNotifier } from '../src/client/notify.js';
 import { officeStatus, waitingStatus } from '../src/server/office-status.js';
 
@@ -37,6 +37,23 @@ test('all terminal questions need the owner, while subagent completions stay wit
   }
 });
 
+test('each status wears the same mark and word as Android’s StatusIcon', () => {
+  const marks = (['starting', 'working', 'needs_input', 'done', 'idle', 'offline', 'exited'] as const).map((status) => [status, statusMark(status), statusMark(status, false)]);
+  assert.deepEqual(marks, [
+    ['starting', 'starting', 'starting'],
+    ['working', 'working', 'working'],
+    ['needs_input', 'needs_you', 'needs_you'],
+    ['done', 'done', 'done_new'],
+    ['idle', 'ready', 'ready'],
+    ['offline', 'asleep', 'asleep'],
+    ['exited', 'asleep', 'asleep'],
+  ]);
+  assert.equal(statusMark('working', true, true), 'blocked', 'a blocked Orchestrator says so whatever it last reported');
+  assert.deepEqual(
+    (['needs_you', 'done_new', 'ready', 'asleep'] as const).map((mark) => STATUS_MARK_WORD[mark]),
+    ['Needs you', 'Done · new', 'Ready', 'Asleep'],
+  );
+});
 test('floor waiting counts include subagent questions, even after their lead leaves', () => {
   const workers = [worker, { ...worker, id: 'nibble', lead: worker.id }, { ...worker, id: 'dot', lead: worker.id, status: 'done' as const }, { ...worker, id: 'widget', lead: 'departed-lead', status: 'needs_input' as const }];
   const status = officeStatus([{ id: 'home', name: 'Home', workers }], []);

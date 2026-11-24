@@ -4,7 +4,7 @@
 import type { ClientMsg, WorkerInfo, WorkerStatus } from '../shared/protocol';
 import { canAnswer, sameMenu, workerMenu, type Menu } from '../shared/asks';
 import { pendingQuestions, questionPresentation, replySummary } from '../shared/ask-question';
-import { isAsleep, isBusy, needsOwnerInput, workerActivity } from '../shared/status';
+import { isAsleep, isBusy, needsOwnerInput, STATUS_MARK_WORD, statusMark, type StatusMark, workerActivity } from '../shared/status';
 import { sessionWebUrl } from '../shared/factory-sessions';
 import { forkRefusal } from '../shared/worker-fork';
 import { draftKey } from './browser-session';
@@ -116,21 +116,58 @@ function lines(id: string) {
   return s && Array.from({ length: s.rows }, (_, i) => (s.lines[i] ?? []).map((r) => r[0]).join(''));
 }
 
-/** A worker's colour, ringed and pulsing by status. */
-export function workerDot(w: WorkerInfo) {
-  return statusDot(w.status, w.color);
+/** A worker's colour, ringed and pulsing by status; `plain` beside a status icon, which says that itself. */
+export function workerDot(w: WorkerInfo, plain = false) {
+  return statusDot(w.status, w.color, plain);
 }
 
 /** A status dot in a colour: for a building agent's subagent, which may sit on another floor, its lead's. */
-export function statusDot(status: WorkerStatus, color: string) {
-  const el = h('span.dash-dot', { 'data-status': status, 'aria-hidden': 'true' });
+export function statusDot(status: WorkerStatus, color: string, plain = false) {
+  const el = h(plain ? 'span.dash-dot.plain' : 'span.dash-dot', { 'data-status': status, 'aria-hidden': 'true' });
   el.style.setProperty('--who', color);
   return el;
 }
 
-/** Three bars that bob while a worker works. */
-export function workingBars(label = '') {
-  return h('span.dash-bars', label ? { role: 'img', 'aria-label': label } : { 'aria-hidden': 'true' }, h('i'), h('i'), h('i'));
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svg(tag: string, attrs: Record<string, string | number> = {}, ...children: SVGElement[]) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+  el.append(...children);
+  return el;
+}
+
+/** The shapes of each mark on a 24-unit grid, animated by style.css `.dash-status`. */
+function markShapes(mark: StatusMark): SVGElement[] {
+  switch (mark) {
+    case 'working':
+      return [3.1, 10, 16.9].map((x) => svg('rect', { x, y: 2, width: 4, height: 19, rx: 2 }));
+    case 'starting':
+      return [svg('path', { d: 'M12 3.4a8.6 8.6 0 1 1-8.6 8.6' })];
+    case 'ready':
+      return [svg('path', { d: 'm3.4 6.2 6.2 5.8-6.2 5.8' }), svg('path', { class: 'caret', d: 'M13 18.2h7.6' })];
+    case 'needs_you':
+    case 'blocked':
+      return [svg('g', {}, svg('path', { d: 'M12 3.8v10', 'stroke-width': 3.3 }), svg('circle', { cx: 12, cy: 19.7, r: 2 }))];
+    case 'done':
+    case 'done_new':
+      return [svg('path', { d: 'm3.4 12.5 6 6 11.2-12', pathLength: 1 })];
+    case 'asleep':
+      return [svg('path', { d: 'M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z', 'stroke-width': 2 })];
+  }
+}
+
+/** A status as a bare animated mark in its colour, read and hovered as its word. */
+export function statusIcon(mark: StatusMark, size = 14) {
+  const word = STATUS_MARK_WORD[mark];
+  const title = svg('title');
+  title.textContent = word;
+  return svg('svg', { class: 'dash-status', 'data-mark': mark, viewBox: '0 0 24 24', width: size, height: size, role: 'img', 'aria-label': word }, title, ...markShapes(mark));
+}
+
+/** A worker's status icon: an Orchestrator that can't start says so with a still `!`. */
+export function workerStatusIcon(w: Pick<WorkerInfo, 'status' | 'acked'>, size?: number, blocked = false) {
+  return statusIcon(statusMark(w.status, w.acked, blocked), size);
 }
 
 function renderPreview(into: HTMLElement, id: string, max: number) {
@@ -164,13 +201,13 @@ export function createPane(host: PaneHost, index: number): Pane {
   const name = h('span.dash-pane-name');
   const task = h('span.dash-pane-task');
   const model = h('span.dash-pane-model');
-  const pill = h('span.pill');
+  const state = h('span.dash-pane-state');
   const views = h('div.seg.dash-pane-views', { role: 'group' });
   const flip = h('button.btn.icon.sm.ghost.dash-pane-flip', { type: 'button' });
   const actions = h('div.dash-pane-actions', { role: 'group', 'aria-label': 'Worker actions' });
   const maxBtn = h('button.btn.icon.sm.ghost', { type: 'button', onclick: () => host.toggleMax(index) });
   const closeBtn = h('button.btn.icon.sm.ghost.dash-pane-close', { type: 'button', 'aria-label': 'Close pane', title: 'Close pane', onclick: () => host.close(index) }, icon('x', 14));
-  const head = h('header.dash-pane-head', {}, badge, who, h('span.dash-pane-titles', {}, name, task, model), pill, views, flip, actions, maxBtn, closeBtn);
+  const head = h('header.dash-pane-head', {}, badge, who, h('span.dash-pane-titles', {}, name, task, model), state, views, flip, actions, maxBtn, closeBtn);
   const teamNav = h('nav.dash-team-nav', { 'aria-label': 'Worker team', hidden: true });
   const question = h('section.dash-question', { 'aria-label': 'Question requiring input', hidden: true });
   const stage = h('div.dash-stage');
@@ -543,11 +580,11 @@ export function createPane(host: PaneHost, index: number): Pane {
       name.textContent = 'Empty pane';
       task.textContent = '';
       model.replaceChildren();
-      pill.hidden = true;
+      state.replaceChildren();
       views.hidden = flip.hidden = true;
       return;
     }
-    who.replaceChildren(bot?.grokBot ? h('span.dash-mission-mark.sm', { 'data-status': w.status, 'aria-hidden': 'true' }, grokBotLogo(16), workerDot(w)) : workerDot(w));
+    who.replaceChildren(bot?.grokBot ? h('span.dash-mission-mark.sm', { 'data-status': w.status, 'aria-hidden': 'true' }, grokBotLogo(16), workerDot(w, true)) : workerDot(w, true));
     name.textContent = w.name;
     name.title = `${w.name} · ${kind(w)}`;
     const doing = headLine(w);
@@ -555,10 +592,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     task.title = doing;
     const engine = w.kind === 'agent' ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w);
     model.replaceChildren(...(engine ? [engine] : []));
-    pill.hidden = false;
-    const blocked = w.id === ORCHESTRATOR_ID && !!orchestratorBlocked(host.mission());
-    pill.className = blocked ? 'pill blocked' : `pill ${w.status}`;
-    pill.textContent = blocked ? 'blocked' : (STATUS_LABEL[w.status] ?? w.status);
+    state.replaceChildren(workerStatusIcon(w, 16, w.id === ORCHESTRATOR_ID && !!orchestratorBlocked(host.mission())));
     views.hidden = flip.hidden = !toggles;
     views.setAttribute('aria-label', `${w.name} view`);
     views.replaceChildren(

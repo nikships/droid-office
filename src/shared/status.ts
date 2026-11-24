@@ -21,6 +21,41 @@ export function needsOwnerAttention(w: Pick<WorkerInfo, 'status' | 'lead' | 'ack
   return needsOwnerInput(w) || (!w.lead && w.status === 'done' && !w.acked);
 }
 
+/** The bare animated mark a status wears in both companions (web `statusIcon`, Android `StatusIcon`). */
+export type StatusMark = 'working' | 'starting' | 'ready' | 'needs_you' | 'blocked' | 'done' | 'done_new' | 'asleep';
+
+/** A done turn nobody has read yet draws its check in; a blocked Orchestrator wears a still `!`. */
+export function statusMark(status: WorkerStatus, acked = true, blocked = false): StatusMark {
+  if (blocked) return 'blocked';
+  switch (status) {
+    case 'working':
+      return 'working';
+    case 'starting':
+      return 'starting';
+    case 'idle':
+      return 'ready';
+    case 'needs_input':
+      return 'needs_you';
+    case 'done':
+      return acked ? 'done' : 'done_new';
+    case 'exited':
+    case 'offline':
+      return 'asleep';
+  }
+}
+
+/** What a status mark says to a screen reader and in its tooltip, as Android's `Workers.statusWord` does. */
+export const STATUS_MARK_WORD: Record<StatusMark, string> = {
+  working: 'Working',
+  starting: 'Starting',
+  ready: 'Ready',
+  needs_you: 'Needs you',
+  blocked: 'Blocked',
+  done: 'Done',
+  done_new: 'Done · new',
+  asleep: 'Asleep',
+};
+
 /**
  * One line for a notification about a worker: what it's asking for when it needs input, or what it
  * was on when it's done (its last activity may be a permission prompt it has long got past).

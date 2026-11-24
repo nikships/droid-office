@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { type BuildingFilter, type BuildingWorkerRow, buildingCounts, buildingRoster, filterBuildingRows, MISSION_FLOOR } from '../src/client/dashboard-building.js';
+import { type BuildingFilter, type BuildingWorkerRow, buildingCounts, buildingRoster, filterBuildingRows, MISSION_FLOOR, repoBesideFloor } from '../src/client/dashboard-building.js';
 import { type MissionControlState, ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 import type { FloorInfo, FloorRoster, WorkerInfo } from '../src/shared/protocol.js';
 
@@ -300,5 +300,32 @@ test('repo labels match Android home, folder, slug and distinct checkout name fa
   assert.deepEqual(
     rows.map((row) => row.repo),
     ['Home', 'Folder', 'owner/project', 'checkout'],
+  );
+});
+
+test('a repository named like its floor is not repeated beside it, as on Android', () => {
+  assert.equal(repoBesideFloor({ floorName: 'droid-office', repo: 'nikships/droid-office' }), undefined);
+  assert.equal(repoBesideFloor({ floorName: 'Home', repo: 'Home' }), undefined);
+  assert.equal(repoBesideFloor({ floorName: 'Notes', repo: 'Folder' }), 'Folder');
+  assert.equal(repoBesideFloor({ floorName: 'Backend', repo: 'nikships/api' }), 'nikships/api');
+  assert.equal(repoBesideFloor({ floorName: 'Backend' }), undefined);
+});
+
+test('a team lead is never labelled as hired by itself', () => {
+  const rows = buildingRoster({
+    floors: [floor('office')],
+    building: new Map(),
+    currentFloor: 'office',
+    workers: [
+      worker('pixel', { lead: 'gone', team: { id: 't1', role: 'lead', accent: '#fff', emblem: 'star', leadName: 'pixel' } }),
+      worker('scout', { lead: 'atlas', team: { id: 't2', role: 'member', accent: '#fff', emblem: 'star', leadName: 'Atlas' } }),
+    ],
+  });
+  assert.deepEqual(
+    rows.map((row) => [row.worker.id, row.leadName]),
+    [
+      ['pixel', undefined],
+      ['scout', 'Atlas'],
+    ],
   );
 });

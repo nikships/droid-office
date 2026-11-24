@@ -122,7 +122,8 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
   });
   assert.match(await page.locator('.dash-roster-caption').innerText(), /2 need you/);
   assert.equal(await page.locator('.dash-row.attn').count(), 2);
-  assert.equal(await page.locator('.dash-subworker .pill').count(), 1, 'only the subagent question, not its unread completion, alerts the owner');
+  assert.equal(await page.locator('.dash-subworker .dash-status[data-mark=needs_you]').count(), 1, 'only the subagent question, not its unread completion, alerts the owner');
+  assert.equal(await page.locator('.dash-row .pill, .dash-row-role').count(), 0, 'statuses are icons, and a lead needs no tag beside its team');
   await page.evaluate(() => (window as any).roster.reveal('dot'));
   await page.getByRole('button', { name: /Open Dot, Subworker of Pixel/ }).click();
   assert.deepEqual(await page.evaluate(() => (window as any).opened), ['dot']);
@@ -252,11 +253,13 @@ test('worker roster preserves hierarchy, focus and entry motion across updates',
     w.paintPane('dot');
   });
   assert.equal(await page.locator('.dash-pane.attn').count(), 1);
-  assert.equal(await page.locator('.dash-pane-head .pill').innerText(), 'needs input');
+  assert.equal(await page.locator('.dash-pane-head .dash-status').getAttribute('data-mark'), 'needs_you');
+  assert.equal(await page.locator('.dash-pane-head .dash-status').getAttribute('aria-label'), 'Needs you');
+  assert.equal(await page.locator('.dash-pane-head .pill').count(), 0);
   assert.equal(await page.locator('.dash-question').isHidden(), false);
   assert.match(await page.locator('.dash-question').innerText(), /Dot needs you/);
   assert.equal(await page.locator('[data-member=dot]').getAttribute('data-status'), 'needs_input');
-  assert.ok((await page.locator('.dash-pane [data-status=needs_input], .dash-pane .pill.needs_input').count()) > 0);
+  assert.ok((await page.locator('.dash-pane [data-status=needs_input]').count()) > 0);
   await page.evaluate(() => {
     const w = window as any;
     w.workers[0].status = 'needs_input';

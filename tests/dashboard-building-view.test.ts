@@ -85,6 +85,20 @@ test('all-workers directory filters, opens cross-floor workers, and keeps focus 
   assert.match((await page.locator('[data-worker=nibble]').getAttribute('aria-label')) ?? '', /Tools, Needs you, subworker of Pixel/);
   assert.equal(await page.locator('[data-worker=nibble] .dash-row-todos').innerText(), '3/5');
   assert.equal(await page.locator('[data-worker=nibble]').evaluate((el) => el.classList.contains('is-subworker')), true);
+  // Statuses are bare icons; a repository named like its floor and the worker's kind say nothing new.
+  assert.deepEqual(await page.locator('.dash-building-status').evaluateAll((els) => els.map((el) => [el.textContent, el.querySelector('.dash-status')?.getAttribute('data-mark')])), [
+    ['Working', 'working'],
+    ['Needs you', 'needs_you'],
+    ['Done · new', 'done_new'],
+    ['Asleep', 'asleep'],
+    ['Needs you', 'needs_you'],
+  ]);
+  assert.deepEqual(
+    await page.locator('.dash-building-place').evaluateAll((els) => els.map((el) => el.querySelector('small')?.textContent ?? null)),
+    [null, null, null, null, null],
+    'nikships/droid-office on droid-office and nikships/tools on Tools',
+  );
+  assert.deepEqual(await page.locator('.dash-building-role').allInnerTexts(), ['Subworker of Pixel']);
   await page.getByRole('button', { name: 'Needs you, 1', exact: true }).click();
   assert.equal(await rows.count(), 1, 'external bot status is not an owner question');
   assert.equal(await rows.getAttribute('data-worker'), 'nibble');
@@ -126,6 +140,7 @@ test('all-workers directory filters, opens cross-floor workers, and keeps focus 
       w.paint();
     }, status);
     assert.equal(await page.locator('[data-worker=bot] .dash-dot').getAttribute('data-status'), status, 'bot status-only ticks refresh the dot');
+    assert.equal(await page.locator('[data-worker=bot] .dash-building-status .dash-status').getAttribute('data-mark'), { working: 'working', done: 'done', needs_input: 'needs_you' }[status]);
   }
   assert.equal(await page.locator('[data-worker=bot] img.grokbot-logo').count(), 0);
   await page.evaluate(() => {
@@ -189,7 +204,9 @@ test('all-workers directory filters, opens cross-floor workers, and keeps focus 
     w.state.rows = [{ worker: { id: 'orchestrator', name: 'Orchestrator', kind: 'agent', status: 'idle' }, kind: 'orchestrator', floorId: '__mission__', floorName: 'Mission Control', depth: 0 }];
     w.paint();
   });
-  assert.equal(await page.locator('[data-status=blocked]').innerText(), 'Blocked');
+  assert.equal(await page.locator('.dash-building-status .dash-status').getAttribute('data-mark'), 'blocked');
+  assert.match((await rows.first().getAttribute('aria-label')) ?? '', /Mission Control, Blocked/);
+  assert.equal(await rows.first().locator('.dash-building-role').count(), 0, 'the floor column already says Mission Control');
   assert.match(await rows.first().innerText(), /Droid is not signed in/);
   await page.evaluate(() => {
     const w = window as any;

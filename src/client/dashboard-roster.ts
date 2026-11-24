@@ -1,8 +1,8 @@
 import type { MissionControlState } from '../shared/mission-control';
 import type { TodoProgress, WorkerInfo } from '../shared/protocol';
-import { isAsleep, isBusy, needsOwnerAttention, needsOwnerInput } from '../shared/status';
+import { isAsleep, needsOwnerInput } from '../shared/status';
 import { shortDuration, workedFor } from './dashboard-workspace';
-import { workerDot, workingBars, WORKER_MIME } from './dashboard-pane';
+import { workerDot, workerStatusIcon, WORKER_MIME } from './dashboard-pane';
 import { teamCounts, workerTeams } from '../shared/team';
 import { todoCount, todoLine } from '../shared/todos';
 import { missionLead } from './mission';
@@ -144,7 +144,7 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
         r.open.setAttribute('aria-label', `Open ${w.name}${relationship ? `, ${relationship}` : ''}, ${status}: ${doingLine(w)}${todos ? `, todo list ${todoLine(todos)}` : ''}`);
         r.split.setAttribute('aria-label', `Open ${w.name} in a new pane`);
         r.open.replaceChildren(
-          workerDot(w),
+          workerDot(w, true),
           h(
             'span.dash-row-main',
             {},
@@ -152,9 +152,8 @@ export function createWorkerRoster(el: HTMLElement, open: (id: string) => void, 
               'span.dash-row-top',
               {},
               h('span.dash-row-name', {}, w.name),
-              hasChildren ? h('span.dash-row-role', {}, 'Lead') : null,
               next.pane(w.id) >= 0 ? h('span.dash-row-pane', { title: `In pane ${next.pane(w.id) + 1}` }, `P${next.pane(w.id) + 1}`) : null,
-              h('span.dash-row-state', {}, needsOwnerAttention(w) ? h('span.pill', { class: w.status }, status) : isBusy(w.status) && w.status !== 'needs_input' ? workingBars(status) : null),
+              h('span.dash-row-state', {}, workerStatusIcon(w)),
             ),
             h('span.dash-row-doing', {}, doingLine(w)),
             todos ? todoMeter(todos) : null,

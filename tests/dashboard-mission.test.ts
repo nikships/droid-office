@@ -241,7 +241,7 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   assert.equal(await pane.locator('.wt-blocked').isVisible(), true);
   assert.match(await pane.locator('.wt-blocked').innerText(), /Droid is signed out/);
   assert.equal(await pane.locator('form').first().isHidden(), true);
-  assert.equal(await pane.locator('.dash-pane-head .pill').innerText(), 'blocked');
+  assert.equal(await pane.locator('.dash-pane-head .dash-status').getAttribute('data-mark'), 'blocked');
   assert.equal(await pane.locator('.dash-pane-task').innerText(), 'Can’t start yet', 'the reason is said once, in place of the composer');
   assert.equal(await pane.locator('.orc-example:disabled').count(), 3, 'no composer to fill');
 
@@ -254,7 +254,7 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   });
   assert.equal(await pane.locator('.wt-blocked').isHidden(), true);
   assert.equal(await pane.locator('.wt-stop').isVisible(), true, 'Stop is reachable');
-  assert.equal(await pane.locator('.dash-pane-head .pill').innerText(), 'working');
+  assert.equal(await pane.locator('.dash-pane-head .dash-status').getAttribute('data-mark'), 'working');
   assert.equal(await pane.locator('.dash-pane-task').innerText(), 'Get CI green on every floor');
   await page.evaluate(() => (window as any).paintRoster());
   assert.equal(await roster.locator('[data-worker=orchestrator] .dash-mission-mark').getAttribute('data-status'), 'working');
@@ -336,6 +336,8 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   });
   assert.equal(await roster.locator('[data-worker=bot-grok] .dash-mission-mark svg.icon').count(), 0);
   assert.equal(await roster.locator('[data-worker=bot-grok] .dash-mission-mark img.grokbot-logo').getAttribute('src'), '/icons/grokbot.webp');
+  assert.equal(await roster.locator('.dash-row-role, .pill').count(), 0, 'a bot’s mark says what it is, and its status is an icon');
+  assert.equal(await roster.locator('[data-worker=bot-grok] .dash-row-state .dash-status').getAttribute('data-mark'), 'asleep');
   assert.equal(await pane.locator('.dash-pane-head .dash-mission-mark img.grokbot-logo').getAttribute('src'), '/icons/grokbot.webp');
   assert.equal(await pane.locator('.dash-bot .dash-info-who .dash-mission-mark img.grokbot-logo').getAttribute('src'), '/icons/grokbot.webp');
   assert.equal(await pane.locator('.dash-bot .dash-info-kind').innerText(), 'Grok Bot');

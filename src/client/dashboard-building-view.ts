@@ -1,9 +1,9 @@
 import type { BuildingFilter, BuildingWorkerRow } from './dashboard-building';
-import { buildingCounts, filterBuildingRows, MISSION_FLOOR } from './dashboard-building';
+import { buildingCounts, filterBuildingRows, MISSION_FLOOR, repoBesideFloor } from './dashboard-building';
 import type { FloorInfo } from '../shared/protocol';
-import { isAsleep } from '../shared/status';
+import { isAsleep, STATUS_MARK_WORD, statusMark } from '../shared/status';
 import { reconcileChildren, todoMeter } from './dashboard-roster';
-import { workerDot } from './dashboard-pane';
+import { statusIcon, workerDot } from './dashboard-pane';
 import { doingLine, workerKind } from './worker-words';
 import { orchestratorBlocked, orchestratorLine } from './mission';
 import type { MissionControlState } from '../shared/mission-control';
@@ -156,62 +156,41 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
       button.classList.toggle('asleep', isAsleep(w.status));
       button.classList.toggle('is-subworker', row.depth > 0);
       const blocked = row.kind === 'orchestrator' && !!orchestratorBlocked(state.mission);
-      let status: string;
-      if (blocked) status = 'Blocked';
-      else if (row.kind === 'bot') status = isAsleep(w.status) ? 'Offline' : row.grokBot ? 'Grok Bot' : 'External bot';
-      else if (isAsleep(w.status)) status = 'Asleep';
-      else {
-        switch (w.status) {
-          case 'needs_input':
-            status = 'Needs you';
-            break;
-          case 'done':
-            status = !w.acked && !w.lead ? 'Done · new' : 'Done';
-            break;
-          case 'idle':
-            status = 'Ready';
-            break;
-          case 'starting':
-            status = 'Starting';
-            break;
-          default:
-            status = 'Working';
-        }
-      }
+      const mark = statusMark(w.status, w.acked, blocked);
+      const status = row.kind === 'bot' ? `${row.grokBot ? 'Grok Bot' : 'External bot'}, ${STATUS_MARK_WORD[mark]}` : STATUS_MARK_WORD[mark];
       const detail = row.kind === 'orchestrator' ? orchestratorLine(state.mission) : doingLine(w);
       const model = w.activeModel ?? w.model;
       const effort = w.activeEffort ?? w.effort;
       const branch = w.worktree?.branch;
+      const repo = repoBesideFloor(row);
       const rowKey = JSON.stringify([w.name, w.color, w.status, status, detail, model, effort, w.kind, w.cloud?.computerName, w.todos, branch, row.floorName, row.repo, row.leadName, row.grokBot, row.depth, row.kind]);
       if (rowKey !== node.key) {
         node.key = rowKey;
         button.setAttribute('aria-label', `Open ${w.name}, ${row.floorName}, ${status}${row.leadName ? `, subworker of ${row.leadName}` : ''}: ${detail}`);
         button.title = [w.name, row.floorName, row.repo, branch, detail].filter(Boolean).join(' · ');
-        let sub = row.kind === 'desk' ? workerKind(w) : 'Mission Control';
-        if (row.leadName) sub = `Subworker of ${row.leadName}`;
+        // The floor column already says Mission Control, and the model column a shell.
+        const sub = row.leadName ? `Subworker of ${row.leadName}` : w.cloud ? workerKind(w) : undefined;
+        const where = [repo, branch].filter(Boolean).join(' · ');
         let engine: HTMLElement | string | undefined;
         if (w.kind === 'shell') engine = 'Shell';
         else if (row.kind === 'bot') engine = row.grokBot ? 'Webhook push' : 'Runs externally';
         else engine = modelBadgeNode(model, effort);
-        let statusKind: string = w.status;
-        if (row.kind === 'bot') statusKind = 'external';
-        if (blocked) statusKind = 'blocked';
         button.replaceChildren(
           h(
             'span.dash-building-identity',
             {},
-            row.grokBot ? h('span.dash-mission-mark', { 'data-status': w.status, 'aria-hidden': 'true' }, grokBotLogo(20), workerDot(w)) : workerDot(w),
+            row.grokBot ? h('span.dash-mission-mark', { 'data-status': w.status, 'aria-hidden': 'true' }, grokBotLogo(20), workerDot(w, true)) : workerDot(w, true),
             h(
               'span.dash-building-work',
               {},
-              h('span.dash-building-name', {}, h('b', {}, w.name), h('span.dash-building-role', { title: sub }, sub)),
+              h('span.dash-building-name', {}, h('b', {}, w.name), sub ? h('span.dash-building-role', { title: sub }, sub) : null),
               h('span.dash-building-doing', { title: detail }, detail),
               w.kind !== 'shell' && w.todos?.total ? todoMeter(w.todos) : null,
             ),
           ),
-          h('span.dash-building-place', {}, h('span', { title: row.floorName }, row.floorName), h('small', { title: [row.repo, branch].filter(Boolean).join(' · ') }, [row.repo, branch].filter(Boolean).join(' · ') || '—')),
+          h('span.dash-building-place', {}, h('span', { title: row.floorName }, row.floorName), where ? h('small', { title: where }, where) : null),
           h('span.dash-building-model', {}, engine),
-          h('span.dash-building-status', { 'data-status': statusKind }, status),
+          h('span.dash-building-status', {}, statusIcon(mark, 16)),
           h('span.dash-building-open', { 'aria-hidden': 'true' }, icon('arrow', 16)),
         );
       }
