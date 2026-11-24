@@ -191,12 +191,7 @@ export class WorkerDelivery {
     }
     const cleared = [...current.items];
     this.cancelInFlightQueued(w);
-    if (w.outbox.length) {
-      w.outbox = [];
-      clearTimeout(w.outboxTimer);
-      w.outboxTimer = undefined;
-      this.context.persist();
-    }
+    if (this.takeOutbox(w).length) this.context.persist();
     if (w.pty && w.term) {
       await clearDroidPendingAll({ write: (d) => w.pty?.write(d), rows: () => (w.term ? screenRows(w.term) : undefined) });
     }
@@ -446,6 +441,8 @@ export class WorkerDelivery {
     if (w.pty) {
       w.info.lastInputAt = Date.now();
       this.typeIn(w, pending.text);
+      // If UserPromptSubmit never arrives (legacy or unreachable hooks), held notices still flush at rest.
+      if (w.outbox.length) this.flushOutbox(w);
     }
     // Saved at once, so an office restarting now doesn't type it in a second time.
     this.context.persist();
@@ -465,8 +462,8 @@ export class WorkerDelivery {
 
   /**
    * An office message for a worker that mustn't be typed into now (it's starting, or asking in its
-   * terminal, where Enter would answer): its hooks hand it over once its turn goes on, or it's typed
-   * in once it comes to rest (see flushOutbox).
+   * terminal, where Enter would answer): its hooks hand it over on UserPromptSubmit, PostToolUse
+   * or Stop once its turn runs, or it's typed in once it comes to rest (see flushOutbox).
    */
   hold(id: string, text: string): string | undefined {
     const w = this.context.get(id);
@@ -479,14 +476,25 @@ export class WorkerDelivery {
     return undefined;
   }
 
+  /** Claims and clears any queued outbox notices, cancelling any pending resting-flush timer. */
+  takeOutbox(w: Worker): string[] {
+    clearTimeout(w.outboxTimer);
+    w.outboxTimer = undefined;
+    if (!w.outbox.length) return [];
+    const notes = w.outbox;
+    w.outbox = [];
+    return notes;
+  }
+
   /**
    * Types in the notices its hooks didn't get to hand over before it came to rest, once nobody has
-   * typed into its terminal for NOTICE_TYPING_MS. One that's busy again by then gets them through its hooks.
+   * typed into its terminal for NOTICE_TYPING_MS. A prompt submitted before then flushes them via
+   * UserPromptSubmit; one that's busy again gets them through its hooks.
    */
   flushOutbox(w: Worker) {
     clearTimeout(w.outboxTimer);
     w.outboxTimer = undefined;
-    if (!w.outbox.length || this.context.closing() || this.context.get(w.info.id) !== w || !w.pty) return;
+    if (!w.outbox.length || w.launchPrompt || this.context.closing() || this.context.get(w.info.id) !== w || !w.pty) return;
     if (w.info.status !== 'done' && w.info.status !== 'idle') return;
     const wait = (w.info.lastInputAt ?? 0) + NOTICE_TYPING_MS - Date.now();
     if (wait > 0) {
@@ -494,9 +502,9 @@ export class WorkerDelivery {
       w.outboxTimer.unref();
       return;
     }
-    const text = w.outbox.join('\n\n');
-    w.outbox = [];
-    this.prompt(w.info.id, text);
+    const notes = this.takeOutbox(w);
+    if (!notes.length) return;
+    this.prompt(w.info.id, notes.join('\n\n'));
     this.context.persist();
   }
 }

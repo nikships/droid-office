@@ -116,7 +116,7 @@ test('outbox delivery waits for typing and rejects callbacks from a replaced or 
   assert.deepEqual(rig.writes, []);
 });
 
-function hookRig(t: TestContext) {
+function hookRig(t: TestContext, opts: { beforePrompt?: () => string | undefined } = {}) {
   const rig = deliveryRig(t);
   const { worker, calls } = rig;
   let current = worker;
@@ -136,6 +136,7 @@ function hookRig(t: TestContext) {
     },
     tool: () => calls.push('tool'),
     notePrompt: (_w, text) => calls.push(`prompt:${text}`),
+    beforePrompt: opts.beforePrompt,
     beforeStop: () => {
       calls.push('beforeStop');
       return 'team news';
@@ -164,6 +165,74 @@ test('SessionStart delivers its launch message before the hook update and save',
   assert.deepEqual(writes, ['\x1b[200~assigned task\x1b[201~']);
   t.mock.timers.tick(120);
   assert.deepEqual(writes, ['\x1b[200~assigned task\x1b[201~', '\r']);
+});
+
+test('UserPromptSubmit injects reminders and flushes pending outbox before turn 1 while cancelling flushOutbox timers', (t) => {
+  let reminder: string | undefined = 'Droid Office notice: The owner sent this from the droid-office floor (/repo).';
+  const { worker, delivery, writes, send } = hookRig(t, {
+    beforePrompt: () => {
+      const next = reminder;
+      reminder = undefined;
+      return next;
+    },
+  });
+  worker.info.status = 'done';
+  worker.info.lastInputAt = Date.now();
+  worker.outbox.push('Hold off on refactoring auth');
+  delivery.flushOutbox(worker);
+  assert.ok(worker.outboxTimer, 'flushOutbox scheduled while waiting out typing');
+
+  // Unknown sessions, old hook versions, and replayed spool hooks cannot consume reminders or outbox.
+  assert.equal(send('UserPromptSubmit', { session_id: 'stranger', prompt: 'Fix tests' }), undefined);
+  assert.equal(send('UserPromptSubmit', { prompt: 'Fix tests' }, { version: 0 }), '');
+  assert.equal(send('UserPromptSubmit', { prompt: 'Fix tests' }, { at: 9000 }), '');
+  assert.equal(reminder !== undefined, true);
+  assert.deepEqual(worker.outbox, ['Hold off on refactoring auth']);
+
+  // A live modern UserPromptSubmit delivers both reminder and outbox via hookSpecificOutput.additionalContext.
+  const raw = send('UserPromptSubmit', { prompt: 'Fix tests' });
+  const parsed = JSON.parse(raw!) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+  assert.deepEqual(parsed, {
+    hookSpecificOutput: {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext: 'Droid Office notice: The owner sent this from the droid-office floor (/repo).\n\nHold off on refactoring auth',
+    },
+  });
+  assert.deepEqual(worker.outbox, []);
+  assert.equal(worker.outboxTimer, undefined, 'pending resting flush timer was cancelled');
+  assert.equal(worker.info.status, 'working');
+
+  // Advancing past the old resting flush deadline writes nothing to the PTY.
+  t.mock.timers.tick(10_000);
+  assert.deepEqual(writes, []);
+});
+
+test('held outbox waits for launchPrompt at SessionStart and flushes on UserPromptSubmit instead of colliding', (t) => {
+  const { worker, delivery, writes, send } = hookRig(t);
+  worker.info.status = 'starting';
+  worker.launchPrompt = { text: 'Start task', at: Date.now() };
+  worker.outbox.push('Whiteboard button pressed');
+  // Simulate setStatus('idle') calling flushOutbox while launchPrompt is still pending.
+  worker.info.status = 'idle';
+  delivery.flushOutbox(worker);
+  assert.deepEqual(writes, [], 'flushOutbox does not type ahead of a pending launchPrompt');
+  assert.deepEqual(worker.outbox, ['Whiteboard button pressed']);
+
+  delivery.sendLaunchPrompt(worker);
+  assert.deepEqual(writes, ['\x1b[200~Start task\x1b[201~']);
+  assert.ok(worker.outboxTimer, 'fallback timer armed in case UserPromptSubmit never arrives');
+  t.mock.timers.tick(120);
+  assert.deepEqual(writes, ['\x1b[200~Start task\x1b[201~', '\r']);
+
+  const reply = JSON.parse(send('UserPromptSubmit', { prompt: 'Start task' })!) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+  assert.deepEqual(reply, {
+    hookSpecificOutput: {
+      hookEventName: 'UserPromptSubmit',
+      additionalContext: 'Droid Office notice:\nWhiteboard button pressed',
+    },
+  });
+  assert.deepEqual(worker.outbox, []);
+  assert.equal(worker.outboxTimer, undefined);
 });
 
 test('unknown sessions cannot consume notices and old or replayed hooks cannot carry replies', (t) => {

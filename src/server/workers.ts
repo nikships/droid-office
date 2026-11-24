@@ -214,6 +214,11 @@ export class WorkerManager {
   /** ⚙️ Settings → Subagents & visits: Droid's built-in Task tool is refused (see hookEntries). Unset: refused. */
   denyTask?: () => boolean;
   /**
+   * What the office adds as context before Droid processes a submitted prompt (UserPromptSubmit),
+   * such as the Orchestrator's current floor reminder. Only asked when the hook can carry replies.
+   */
+  beforePrompt?: (info: WorkerInfo) => string | undefined;
+  /**
    * What the office tells a worker whose turn is about to end instead of letting it stop, once: its
    * team's news, or a subagent's reminder to report (see Team.beforeStop). Only asked when its Stop can be blocked.
    */
@@ -342,6 +347,7 @@ export class WorkerManager {
       syncBranch: (w) => this.syncBranch(w),
       tool: (id, refresh) => this.events.tool?.(id, refresh),
       notePrompt: (w, text) => this.notePrompt(w, text),
+      beforePrompt: (info) => this.beforePrompt?.(info),
       beforeStop: (info) => this.beforeStop?.(info),
       nextTurn: (info) => this.nextTurn?.(info),
       delivery: this.delivery,
@@ -1962,14 +1968,20 @@ export class WorkerManager {
   }
 
   /**
-   * Hands an office notice to a worker in the middle of a turn: its droid reads it with the result
-   * of its next tool call, or as the reason its turn goes on when it tries to stop. Says whether it
-   * took it; a worker at rest, asking, or on a hook command that can't carry it (one its droid
-   * started before this office) is typed into by the caller instead, as before. One still waiting
-   * when the worker comes to rest is typed in then.
+   * Hands an office notice to a worker in the middle of a turn: its droid reads it on its next
+   * UserPromptSubmit or PostToolUse as `additionalContext`, or as the reason its turn goes on when
+   * it tries to stop. Says whether it took it; a worker at rest, asking, or on a hook command that
+   * can't carry it (one its droid started before this office) is typed into by the caller instead,
+   * as before. One still waiting when the worker comes to rest is typed in then.
    */
   notice(id: string, text: string, images?: readonly string[]): boolean {
     return this.delivery.notice(id, text, images);
+  }
+
+  /** Whether `id` is running on a hook command older than `HOOK_VERSION` (cannot carry hook replies). */
+  legacyHooks(id: string): boolean {
+    const w = this.workers.get(id);
+    return !!w?.pty && w.hookAt > 0 && w.hookVersion < HOOK_VERSION;
   }
 
   /**

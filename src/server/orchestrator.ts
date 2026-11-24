@@ -78,6 +78,8 @@ export class Orchestrator {
   private restartAtRest = false;
   /** The floor hint its conversation last got: the next prompt names a floor only when it differs. */
   private hint?: string;
+  /** The floor hint queued for the next UserPromptSubmit hook, once a prompt is accepted. */
+  private pendingHint?: string;
 
   constructor(private readonly opts: OrchestratorOptions) {
     this.file = path.join(opts.dataDir, ORCHESTRATOR_FILE);
@@ -112,6 +114,13 @@ export class Orchestrator {
     this.workers.allowTools = { matcher: ORCHESTRATOR_ALLOWED_TOOLS, reason: ALLOWED };
     this.workers.asleep = () => !this.settings.on;
     this.workers.modelGate = (model) => opts.modelGate?.(model);
+    // Floor reminder injected via UserPromptSubmit additionalContext so the visible prompt stays clean.
+    this.workers.beforePrompt = () => {
+      const hint = this.pendingHint;
+      this.pendingHint = undefined;
+      if (hint) this.hint = hint;
+      return hint;
+    };
     // Its team's news it hasn't been woken for, on every floor, instead of stopping.
     this.workers.beforeStop = (info) => {
       const notes = opts.floors().flatMap((f) => f.team.beforeStop(info) ?? []);
@@ -185,17 +194,24 @@ export class Orchestrator {
 
   /**
    * The owner's prompt: the first one starts its session. `floor` is where the owner is, if they are on one:
-   * the prompt that starts a conversation and any later one from another floor carry it as a reminder after
-   * their words, so a request that names no repository has a default.
+   * the prompt that starts a conversation and any later one from another floor carry it as `additionalContext`
+   * on `UserPromptSubmit` (so the typed prompt and Thread transcript stay clean), falling back inline only
+   * for Ctrl+Enter queued prompts or legacy hook commands that cannot carry hook replies.
    */
   prompt(text: string, images?: readonly string[], queue = false, floor?: { name: string; dir: string }): string | undefined {
     if (!this.settings.on) return 'The Orchestrator is off. Turn it on in ⚙️ Settings → Orchestrator.';
     const blocked = this.blocked();
     if (blocked) return blocked.why;
     const hint = floor ? floorHint(floor) : undefined;
-    const give = hint !== undefined && hint !== this.hint;
-    const error = this.send(give ? `${text}\n\n${hint}` : text, images, queue);
-    if (!error && give) this.hint = hint;
+    const give = hint !== undefined && hint !== (this.pendingHint ?? this.hint);
+    const inline = give && ((queue && this.running() && this.info?.status === 'working') || this.workers.legacyHooks(ORCHESTRATOR_ID));
+    const error = this.send(inline ? `${text}\n\n${hint}` : text, images, queue);
+    if (!error && give) {
+      if (inline) {
+        this.hint = hint;
+        this.pendingHint = undefined;
+      } else this.pendingHint = hint;
+    }
     return error;
   }
 
@@ -230,6 +246,7 @@ export class Orchestrator {
   reset() {
     this.restartAtRest = false;
     this.hint = undefined;
+    this.pendingHint = undefined;
     this.workers.forget(ORCHESTRATOR_ID);
     this.opts.changed();
   }

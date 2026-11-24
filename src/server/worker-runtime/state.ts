@@ -56,7 +56,7 @@ export interface Worker {
   hookVersion: number;
   /** Its session's conversation file, as its hooks name it (transcript_path). */
   transcript?: string;
-  /** Office notices for its next tool call or Stop (see notice). */
+  /** Office notices for its next UserPromptSubmit, PostToolUse or Stop (see notice). */
   outbox: string[];
   /** When the owner (or a visit) last pressed Escape or Ctrl+C in its terminal: a Stop right after is a cancel, never blocked. */
   cancelAt?: number;

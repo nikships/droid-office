@@ -706,9 +706,14 @@ const hookRecord = (id: string, hookEventName: string, stdout: string) =>
     ],
   });
 
-test('what the office handed over through hooks shows as office notices, and other hooks stay hidden', async (t) => {
+test('what the office handed over through hooks shows as office notices, and other hooks or floor reminders stay hidden', async (t) => {
+  const floor = 'Droid Office notice: The owner sent this from the droid-office floor (/Users/nik/repos/droid-office).';
   const { reader, source } = await rig(t, [
     text('prompt', 'Fix the login', 'user'),
+    hookRecord('ups-floor', 'UserPromptSubmit', JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: floor } })),
+    hookRecord('ups-both', 'UserPromptSubmit', JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: `${floor}\n\nHold off on auth refactor.` } })),
+    hookRecord('ups-notice', 'UserPromptSubmit', JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'Droid Office notice:\nWhiteboard button pressed.' } })),
+    hookRecord('ups-other', 'UserPromptSubmit', JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'Someone else said PRIVATE_UPS' } })),
     message('call', 'assistant', [{ type: 'tool_use', id: 'call-1', name: 'Execute', input: { command: 'echo hi' } }]),
     message('result', 'user', [{ type: 'tool_result', tool_use_id: 'call-1', content: 'hi' }]),
     hookRecord('post', 'PostToolUse', JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: 'Droid Office notice: team update\nPixel reported back.' } })),
@@ -722,11 +727,13 @@ test('what the office handed over through hooks shows as office notices, and oth
   const shown = page.entries.filter((e) => e.kind === 'notice' || e.kind === 'text').map((e) => [e.role, e.kind, e.text]);
   assert.deepEqual(shown, [
     ['user', 'text', 'Fix the login'],
+    ['system', 'notice', 'Office notice: Hold off on auth refactor.'],
+    ['system', 'notice', 'Office notice: Whiteboard button pressed.'],
     ['system', 'notice', 'Office notice: team update\nPixel reported back.'],
     ['system', 'notice', 'Office notice: report to your lead\nCall team_report.'],
     ['assistant', 'text', 'Reported.'],
   ]);
-  assert.doesNotMatch(JSON.stringify(page), /PRIVATE_OTHER/);
+  assert.doesNotMatch(JSON.stringify(page), /PRIVATE_OTHER|PRIVATE_UPS|owner sent this/);
 });
 
 test("the conversation file the worker's hooks named is read first, and only from the sessions folder", async (t) => {

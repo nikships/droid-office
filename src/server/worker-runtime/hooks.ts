@@ -23,9 +23,10 @@ interface HookContext {
   syncBranch(worker: Worker): Promise<void>;
   tool(workerId: string, refresh: ToolRefresh): void;
   notePrompt(worker: Worker, text: string): void;
+  beforePrompt?(info: WorkerInfo): string | undefined;
   beforeStop(info: WorkerInfo): string | undefined;
   nextTurn(info: WorkerInfo): void;
-  delivery: Pick<WorkerDelivery, 'sendLaunchPrompt'>;
+  delivery: Pick<WorkerDelivery, 'sendLaunchPrompt' | 'takeOutbox'>;
 }
 
 /**
@@ -75,7 +76,8 @@ export class WorkerHooks {
 
   /**
    * A hook from the worker's own session. With `replies` (a live hook from a command that prints
-   * what the office answers), PostToolUse and Stop can carry its notices; the reply is returned.
+   * what the office answers), UserPromptSubmit, PostToolUse and Stop can carry its reminders and
+   * notices; the reply is returned.
    */
   private sessionHook(w: Worker, event: string, report: Record<string, unknown>, replies: boolean): string | undefined {
     const session = report.session_id as string;
@@ -111,10 +113,17 @@ export class WorkerHooks {
       w.currentTool = undefined;
       w.info.action = undefined;
       if (typeof report.prompt === 'string') {
-        // The office's reminders after the owner's words (an Orchestrator prompt's floor) aren't what was asked.
+        // Queued or legacy prompts can still carry an appended reminder after the owner's words.
         const said = withoutReminders(report.prompt) || report.prompt;
         w.info.activity = truncate(said, 80);
         this.context.notePrompt(w, said);
+      }
+      if (replies) {
+        const notes: string[] = [];
+        const reminder = this.context.beforePrompt?.(w.info);
+        if (reminder) notes.push(reminder);
+        notes.push(...this.context.delivery.takeOutbox(w));
+        reply = this.hookContext('UserPromptSubmit', notes);
       }
       this.context.setStatus(w, 'working');
     } else if (event === 'PreToolUse') this.toolStarted(w, session, report);
@@ -131,10 +140,7 @@ export class WorkerHooks {
       // A hook command from before SubagentStop: a subagent that asked has finished once its Task returns.
       if (w.hookVersion < HOOK_VERSION && w.asking && w.asking.session !== session && report.tool_name === 'Task') this.context.setStatus(w, 'working');
       else this.toolFinished(w, session, report);
-      if (replies && w.outbox.length) {
-        reply = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: officeSays(w.outbox.join('\n\n')) } });
-        w.outbox = [];
-      }
+      if (replies && w.outbox.length) reply = this.hookContext('PostToolUse', this.context.delivery.takeOutbox(w));
     } else if (event === 'Notification') {
       // The hooks reference says a cancelled turn sends idle_prompt instead of Stop; Droid 1.1.0 sends Stop.
       if (report.notification_type === 'idle_prompt' && (w.info.status === 'working' || (w.info.status === 'needs_input' && !w.bootBlocked))) this.context.setStatus(w, 'done');
@@ -152,6 +158,12 @@ export class WorkerHooks {
     // /model can change it between turns, and droid writes the file a moment after SessionStart.
     if (event === 'SessionStart' || event === 'UserPromptSubmit' || event === 'Stop') this.context.refreshModel(w);
     return reply;
+  }
+
+  /** Formats office reminders or notices as hookSpecificOutput.additionalContext. */
+  private hookContext(event: 'UserPromptSubmit' | 'PostToolUse', notes: readonly string[]): string | undefined {
+    if (!notes.length) return undefined;
+    return JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: officeSays(notes.join('\n\n')) } });
   }
 
   /**
@@ -176,11 +188,10 @@ export class WorkerHooks {
     }
     const cancelled = w.cancelAt !== undefined && Date.now() - w.cancelAt < CANCEL_MS;
     if (replies && !cancelled && report.stop_hook_active !== true && (w.info.status === 'working' || w.info.status === 'needs_input')) {
-      const notes = [...w.outbox];
       const more = this.context.beforeStop(w.info);
-      if (more) notes.push(more);
-      if (notes.length) {
-        w.outbox = [];
+      if (w.outbox.length || more) {
+        const notes = this.context.delivery.takeOutbox(w);
+        if (more) notes.push(more);
         return JSON.stringify({ decision: 'block', reason: officeSays(notes.join('\n\n')) });
       }
     }

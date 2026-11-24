@@ -682,7 +682,8 @@ export class WorkerThreadReader {
 
   /**
    * The record of a hook run. Only what the office said through it shows: a notice it handed over
-   * with a tool's result, and the reason it gave for blocking a Stop, whose user message follows.
+   * on UserPromptSubmit (floor reminders omitted) or with a tool's result, and the reason it gave
+   * for blocking a Stop, whose user message follows.
    */
   private officeHook(state: Projection, id: string, message: Record<string, unknown>): void {
     const event = message.hookEventName;
@@ -697,8 +698,10 @@ export class WorkerThreadReader {
         continue;
       }
       const context = object(out.hookSpecificOutput).additionalContext;
-      if (event === 'PostToolUse' && typeof context === 'string' && context.startsWith(OFFICE_SAYS)) this.add(state, { id: `${id}:office:${index}`, role: 'system', kind: 'notice', text: officeNotice(clean(context)) });
-      else if (event === 'Stop' && out.decision === 'block' && typeof out.reason === 'string' && out.reason.startsWith(OFFICE_SAYS)) state.blocked = clean(out.reason);
+      if ((event === 'PostToolUse' || event === 'UserPromptSubmit') && typeof context === 'string' && context.startsWith(OFFICE_SAYS)) {
+        const notice = clean(context, FIELD_CHARS, event === 'UserPromptSubmit');
+        if (notice) this.add(state, { id: `${id}:office:${index}`, role: 'system', kind: 'notice', text: officeNotice(notice) });
+      } else if (event === 'Stop' && out.decision === 'block' && typeof out.reason === 'string' && out.reason.startsWith(OFFICE_SAYS)) state.blocked = clean(out.reason);
     }
   }
 

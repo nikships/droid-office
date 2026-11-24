@@ -297,7 +297,7 @@ test('a read of the Orchestrator’s conversation and a resize of its terminal e
   assert.match(thread.text, /no conversation yet/);
 });
 
-test('a prompt from a floor reaches the Orchestrator with that floor named once, and its Thread keeps what the owner typed', async (t) => {
+test('a prompt from a floor injects that floor once via UserPromptSubmit, keeping the typed prompt and Thread clean', async (t) => {
   const o = await missionOffice(t);
   const owner = await ownerWindow(t, o.base);
   const floor = o.server.floors()[0];
@@ -314,19 +314,19 @@ test('a prompt from a floor reaches the Orchestrator with that floor named once,
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   };
-  const hint = `\n\nDroid Office notice: The owner sent this from the ${floor.def.name} floor (${floor.dir}).`;
+  const hint = `Droid Office notice: The owner sent this from the ${floor.def.name} floor (${floor.dir}).`;
   const typed = await until(() => o.typed(ORCHESTRATOR_ID)[0]);
-  assert.equal(typed, `Get all open PRs merged${hint}`);
-  // Droid escapes a reserved tag in typed input (`<system-reminder>` arrives as `&lt;system-reminder&gt;`): this line has none, so the model reads it as sent.
-  assert.equal(typed.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'), typed.replace(/&/g, '&amp;'));
-  assert.equal(/[<>]/.test(typed), false);
-  await o.hook(session, 'UserPromptSubmit', { prompt: typed });
+  assert.equal(typed, 'Get all open PRs merged', 'the typed prompt contains only the owner’s words');
+  const reply = JSON.parse(await o.hook(session, 'UserPromptSubmit', { prompt: typed })) as { hookSpecificOutput?: { hookEventName?: string; additionalContext?: string } };
+  assert.deepEqual(reply, { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: hint } });
   assert.equal(o.server.owner.mission()[0].worker.activity, 'Get all open PRs merged', 'the card shows what the owner typed');
   await o.hook(session, 'Stop');
   // A worker sent the same way takes the same path: the companion's worker.prompt for the Orchestrator.
   owner.send({ t: 'worker.prompt', workerId: ORCHESTRATOR_ID, prompt: 'And the issues', requestId: 'second' });
   assert.equal((await owner.wait('action.result', (m) => m.requestId === 'second')).ok, true);
-  assert.equal(await until(() => o.typed(ORCHESTRATOR_ID)[1]), 'And the issues', 'the same floor again adds nothing');
+  const second = await until(() => o.typed(ORCHESTRATOR_ID)[1]);
+  assert.equal(second, 'And the issues');
+  assert.equal(await o.hook(session, 'UserPromptSubmit', { prompt: second }), '', 'the same floor again adds nothing');
 });
 
 test('office_worker_spawn gives the Orchestrator the model list team_hire gives it, and leaves the owner’s own hires alone', async (t) => {

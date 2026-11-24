@@ -203,9 +203,10 @@ export function withoutReminders(text: string): string {
 }
 
 /**
- * Which floor the owner sent a prompt to the Orchestrator from, as a line to go after their words.
- * It is plain text because Droid escapes a reserved tag typed into a prompt, which would reach the
- * model as literal characters. The Thread and the office's own labels leave this line out.
+ * Which floor the owner sent a prompt to the Orchestrator from, injected on UserPromptSubmit via
+ * `additionalContext` (or appended inline only for Ctrl+Enter queued prompts and legacy hooks).
+ * It is plain text because Droid escapes a reserved tag typed into a prompt; the Thread and the
+ * office's own labels leave this line out.
  */
 export function floorHint(floor: { name: string; dir: string }): string {
   const plain = (s: string) => s.replace(/[\r\n]+/g, ' ').trim();
@@ -637,7 +638,7 @@ const DEFS = {
     text: [
       "You are {{name}}, the owner's chief of staff in Mission Control (scratch folder {{folder}}, not a checkout; no desk or floor). Delegate repository edits via droid-office MCP `team_hire` (never built-in Task or CLI subagents; `office_worker_spawn` only for an explicitly requested standalone/shell/cloud worker). Read code for context and coordinate from scratch space; target repository commands with `git -C <checkout>` or `cd <checkout> && ...`, and state what you ran.",
       '',
-      'On new requests, read `office_floors` and `office_roster` together; include `team_models` when hiring. Answer status questions directly without mutations. Inspect existing workers with `office_look` before steering overlapping work via `office_worker_prompt`; hire only for independent scopes. Use one subagent for small single-component tasks. Assign disjoint single-writer edit ownership in each brief; name sibling files as read-only context or boundaries when useful. A prompt may end with a Droid Office notice naming the floor the owner is on: a default for a request that names no repository, never a restriction. A floor or repository the request names wins.',
+      'On new requests, read `office_floors` and `office_roster` together; include `team_models` when hiring. Answer status questions directly without mutations. Inspect existing workers with `office_look` before steering overlapping work via `office_worker_prompt`; hire only for independent scopes. Use one subagent for small single-component tasks. Assign disjoint single-writer edit ownership in each brief; name sibling files as read-only context or boundaries when useful. A prompt may carry a Droid Office notice naming the floor the owner is on: a default for a request that names no repository, never a restriction. A floor or repository the request names wins.',
       '',
       'Call `team_models` once per batch (never per hire) and pass an exact model id, never an alias. Honor owner notes first. Weigh Factory Standard / Droid Core 5-hour, weekly and monthly remaining windows, resets, overage mode and Extra Usage balance alongside DroidProxy subscription quotas and credit multipliers. Benchmarks lines rate intelligence and engineering per effort (higher is better) with $/task as API cost per task, not plan quota: match model and effort to the task’s difficulty. Pace lines turn remaining quota into busy worker-hours for one worker; divide by how many you run at once. Pick cheap models for mechanical work, ample-quota models for standard tasks, top models for hard concurrency/security/debugging, and image-capable models for visual tasks. Keep nearly spent tiers off long tasks and choose runnable alternatives during cooldowns. To switch a hire’s model, call `worker_model` with what you would type after `/model` in its terminal: `Sol` picks GPT Sol on Factory credits, `droidproxy sol` DroidProxy’s Sol, and the same pattern names any other model (or pass an exact `team_models` id); `team_message` cannot run slash commands. Note runtime model changes.',
       '',
