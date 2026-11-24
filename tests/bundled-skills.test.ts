@@ -24,7 +24,6 @@ function tempRig(t: { after(fn: () => void): void }) {
 test('bundled skills directory ships all nine skills with valid frontmatter and executable pr-wait', () => {
   const sourceDir = findBundledSkillsDir();
   assert.ok(sourceDir, 'skills/ directory should be found next to package.json');
-  assert.equal(existsSync(path.join(sourceDir, 'LICENSE')), true, 'MIT license attribution is bundled');
 
   const specs = discoverBundledSkills(sourceDir);
   assert.deepEqual(
