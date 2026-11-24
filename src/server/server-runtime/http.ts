@@ -356,12 +356,18 @@ export function createHttpHandler(ctx: HttpContext) {
       }
       if (p === '/api/agents/droid/commands' && req.method === 'GET') {
         // The skills and custom commands a worker's droid offers as slash commands (droid-commands.ts).
-        const hasWorker = url.searchParams.has('worker');
         const workerId = str(url.searchParams.get('worker'), 32);
-        const floorId = str(url.searchParams.get('floor'), 64);
-        // The Orchestrator's folder is there before its first prompt starts a session; hiring asks for a floor's folder.
-        const folder = workerId === ORCHESTRATOR_ID ? orchestrator.cwd : workerId ? workersOf(workerId)?.agentFolder(workerId) : !hasWorker && floorId ? floors.get(floorId)?.dir : undefined;
-        if (!folder) return send(res, 404, { error: hasWorker ? 'No such worker' : 'No such floor' });
+        if (url.searchParams.has('worker')) {
+          // The Orchestrator's folder is there before its first prompt starts a session.
+          let folder: string | undefined;
+          if (workerId === ORCHESTRATOR_ID) folder = orchestrator.cwd;
+          else if (workerId) folder = workersOf(workerId)?.agentFolder(workerId);
+          if (!folder) return send(res, 404, { error: 'No such worker' });
+          return send(res, 200, { commands: await droidCommands.get(folder) });
+        }
+        // Hiring asks for a floor's folder.
+        const folder = floors.get(str(url.searchParams.get('floor'), 64))?.dir;
+        if (!folder) return send(res, 404, { error: 'No such floor' });
         return send(res, 200, { commands: await droidCommands.get(folder) });
       }
       if (p === '/api/jukebox/soundcloud' && req.method === 'GET') {

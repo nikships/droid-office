@@ -54,8 +54,10 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -103,6 +105,21 @@ import kotlinx.coroutines.launch
 // A task typed and then closed by mistake is still there the next time hiring opens.
 private var promptDraft = ""
 
+private val PastedTextListSaver = listSaver<SnapshotStateList<ThreadCompose.PastedText>, Any>(
+    save = { list -> list.flatMap { listOf(it.id, it.text) } },
+    restore = { flat ->
+        mutableStateListOf<ThreadCompose.PastedText>().apply {
+            var i = 0
+            while (i + 1 < flat.size) {
+                val id = flat[i] as? Int
+                val text = flat[i + 1] as? String
+                if (id != null && text != null) add(ThreadCompose.pastedText(id, text))
+                i += 2
+            }
+        }
+    },
+)
+
 /**
  * Hire a worker at the next free desk, or at [deskId] when one was picked on the map: a Droid agent
  * with a task (or none yet), or a plain shell, which opens as soon as Shell is tapped, as B at an
@@ -122,8 +139,8 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     val otherRepos = remember(data.floors, data.floorId) { repoChoices(data.floors, data.floorId) }
 
     var prompt by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(promptDraft, TextRange(promptDraft.length))) }
-    val pastes = remember { mutableStateListOf<ThreadCompose.PastedText>() }
-    var pasteSeq by remember { mutableIntStateOf(0) }
+    val pastes = rememberSaveable(saver = PastedTextListSaver) { mutableStateListOf() }
+    var pasteSeq by rememberSaveable { mutableIntStateOf(0) }
     var promptError by remember { mutableStateOf<String?>(null) }
     var worktree by rememberSaveable { mutableStateOf(true) }
     var repos by rememberSaveable { mutableStateOf(emptyList<String>()) }
@@ -192,7 +209,7 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     val mention = if (!cloud && floorId != null) WorkspaceMention.find(prompt.text, prompt.selection.end) else null
     LaunchedEffect(floorId, mention?.query, connected, cloud) {
         val query = mention?.query ?: return@LaunchedEffect
-        if (!connected || cloud || floorId == null) return@LaunchedEffect
+        if (!connected || floorId == null) return@LaunchedEffect
         if (!files.fresh(System.currentTimeMillis())) {
             connection.threadFiles(floorId, null, "")?.let { files.keep(it, System.currentTimeMillis()) }
         }
@@ -210,12 +227,10 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
 
     fun hire() {
         val expanded = ThreadCompose.expandPastes(prompt.text, pastes).trim()
-        if (!cloud) {
-            val refused = SlashCommands.refusal(expanded, "the new worker", busy = false, commands = slashList)
-            if (refused != null) {
-                promptError = refused
-                return
-            }
+        val refused = if (!cloud) SlashCommands.refusal(expanded, "the new worker", busy = false, commands = slashList) else null
+        if (refused != null) {
+            promptError = refused
+            return
         }
         val e = effort?.takeIf { w -> efforts.isEmpty() || efforts.any { it.wire == w } }
         val ownWorktree = worktreeOption && worktree && !cloud
@@ -273,17 +288,16 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                         colors = fieldColors(),
                     )
-                    val mentions = if (mention != null) mentionItems else emptyList()
                     AnimatedVisibility(mention != null) {
                         Box(Modifier.padding(top = 8.dp)) {
-                            MentionMenu(mentions, searching = connected && files.base == null) { item ->
+                            MentionMenu(mentionItems, searching = connected && files.base == null) { item ->
                                 val q = WorkspaceMention.find(prompt.text, prompt.selection.end) ?: mention ?: return@MentionMenu
                                 val next = WorkspaceMention.apply(prompt.text, q.start, q.end, item.path)
                                 editPrompt(TextFieldValue(next.value, selection = TextRange(next.cursor)))
                             }
                         }
                     }
-                    val suggestions = if (cloud || mentions.isNotEmpty()) emptyList() else SlashCommands.suggestions(prompt.text, slashList)
+                    val suggestions = if (cloud || mentionItems.isNotEmpty()) emptyList() else SlashCommands.suggestions(prompt.text, slashList)
                     AnimatedVisibility(suggestions.isNotEmpty()) {
                         Box(Modifier.padding(top = 8.dp)) {
                             SlashMenu(suggestions, thread = true, busy = false) { c ->

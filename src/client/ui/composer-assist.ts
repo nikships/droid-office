@@ -132,12 +132,10 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
     const s = opts.scope();
     const scopeKey = filesScopeKey(s);
     if (!scopeKey) return;
-    const now = Date.now();
-    const validBase = filesCache && filesCache.key === scopeKey && now - filesCache.at < FILES_CACHE_TTL_MS ? filesCache : undefined;
-    const needServerFilter = Boolean(query && validBase?.truncated);
-    if (validBase && !needServerFilter) return;
+    const freshBase = filesCache?.key === scopeKey && Date.now() - filesCache.at < FILES_CACHE_TTL_MS ? filesCache : undefined;
+    const reqQuery = freshBase?.truncated ? query : '';
+    if (freshBase && !reqQuery) return;
 
-    const reqQuery = needServerFilter ? query : '';
     const fetchKey = `${scopeKey}:${reqQuery}`;
     if (filesQueryKey === fetchKey && filesAbort) return;
 
@@ -426,8 +424,7 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        if (activeMention) mentionDismissedKey = `${activeMention.start}:${activeMention.query}`;
-        paintMention();
+        dismissMenu();
         return true;
       }
       if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
@@ -448,8 +445,7 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
       if (event.key === 'Escape') {
         event.preventDefault();
         event.stopPropagation();
-        slashClosed = true;
-        paintSlash();
+        dismissMenu();
         return true;
       }
       // Tab, or Enter on a name only partly typed, completes it; Enter on a whole name sends it.
@@ -482,8 +478,9 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
     else paintMention();
   };
 
-  if (opts.preloadSlash || input.value.trimStart().startsWith('/')) loadSlash();
-  if (input.value.trimStart().startsWith('/')) paintSlash();
+  const startsAsSlash = input.value.trimStart().startsWith('/');
+  if (opts.preloadSlash || startsAsSlash) loadSlash();
+  if (startsAsSlash) paintSlash();
 
   return {
     mentionMenu,

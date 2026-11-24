@@ -167,7 +167,9 @@ export function createFloorHttp({ floors, orchestrator, workerFloor, workerThrea
       const hasWorker = url.searchParams.has('worker');
       const workerId = str(url.searchParams.get('worker'), 32);
       // Listing workspace files without `worker` serves the floor's folder for the hire composer.
-      const cwd = hasWorker ? resolveThreadCwd(workerId, floor) : p === '/api/thread/files' ? floor?.dir : undefined;
+      let cwd: string | undefined;
+      if (hasWorker) cwd = resolveThreadCwd(workerId, floor);
+      else if (p === '/api/thread/files') cwd = floor?.dir;
       if (!cwd) return send(res, 404, { error: 'Workspace files are available only for local Droid workers.' });
       if (p === '/api/thread/files') {
         const q = str(url.searchParams.get('q'), 256);

@@ -154,9 +154,9 @@ export function openAsk(opts: AskOptions) {
       refusedNote.classList.remove('hidden');
       return;
     }
-    if (!targetIsCloud()) {
-      const targetName = to ? (opts.workers.find((w) => w.id === to)?.name ?? 'this worker') : 'the new worker';
-      const slashError = slashRefusal(text, targetName, false, assist.slashList());
+    const target = to ? opts.workers.find((w) => w.id === to) : undefined;
+    if (!target?.cloud) {
+      const slashError = slashRefusal(text, target?.name ?? (to ? 'this worker' : 'the new worker'), false, assist.slashList());
       if (slashError) {
         refusedNote.textContent = slashError;
         refusedNote.classList.remove('hidden');
