@@ -170,16 +170,19 @@ object SlashCommands {
 
     /**
      * The commands to offer while a `/` token is typed at [cursor]: all commands at the start of
-     * the draft, and skills only mid-draft (suppressed when the draft starts with a non-skill
-     * slash command). Exact matches come first, then prefix matches, aliases, and substrings.
+     * the draft, and skills only mid-draft or when [inlineOnly] is true (suppressed when the draft
+     * starts with a resolved non-skill slash command). Exact matches come first, then prefix
+     * matches, aliases, and substrings.
      */
-    fun suggestions(draft: String, commands: List<Command> = ALL, cursor: Int = draft.length): List<Command> {
+    fun suggestions(draft: String, commands: List<Command> = ALL, cursor: Int = draft.length, inlineOnly: Boolean = false): List<Command> {
         val found = find(draft, cursor) ?: return emptyList()
-        val pool = if (found.atStart) {
+        val pool = if (!inlineOnly && found.atStart) {
             commands
         } else {
-            val leading = of(draft, commands)
-            if (leading?.second != null && leading.second?.source != Source.Skill) return emptyList()
+            if (!inlineOnly) {
+                val leading = of(draft, commands)?.second
+                if (leading != null && leading.source != Source.Skill) return emptyList()
+            }
             commands.filter { it.source == Source.Skill }
         }
         val typed = found.query.lowercase()
@@ -187,7 +190,7 @@ object SlashCommands {
             when {
                 typed.isNotEmpty() && name == typed -> 0
                 name.startsWith(typed) -> 1
-                c.aliases.any { it.startsWith(typed) } -> 2
+                c.aliases.any { it.lowercase().startsWith(typed) } -> 2
                 typed in name -> 3
                 else -> -1
             }

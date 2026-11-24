@@ -220,7 +220,7 @@ export function slashSuggestions(draft: string, commands: readonly SlashCommand[
     const name = c.name.toLowerCase();
     if (typed && name === typed) return 0;
     if (name.startsWith(typed)) return 1;
-    if (c.aliases?.some((a) => a.startsWith(typed))) return 2;
+    if (c.aliases?.some((a) => a.toLowerCase().startsWith(typed))) return 2;
     if (name.includes(typed)) return 3;
     return -1;
   };

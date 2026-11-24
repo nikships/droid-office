@@ -111,6 +111,8 @@ class SlashCommandsTest {
         assertEquals(listOf("full", "full-send", "full-stop"), SlashCommands.suggestions("/tmp is where logs are; /full", all).map { it.name })
         assertEquals(listOf("sol-loop"), SlashCommands.suggestions("/full-send then /sol", all).map { it.name })
         assertEquals(listOf("sol-loop"), SlashCommands.suggestions("/etc/hosts is wrong, /sol", all).map { it.name })
+        assertEquals(listOf("full-send", "full-stop", "full", "sol-loop"), SlashCommands.suggestions("/", all, inlineOnly = true).map { it.name })
+        assertEquals(emptyList<String>(), SlashCommands.suggestions("/mod", all, inlineOnly = true).map { it.name })
 
         // apply replaces only the active slash token without duplicating an existing trailing space.
         assertEquals(SlashCommands.Applied("fix bug\n\n/full-send ", 20), SlashCommands.apply("fix bug\n\n/full", 9, 14, "full-send"))

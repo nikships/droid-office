@@ -455,20 +455,20 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
     paintSlash();
     paintMention();
   };
+  const onDocSelection = () => {
+    if (document.activeElement === input) onSelection();
+  };
   const onKeyup = (event: KeyboardEvent) => {
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') {
-      paintSlash();
-      paintMention();
-    } else if ((event.key === 'ArrowUp' || event.key === 'ArrowDown') && !slashShown.length && !mentionShown.length) {
-      paintSlash();
-      paintMention();
-    }
+    const moved = event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End';
+    const reopen = (event.key === 'ArrowUp' || event.key === 'ArrowDown') && !slashShown.length && !mentionShown.length;
+    if (moved || reopen) onSelection();
   };
 
   input.addEventListener('paste', onPaste);
   input.addEventListener('click', onSelection);
   input.addEventListener('select', onSelection);
   input.addEventListener('selectionchange', onSelection);
+  document.addEventListener('selectionchange', onDocSelection);
   input.addEventListener('keyup', onKeyup);
 
   const dismissMenu = (): boolean => {
@@ -509,38 +509,37 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
     }
     const plain = !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
     const isSlashKey = event.key === 'Escape' || (plain && (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Tab' || event.key === 'Enter'));
-    if (isSlashKey) {
-      const selStart = input.selectionStart ?? input.value.length;
-      const selEnd = input.selectionEnd ?? selStart;
-      const liveSlash = selStart === selEnd ? findSlashQuery(input.value, selStart) : null;
-      if (!liveSlash) {
-        if (slashShown.length) closeSlash();
-        return false;
-      }
-      const liveKey = `${liveSlash.start}:${liveSlash.query}`;
-      if (liveKey !== activeSlashKey) paintSlash();
-      if (!slashShown.length) return false;
-      const typed = liveSlash.query.toLowerCase();
-      if (plain && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
-        event.preventDefault();
-        slashCursor = (slashCursor + (event.key === 'ArrowDown' ? 1 : slashShown.length - 1)) % slashShown.length;
-        paintSlash();
-        slashMenu.children[slashCursor]?.scrollIntoView?.({ block: 'nearest' });
-        return true;
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        dismissMenu();
-        return true;
-      }
-      const exactAtEnd = selStart === liveSlash.end && slashShown[slashCursor].name.toLowerCase() === typed;
-      // Tab, or Enter on a partial or mid-token name, completes it; Enter on a whole name at token end sends it.
-      if (plain && (event.key === 'Tab' || (event.key === 'Enter' && !exactAtEnd))) {
-        event.preventDefault();
-        pickSlash(slashShown[slashCursor], liveKey);
-        return true;
-      }
+    if (!isSlashKey) return false;
+    const selStart = input.selectionStart ?? input.value.length;
+    const selEnd = input.selectionEnd ?? selStart;
+    const liveSlash = selStart === selEnd ? findSlashQuery(input.value, selStart) : null;
+    if (!liveSlash) {
+      if (slashShown.length) closeSlash();
+      return false;
+    }
+    const liveKey = `${liveSlash.start}:${liveSlash.query}`;
+    if (liveKey !== activeSlashKey) paintSlash();
+    if (!slashShown.length) return false;
+    const typed = liveSlash.query.toLowerCase();
+    if (plain && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+      event.preventDefault();
+      slashCursor = (slashCursor + (event.key === 'ArrowDown' ? 1 : slashShown.length - 1)) % slashShown.length;
+      paintSlash();
+      slashMenu.children[slashCursor]?.scrollIntoView?.({ block: 'nearest' });
+      return true;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      dismissMenu();
+      return true;
+    }
+    const exactAtEnd = selStart === liveSlash.end && slashShown[slashCursor].name.toLowerCase() === typed;
+    // Tab, or Enter on a partial or mid-token name, completes it; Enter on a whole name at token end sends it.
+    if (plain && (event.key === 'Tab' || (event.key === 'Enter' && !exactAtEnd))) {
+      event.preventDefault();
+      pickSlash(slashShown[slashCursor], liveKey);
+      return true;
     }
     return false;
   };
@@ -558,14 +557,14 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
       slashEntries = slashCommands();
       slashScopeKey = '';
       slashAsked = 0;
-      if (opts.preloadSlash || findSlashQuery(input.value, input.selectionStart ?? input.value.length)) loadSlash();
+      if (opts.preloadSlash || findSlashQuery(input.value, input.selectionStart ?? input.value.length) || findSlashQuery(input.value, input.value.length)) loadSlash();
     }
     paintSlash();
     if (!canMentionFiles(s)) closeMention();
     else paintMention();
   };
 
-  const hasInitialSlash = Boolean(findSlashQuery(input.value, input.selectionStart ?? input.value.length));
+  const hasInitialSlash = Boolean(findSlashQuery(input.value, input.selectionStart ?? input.value.length) || findSlashQuery(input.value, input.value.length));
   if (opts.preloadSlash || hasInitialSlash) loadSlash();
   if (hasInitialSlash) paintSlash();
 
@@ -600,6 +599,7 @@ export function attachComposerAssist(opts: ComposerAssistOptions): ComposerAssis
       input.removeEventListener('click', onSelection);
       input.removeEventListener('select', onSelection);
       input.removeEventListener('selectionchange', onSelection);
+      document.removeEventListener('selectionchange', onDocSelection);
       input.removeEventListener('keyup', onKeyup);
     },
   };
