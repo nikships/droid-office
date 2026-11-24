@@ -332,7 +332,8 @@ test('hiring preserves the literal brief, uses nearest desk and a worktree, and 
   assert.equal(result.body.worker.worktree.path, path.join(r.dir, '.droid-office/worktrees/sub1'));
   assert.match(result.output, /Pixel.*Desk 3/);
   assert.match(result.output, /origin\/main/);
-  await r.hire({ worktree: false });
+  assert.match(result.output, /call team_dismiss/i);
+  assert.match((await r.hire({ worktree: false })).output, /call team_dismiss/i);
   assert.equal(r.hired[1][3], false);
   assert.equal(r.fetched.length, 1);
   assert.match((await r.hire({ worktree: false, from: 'main' })).output, /leave from out/);

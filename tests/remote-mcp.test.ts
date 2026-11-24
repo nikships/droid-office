@@ -345,6 +345,7 @@ test('a building agent hires through MCP by naming a floor, and a structured tas
 
   const hired = await call({ title: 'Count the tests', brief: 'Count tests/*.test.ts and report the number.', floor: 'beta', worktree: false });
   assert.equal(hired.isError, undefined, hired.text);
+  assert.match(hired.text, /call team_dismiss/i);
   assert.equal(r.maps[1].has(hired.body.worker.id), true, 'the worker landed on the floor the building agent named');
   assert.equal(r.maps[0].has(hired.body.worker.id), false);
 

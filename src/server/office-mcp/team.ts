@@ -687,7 +687,10 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
         }),
         (body) => {
           const guide = server.takeLeadGuide(caller);
-          return [`Hired ${memberText(body.worker as TeamMember)}\nIt is working on the brief. Review its report and commits before integration.`, ...(guide ? [`Team lead guide:\n${guide}`] : [])].join('\n\n');
+          return [
+            `Hired ${memberText(body.worker as TeamMember)}\nReview its report and commits before integration. Call team_dismiss as soon as this subagent's work is merged, delivered, or no longer needed.`,
+            ...(guide ? [`Team lead guide:\n${guide}`] : []),
+          ].join('\n\n');
         },
       );
     },
