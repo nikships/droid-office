@@ -162,15 +162,14 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
       const model = w.activeModel ?? w.model;
       const effort = w.activeEffort ?? w.effort;
       const branch = w.worktree?.branch;
-      const repo = repoBesideFloor(row);
+      const where = [repoBesideFloor(row), branch].filter(Boolean).join(' · ');
       const rowKey = JSON.stringify([w.name, w.color, w.status, status, detail, model, effort, w.kind, w.cloud?.computerName, w.todos, branch, row.floorName, row.repo, row.leadName, row.grokBot, row.depth, row.kind]);
       if (rowKey !== node.key) {
         node.key = rowKey;
         button.setAttribute('aria-label', `Open ${w.name}, ${row.floorName}, ${status}${row.leadName ? `, subworker of ${row.leadName}` : ''}: ${detail}`);
-        button.title = [w.name, row.floorName, row.repo, branch, detail].filter(Boolean).join(' · ');
+        button.title = [w.name, row.floorName, where, detail].filter(Boolean).join(' · ');
         // The floor column already says Mission Control, and the model column a shell.
         const sub = row.leadName ? `Subworker of ${row.leadName}` : w.cloud ? workerKind(w) : undefined;
-        const where = [repo, branch].filter(Boolean).join(' · ');
         let engine: HTMLElement | string | undefined;
         if (w.kind === 'shell') engine = 'Shell';
         else if (row.kind === 'bot') engine = row.grokBot ? 'Webhook push' : 'Runs externally';

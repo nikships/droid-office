@@ -27,21 +27,11 @@ export type StatusMark = 'working' | 'starting' | 'ready' | 'needs_you' | 'block
 /** A done turn nobody has read yet draws its check in; a blocked Orchestrator wears a still `!`. */
 export function statusMark(status: WorkerStatus, acked = true, blocked = false): StatusMark {
   if (blocked) return 'blocked';
-  switch (status) {
-    case 'working':
-      return 'working';
-    case 'starting':
-      return 'starting';
-    case 'idle':
-      return 'ready';
-    case 'needs_input':
-      return 'needs_you';
-    case 'done':
-      return acked ? 'done' : 'done_new';
-    case 'exited':
-    case 'offline':
-      return 'asleep';
-  }
+  if (status === 'idle') return 'ready';
+  if (status === 'needs_input') return 'needs_you';
+  if (status === 'done') return acked ? 'done' : 'done_new';
+  if (status === 'exited' || status === 'offline') return 'asleep';
+  return status;
 }
 
 /** What a status mark says to a screen reader and in its tooltip, as Android's `Workers.statusWord` does. */
