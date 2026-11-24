@@ -100,6 +100,22 @@ object Workers {
 
     fun title(w: WorkerInfo): String? = w.task?.name?.takeIf { it.isNotBlank() } ?: w.title?.takeIf { it.isNotBlank() }
 
+    /**
+     * A card's two lines: its [title] and its [detail], each said once. A detail that only goes on
+     * from where a cut-short title stopped (a title made from the prompt) takes the title's place.
+     */
+    fun headline(w: WorkerInfo): Pair<String?, String?> = headline(title(w), detail(w))
+
+    fun headline(title: String?, detail: String?): Pair<String?, String?> {
+        if (title == null || detail == null) return title to detail
+        val head = title.trimEnd().removeSuffix("…").removeSuffix("...").trimEnd()
+        return when {
+            detail.trim().equals(title.trim(), ignoreCase = true) -> title to null
+            head.isNotEmpty() && detail.trimStart().startsWith(head, ignoreCase = true) -> detail to null
+            else -> title to detail
+        }
+    }
+
     /** Its todo list, when it has one with items (src/shared/todos.ts); a shell has none. */
     fun todos(w: WorkerInfo): TodoProgress? = w.todos?.takeIf { !w.isShell && it.total > 0 && it.done in 0..it.total }
 

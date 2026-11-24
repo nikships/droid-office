@@ -76,6 +76,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
@@ -109,6 +110,7 @@ import ai.factory.droidoffice.session.OfficeData
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
+import ai.factory.droidoffice.ui.components.CardMark
 import ai.factory.droidoffice.ui.components.Chip
 import ai.factory.droidoffice.ui.components.HireFab
 import ai.factory.droidoffice.ui.components.EffortDialMark
@@ -471,10 +473,16 @@ internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit, highlight: 
         val last = onScreen.lastOrNull() ?: return null
         return order.drop(order.indexOf(last) + 1).firstOrNull { it != id }
     }
+    val context = LocalContext.current
+    var showHint by remember(context) { mutableStateOf(FloorOrderHint.shown(context)) }
+    fun learned() {
+        showHint = false
+        FloorOrderHint.learned(context)
+    }
     fun move(id: String, step: Int): Boolean {
         if (!live) return false
         val move = FloorOrder.step(latestFloors.map { it.id }, id, step) ?: return false
-        return connection.reorderFloor(move.floor, move.before)
+        return connection.reorderFloor(move.floor, move.before).also { if (it) learned() }
     }
     fun drop(id: String, target: String?) {
         if (!latestLive) {
@@ -493,6 +501,7 @@ internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit, highlight: 
                     detectDragGesturesAfterLongPress(
                         onDragStart = { offset ->
                             bounds[f.id]?.let { rect ->
+                                learned()
                                 dragging = f.id
                                 pointerX = rect.left + offset.x
                                 startX = pointerX
@@ -575,7 +584,7 @@ internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit, highlight: 
                 more.forEach { it.placeRelative(x, (height - it.height) / 2) }
             }
         }
-        if (live) Text("Long-press a floor and drag to reorder", style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, modifier = Modifier.padding(start = 14.dp, bottom = 6.dp).tagged(Tags.Home.FLOOR_ORDER_HINT))
+        if (live && showHint) Text("Long-press a floor and drag to reorder", style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary, modifier = Modifier.padding(start = 14.dp, bottom = 6.dp).tagged(Tags.Home.FLOOR_ORDER_HINT))
     }
 }
 
@@ -653,13 +662,14 @@ internal fun WorkerCard(row: WorkerRow, pulls: List<GhPull>, now: Long, selected
                 Column(Modifier.weight(1f).padding(start = 2.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).tagged(Tags.Home.CARD_NAME))
-                        if (w.isShell) Tag("SHELL")
-                        if (w.isCloud) Tag("CLOUD")
-                        if (row.subagents > 0) Tag("+${row.subagents}")
+                        if (w.isShell) CardMark(OfficeIcons.Shell, "Shell")
+                        if (w.isCloud) CardMark(OfficeIcons.Cloud, "Cloud worker")
+                        if (row.subagents > 0) CardMark(OfficeIcons.Workers, if (row.subagents == 1) "1 subagent" else "${row.subagents} subagents", count = row.subagents)
+                        Spacer(Modifier.width(8.dp))
                         StatusPill(state, acked = w.acked, tag = Tags.Home.CARD_STATUS, compact = true)
                     }
                     val effort = Workers.effort(w)?.takeIf { !w.isShell && model != null }
-                    val rest = meta(w, now, graph.connection.officeName)
+                    val rest = meta(w, now)
                     val shown = model?.takeIf { !w.isShell }?.let(Models::plainName)?.uppercase()
                     val spoken = listOfNotNull(model?.takeIf { !w.isShell }?.let { it + (effort?.let { e -> " · ${EffortDial.label(e)}" } ?: "") }, rest.takeIf { it.isNotEmpty() }).joinToString(" · ")
                     val metaStyle = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp)
@@ -675,12 +685,11 @@ internal fun WorkerCard(row: WorkerRow, pulls: List<GhPull>, now: Long, selected
                     }
                 }
             }
-            val title = Workers.title(w)
-            val detail = Workers.detail(w)
+            val (title, detail) = Workers.headline(w)
             if (title != null || detail != null) {
                 Column(Modifier.padding(start = 26.dp, top = 6.dp)) {
-                    if (title != null) Text(title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.tagged(Tags.Home.CARD_TITLE))
-                    if (detail != null && detail != title) {
+                    if (title != null) Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Home.CARD_TITLE))
+                    if (detail != null) {
                         Text(
                             detail,
                             style = MaterialTheme.typography.bodySmall,
@@ -727,23 +736,16 @@ internal fun WorkerCard(row: WorkerRow, pulls: List<GhPull>, now: Long, selected
     }
 }
 
-/** The card's metadata after the model and its dial. A shell's tag already says it's a shell; what this phone hired doesn't say who. */
-private fun meta(w: WorkerInfo, now: Long, me: String): String {
+/**
+ * The card's metadata after the model and its dial: how long it worked and how long it has waited.
+ * Who hired it isn't said: every worker is the owner's, whichever window or phone it came from.
+ */
+private fun meta(w: WorkerInfo, now: Long): String {
     val parts = mutableListOf<String>()
     val worked = Workers.workedMs(w, now)
     if (worked >= 1_000) parts += Workers.duration(worked)
     if ((w.state == WorkerStatus.NeedsInput || (w.state == WorkerStatus.Done && !w.acked)) && w.waitingSince != null) parts += Workers.ago(w.waitingSince, now)
-    if (w.createdBy.isNotBlank() && w.createdBy != me) parts += "by ${w.createdBy}"
     return parts.joinToString(" · ").uppercase()
-}
-
-@Composable
-private fun Tag(text: String) {
-    Text(
-        text,
-        style = LocalOfficeType.current.eyebrow.copy(fontSize = 9.sp, color = Palette.TextSecondary),
-        modifier = Modifier.padding(start = 6.dp).clip(RoundedCornerShape(3.dp)).background(Palette.SurfaceHigh).padding(horizontal = 5.dp, vertical = 1.dp),
-    )
 }
 
 @Composable

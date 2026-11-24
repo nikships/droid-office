@@ -45,7 +45,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -53,7 +52,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -112,42 +116,103 @@ fun Modifier.tagged(name: String) = this.semantics {
     testTag = name
 }
 
-/** A square mono pill with a status-colored indicator; it blinks for "needs you", like the office's. [blocked] reads "Blocked" whatever the status. */
+/**
+ * A worker's status: its [StatusGlyph], and beside it the word unless [compact]. TalkBack reads the
+ * word either way. [blocked] reads "Blocked" whatever the status.
+ */
 @Composable
 fun StatusPill(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boolean = true, tag: String? = null, compact: Boolean = false, blocked: Boolean = false) {
     val look = if (blocked) StatusLook("Blocked", Palette.Warning) else statusLook(status, acked)
-    val indicatorOnly = !blocked && compact && (status == WorkerStatus.Working || status == WorkerStatus.Done)
-    val blink = if (look.loud) {
-        val t = rememberInfiniteTransition(label = "blink")
-        t.animateFloat(1f, 0.25f, infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse), label = "blink").value
-    } else 1f
     Row(
-        modifier
-            // Read as "Needs you" rather than spelled out from the upper-case label.
-            .clearAndSetSemantics {
-                contentDescription = look.label
-                if (tag != null) {
-                    testTagsAsResourceId = true
-                    testTag = tag
-                }
+        modifier.clearAndSetSemantics {
+            contentDescription = look.label
+            if (tag != null) {
+                testTagsAsResourceId = true
+                testTag = tag
             }
-            .then(
-                if (indicatorOnly) Modifier.size(24.dp)
-                else Modifier
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(if (look.loud) look.color.copy(alpha = 0.12f) else Palette.SurfaceRaised)
-                    .border(1.dp, look.color.copy(alpha = if (look.loud) 0.55f else 0.35f), RoundedCornerShape(3.dp))
-                    .padding(horizontal = 7.dp, vertical = 4.dp),
-            ),
+        },
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = if (indicatorOnly) Arrangement.Center else Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        if (!blocked && (status == WorkerStatus.Working || status == WorkerStatus.Starting)) {
-            WorkingBars(look.color, height = if (indicatorOnly) 12.dp else 8.dp, width = if (indicatorOnly) 12.dp else 9.dp)
-        } else {
-            Box(Modifier.size(if (indicatorOnly) 9.dp else 5.dp).alpha(blink).clip(if (indicatorOnly) CircleShape else RoundedCornerShape(1.dp)).background(look.color))
+        StatusGlyph(status, acked = acked, blocked = blocked, size = if (compact) 22.dp else 20.dp)
+        if (!compact) Text(look.label, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold), color = look.color, maxLines = 1)
+    }
+}
+
+/**
+ * A status as a tinted disc with a mark of its own, so it reads by shape as well as colour: bars
+ * while working, a turning arc while starting, a prompt chevron when ready, `!` when it needs you,
+ * a check when done, a moon asleep. Needs you and an unread Done fill the disc; Needs you blinks.
+ */
+@Composable
+fun StatusGlyph(status: WorkerStatus, acked: Boolean = true, blocked: Boolean = false, size: Dp = 22.dp) {
+    val look = if (blocked) StatusLook("Blocked", Palette.Warning) else statusLook(status, acked)
+    val solid = !blocked && (status == WorkerStatus.NeedsInput || (status == WorkerStatus.Done && !acked))
+    val blink = if (!blocked && status == WorkerStatus.NeedsInput) {
+        rememberInfiniteTransition(label = "blink").animateFloat(1f, 0.35f, infiniteRepeatable(tween(700, easing = LinearEasing), RepeatMode.Reverse), label = "blink")
+    } else null
+    val mark = if (solid) Palette.Bg else look.color
+    Box(
+        Modifier.size(size)
+            // Read while drawing, so the blink never relayouts the card.
+            .graphicsLayer { alpha = blink?.value ?: 1f }
+            .drawBehind {
+                if (solid) {
+                    drawCircle(look.color)
+                } else {
+                    drawCircle(look.color.copy(alpha = 0.13f))
+                    drawCircle(look.color.copy(alpha = 0.38f), style = Stroke(1.dp.toPx()))
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            blocked -> StatusMark(Glyph.Exclaim, mark, size)
+            status == WorkerStatus.Working -> WorkingBars(mark, height = size * 0.42f, width = size * 0.46f)
+            status == WorkerStatus.Starting -> Spinner(Modifier.size(size * 0.48f), mark)
+            status == WorkerStatus.Idle -> StatusMark(Glyph.Prompt, mark, size)
+            status == WorkerStatus.NeedsInput -> StatusMark(Glyph.Exclaim, mark, size)
+            status == WorkerStatus.Done -> StatusMark(Glyph.Check, mark, size)
+            status.asleep -> Icon(OfficeIcons.Moon, null, Modifier.size(size * 0.5f), tint = mark)
+            else -> StatusMark(Glyph.Dash, mark, size)
         }
-        if (!indicatorOnly) Text(look.label.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = look.color, fontSize = 9.5.sp))
+    }
+}
+
+private enum class Glyph { Check, Exclaim, Prompt, Dash }
+
+@Composable
+private fun StatusMark(glyph: Glyph, color: Color, size: Dp) {
+    Canvas(Modifier.size(size)) {
+        val s = this.size.minDimension
+        val stroke = Stroke(width = s * 0.095f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        fun at(x: Float, y: Float) = Offset(s * x, s * y)
+        when (glyph) {
+            Glyph.Check -> drawPath(Path().apply { moveTo(s * 0.31f, s * 0.52f); lineTo(s * 0.45f, s * 0.65f); lineTo(s * 0.70f, s * 0.37f) }, color, style = stroke)
+            Glyph.Prompt -> drawPath(Path().apply { moveTo(s * 0.42f, s * 0.33f); lineTo(s * 0.59f, s * 0.5f); lineTo(s * 0.42f, s * 0.67f) }, color, style = stroke)
+            Glyph.Exclaim -> {
+                drawLine(color, at(0.5f, 0.29f), at(0.5f, 0.55f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+                drawCircle(color, radius = stroke.width * 0.62f, center = at(0.5f, 0.71f))
+            }
+            Glyph.Dash -> drawLine(color, at(0.36f, 0.5f), at(0.64f, 0.5f), strokeWidth = stroke.width, cap = StrokeCap.Round)
+        }
+    }
+}
+
+/** A card's small kind mark (a shell, a cloud computer, a team's size) as an icon, with what it means for TalkBack. */
+@Composable
+fun CardMark(icon: ImageVector, spoken: String, modifier: Modifier = Modifier, count: Int? = null) {
+    Row(
+        modifier.padding(start = 6.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(Palette.SurfaceHigh)
+            .clearAndSetSemantics { contentDescription = spoken }
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Icon(icon, null, Modifier.size(12.dp), tint = Palette.TextSecondary)
+        if (count != null) Text("$count", style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp, color = Palette.TextSecondary, letterSpacing = 0.sp))
     }
 }
 

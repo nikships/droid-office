@@ -50,6 +50,16 @@ object BuildingRoster {
         return tail.takeIf { it.isNotEmpty() && !it.equals(floor.name.trim(), ignoreCase = true) }
     }
 
+    /**
+     * [repoLabel] where it adds to the floor's name: `nikships/droid-office` on a floor named
+     * `droid-office` says nothing new, and neither does `Home` on the Home floor.
+     */
+    fun repoBesideFloor(floor: FloorInfo?): String? {
+        val repo = repoLabel(floor) ?: return null
+        val name = floor?.name?.trim().orEmpty()
+        return repo.takeUnless { name.isNotEmpty() && (it.equals(name, ignoreCase = true) || it.substringAfterLast('/').equals(name, ignoreCase = true)) }
+    }
+
     /** Short repo name when space is tight (`nikships/droid-office` -> `droid-office`), or full slug when unambiguous clarity helps. */
     fun extraRepoLabels(worker: WorkerInfo): List<String> =
         worker.repos.mapNotNull { r -> r.repo?.trim()?.takeIf { it.isNotEmpty() } ?: r.name.trim().takeIf { it.isNotEmpty() } }.distinct()
@@ -58,7 +68,7 @@ object BuildingRoster {
     fun whereLabel(worker: WorkerInfo, floor: FloorInfo?): String? {
         if (worker.id == ORCHESTRATOR_ID || worker.remote) return "Mission Control"
         val floorName = floor?.name?.trim()?.takeIf { it.isNotEmpty() } ?: floor?.id?.takeIf { it.isNotBlank() }
-        val repo = repoLabel(floor)?.takeUnless { it.equals(floorName, ignoreCase = true) }
+        val repo = repoBesideFloor(floor)
         val branch = worker.worktree?.branch?.trim()?.takeIf { it.isNotEmpty() }
         return listOfNotNull(floorName, repo, branch).joinToString(" · ").ifBlank { null }
     }
@@ -134,8 +144,9 @@ object BuildingRoster {
         val enriched = candidates.map { row ->
             val leadId = row.worker.lead
             val leadRow = leadId?.let(byId::get)
+            // A team's lead carries its own name as the team's leadName: only a member was hired by someone.
             val resolvedLeadName = leadRow?.worker?.name?.ifBlank { null }
-                ?: row.worker.team?.leadName?.ifBlank { null }
+                ?: row.worker.team?.takeIf { it.role != "lead" }?.leadName?.ifBlank { null }
             val crossFloor = leadRow != null && leadRow.floorId != row.floorId
             row.copy(leadName = resolvedLeadName, crossFloorLead = crossFloor)
         }

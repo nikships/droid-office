@@ -23,7 +23,8 @@ class BuildingRosterTest {
     @Test
     fun whereLabelIncludesFloorRepoAndBranchForCrossFloorAsks() {
         val w = WorkerInfo(id = "w1", name = "Atlas", worktree = WorktreeRef(branch = "feat/workers-tab"))
-        assertEquals("droid-office · nikships/droid-office · feat/workers-tab", BuildingRoster.whereLabel(w, floorOffice))
+        assertEquals("droid-office · feat/workers-tab", BuildingRoster.whereLabel(w, floorOffice))
+        assertEquals("Backend · nikships/api-service", BuildingRoster.whereLabel(WorkerInfo(id = "w2", name = "Nova"), floorApi.copy(name = "Backend")))
         assertEquals("Mission Control", BuildingRoster.whereLabel(WorkerInfo(id = ORCHESTRATOR_ID, name = ORCHESTRATOR_NAME), floorOffice))
     }
 
@@ -128,5 +129,28 @@ class BuildingRosterTest {
 
         assertEquals(listOf("root", "child", "grand", "cyc-a", "cyc-b"), view.rows.map { it.worker.id })
         assertEquals(listOf(0, 1, 2, 0, 1), view.rows.map { it.depth })
+    }
+    @Test
+    fun repoBesideFloorSkipsARepositoryNamedLikeItsFloor() {
+        assertNull(BuildingRoster.repoBesideFloor(floorOffice))
+        assertNull(BuildingRoster.repoBesideFloor(floorHome))
+        assertEquals("Folder", BuildingRoster.repoBesideFloor(floorNotes))
+        assertEquals("nikships/api", BuildingRoster.repoBesideFloor(FloorInfo(id = "x", name = "Backend", repo = "nikships/api", dir = "/repos/api")))
+        assertEquals("checkout-dir", BuildingRoster.repoBesideFloor(FloorInfo(id = "x", name = "My App", dir = "/work/checkout-dir")))
+    }
+
+    @Test
+    fun aTeamLeadIsNeverLabelledAsHiredByItself() {
+        val lead = WorkerInfo(id = "pixel", name = "Pixel", status = "idle", team = TeamBadge(id = "t1", role = "lead", leadName = "Pixel"))
+        val member = WorkerInfo(id = "far", name = "Scout", status = "working", team = TeamBadge(id = "t2", role = "member", leadName = "Atlas"))
+        val view = BuildingRoster.build(
+            floors = listOf(floorOffice),
+            workersByFloor = mapOf("office" to listOf(lead, member)),
+            pullsByFloor = emptyMap(),
+            mission = null,
+            screens = emptyMap(),
+        )
+        assertNull(view.rows.single { it.worker.id == "pixel" }.leadName)
+        assertEquals("Atlas", view.rows.single { it.worker.id == "far" }.leadName)
     }
 }

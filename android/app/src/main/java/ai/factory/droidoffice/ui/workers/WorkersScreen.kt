@@ -89,6 +89,7 @@ import ai.factory.droidoffice.session.OfficeData
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.asks.AskCard
+import ai.factory.droidoffice.ui.components.CardMark
 import ai.factory.droidoffice.ui.components.EffortDialMark
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.GlyphMark
@@ -106,7 +107,6 @@ import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.ConnectionBanner
 import ai.factory.droidoffice.ui.home.Repair
 import ai.factory.droidoffice.ui.home.WorkerActionsSheet
-import ai.factory.droidoffice.ui.home.deskLabel
 import ai.factory.droidoffice.ui.home.rememberNow
 import ai.factory.droidoffice.ui.mission.AgentTile
 import ai.factory.droidoffice.ui.mission.BotTile
@@ -348,7 +348,8 @@ private fun WorkersRosterPane(
                             }
                         }
 
-                        if (view.rows.isNotEmpty()) {
+                        // The header already counts them; the heading only separates them from the questions above.
+                        if (view.rows.isNotEmpty() && (primaryAsk != null || sent.isNotEmpty())) {
                             item(key = "roster-header") {
                                 val heading = if (data.floors.size > 1) "All floors · ${view.rows.size}" else "Roster · ${view.rows.size}"
                                 Eyebrow(
@@ -365,7 +366,6 @@ private fun WorkersRosterPane(
                                 multiFloor = data.floors.size > 1,
                                 activeFloorId = data.floorId,
                                 catalogue = catalogue,
-                                officeName = LocalGraph.current.connection.officeName,
                                 now = now,
                                 selected = row.worker.id == selected,
                                 onOpen = onOpen,
@@ -593,7 +593,6 @@ private fun BuildingWorkerCard(
     multiFloor: Boolean,
     activeFloorId: String?,
     catalogue: ModelCatalogue?,
-    officeName: String,
     now: Long,
     selected: Boolean,
     onOpen: (String) -> Unit,
@@ -655,12 +654,13 @@ private fun BuildingWorkerCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f).tagged(Tags.Workers.CARD_NAME),
                         )
-                        if (w.isShell) MicroTag("SHELL")
-                        if (w.isCloud) MicroTag("CLOUD")
-                        if (isBot) MicroTag(if (row.grokBot) "GROK BOT" else "EXTERNAL")
+                        if (w.isShell) CardMark(OfficeIcons.Shell, "Shell")
+                        if (w.isCloud) CardMark(OfficeIcons.Cloud, "Cloud worker")
+                        // The Grok Bot wears its logo; any other bot only an antenna, so it still says what it is.
+                        if (isBot && !row.grokBot) MicroTag("EXTERNAL")
                         val subCount = if (row.subagents > 0) row.subagents else row.teamCount
-                        if (subCount > 0) MicroTag("+$subCount")
-                        Spacer(Modifier.width(6.dp))
+                        if (subCount > 0) CardMark(OfficeIcons.Workers, if (subCount == 1) "1 subagent" else "$subCount subagents", count = subCount)
+                        Spacer(Modifier.width(8.dp))
                         StatusPill(
                             state,
                             acked = w.acked,
@@ -673,7 +673,7 @@ private fun BuildingWorkerCard(
                     // Model + effort dial + duration line
                     val model = if (isBot) null else Workers.modelId(w)?.let(catalogue::nameOf)
                     val effort = Workers.effort(w)?.takeIf { !w.isShell && !isBot && (model != null || isOrchestrator) }
-                    val rest = cardMeta(row, now, officeName)
+                    val rest = cardMeta(row, now)
                     val shownModel = when {
                         w.isShell || isBot -> null
                         model != null -> Models.plainName(model).uppercase()
@@ -727,19 +727,16 @@ private fun BuildingWorkerCard(
                 !row.floorId.isNullOrBlank() -> row.floorId
                 else -> null
             }
-            val repo = if (isOrchestrator || isBot) null else BuildingRoster.repoLabel(row.floor)
+            val repo = if (isOrchestrator || isBot) null else BuildingRoster.repoBesideFloor(row.floor)
             val extraRepos = if (isOrchestrator || isBot) emptyList() else BuildingRoster.extraRepoLabels(w)
             val repoDisplay = listOfNotNull(
                 repo,
                 extraRepos.takeIf { it.isNotEmpty() }?.let { "+${it.size} repo${if (it.size == 1) "" else "s"}" },
             ).joinToString(" · ").takeIf { it.isNotBlank() }
-            val seat = when {
-                isOrchestrator || isBot -> null
-                w.isCloud -> w.cloud?.where?.let { "☁ $it" }
-                w.deskId.isNotBlank() -> deskLabel(w.deskId)
-                else -> null
-            }
+            // Which desk it sits at matters in the 3D office, not on a phone; a cloud worker's computer does.
+            val seat = if (w.isCloud && !isOrchestrator && !isBot) w.cloud?.where else null
             val leadHint = when {
+                row.leadName.equals(w.name, ignoreCase = true) -> null
                 row.depth == 0 && !row.leadName.isNullOrBlank() -> "via ${row.leadName}"
                 row.depth > 0 && row.crossFloorLead && !row.leadName.isNullOrBlank() -> "from ${row.leadName}"
                 else -> null
@@ -787,18 +784,17 @@ private fun BuildingWorkerCard(
             }
 
             // Task title & summary / blocked state
-            val title = if (isBot) null else Workers.title(w)
-            val detail = when {
-                isBot -> MissionControl.botLine(MissionAgent(w, lastUsedAt = row.botLastUsedAt))
-                isOrchestrator -> Workers.detail(w) ?: if (row.blocked == null) MissionControl.READY else null
-                else -> Workers.detail(w)
+            val (title, detail) = when {
+                isBot -> null to MissionControl.botLine(MissionAgent(w, lastUsedAt = row.botLastUsedAt))
+                isOrchestrator -> Workers.headline(Workers.title(w), Workers.detail(w) ?: if (row.blocked == null) MissionControl.READY else null)
+                else -> Workers.headline(w)
             }
             if (title != null || detail != null || row.blocked != null) {
                 Column(Modifier.padding(start = bodyIndent, top = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     if (title != null) {
-                        Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Workers.CARD_TITLE))
+                        Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Workers.CARD_TITLE))
                     }
-                    if (detail != null && detail != title) {
+                    if (detail != null) {
                         Text(
                             detail,
                             style = MaterialTheme.typography.bodySmall,
@@ -872,7 +868,7 @@ private fun BuildingWorkerCard(
     }
 }
 
-private fun cardMeta(row: BuildingWorkerRow, now: Long, me: String): String {
+private fun cardMeta(row: BuildingWorkerRow, now: Long): String {
     val w = row.worker
     val parts = ArrayList<String>(4)
     if (row.kind == RosterKind.Bot) {
@@ -884,9 +880,6 @@ private fun cardMeta(row: BuildingWorkerRow, now: Long, me: String): String {
     if (worked >= 1_000) parts += Workers.duration(worked)
     if ((w.state == WorkerStatus.NeedsInput || (w.state == WorkerStatus.Done && !w.acked)) && w.waitingSince != null) {
         parts += Workers.ago(w.waitingSince, now)
-    }
-    if (w.createdBy.isNotBlank() && w.createdBy != me && row.kind == RosterKind.Desk) {
-        parts += "by ${w.createdBy}"
     }
     return parts.joinToString(" · ").uppercase()
 }
