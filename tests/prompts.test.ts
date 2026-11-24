@@ -8,6 +8,7 @@ import {
   PROMPT_IDS,
   PROMPT_MAX,
   WORKER_TEAM_LEAD,
+  WORKER_TEAM_SOLO,
   WORKER_TEAM_SUBAGENT,
   WORKER_VISITS,
   fillPrompt,
@@ -25,7 +26,7 @@ import {
 } from '../src/shared/prompts.js';
 import { buildingInstructions } from '../src/server/office-mcp/remote.js';
 import { ownerInstructions } from '../src/server/office-mcp/owner.js';
-import { INSTRUCTIONS, SUBAGENT_INSTRUCTIONS } from '../src/server/office-mcp/index.js';
+import { INSTRUCTIONS, SOLO_INSTRUCTIONS, SUBAGENT_INSTRUCTIONS } from '../src/server/office-mcp/index.js';
 import { OfficePrompts, officePrompt, type PromptSource } from '../src/server/prompts.js';
 import type { AgentChoice, PromptsState } from '../src/shared/protocol.js';
 
@@ -341,18 +342,29 @@ test('what is cut from a message leaves at most one blank line', () => {
   assert.equal(withoutReminders('One\n\n\n\nTwo'), 'One\n\n\n\nTwo', 'untouched text keeps its own spacing');
 });
 
-test("each audience is told once to send workers home and to weigh a subscription's quota, and the standing rules are not repeated across surfaces", () => {
-  // Built the way the Office MCP's serverFor does: a building agent with owner access reads its building text and the owner text, any other worker the general text.
+test("each audience is told once to send workers home and to weigh a subscription's quota, solo workers omit lead manuals, and standing rules are not repeated across surfaces", () => {
+  // Built the way the Office MCP's serverFor does: building agents read building + owner text, active floor leads read WORKER_TEAM_LEAD + INSTRUCTIONS, solo floor workers read WORKER_TEAM_SOLO + SOLO_INSTRUCTIONS.
   const orchestrator = [PROMPTS['orchestrator.system'].text, buildingInstructions({ id: 'orchestrator', name: 'Orchestrator' }), ownerInstructions].join('\n');
   const bot = [buildingInstructions({ id: 'remote-1', name: 'Bot', remote: true }), ownerInstructions].join('\n');
   const leadSystem = fillPrompt(PROMPTS['worker.system'].text, { name: 'Lead', team: WORKER_TEAM_LEAD, visits: WORKER_VISITS, branchPolicy: '' });
+  const leadStanding = [leadSystem, INSTRUCTIONS].join('\n');
   const lead = [leadSystem, PROMPTS['subagent.nudge'].text, INSTRUCTIONS].join('\n');
+  const soloSystem = fillPrompt(PROMPTS['worker.system'].text, { name: 'Solo', team: WORKER_TEAM_SOLO, visits: WORKER_VISITS, branchPolicy: '' });
+  const solo = [soloSystem, SOLO_INSTRUCTIONS].join('\n');
   const subagentSystem = fillPrompt(PROMPTS['worker.system'].text, { name: 'Sub', team: WORKER_TEAM_SUBAGENT, visits: '', branchPolicy: '' });
   const subagent = [subagentSystem, SUBAGENT_INSTRUCTIONS].join('\n');
   for (const omitted of [/Factory Standard/, /Droid Core/, /DroidProxy/, /Benchmarks lines/, /Pace lines/, /worker_model/, /team_hire/, /team_models/, /visit_roster/]) {
     assert.doesNotMatch(subagent, omitted);
   }
+  for (const omitted of [/Factory Standard/, /Droid Core/, /DroidProxy/, /Benchmarks lines/, /Pace lines/, /worker_model/, /connective tissue/, /team_review/, /team_merge/, /worker_diff/, /questions_list/]) {
+    assert.doesNotMatch(solo, omitted, `solo worker should omit ${omitted}`);
+  }
+  assert.match(solo, /team_models/);
+  assert.match(solo, /team_hire/);
   const count = (text: string, rule: RegExp) => (text.match(rule) ?? []).length;
+  for (const once of [/connective tissue/g, /worker_diff/g, /team_review/g, /team_merge/g, /questions_list/g, /worker_model/g]) {
+    assert.equal(count(leadStanding, once), 1, `active floor lead standing surfaces should mention ${once} once`);
+  }
   assert.deepEqual(
     [orchestrator, bot, lead].map((text) => count(text, /team_dismiss/g)),
     [1, 1, 1],
@@ -360,7 +372,7 @@ test("each audience is told once to send workers home and to weigh a subscriptio
   assert.deepEqual(
     [orchestrator, bot, lead].map((text) => count(text, /nearly spent (?:one|tiers) off long tasks/g)),
     [1, 1, 1],
-    'the quota guidance reaches every audience once',
+    'the quota guidance reaches every lead audience once',
   );
   for (const text of [orchestrator, bot, lead]) {
     assert.match(text, /Factory Standard/);

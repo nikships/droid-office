@@ -269,11 +269,24 @@ test('a real HTTP MCP client reads office identity and server instructions', asy
   for (const omitted of [/team_hire/, /team_models/, /worker_model/, /Factory Standard/, /DroidProxy/, /Benchmarks lines/, /Pace lines/, /visit_roster/, /Otherwise keep to your own task/]) {
     assert.doesNotMatch(subInstructions, omitted);
   }
+  r.people.set('solo', worker('solo', { deskId: 'desk-9' }));
+  r.tokens.set('solo', 'test-token-solo');
+  const solo = await r.connect('solo');
+  const soloInstructions = solo.getInstructions() ?? '';
+  assert.match(soloInstructions, /owner's instructions outrank/);
+  assert.match(soloInstructions, /team_models/);
+  for (const omitted of [/Factory Standard/, /DroidProxy/, /Benchmarks lines/, /Pace lines/, /worker_model/, /connective tissue/, /team_review/]) {
+    assert.doesNotMatch(soloInstructions, omitted, `solo worker MCP instructions should omit ${omitted}`);
+  }
   const identity = await sub.callTool({ name: 'office_whoami', arguments: {} });
   assert.equal(identity.structuredContent?.canHire, false);
   assert.equal(identity.structuredContent?.canVisit, false);
   assert.equal(identity.structuredContent?.cwd, path.join(r.dir, '.droid-office/worktrees/sub'));
   assert.deepEqual(identity.structuredContent?.lead, { id: 'lead', name: 'lead' });
+  r.settings.on = false;
+  r.settings.visits = false;
+  const soloDisabled = await r.connect('solo');
+  assert.doesNotMatch(soloDisabled.getInstructions() ?? '', /team_models|team_hire|visit_reply/);
 });
 
 test('discovery and direct calls apply the same permissions per caller, including live changes', async (t) => {

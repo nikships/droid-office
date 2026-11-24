@@ -131,18 +131,21 @@ test('eval rejects premature or invented inbox acknowledgments', async (t) => {
   assert.equal(grade().passed, false);
 });
 
-test('orchestration-eval rig serves live Office MCP roles, measures context, and codifies active-lead guidance across every lead surface', async (t) => {
-  const roles: EvalRole[] = ['orchestrator', 'external-bot', 'floor-lead', 'subagent'];
-  const counts: Record<EvalRole, number> = { orchestrator: 0, 'external-bot': 0, 'floor-lead': 0, subagent: 0 };
+test('orchestration-eval rig serves live Office MCP roles, keeps solo workers lean, and codifies active-lead guidance across every lead surface', async (t) => {
+  const roles: EvalRole[] = ['orchestrator', 'external-bot', 'floor-lead', 'solo-worker', 'subagent'];
+  const counts: Record<EvalRole, number> = { orchestrator: 0, 'external-bot': 0, 'floor-lead': 0, 'solo-worker': 0, subagent: 0 };
+  const breakdowns = new Map<EvalRole, { systemPromptChars: number; mcpInstructionsChars: number }>();
 
   for (const role of roles) {
     const rig = await createEvalRig({
       role,
       floors: [{ id: 'droid-office', name: 'droid-office', dir: '/work/droid-office' }],
+      workers: role === 'floor-lead' ? [{ id: 'sub-seed', name: 'Pixel', floor: 'droid-office', lead: 'caller' }] : [],
     });
     t.after(() => rig.close());
 
     const breakdown = rig.contextBreakdown();
+    breakdowns.set(role, breakdown);
     counts[role] = breakdown.toolCount;
     assert.ok(breakdown.totalChars > 0);
     assert.equal(breakdown.estimatedTokens, estimateTokens(`${rig.baseSystemPrompt}\n${rig.mcpInstructions}\n${JSON.stringify(rig.listedTools)}`));
@@ -151,8 +154,16 @@ test('orchestration-eval rig serves live Office MCP roles, measures context, and
     assert.match(whoami, role === 'orchestrator' ? /Orchestrator/ : role === 'external-bot' ? /external bot/ : /droid-office/);
     assert.equal(rig.calls.at(-1)?.isError, false);
 
-    if (role !== 'subagent') {
-      // Every lead role—including external MCP clients without orchestrator.system—receives active-manager guidance.
+    if (role === 'solo-worker') {
+      assert.doesNotMatch(rig.fullSystemPrompt, /Factory Standard|DroidProxy|Benchmarks lines|Pace lines|connective tissue/);
+      const modelsOut = await rig.executeTool(2, 'team_models', {});
+      assert.match(modelsOut, /Hiring & quota guide:/);
+      assert.match(modelsOut, /Factory Standard/);
+      const hireOut = await rig.executeTool(3, 'team_hire', { title: 'Test slice', brief: 'Implement and verify.' });
+      assert.match(hireOut, /Team lead guide:/);
+      assert.match(hireOut, /connective tissue/);
+    } else if (role !== 'subagent') {
+      // Every active lead role—including external MCP clients without orchestrator.system—receives active-manager guidance.
       const combinedLeadGuidance = [rig.fullSystemPrompt, ...rig.listedTools.filter((tool) => /^team_(?:hire|status|wait|message|review|merge)$|^worker_diff$/.test(tool.name)).map((tool) => tool.description ?? '')].join('\n');
       assert.match(combinedLeadGuidance, /connective tissue/i, `${role} should receive active-manager connective-tissue rule`);
       assert.match(combinedLeadGuidance, /worker_diff/, `${role} should be instructed to verify worker_diff`);
@@ -163,10 +174,11 @@ test('orchestration-eval rig serves live Office MCP roles, measures context, and
     }
   }
 
-  assert.equal(counts.orchestrator, 28);
-  assert.equal(counts['external-bot'], 30);
-  assert.equal(counts['floor-lead'], 29);
-  assert.equal(counts.subagent, 10);
+  const soloBreakdown = breakdowns.get('solo-worker')!;
+  const leadBreakdown = breakdowns.get('floor-lead')!;
+  assert.ok(soloBreakdown.systemPromptChars <= leadBreakdown.systemPromptChars);
+  assert.ok(soloBreakdown.mcpInstructionsChars + 2000 < leadBreakdown.mcpInstructionsChars, 'solo workers save >2,000 chars of MCP lead/quota manuals on startup');
+  assert.deepEqual(counts, { orchestrator: 28, 'external-bot': 30, 'floor-lead': 29, 'solo-worker': 29, subagent: 10 });
 });
 
 test('orchestration-eval scenario suite has unique ids and grades live MCP interactions end to end', async (t) => {

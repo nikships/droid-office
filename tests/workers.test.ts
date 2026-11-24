@@ -13,7 +13,7 @@ import type { ToolRefresh } from '../src/server/hook-refresh.js';
 import { Worktrees } from '../src/server/worktrees.js';
 import type { PromptSource } from '../src/server/prompts.js';
 import { CLEAR_DROID_QUEUE } from '../src/shared/droid-queue.js';
-import { PROMPTS, WORKER_TEAM_LEAD, WORKER_VISITS } from '../src/shared/prompts.js';
+import { PROMPTS, WORKER_TEAM_LEAD, WORKER_TEAM_SOLO, WORKER_VISITS } from '../src/shared/prompts.js';
 import { SUBAGENT_DEFAULTS, type AgentChoice, type AgentEffort, type GhPull, type WorkerInfo } from '../src/shared/protocol.js';
 import { nextFreeSeat } from '../src/shared/layout.js';
 import { SCREEN_SETTLE_MS } from '../src/server/droid-screen.js';
@@ -695,7 +695,7 @@ test('only a worker with no lead is told about the visit tools, and only while v
   assert.match(systemOf(lead.id), /Use the Droid Office MCP tools/);
   assert.match(systemOf(lead.id), /`team_hire`/);
   assert.match(systemOf(lead.id), /`team_models`/);
-  assert.match(systemOf(lead.id), /`worker_model`/);
+  assert.doesNotMatch(systemOf(lead.id), /worker_model|team_merge|team_review|worker_diff|connective tissue/, 'a solo worker is not sent active-lead manuals');
 
   const sub = workers.spawn('desk-3', 'test', 'help out', false, 'agent', undefined, undefined, [], lead.id);
   if (typeof sub === 'string') return assert.fail(sub);
@@ -715,21 +715,29 @@ test('only a worker with no lead is told about the visit tools, and only while v
   await launched(custom.id);
   assert.match(systemOf(custom.id), /^You are .*, at a desk\.\n\n- Use `visit_roster`/);
 
-  // A saved custom prompt with verbatim lead and visit paragraphs still scrubs both for a subagent.
+  // A saved custom prompt with verbatim lead/solo and visit paragraphs scrubs for subagents and adapts for solo workers.
   system = `You are {{name}}.\n\n${WORKER_TEAM_LEAD}\n\n${WORKER_VISITS}\n\nFinish cleanly.`;
   const legacySub = workers.spawn('desk-6', 'test', 'help out', false, 'agent', undefined, undefined, [], lead.id);
   if (typeof legacySub === 'string') return assert.fail(legacySub);
   await launched(legacySub.id);
   assert.match(systemOf(legacySub.id), /`team_board`/);
-  assert.doesNotMatch(systemOf(legacySub.id), /team_hire|visit_roster/);
+  assert.doesNotMatch(systemOf(legacySub.id), /team_hire|visit_roster|You lead subagents/);
   assert.doesNotMatch(systemOf(legacySub.id), /\n{3,}/);
 
+  const soloFromLeadPrompt = workers.spawn('desk-7', 'test', 'solo task');
+  if (typeof soloFromLeadPrompt === 'string') return assert.fail(soloFromLeadPrompt);
+  await launched(soloFromLeadPrompt.id);
+  assert.ok(systemOf(soloFromLeadPrompt.id).includes(WORKER_TEAM_SOLO));
+  assert.doesNotMatch(systemOf(soloFromLeadPrompt.id), /You lead subagents/);
+
   on = false;
+  workers.canHire = () => false;
   system = PROMPTS['worker.system'].text;
   const off = workers.spawn('desk-5', 'test', 'read');
   if (typeof off === 'string') return assert.fail(off);
   await launched(off.id);
-  assert.doesNotMatch(systemOf(off.id), /visit_roster/);
+  assert.doesNotMatch(systemOf(off.id), /visit_roster|team_hire|team_models/);
+  assert.doesNotMatch(systemOf(off.id), /\n{3,}/);
 });
 test("a plain folder's workers get no branch policy, no worktrees, and git that stops at the folder", async (t) => {
   const f = fixture();

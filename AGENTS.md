@@ -43,6 +43,7 @@ Run from the repository root with npm (`package-lock.json` is the sole lockfile)
 
 ## Conventions
 
+- Leave conversation compaction completely to the Droid CLI harness: never build compaction workarounds, post-compaction re-injection hooks, or manual context-saving machinery in this repository.
 - Keep `.droid-office/` (runtime config, workers, scrollback, worktrees) and `.env*` files untracked. Update `.env.example` whenever adding, renaming or removing an env var (`tests/env-example.test.ts` enforces parity).
 - The signed Mac app release (with the paired Android APK) is the only supported production distribution, and `package.json` stays `"private": true` (no standalone tarballs, installers or npm publishing).
 - The Mac app ships unpacked (`asar: false`) and runs the office, PTY host and worker hooks on `process.execPath` with `ELECTRON_RUN_AS_NODE=1`. Route any new `process.execPath` script through `runAsNode` in `src/server/workers.ts` as a file on disk.

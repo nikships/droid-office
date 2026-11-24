@@ -213,6 +213,10 @@ export class WorkerManager {
   modelGate?: (model: string | undefined) => string | undefined;
   /** ⚙️ Settings → Subagents & visits: Droid's built-in Task tool is refused (see hookEntries). Unset: refused. */
   denyTask?: () => boolean;
+  /** Whether `info` may hire subagents on this floor (see Team.cannotHire). */
+  canHire?: (info: WorkerInfo) => boolean;
+  /** Whether `id` currently manages subagents or watched workers on this floor (see Team.isManaging; standalone fallback checks active subagents). */
+  isLeading?: (id: string) => boolean;
   /**
    * What the office adds as context before Droid processes a submitted prompt (UserPromptSubmit),
    * such as the Orchestrator's current floor reminder. Only asked when the hook can carry replies.
@@ -306,6 +310,8 @@ export class WorkerManager {
     });
     this.settings = new WorkerLaunchSettings(dataDir, {
       denyTask: () => this.denyTask?.() ?? true,
+      canHire: (info) => this.canHire?.(info) ?? true,
+      isLeading: (id) => this.isLeading?.(id) ?? this.list().some((w) => w.lead === id),
       allowTools: () => this.allowTools,
       systemPrompt: () => this.systemPrompt,
       visitsOn: () => this.visitsOn?.() ?? false,

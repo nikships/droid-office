@@ -747,6 +747,11 @@ export class Team {
     return this.log.some((event) => event.lead === lead && !event.seen);
   }
 
+  /** Whether `lead` currently manages a team (active or former subagents, watched workers, or unread team news). */
+  isManaging(lead: string): boolean {
+    return this.followedOf(lead).length > 0 || this.hasNews(lead) || this.formerRecords(lead).length > 0;
+  }
+
   /** Remote inbox acknowledgments are explicit and survive a lost HTTP response. */
   inbox(lead: string, ack: readonly number[] = []): TeamEvent[] {
     const ids = new Set(ack);

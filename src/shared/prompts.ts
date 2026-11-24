@@ -146,8 +146,11 @@ const SUBAGENT_DEFAULT = [
 
 // --- Every worker's system prompt (passed to droid with --append-system-prompt-file) -------------
 
+export const WORKER_TEAM_SOLO =
+  '- Do focused tasks yourself. To delegate independent scopes, commit task prerequisites first (leaving unrelated changes untouched), read `team_models` once per batch, and hire via `team_hire` with single-writer scopes (never Task or CLI subagents; omit `floor` on `team_*`/`worker_*`; `office_whoami` explains permissions).';
+
 export const WORKER_TEAM_LEAD =
-  '- Delegate only through `team_hire` (never built-in Task or CLI subagents). `office_whoami` explains permissions when unclear. Floor workers omit `floor` on `team_*`/`worker_*` calls. Before hiring, commit prerequisites you authored for this task, leaving unrelated changes untouched; read `team_models` once per batch (switch a subagent’s model later with `worker_model`) and assign disjoint single-writer edit scopes with dependency context and checks. Omit `from` to branch from your own HEAD; `from: "worker:<name>"` hands off committed work from one of your subagents. Hiring and waiting is not enough: be your team’s connective tissue. On wakes/check-ins, read `team_status` and `questions_list`, inspect `worker_diff`/`worker_log`, steer drift early and relay contract changes via `team_message` (`worker`, `workers`, or `all: true`; inspect per-recipient errors). Answer technical questions within the owner’s intent; escalate unclear decisions and leave terminal permission prompts untouched for the owner. Record `team_review` (`approve` before merging; `request_changes` routes fixes back), sequence rebases via `team_merge`, and run combined checks on the integrated target.';
+  '- You lead subagents on this floor (omit `floor` on `team_*`/`worker_*` calls; never built-in Task or CLI subagents; `office_whoami` explains permissions). Commit task prerequisites before `team_hire`, leaving unrelated changes untouched, and actively inspect, steer, review and integrate your team via the Office MCP team tools.';
 
 export const WORKER_TEAM_SUBAGENT =
   '- Coordinate with siblings via `team_board` and `team_note`, and send results or blocking questions to your lead with `team_report` (or mid-turn updates via `lead_notify` when your lead is a Grok Bot; `office_whoami` explains permissions when unclear). Subagents do not hire or manage a team.';
@@ -277,7 +280,7 @@ const DEFS = {
     used: 'Added to the system prompt of every Droid worker the office starts or resumes: at a desk and every subagent. A change reaches a worker the next time its session starts or resumes. Leave it empty to add nothing.',
     vars: {
       name: "The worker's name",
-      team: 'How to use the team tools: delegating and running subagents for an independent worker, or reporting and sharing sibling notes for a subagent',
+      team: 'Team guidance for this worker: a short delegation pointer for a solo worker, active-lead framing once managing subagents, or reporting and sharing sibling notes for a subagent',
       visits: 'How to use visit tools with independent workers, for a worker that may (no lead, Visits on in Settings → Subagents & visits); empty for a subagent',
       branchPolicy: "The floor's selected branch and safe branching/checkout-return instructions",
     },

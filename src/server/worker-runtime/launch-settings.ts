@@ -3,10 +3,13 @@ import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } 
 import path from 'node:path';
 import type { WorkerInfo } from '../../shared/protocol.js';
 import { officePrompt, type PromptSource } from '../prompts.js';
-import { PROMPTS, WORKER_TEAM_LEAD, WORKER_TEAM_SUBAGENT, WORKER_VISITS, workerBranchPolicy } from '../../shared/prompts.js';
+import { PROMPTS, WORKER_TEAM_LEAD, WORKER_TEAM_SOLO, WORKER_TEAM_SUBAGENT, WORKER_VISITS, workerBranchPolicy } from '../../shared/prompts.js';
 import type { Worktrees } from '../worktrees.js';
 import { hookScript, HOOK_EVENTS, HOOK_VERSION } from './hook-transport.js';
 import { runAsNode, shq } from './process.js';
+
+const LEGACY_WORKER_TEAM_LEAD =
+  '- Delegate only through `team_hire` (never built-in Task or CLI subagents). `office_whoami` explains permissions when unclear. Floor workers omit `floor` on `team_*`/`worker_*` calls. Before hiring, commit prerequisites you authored for this task, leaving unrelated changes untouched; read `team_models` once per batch (switch a subagent’s model later with `worker_model`) and assign disjoint single-writer edit scopes with dependency context and checks. Omit `from` to branch from your own HEAD; `from: "worker:<name>"` hands off committed work from one of your subagents. Hiring and waiting is not enough: be your team’s connective tissue. On wakes/check-ins, read `team_status` and `questions_list`, inspect `worker_diff`/`worker_log`, steer drift early and relay contract changes via `team_message` (`worker`, `workers`, or `all: true`; inspect per-recipient errors). Answer technical questions within the owner’s intent; escalate unclear decisions and leave terminal permission prompts untouched for the owner. Record `team_review` (`approve` before merging; `request_changes` routes fixes back), sequence rebases via `team_merge`, and run combined checks on the integrated target.';
 
 const ENFORCED_SESSION_DEFAULTS = { interactionMode: 'auto', autonomyLevel: 'high' } as const;
 const ENFORCED_SUBAGENT_AUTONOMY = 'high';
@@ -149,6 +152,8 @@ export function syncDroidProfile(file: string | undefined, opts: { platform?: No
 
 interface LaunchSettingsContext {
   denyTask(): boolean;
+  canHire?: (info: WorkerInfo) => boolean;
+  isLeading?: (id: string) => boolean;
   allowTools(): { matcher: string; reason: string } | undefined;
   systemPrompt(): ((info: WorkerInfo) => string | undefined) | undefined;
   visitsOn(): boolean;
@@ -235,14 +240,28 @@ export class WorkerLaunchSettings {
     // A plain folder has no branches to keep in sync.
     const branchPolicy = this.context.plain ? '' : workerBranchPolicy(this.context.trees.baseBranch() ?? this.context.trees.currentBranch(), this.context.trees.branchFile);
     const template = this.context.prompts?.text('worker.system') ?? PROMPTS['worker.system'].text;
-    const team = info.lead ? WORKER_TEAM_SUBAGENT : WORKER_TEAM_LEAD;
+    let team = '';
+    if (info.lead) team = WORKER_TEAM_SUBAGENT;
+    else if (this.context.isLeading?.(info.id)) team = WORKER_TEAM_LEAD;
+    else if (info.kind === 'agent' && (this.context.canHire?.(info) ?? true)) team = WORKER_TEAM_SOLO;
     // Only a worker with no lead may visit the others; a subagent isn't told the visit tools exist.
     const visits = info.kind === 'agent' && !info.lead && this.context.visitsOn() ? WORKER_VISITS : '';
     let text = officePrompt(this.context.prompts, 'worker.system', { name: info.name, team, visits, branchPolicy });
     // A saved custom prompt from before {{team}} or {{visits}} existed may still hold those paragraphs verbatim.
-    if (text && info.lead) {
-      if (text.includes(WORKER_TEAM_LEAD)) text = text.replaceAll(WORKER_TEAM_LEAD, WORKER_TEAM_SUBAGENT);
-      if (text.includes(WORKER_VISITS))
+    if (text) {
+      const target = info.lead ? WORKER_TEAM_SUBAGENT : team;
+      let placed = Boolean(target && text.includes(target));
+      for (const prior of [LEGACY_WORKER_TEAM_LEAD, WORKER_TEAM_LEAD, WORKER_TEAM_SOLO]) {
+        if (prior !== target && text.includes(prior)) {
+          const replacement = !placed && target ? target : '';
+          placed = placed || Boolean(target);
+          text = text
+            .replaceAll(prior, replacement)
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+        }
+      }
+      if (!visits && text.includes(WORKER_VISITS))
         text = text
           .replaceAll(WORKER_VISITS, '')
           .replace(/\n{3,}/g, '\n\n')

@@ -9,7 +9,7 @@ The behavioral suite covers orchestrator, external-bot and floor-lead roles; sub
 ## Commands
 
 ```bash
-# Deterministic context/token footprint across all 4 office roles (no model calls)
+# Deterministic context/token footprint across all 5 office roles, solo-worker included (no model calls)
 bun tools/orchestration-eval/run.ts --context
 
 # Run full suite against configured DroidProxy models (provider/subscription costs may apply)

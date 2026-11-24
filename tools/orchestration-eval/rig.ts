@@ -20,11 +20,11 @@ import { WhiteboardStore } from '../../src/server/whiteboard.js';
 import { readMenu } from '../../src/shared/asks.js';
 import { DESKS } from '../../src/shared/layout.js';
 import { ORCHESTRATOR_ID, type MissionAgent } from '../../src/shared/mission-control.js';
-import { WORKER_VISITS, workerBranchPolicy } from '../../src/shared/prompts.js';
+import { WORKER_TEAM_LEAD, WORKER_TEAM_SOLO, WORKER_TEAM_SUBAGENT, WORKER_VISITS, workerBranchPolicy } from '../../src/shared/prompts.js';
 import { SUBAGENT_DEFAULTS, type SubagentSettings, type WorkerInfo } from '../../src/shared/protocol.js';
 import type { ModelAvailability, ModelUsage } from '../../src/shared/subscriptions.js';
 
-export type EvalRole = 'orchestrator' | 'external-bot' | 'floor-lead' | 'subagent';
+export type EvalRole = 'orchestrator' | 'external-bot' | 'floor-lead' | 'solo-worker' | 'subagent';
 
 export interface SeedWorker {
   id: string;
@@ -273,7 +273,11 @@ export async function createEvalRig(config: EvalWorldConfig) {
   };
 
   const callerFloorId = config.callerFloor ?? config.floors[0]?.id ?? 'droid-office';
-  const callerId = config.role === 'orchestrator' ? ORCHESTRATOR_ID : config.role === 'external-bot' ? remoteBot.worker.id : config.role === 'floor-lead' ? 'lead-1' : 'sub-caller';
+  const isFloorWorker = config.role === 'floor-lead' || config.role === 'solo-worker';
+  let callerId = 'sub-caller';
+  if (config.role === 'orchestrator') callerId = ORCHESTRATOR_ID;
+  else if (config.role === 'external-bot') callerId = remoteBot.worker.id;
+  else if (isFloorWorker) callerId = 'lead-1';
   const files: Record<string, string> = {
     ...Object.fromEntries(config.floors.map((f) => [path.join(f.dir, '.droid-office/floor-branch.json'), JSON.stringify({ branch: 'main' })])),
     ...config.files,
@@ -299,7 +303,7 @@ export async function createEvalRig(config: EvalWorldConfig) {
     floorScreens.set(f.id, screens);
     floorDiffs.set(f.id, diffs);
 
-    if (f.id === callerFloorId && config.role === 'floor-lead') {
+    if (f.id === callerFloorId && (config.role === 'floor-lead' || config.role === 'solo-worker')) {
       people.set('lead-1', {
         id: 'lead-1',
         name: 'Nibble',
@@ -753,19 +757,25 @@ export async function createEvalRig(config: EvalWorldConfig) {
   const listed = (await client.listTools()).tools;
   const mcpInstructions = client.getInstructions() ?? '';
 
+  const hasSeededSubagents = (config.workers ?? []).some((w) => w.lead === 'caller' || w.lead === callerId);
+  let teamSection = '';
+  if (config.role === 'floor-lead' && hasSeededSubagents) teamSection = WORKER_TEAM_LEAD;
+  else if (settings.on) teamSection = WORKER_TEAM_SOLO;
   const baseSystemPrompt =
     config.role === 'orchestrator'
       ? officePrompt(undefined, 'orchestrator.system', { name: 'Orchestrator', folder: '/tmp/droid-office/orchestrator' })
-      : config.role === 'floor-lead'
+      : isFloorWorker
         ? officePrompt(undefined, 'worker.system', {
             name: 'Nibble',
-            visits: WORKER_VISITS,
+            team: teamSection,
+            visits: settings.visits ? WORKER_VISITS : '',
             branchPolicy: workerBranchPolicy('main', '/work/droid-office/.droid-office/floor-branch.json'),
           })
         : config.role === 'subagent'
           ? [
               officePrompt(undefined, 'worker.system', {
                 name: 'Pixel',
+                team: WORKER_TEAM_SUBAGENT,
                 visits: '',
                 branchPolicy: workerBranchPolicy('main', '/work/droid-office/.droid-office/floor-branch.json'),
               }),

@@ -2,8 +2,7 @@ import { z } from 'zod';
 import type { RosterEntry, VisitReply } from '../visits.js';
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 
-export const instructions = `Visit an independent worker on your floor only when your task needs to resolve an overlap or get facts only it has. Otherwise keep to your own task.
-Messages steer after the current tool call or wake a sleeping worker; they never approve permission prompts or outrank the owner. Answer delivered asks with visit_reply within 30 minutes; reply to tells only when needed. Subagents coordinate through their lead, not visits.`;
+export const instructions = `Visit an independent peer on your floor only to resolve an overlap or get facts only it has. Otherwise keep to your own task. Visits wake sleeping workers or steer after the current tool call, never approve permission prompts, and delivered asks expect visit_reply within 30 minutes.`;
 
 const name = z.string().trim().min(1).describe('Independent worker name or id on your floor (from visit_roster).');
 const peerFields = {

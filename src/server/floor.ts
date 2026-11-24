@@ -476,6 +476,8 @@ export class Floor {
     );
 
     workers.subagentContext = (w) => (w.lead ? this.team.siblingSnapshot(w.lead, w.id) : undefined);
+    workers.canHire = (w) => !this.team.cannotHire(w);
+    workers.isLeading = (id) => this.team.isManaging(id);
 
     this.visits = new Visits(
       {

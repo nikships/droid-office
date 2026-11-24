@@ -337,8 +337,35 @@ test('hiring preserves the literal brief, uses nearest desk and a worktree, and 
   assert.equal(r.fetched.length, 1);
   assert.match((await r.hire({ worktree: false, from: 'main' })).output, /leave from out/);
   assert.match((await r.hire({ from: '--upload-pack=evil' })).output, /branch, tag or commit/);
-  const instructions = r.lead.getInstructions() ?? '';
-  for (const rule of [/fresh subagent per task/, /touch separate files/, /Owner notes take priority/, /no-images/, /review and integration/, /Subagents cannot hire/]) assert.match(instructions, rule);
+  const soloInstructions = r.lead.getInstructions() ?? '';
+  for (const omitted of [/fresh subagent per task/, /Owner notes take priority/, /Factory Standard/, /worker_model/]) {
+    assert.doesNotMatch(soloInstructions, omitted, 'solo workers start with lean MCP instructions');
+  }
+  const leadRules = [/fresh subagent per task/, /touch separate files/, /Owner notes take priority/, /no-images/, /review and integration/, /Subagents cannot hire/];
+  for (const rule of leadRules) {
+    assert.match(result.output, rule, 'first hire delivers active-lead and model/quota guidance when team_models was skipped');
+  }
+  const secondHire = await r.hire({ title: 'Second task', brief: 'Follow up.' });
+  assert.doesNotMatch(secondHire.output, /Team lead guide:/, 'on-demand lead guide is delivered once, not repeated on every hire');
+  const activeLead = await r.connect('lead');
+  const leadInstructions = activeLead.getInstructions() ?? '';
+  for (const rule of leadRules) {
+    assert.match(leadInstructions, rule, 'a client initializing while already managing subagents receives full lead instructions');
+  }
+  const activeLeadModels = await r.call(activeLead, 'team_models');
+  assert.doesNotMatch(activeLeadModels.output, /Hiring & quota guide:/, 'already-instructed leads do not receive duplicate guides in team_models');
+
+  // Standard solo -> team_models -> team_hire flow splits the two guides across those two steps without repeating either.
+  const other = await r.connect('other');
+  const firstModels = await r.call(other, 'team_models');
+  assert.match(firstModels.output, /Hiring & quota guide:/);
+  assert.match(firstModels.output, /Owner notes take priority/);
+  const secondModels = await r.call(other, 'team_models');
+  assert.doesNotMatch(secondModels.output, /Hiring & quota guide:/);
+  const firstWatch = await r.call(other, 'team_watch', { worker: 'Nibble' });
+  assert.match(firstWatch.output, /Team lead guide:/);
+  assert.match(firstWatch.output, /connective tissue/);
+  assert.doesNotMatch(firstWatch.output, /Owner notes take priority/, 'model guide already delivered via team_models is not repeated on team_watch');
 });
 
 test('hire refusals are actionable errors and do not take a desk', async (t) => {

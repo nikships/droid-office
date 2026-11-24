@@ -142,7 +142,8 @@ function currentCommit(): string {
 }
 
 async function measureAllContexts(): Promise<ContextBreakdown[]> {
-  const roles: EvalRole[] = ['orchestrator', 'external-bot', 'floor-lead', 'subagent'];
+  // floor-lead seeds a subagent below to measure WORKER_TEAM_LEAD + INSTRUCTIONS; solo-worker seeds none to measure WORKER_TEAM_SOLO + SOLO_INSTRUCTIONS.
+  const roles: EvalRole[] = ['orchestrator', 'external-bot', 'floor-lead', 'solo-worker', 'subagent'];
   const results: ContextBreakdown[] = [];
   for (const role of roles) {
     const rig = await createEvalRig({

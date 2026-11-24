@@ -15,10 +15,15 @@ import { enrichTeamReplyBody, floorDeepLink, mcpDeepLinkBase, withCompactWorkerD
 import { officeAccess, officeError, officeResult, ownFloor, type OfficeMcpCaller, type OfficeMcpDeps, type OfficeMcpServer } from './index.js';
 import { compactEvent, compactEventText, compactWorker, compactWorkerText, cursorOf, EVENT_FILTERS, eventKinds, floorArg, parseCursor, resultDetailLines, withImageOrigin } from './team-events.js';
 
-export const instructions = `Subagents are real workers with their own terminals and (by default) git worktrees reporting to you, their lead. Subagents cannot hire.
+export const soloInstructions = `Subagents are optional: handle focused tasks yourself. Before delegating independent scopes via team_hire, call team_models once for the model and quota guide; hiring returns the active-lead workflow.`;
+
+export const ACTIVE_LEAD_GUIDE = `Subagents are real workers with their own terminals and (by default) git worktrees reporting to you, their lead. Subagents cannot hire.
 Have task-authored prerequisites committed BEFORE hiring (worktrees see committed state only; leave unrelated changes untouched). Read team_models once per hiring batch, then hire one fresh subagent per task, only as many as independent scopes need. Independent scopes touch separate files: assign single-writer edit ownership in each brief, plus goal, dependency context, boundaries, checks and delivery; sibling files can be referenced as read-only context. Subagents share areas/findings via team_board and team_note. Continue a subagent's committed work via from / task.baseBranch set to worker:<name/id> or its absolute worktree path; floor leads omit from for their own current HEAD.
-Owner notes take priority when picking an exact model id from team_models. Weigh Factory Standard and Droid Core 5-hour, weekly and monthly remaining windows, reset times, active overage mode and Extra Usage balance alongside DroidProxy subscription quotas and credit multipliers. Droid Core fallback does not make an exhausted Standard model runnable; Extra Usage only does when allowed with a positive balance. Custom/subscription models use no Factory credits; prefer ample quota and keep nearly spent tiers off long tasks. Benchmarks lines rate intelligence and engineering per effort (higher is better) with $/task as API cost per task, not plan quota: match model and effort to the task's difficulty. Pace lines turn remaining quota into busy worker-hours for one worker; divide by how many you run at once. Pick <=x0.5 for mechanical work, ~x1 for standard tasks, and top models for hard design, security, or concurrency; never give visual tasks to a no-images model. To switch a subagent's model, call worker_model with what you would type after /model in its terminal: "Sol" picks GPT Sol on Factory credits, "droidproxy sol" DroidProxy's Sol, and the same pattern names any other model (or pass an exact team_models id); team_message cannot run slash commands.
 Hiring and waiting is not enough: run the team as its connective tissue. On wakes/check-ins read team_status and questions_list, inspect relevant worker_diff/worker_log and full reports with team_report_get. Steer drift and relay contract changes via team_message (default queue: false steers at the next step; queue: true queues behind the turn; urgent: true interrupts blocking commands; images attaches uploaded image ids; worker_queue lists/clears/promotes queued items; workers/all: true broadcasts; inspect per-recipient errors). Answer technical questions within the owner's intent; escalate unclear decisions and leave workers at permission prompts untouched for the owner. Record team_review approve before merging (a lead workflow gate, not a server-enforced lock; request_changes routes fixes back). Integrate via team_merge (building agents name target), land foundations first, then have dependent siblings rebase/align and re-verify. Resolve returned conflict hunks in the reported worktree and run combined target checks after review and integration. team_pr requires authorization and a pushed branch. With Wake the lead on, end your turn when nothing else remains; otherwise use team_wait. Subagents can attach produced screenshots/images (or Whiteboard card ids) on team_report so you receive downloadable image ids and Tailnet URLs.`;
+
+export const MODEL_SELECTION_GUIDE = `Owner notes take priority when picking an exact model id from team_models. Weigh Factory Standard and Droid Core 5-hour, weekly and monthly remaining windows, reset times, active overage mode and Extra Usage balance alongside DroidProxy subscription quotas and credit multipliers. Droid Core fallback does not make an exhausted Standard model runnable; Extra Usage only does when allowed with a positive balance. Custom/subscription models use no Factory credits; prefer ample quota and keep nearly spent tiers off long tasks. Benchmarks lines rate intelligence and engineering per effort (higher is better) with $/task as API cost per task, not plan quota: match model and effort to the task's difficulty. Pace lines turn remaining quota into busy worker-hours for one worker; divide by how many you run at once. Pick <=x0.5 for mechanical work, ~x1 for standard tasks, and top models for hard design, security, or concurrency; never give visual tasks to a no-images model. To switch a subagent's model, call worker_model with what you would type after /model in its terminal: "Sol" picks GPT Sol on Factory credits, "droidproxy sol" DroidProxy's Sol, and the same pattern names any other model (or pass an exact team_models id); team_message cannot run slash commands.`;
+
+export const instructions = [ACTIVE_LEAD_GUIDE, MODEL_SELECTION_GUIDE].join('\n');
 
 export const subagentInstructions = `You are a subagent reporting to your lead; subagents cannot hire or manage a team.
 Read team_board before editing shared areas to inspect sibling tasks, status, branches, edit areas and notes, and post short findings or updated edit areas with team_note ([] clears areas; never replaces team_report). Incorporate mid-turn steering from your lead at your next step.
@@ -318,7 +323,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       return replyFor(caller, await command(caller, { action: 'watch', ...args }), (body) => {
         const results = (body.results as Array<Record<string, unknown>> | undefined) ?? [];
         if (!results.length) return String(body.note ?? (args.watch === false ? 'Stopped watching.' : 'No workers matched.'));
-        return results
+        const lines = results
           .map((r) => {
             const label = `${r.name ?? r.id}${r.floor ? ` (${r.floor})` : ''}`;
             if (r.error) return `${label}: ${r.error}`;
@@ -329,6 +334,8 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
               : `${label}: watching${w ? ` (${w.status}${w.cwd ? `, ${w.cwd}` : ''}${w.branch ? ` on ${w.branch}` : ''}${w.pr ? `, PR ${w.pr.url}` : ''}${w.warnings?.length ? `; Warning: ${w.warnings.join('; ')}` : ''})` : ''}`;
           })
           .join('\n');
+        const guide = args.watch !== false && ((body.watching as unknown[] | undefined)?.length ?? 0) > 0 ? server.takeLeadGuide(caller) : undefined;
+        return guide ? `${lines}\n\nTeam lead guide:\n${guide}` : lines;
       });
     },
   );
@@ -597,6 +604,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
       if (mode === 'subscriptions') filtered = allModels.filter((m) => Boolean(m.factoryUsage || m.subscriptionProvider || m.usage || isSubscriptionModel(m.id)));
       else if (mode === 'available') filtered = allModels.filter((m) => !m.cannotRun);
       const body = mode === 'all' ? res.body : { ...res.body, models: filtered, only: mode };
+      const guide = server.takeModelGuide(caller);
       return officeResult(
         [
           ...(quotas?.length ? [formatProviderQuotas(quotas)] : []),
@@ -605,6 +613,7 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           ...modelsLegend(filtered),
           ...filtered.map(modelText),
           defaultLine,
+          ...(guide ? [`Hiring & quota guide:\n${guide}`] : []),
         ].join('\n\n'),
         body,
       );
@@ -676,7 +685,10 @@ export function register(server: OfficeMcpServer, deps: OfficeMcpDeps): void {
           ...(task ? { structured: true, ...(task.repo ? { repo: task.repo } : {}), from: task.baseBranch ?? args.from, branch: task.branch } : {}),
           worktree: args.worktree,
         }),
-        (body) => `Hired ${memberText(body.worker as TeamMember)}\nIt is working on the brief. Review its report and commits before integration.`,
+        (body) => {
+          const guide = server.takeLeadGuide(caller);
+          return [`Hired ${memberText(body.worker as TeamMember)}\nIt is working on the brief. Review its report and commits before integration.`, ...(guide ? [`Team lead guide:\n${guide}`] : [])].join('\n\n');
+        },
       );
     },
   );
