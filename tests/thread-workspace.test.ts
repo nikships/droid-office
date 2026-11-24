@@ -161,8 +161,10 @@ test('ThreadWorkspace.readPreview enforces realpath containment, .env* rejection
 
 test('floor-http serves /api/thread/files and /api/thread/file for local and orchestrator workers and 404s shells/cloud', async (t) => {
   const worktreeDir = await tempDir(t, 'office-http-wt-');
+  const floorDir = await tempDir(t, 'office-http-floor-');
   const orchDir = await tempDir(t, 'office-http-orch-');
   await writeFile(path.join(worktreeDir, 'index.ts'), 'export const ready = true;\n');
+  await writeFile(path.join(floorDir, 'floor-file.ts'), 'export const floor = true;\n');
   await writeFile(path.join(orchDir, 'notes.md'), '# Mission\n');
   const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc0f01f0005000201a6a1b6a10000000049454e44ae426082', 'hex');
   await writeFile(path.join(worktreeDir, 'chart.png'), png);
@@ -173,6 +175,7 @@ test('floor-http serves /api/thread/files and /api/thread/file for local and orc
 
   const fakeFloor = {
     id: 'f1',
+    dir: floorDir,
     workers: {
       agentFolder: (id: string) => (id === 'agent-1' ? worktreeDir : undefined),
     },
@@ -226,6 +229,13 @@ test('floor-http serves /api/thread/files and /api/thread/file for local and orc
   const orchRes = await get(`/api/thread/file?worker=${ORCHESTRATOR_ID}&path=notes.md`);
   assert.equal(orchRes.status, 200);
   assert.equal(orchRes.body.text, '# Mission\n');
+
+  // Floor-level file listing without `worker` serves the floor checkout for the hire dialog; preview still requires a worker.
+  const floorFilesRes = await get('/api/thread/files?floor=f1');
+  assert.equal(floorFilesRes.status, 200);
+  assert.ok(floorFilesRes.body.files.includes('floor-file.ts'));
+  assert.equal((await get('/api/thread/files?floor=missing')).status, 404);
+  assert.equal((await get('/api/thread/file?floor=f1&path=floor-file.ts')).status, 404);
 
   // Shells, cloud workers and unknown workers return 404.
   for (const unsupported of ['shell-1', 'cloud-1', 'unknown-1', '']) {

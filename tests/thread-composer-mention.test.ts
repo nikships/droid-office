@@ -22,7 +22,7 @@ test('V3 Thread UI modules load cleanly in Node without window or document globa
   const pulldiffSrc = readFileSync(new URL('../src/client/ui/pulldiff.ts', import.meta.url), 'utf8');
   assert.match(pulldiffSrc, /export\s*\{\s*looksGeneratedPath\s+as\s+looksGenerated\s*\}\s*from\s*['"]\.\.\/\.\.\/shared\/thread-diff['"]/);
 
-  for (const rel of ['thread-mention.ts', 'thread-diff-view.ts', 'worker-thread.ts']) {
+  for (const rel of ['composer-assist.ts', 'thread-mention.ts', 'thread-diff-view.ts', 'worker-thread.ts']) {
     const src = readFileSync(new URL(`../src/client/ui/${rel}`, import.meta.url), 'utf8');
     assert.doesNotMatch(src, /\bh\([^)]*\bstyle\s*:/, `${rel} must not pass style: to h()`);
   }

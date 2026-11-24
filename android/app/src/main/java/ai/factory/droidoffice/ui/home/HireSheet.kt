@@ -1,5 +1,6 @@
 package ai.factory.droidoffice.ui.home
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -49,6 +50,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -61,7 +64,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -73,7 +78,10 @@ import ai.factory.droidoffice.core.FactoryCloud
 import ai.factory.droidoffice.core.ModelAvailability
 import ai.factory.droidoffice.core.ModelSearch
 import ai.factory.droidoffice.core.RunsOn
+import ai.factory.droidoffice.core.SlashCommands
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.ThreadCompose
+import ai.factory.droidoffice.core.WorkspaceMention
 import ai.factory.droidoffice.core.repoChoices
 import ai.factory.droidoffice.net.ModelCatalogue
 import ai.factory.droidoffice.session.Phase
@@ -85,6 +93,11 @@ import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
+import ai.factory.droidoffice.ui.worker.MentionFiles
+import ai.factory.droidoffice.ui.worker.MentionMenu
+import ai.factory.droidoffice.ui.worker.PasteChips
+import ai.factory.droidoffice.ui.worker.SlashMenu
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 // A task typed and then closed by mistake is still there the next time hiring opens.
@@ -108,7 +121,10 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     val places = remember(factory) { FactoryCloud.choices(factory) }
     val otherRepos = remember(data.floors, data.floorId) { repoChoices(data.floors, data.floorId) }
 
-    var prompt by rememberSaveable { mutableStateOf(promptDraft) }
+    var prompt by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(promptDraft, TextRange(promptDraft.length))) }
+    val pastes = remember { mutableStateListOf<ThreadCompose.PastedText>() }
+    var pasteSeq by remember { mutableIntStateOf(0) }
+    var promptError by remember { mutableStateOf<String?>(null) }
     var worktree by rememberSaveable { mutableStateOf(true) }
     var repos by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var modelId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -118,6 +134,25 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     var failed by remember { mutableStateOf(false) }
     var catalogue by remember { mutableStateOf<ModelCatalogue?>(null) }
     var loadingModels by remember { mutableStateOf(true) }
+    val floorId = data.floorId
+    var slashList by remember(floorId) { mutableStateOf(SlashCommands.ALL) }
+    val files = remember(floorId) { MentionFiles() }
+
+    fun editPrompt(next: TextFieldValue) {
+        if (next.text != prompt.text) {
+            promptError = null
+            pastes.retainAll { next.text.contains(it.token) }
+        }
+        prompt = next
+        promptDraft = ThreadCompose.expandPastes(next.text, pastes)
+    }
+    fun typedPrompt(next: TextFieldValue) {
+        val paste = ThreadCompose.inserted(prompt.text, prompt.selection.start, prompt.selection.end, next.text, next.selection.end)
+            ?.takeIf { ThreadCompose.isLargePaste(it.text) } ?: return editPrompt(next)
+        val held = ThreadCompose.pastedText(++pasteSeq, paste.text)
+        pastes += held
+        editPrompt(TextFieldValue(prompt.text.replaceRange(paste.start, paste.end, held.token), TextRange(paste.start + held.token.length)))
+    }
 
     LaunchedEffect(link.phase) {
         if (link.phase != Phase.Connected || catalogue != null) return@LaunchedEffect
@@ -149,11 +184,43 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     val pickable = if (!cloud) availability else availability + catalogue?.models.orEmpty().filterNot { FactoryCloud.runsInCloud(it.id) }.associate { it.id to ModelAvailability.NotInCloud }
     val connected = link.phase == Phase.Connected
 
+    LaunchedEffect(floorId, connected, cloud) {
+        if (connected && !cloud && floorId != null) {
+            connection.floorSlashCommands(floorId)?.let { slashList = SlashCommands.all(it) }
+        }
+    }
+    val mention = if (!cloud && floorId != null) WorkspaceMention.find(prompt.text, prompt.selection.end) else null
+    LaunchedEffect(floorId, mention?.query, connected, cloud) {
+        val query = mention?.query ?: return@LaunchedEffect
+        if (!connected || cloud || floorId == null) return@LaunchedEffect
+        if (!files.fresh(System.currentTimeMillis())) {
+            connection.threadFiles(floorId, null, "")?.let { files.keep(it, System.currentTimeMillis()) }
+        }
+        if (query.isNotEmpty() && files.base?.truncated == true && files.filtered?.first != query) {
+            delay(150)
+            connection.threadFiles(floorId, null, query)?.let { files.filtered = query to it }
+        }
+    }
+    val mentionItems = remember(mention?.query, files.base, files.filtered) {
+        val query = mention?.query ?: return@remember emptyList()
+        val base = files.base ?: return@remember emptyList()
+        val source = files.filtered?.takeIf { query.isNotEmpty() && base.truncated && it.first == query }?.second ?: base
+        WorkspaceMention.rank(source.files, source.dirs, query)
+    }
+
     fun hire() {
+        val expanded = ThreadCompose.expandPastes(prompt.text, pastes).trim()
+        if (!cloud) {
+            val refused = SlashCommands.refusal(expanded, "the new worker", busy = false, commands = slashList)
+            if (refused != null) {
+                promptError = refused
+                return
+            }
+        }
         val e = effort?.takeIf { w -> efforts.isEmpty() || efforts.any { it.wire == w } }
         val ownWorktree = worktreeOption && worktree && !cloud
         val also = if (ownWorktree) repos.filter { id -> otherRepos.any { it.id == id } } else emptyList()
-        val ok = connection.hire(prompt.trim().takeIf { it.isNotBlank() }, "agent", modelId, e, ownWorktree, deskId, if (cloud) FactoryCloud.hire(place, folder) else null, also)
+        val ok = connection.hire(expanded.takeIf { it.isNotBlank() }, "agent", modelId, e, ownWorktree, deskId, if (cloud) FactoryCloud.hire(place, folder) else null, also)
         if (ok) {
             promptDraft = ""
             if (modelId != null) graph.scope.launch { graph.store.settings { it.copy(hireModel = modelId, hireEffort = e) } }
@@ -184,17 +251,47 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
             ) {
                 KindSwitch(connected, ::openShell)
                 Field("Task") {
+                    val livePastes = ThreadCompose.livePastes(prompt.text, pastes)
+                    AnimatedVisibility(livePastes.isNotEmpty()) {
+                        PasteChips(livePastes) { paste, replacement ->
+                            ThreadCompose.replacePaste(prompt.text, paste, replacement)?.let { editPrompt(TextFieldValue(it.value, selection = TextRange(it.cursor))) }
+                        }
+                    }
                     OutlinedTextField(
                         value = prompt,
-                        onValueChange = { prompt = it; promptDraft = it },
+                        onValueChange = ::typedPrompt,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 260.dp).tagged(Tags.Hire.PROMPT),
                         placeholder = { Text("What should it work on?", color = Palette.TextTertiary) },
-                        supportingText = { Text("Leave it empty to brief it later.", color = Palette.TextTertiary) },
+                        supportingText = {
+                            Text(
+                                promptError ?: "Leave it empty to brief it later.",
+                                color = if (promptError != null) Palette.Danger else Palette.TextTertiary,
+                            )
+                        },
                         textStyle = MaterialTheme.typography.bodyLarge,
                         shape = RoundedCornerShape(12.dp),
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                         colors = fieldColors(),
                     )
+                    val mentions = if (mention != null) mentionItems else emptyList()
+                    AnimatedVisibility(mention != null) {
+                        Box(Modifier.padding(top = 8.dp)) {
+                            MentionMenu(mentions, searching = connected && files.base == null) { item ->
+                                val q = WorkspaceMention.find(prompt.text, prompt.selection.end) ?: mention ?: return@MentionMenu
+                                val next = WorkspaceMention.apply(prompt.text, q.start, q.end, item.path)
+                                editPrompt(TextFieldValue(next.value, selection = TextRange(next.cursor)))
+                            }
+                        }
+                    }
+                    val suggestions = if (cloud || mentions.isNotEmpty()) emptyList() else SlashCommands.suggestions(prompt.text, slashList)
+                    AnimatedVisibility(suggestions.isNotEmpty()) {
+                        Box(Modifier.padding(top = 8.dp)) {
+                            SlashMenu(suggestions, thread = true, busy = false) { c ->
+                                val filled = "/${c.name} "
+                                editPrompt(TextFieldValue(filled, selection = TextRange(filled.length)))
+                            }
+                        }
+                    }
                 }
                 Field("Model") {
                     ModelPicker(catalogue, loadingModels && connected, modelId, pickable) { m ->

@@ -4,7 +4,7 @@ import { h } from './dom';
 import { loadPromptHistory, recallPrompt, rememberPrompt, savePromptHistory } from '../prompt-recall';
 
 /** Wrap `ta` with prompt recall. `sent` records a prompt that actually went out. */
-export function promptExtras(ta: HTMLTextAreaElement): { element: HTMLElement; sent(text: string): void; dispose(): void } {
+export function promptExtras(ta: HTMLTextAreaElement, opts: { onRecall?: (text: string) => void } = {}): { element: HTMLElement; sent(text: string): void; dispose(): void } {
   let history = loadPromptHistory();
   /** -1 while the textarea is yours; otherwise an index into `history`. */
   let cursor = -1;
@@ -16,6 +16,7 @@ export function promptExtras(ta: HTMLTextAreaElement): { element: HTMLElement; s
     ta.value = text;
     ta.focus();
     ta.setSelectionRange(text.length, text.length);
+    opts.onRecall?.(text);
     typing = false;
   };
 
@@ -26,7 +27,7 @@ export function promptExtras(ta: HTMLTextAreaElement): { element: HTMLElement; s
   });
 
   ta.addEventListener('keydown', (e) => {
-    if (e.isComposing || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
+    if (e.defaultPrevented || e.isComposing || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
     if (ta.selectionStart !== ta.selectionEnd) return;
     const before = ta.value.slice(0, ta.selectionStart);
