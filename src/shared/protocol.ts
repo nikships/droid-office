@@ -537,7 +537,7 @@ export interface FloorInfo {
   hires?: number;
 }
 
-/** The workspace folder on the office's machine: where "Add floor" looks for existing checkouts and clones pasted GitHub URLs. */
+/** The workspace folder on the office's machine: where "Add floor" looks for existing checkouts and clones pasted GitHub or GitLab URLs. */
 export interface ProjectsDirState {
   /** For showing people: under the home folder it's ~/…. */
   dir: string;
@@ -1021,7 +1021,7 @@ type ClientMessage =
   | { t: 'floor.repos'; refresh?: boolean }
   /** The folders in `dir` (the workspace folder when unset), for the elevator's folder browser; answered with `floor.folders`. */
   | { t: 'floor.folders'; dir?: string; request?: string }
-  /** Make a folder a new floor (a checkout in the workspace folder, or a plain folder anywhere), or clone a GitHub URL into the workspace folder and add it; answered with `floor.added`. */
+  /** Make a folder a new floor (a checkout in the workspace folder, or a plain folder anywhere), or clone a GitHub/GitLab URL into the workspace folder and add it; answered with `floor.added`. */
   | { t: 'floor.add'; dir: string }
   /** Take a floor off the building. Its folder stays on disk; everyone on it rides to another floor. */
   | { t: 'floor.remove'; floor: string }
@@ -1154,7 +1154,7 @@ export type ServerMsg =
   | { t: 'floor.repos'; repos: RepoChoice[]; error?: string }
   /** Sent to whoever asked, with their `request`: `dir` (absolute) and `shown` (as ~/…), whether it's a checkout (and why it can't be added, if it can't), its parent, and the folders in it. */
   | { t: 'floor.folders'; request?: string; dir: string; shown: string; git: boolean; blocked?: string; parent?: string; folders: FolderChoice[]; more?: boolean; error?: string }
-  /** Sent to whoever asked for the floor (or couldn't get it). `dir` echoes the path or GitHub URL they sent. */
+  /** Sent to whoever asked for the floor (or couldn't get it). `dir` echoes the path or repository URL they sent. */
   | { t: 'floor.added'; dir: string; floor?: string; error?: string }
   /** The projects folder moved (see floor.projectsDir). */
   | { t: 'projectsDir'; state: ProjectsDirState }

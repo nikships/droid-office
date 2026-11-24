@@ -55,7 +55,7 @@ import { factoryModelGate, factoryModelTier } from '../shared/factory-limits.js'
 import { elevatorSpot, nextFreeSeat, streetBelow } from '../shared/layout.js';
 import { STREAM } from '../shared/jukebox.js';
 import { Jukebox } from './jukebox.js';
-import { MAX_FLOORS, forgeWords, parseGitHubUrl, returnLanding } from '../shared/floors.js';
+import { MAX_FLOORS, forgeWords, returnLanding } from '../shared/floors.js';
 import { PROMPTS, PROMPT_MAX, isPromptId } from '../shared/prompts.js';
 import { ROOF } from '../shared/rooftop.js';
 import { NO_PIPELINES } from '../shared/pipelines.js';
@@ -1646,7 +1646,7 @@ export async function startServer(cfg: Config) {
           sendTo(c, { t: 'floor.added', dir, floor: floor.id });
           done();
         };
-        if (parseGitHubUrl(dir)) {
+        if (building.isCloneUrl(dir)) {
           defer();
           void building.cloneAndAdd(dir, who).then(
             (r) => finishAdd(r, true),

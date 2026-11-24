@@ -153,7 +153,7 @@ test('pure add-floor path and target helpers handle home shortening, search filt
   // Non-matching relative input submits on Enter so the server returns its validation message.
   assert.equal(resolveFloorTarget({ filter: 'relative/folder', selected: null, repos, floors, onEnter: true }), 'relative/folder');
 
-  // Pasted GitHub URLs match existing checkouts or resolve directly to clone into the workspace folder.
+  // Pasted GitHub & GitLab URLs match existing checkouts or resolve directly to clone into the workspace folder.
   assert.equal(cloneTargetPath('~/repos/', 'next.js'), '~/repos/next.js');
   assert.equal(cloneTargetPath('', 'next.js'), 'next.js');
   assert.equal(filterWorkspaceRepos(repos, 'https://github.com/acme/web', '~/Workspace', floors).length, 1);
@@ -161,8 +161,12 @@ test('pure add-floor path and target helpers handle home shortening, search filt
   assert.equal(resolveFloorTarget({ filter: 'https://github.com/acme/web', selected: null, repos, floors }), '/Users/nik/Workspace/web');
   // Already-open floor disables add (its row lets you jump straight to it).
   assert.equal(resolveFloorTarget({ filter: 'https://github.com/acme/api', selected: null, repos, floors }), undefined);
-  // Uncloned GitHub URL resolves for both button click and Enter.
+  // Uncloned GitHub & GitLab URLs resolve for both button click and Enter.
   assert.equal(resolveFloorTarget({ filter: '  https://github.com/acme/fresh-repo  ', selected: null, repos, floors }), 'https://github.com/acme/fresh-repo');
+  assert.equal(resolveFloorTarget({ filter: 'https://gitlab.com/acme/platform/svc', selected: null, repos, floors }), 'https://gitlab.com/acme/platform/svc');
+  // Known self-hosted GitLab host from workspace repos is recognized too.
+  const reposWithSelfHosted: RepoChoice[] = [...repos, { name: 'code.acme.com/team/core', dir: '/Users/nik/Workspace/core', repo: 'code.acme.com/team/core', forge: 'gitlab' }];
+  assert.equal(resolveFloorTarget({ filter: 'https://code.acme.com/team/other', selected: null, repos: reposWithSelfHosted, floors }), 'https://code.acme.com/team/other');
 });
 
 test('paired web companion lists repos, browses folders, validates errors, and adds git & plain floors live across clients', async (t) => {
@@ -430,6 +434,19 @@ test('web companion UI drives the full Add floor flow live against the real serv
     await dialog.waitFor({ state: 'detached' });
     await page.waitForFunction(() => document.querySelector('.dash-floor-chip.on .dash-floor-name')?.textContent === 'brand-new');
     assert.equal(await page.locator('.dash-side-title').innerText(), 'brand-new');
+    assert.equal(await page.locator('.dash-side-sub').innerText(), 'main');
+
+    // Paste a GitLab URL with subgroups into Add floor: shows GitLab preview, clones and opens the floor in one step.
+    await page.getByRole('button', { name: 'Add floor' }).click();
+    await dialog.waitFor();
+    await input.fill('https://gitlab.com/acme/platform/gl-service/-/tree/main');
+    const glCloneRow = dialog.locator('.list-row.clone-row[data-clone-repo="gitlab.com/acme/platform/gl-service"]');
+    await glCloneRow.waitFor();
+    assert.match(await glCloneRow.innerText(), /Clone into .*\/gl-service/);
+    await dialog.getByRole('button', { name: 'Clone & add' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.querySelector('.dash-floor-chip.on .dash-floor-name')?.textContent === 'gl-service');
+    assert.equal(await page.locator('.dash-side-title').innerText(), 'gl-service');
     assert.equal(await page.locator('.dash-side-sub').innerText(), 'main');
 
     assert.equal(MAX_FLOORS, 16);

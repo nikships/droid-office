@@ -3,7 +3,7 @@ import { type Dirent, accessSync, constants, existsSync, mkdirSync, readFileSync
 import { readdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { FLOOR_PALETTES, MAX_FLOORS, forgeOf, normalizeRepo, parseGitHubUrl } from '../shared/floors.js';
+import { FLOOR_PALETTES, MAX_FLOORS, type CloneUrl, forgeOf, forgeWords, normalizeRepo, parseCloneUrl } from '../shared/floors.js';
 import { moveFloor } from '../shared/floor-order.js';
 import type { FolderChoice, ProjectsDirState, RepoChoice } from '../shared/protocol.js';
 import { isGitlabHost } from './gitlab.js';
@@ -58,7 +58,7 @@ const SCAN_DEPTH = 4;
 const SCAN_ENTRIES = 20_000;
 /** Folders that hold no projects and are big or private enough to skip when the workspace folder is the home folder. */
 const SCAN_SKIP = new Set(['node_modules', 'Library', 'Applications', 'Movies', 'Music', 'Pictures', 'Downloads', 'AppData']);
-/** Maximum time a single `git clone` / `gh repo clone` is allowed to run before aborting. */
+/** Maximum time a single `git clone` / `gh` / `glab` clone is allowed to run before aborting. */
 const CLONE_TIMEOUT_MS = 300_000;
 /** Cap captured stderr/stdout from clone commands so progress bars never exhaust memory. */
 const MAX_CLONE_OUTPUT = 16_384;
@@ -66,8 +66,8 @@ const MAX_CLONE_OUTPUT = 16_384;
 /**
  * The floors of the building, saved in <office>/.droid-office/floors.json: which projects there are,
  * where their checkouts live, and how each floor is painted. Existing folders open in place without
- * copying; pasting a GitHub repository URL clones into the workspace folder (picked in ⚙️ Settings,
- * kept in projects-folder.json) and opens it as a floor in one step.
+ * copying; pasting a GitHub or GitLab repository URL clones into the workspace folder (picked in
+ * ⚙️ Settings, kept in projects-folder.json) and opens it as a floor in one step.
  */
 export class Building {
   private defs: FloorDef[] = [];
@@ -290,22 +290,27 @@ export class Building {
     return def;
   }
 
+  /** Whether `raw` is a GitHub or GitLab repository URL that `cloneAndAdd` can clone. */
+  isCloneUrl(raw: string): boolean {
+    return Boolean(parseCloneUrl(raw, isGitlabHost));
+  }
+
   /**
-   * Clones a GitHub repository URL into the workspace folder (`projectsDir/<repo>`) and adds it as a floor.
+   * Clones a GitHub or GitLab repository URL into the workspace folder (`projectsDir/<repo>`) and adds it as a floor.
    * If `projectsDir/<repo>` is already a checkout of the same repository, it is added directly without cloning again.
    */
   async cloneAndAdd(rawUrl: string, by: string): Promise<FloorDef | string> {
-    const parsed = parseGitHubUrl(rawUrl);
-    if (!parsed) return 'Use a valid GitHub repository URL, like https://github.com/owner/repo';
+    const parsed = parseCloneUrl(rawUrl, isGitlabHost);
+    if (!parsed) return 'Use a valid GitHub or GitLab repository URL, like https://github.com/owner/repo';
     const root = path.resolve(this.projectsDir);
     const targetDir = path.resolve(root, parsed.name);
     if (!within(targetDir, root) || targetDir === root) return 'Invalid repository name';
 
     if (existsSync(targetDir)) {
-      if (isCheckout(targetDir) && originRepo(targetDir)?.toLowerCase() === parsed.repo.toLowerCase()) {
+      const existingRepo = isCheckout(targetDir) ? originRepo(targetDir) : undefined;
+      if (existingRepo?.toLowerCase() === parsed.repo.toLowerCase()) {
         return this.add(targetDir, by);
       }
-      const existingRepo = isCheckout(targetDir) ? originRepo(targetDir) : undefined;
       const shown = tildify(targetDir);
       return existingRepo ? `${shown} already exists (${existingRepo}). Pick another workspace folder or add it directly.` : `${shown} already exists. Remove or rename it, or pick another workspace folder.`;
     }
@@ -334,15 +339,15 @@ export class Building {
       if (!gitRes.ok || !isCheckout(targetDir)) {
         cleanupPartialClone(targetDir);
         if (gitRes.enoent) return "git is not installed on the office's machine";
-        if (!parsed.ssh && shouldFallbackToGh(gitRes.output)) {
-          const ghRes = await runCloneCommand('gh', ['repo', 'clone', parsed.repo, targetDir], root, { ...gitEnv, GH_PROMPT_DISABLED: '1' });
-          if (!ghRes.ok || !isCheckout(targetDir)) {
-            cleanupPartialClone(targetDir);
-            const detail = ghRes.enoent || ghRes.ok ? gitRes.output : ghRes.output || gitRes.output;
-            return friendlyCloneError(parsed.repo, detail, parsed.ssh);
-          }
-        } else {
-          return friendlyCloneError(parsed.repo, gitRes.output, parsed.ssh);
+        if (parsed.ssh || !shouldFallbackToForgeCli(gitRes.output)) return friendlyCloneError(parsed, gitRes.output);
+        const cliRes =
+          parsed.forge === 'gitlab'
+            ? await runCloneCommand('glab', ['repo', 'clone', parsed.cloneUrl, targetDir], root, { ...gitEnv, GLAB_NO_PROMPT: '1', NO_PROMPT: '1', GLAB_PAGER: 'cat', PAGER: 'cat', NO_COLOR: '1' })
+            : await runCloneCommand('gh', ['repo', 'clone', parsed.repo, targetDir], root, { ...gitEnv, GH_PROMPT_DISABLED: '1' });
+        if (!cliRes.ok || !isCheckout(targetDir)) {
+          cleanupPartialClone(targetDir);
+          const detail = !cliRes.enoent && !cliRes.ok && cliRes.output ? cliRes.output : gitRes.output;
+          return friendlyCloneError(parsed, detail);
         }
       }
       this.repoCache = undefined;
@@ -707,23 +712,27 @@ function runCloneCommand(cmd: string, args: string[], cwd: string, env: NodeJS.P
   });
 }
 
-function shouldFallbackToGh(raw: string): boolean {
-  return /authentication|could not read username|terminal prompts disabled|repository not found|access denied|permission denied|403|401/i.test(raw);
+function shouldFallbackToForgeCli(raw: string): boolean {
+  return /authentication|could not read username|terminal prompts disabled|repository not found|project not found|access denied|permission denied|403|401|404/i.test(raw);
 }
 
-function friendlyCloneError(repo: string, raw: string, ssh: boolean): string {
+function friendlyCloneError(parsed: Pick<CloneUrl, 'forge' | 'repo' | 'ssh'>, raw: string): string {
+  const { site, cli } = forgeWords(parsed.forge);
+  const { repo, ssh } = parsed;
   if (/timed out/i.test(raw)) return `Cloning ${repo} timed out. Try again or clone it manually in a terminal.`;
   if (/permission denied \(publickey\)|host key verification failed/i.test(raw)) {
     return `SSH authentication failed for ${repo}. Check your SSH key on the office's machine, or paste the HTTPS URL instead.`;
   }
-  if (/authentication failed|could not read username|terminal prompts disabled|invalid username or token/i.test(raw)) {
-    return `Couldn't authenticate with GitHub to clone ${repo}. Sign in with \`gh auth login\` or configure git credentials on the office's machine.`;
+  if (/authentication failed|could not read username|terminal prompts disabled|invalid username or token|unauthorized|no token/i.test(raw)) {
+    return `Couldn't authenticate with ${site} to clone ${repo}. Sign in with \`${cli} auth login\` or configure git credentials on the office's machine.`;
   }
-  if (/repository not found|does not exist|could not resolve to a repository/i.test(raw)) {
-    return ssh ? `Couldn't find ${repo} on GitHub. Check the URL and your SSH access to the repository.` : `Couldn't find ${repo} on GitHub. Check the URL and your GitHub access (sign in with \`gh auth login\` for private repositories).`;
+  if (/repository not found|project not found|does not exist|could not resolve to a repository|404/i.test(raw)) {
+    return ssh
+      ? `Couldn't find ${repo} on ${site}. Check the URL and your SSH access to the repository.`
+      : `Couldn't find ${repo} on ${site}. Check the URL and your ${site} access (sign in with \`${cli} auth login\` for private repositories).`;
   }
   if (/could not resolve host|unable to access|failed to connect|network is unreachable/i.test(raw)) {
-    return `Couldn't reach GitHub to clone ${repo}. Check the office's network connection.`;
+    return `Couldn't reach ${site} to clone ${repo}. Check the office's network connection.`;
   }
   const lines = raw
     .split(/\r?\n/)
