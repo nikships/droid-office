@@ -145,14 +145,19 @@ test('Kitty terminal images expand on hover button, Cmd/Ctrl+click, and normal-s
   await page.waitForFunction(() => {
     const c = document.querySelector<HTMLCanvasElement>('canvas.term-kitty-layer');
     if (!c || c.width === 0) return false;
+    const dpr = window.devicePixelRatio || 1;
+    const y = Math.round((-parseFloat(c.style.top || '0') + 8) * dpr);
     const ctx = c.getContext('2d');
-    const px = ctx?.getImageData(8, 8, 1, 1).data;
+    const px = ctx?.getImageData(Math.round(8 * dpr), y, 1, 1).data;
     return !!px && px[3] === 255;
   });
   // Wait until animation advances at least once to blue so we prove lightbox still uses frame 0 (red).
   await page.waitForFunction(() => {
     const c = document.querySelector<HTMLCanvasElement>('canvas.term-kitty-layer');
-    const px = c?.getContext('2d')?.getImageData(8, 8, 1, 1).data;
+    if (!c) return false;
+    const dpr = window.devicePixelRatio || 1;
+    const y = Math.round((-parseFloat(c.style.top || '0') + 8) * dpr);
+    const px = c.getContext('2d')?.getImageData(Math.round(8 * dpr), y, 1, 1).data;
     return !!px && px[2] > 200 && px[0] < 30;
   });
 

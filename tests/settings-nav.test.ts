@@ -52,7 +52,6 @@ test('every setting is in a category', () => {
     ['Line spacing', 'terminal'],
     ['Cursor shape', 'terminal'],
     ['Cursor blink', 'terminal'],
-    ['Smooth scrolling', 'terminal'],
     ['Scroll speed', 'terminal'],
     ['Option key', 'terminal'],
     ['Restore Terminal defaults', 'terminal'],
@@ -167,7 +166,7 @@ test('search finds a setting by name, pane or keyword, every word required', () 
   assert.deepEqual(searchSettings('benchmarks'), [{ pane: 'connections', title: 'Artificial Analysis' }]);
   assert.deepEqual(searchSettings('new conversation'), [{ pane: 'orchestrator', title: 'New conversation' }]);
   assert.deepEqual(searchSettings('orchestrator model'), [{ pane: 'orchestrator', title: 'Orchestrator model' }]);
-  assert.deepEqual(searchSettings('smooth scroll'), [{ pane: 'terminal', title: 'Smooth scrolling' }]);
+  assert.deepEqual(searchSettings('scroll speed'), [{ pane: 'terminal', title: 'Scroll speed' }]);
   assert.deepEqual(searchSettings('tty cursor'), [
     { pane: 'terminal', title: 'Cursor shape' },
     { pane: 'terminal', title: 'Cursor blink' },
@@ -259,7 +258,7 @@ test('the companions leave out what only the 3D office has, and only the Mac app
     'Tool calls',
     'Restore Thread defaults',
     'Terminal text size',
-    'Smooth scrolling',
+    'Scroll speed',
     'Restore Terminal defaults',
     'Workspace folder',
     'Host desktop app',

@@ -101,8 +101,7 @@ function findParts(term: Terminal): Parts | null {
 
 /**
  * Makes `term`'s scrollback move by pixels while `enabled` says so (by default, while its
- * `smoothScrollDuration` is on, which is what Settings → Terminal → Smooth scrolling sets). Call
- * before or after `term.open`.
+ * `smoothScrollDuration` is on). Call before or after `term.open`.
  */
 export function attachPixelScroll(term: Terminal, opts: { enabled?: () => boolean } = {}): PixelScroll {
   const enabled = opts.enabled ?? (() => (term.options.smoothScrollDuration ?? 0) > 0);

@@ -126,7 +126,6 @@ export const SETTINGS_CARDS = [
   { pane: 'terminal', title: 'Line spacing', keywords: 'terminal tty line height spacing leading compact relaxed rows' },
   { pane: 'terminal', title: 'Cursor shape', keywords: 'terminal tty cursor style shape block bar beam underline caret' },
   { pane: 'terminal', title: 'Cursor blink', keywords: 'terminal tty cursor blink blinking flash steady caret' },
-  { pane: 'terminal', title: 'Smooth scrolling', keywords: 'terminal tty smooth scrolling scroll animate glide wheel page up down' },
   { pane: 'terminal', title: 'Scroll speed', keywords: 'terminal tty scroll speed sensitivity wheel trackpad slow fast' },
   { pane: 'terminal', title: 'Option key', keywords: 'terminal tty option alt key meta mac special characters keyboard layout' },
   { pane: 'terminal', title: 'Restore Terminal defaults', keywords: 'terminal tty reset restore defaults text size line spacing cursor scrolling option' },

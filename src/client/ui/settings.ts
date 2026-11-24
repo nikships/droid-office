@@ -204,7 +204,7 @@ function terminalRows() {
       () => terminalPrefs()[key],
       (value) => setTerminalPrefs({ [key]: value } as Partial<TerminalPrefs>),
     );
-  const switchFor = (key: 'cursorBlink' | 'smoothScroll', label: string) =>
+  const switchFor = (key: 'cursorBlink', label: string) =>
     toggle(
       label,
       () => terminalPrefs()[key],
@@ -226,7 +226,6 @@ function terminalRows() {
     ['underline', 'Underline'],
   ]);
   const blink = switchFor('cursorBlink', 'Cursor blink');
-  const smooth = switchFor('smoothScroll', 'Smooth scrolling');
   const speed = choose('scrollSpeed', 'Scroll speed', [
     ['slow', 'Slow'],
     ['default', 'Default'],
@@ -252,7 +251,7 @@ function terminalRows() {
     size.value = String(px);
     size.style.setProperty('--fill', `${((px - TERM_FONT_MIN) / (TERM_FONT_MAX - TERM_FONT_MIN)) * 100}%`);
     sizeValue.textContent = `${px} px`;
-    for (const choice of [lineHeight, cursorStyle, blink, smooth, speed, option]) choice.paint();
+    for (const choice of [lineHeight, cursorStyle, blink, speed, option]) choice.paint();
     restore.disabled = isDefaultTerminalPrefs(terminalPrefs()) && px === TERM_FONT_DEFAULT;
   };
   paint();
@@ -269,16 +268,7 @@ function terminalRows() {
         card('Cursor shape', { desc: desc('How the cursor draws while a terminal has focus. Unfocused, it is an outline.'), control: cursorStyle.row }),
         card('Cursor blink', { desc: desc('Off keeps the cursor steady.'), control: blink.el }),
       ),
-      group(
-        'Scrolling',
-        card('Smooth scrolling', {
-          desc: desc(
-            'History moves pixel by pixel: a trackpad or Magic Mouse follows your fingers, and a mouse wheel and Shift+Page Up or Down glide. It settles on a whole line once you stop. Full-screen programs and programs that read the mouse still move by whole lines.',
-          ),
-          control: smooth.el,
-        }),
-        card('Scroll speed', { desc: desc('How far each wheel notch or trackpad swipe moves through history. Hold Option (Alt) to scroll five times faster.'), control: speed.row }),
-      ),
+      group('Scrolling', card('Scroll speed', { desc: desc('How far each wheel notch or trackpad swipe moves through history. Hold Option (Alt) to scroll five times faster.'), control: speed.row })),
       group(
         'Keyboard',
         card('Option key', {

@@ -14,21 +14,18 @@ export interface TerminalPrefs {
   lineHeight: (typeof TERM_LINE_HEIGHTS)[number];
   cursorStyle: (typeof TERM_CURSOR_STYLES)[number];
   cursorBlink: boolean;
-  /** Scrollback moves by pixels: a trackpad follows the fingers, and wheel notches and Shift+Page Up/Down glide. */
-  smoothScroll: boolean;
   scrollSpeed: (typeof TERM_SCROLL_SPEEDS)[number];
   /** Option (Alt) sends Meta to the program, as Droid's word jumps want, instead of typing the character it makes. */
   optionIsMeta: boolean;
 }
 
-export const TERMINAL_DEFAULTS: Readonly<TerminalPrefs> = Object.freeze({ lineHeight: 'default', cursorStyle: 'block', cursorBlink: true, smoothScroll: false, scrollSpeed: 'default', optionIsMeta: true });
+export const TERMINAL_DEFAULTS: Readonly<TerminalPrefs> = Object.freeze({ lineHeight: 'default', cursorStyle: 'block', cursorBlink: true, scrollSpeed: 'default', optionIsMeta: true });
 
 const BOTH = [true, false] as const;
 const OPTIONS: PrefOptions<TerminalPrefs> = {
   lineHeight: TERM_LINE_HEIGHTS,
   cursorStyle: TERM_CURSOR_STYLES,
   cursorBlink: BOTH,
-  smoothScroll: BOTH,
   scrollSpeed: TERM_SCROLL_SPEEDS,
   optionIsMeta: BOTH,
 };
@@ -55,7 +52,7 @@ export function terminalOptions(p: TerminalPrefs = terminalPrefs()): TerminalPre
     lineHeight: LINE_HEIGHT[p.lineHeight],
     cursorStyle: p.cursorStyle,
     cursorBlink: p.cursorBlink,
-    smoothScrollDuration: p.smoothScroll ? SMOOTH_SCROLL_MS : 0,
+    smoothScrollDuration: SMOOTH_SCROLL_MS,
     scrollSensitivity: SCROLL_SPEED[p.scrollSpeed],
     macOptionIsMeta: p.optionIsMeta,
   };

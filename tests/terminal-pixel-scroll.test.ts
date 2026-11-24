@@ -15,7 +15,7 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
   const bundle = buildSync({
     stdin: {
       contents:
-        "export { openTerminal, routeTerminalMessage } from './src/client/ui/terminal'; export { setTerminalPrefs } from './src/client/ui/terminal-prefs'; export { pixelScrollOf, SETTLE_DELAY_MS, SETTLE_MS } from './src/client/term-pixel-scroll'; export { store } from './src/client/state'; export { Terminal } from '@xterm/xterm';",
+        "export { openTerminal, routeTerminalMessage } from './src/client/ui/terminal'; export { pixelScrollOf, SETTLE_DELAY_MS, SETTLE_MS } from './src/client/term-pixel-scroll'; export { store } from './src/client/state'; export { Terminal } from '@xterm/xterm';",
       resolveDir: fileURLToPath(new URL('..', import.meta.url)),
     },
     bundle: true,
@@ -27,7 +27,7 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
   const css = await readFile(new URL('../src/client/style.css', import.meta.url), 'utf8');
   const xtermCss = await readFile(new URL('../node_modules/@xterm/xterm/css/xterm.css', import.meta.url), 'utf8');
 
-  const rig = async (smooth = true) => {
+  const rig = async () => {
     const page = await context.newPage();
     await page.setViewportSize({ width: 1000, height: 700 });
     const errors: string[] = [];
@@ -39,86 +39,82 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
     await page.setContent('<!doctype html><div id="mount"></div><div id="modal-root"></div>');
     await page.addStyleTag({ content: `${css}${xtermCss} body { margin: 0 }` });
     await page.addScriptTag({ content: bundle });
-    await page.evaluate(
-      ({ smooth }) => {
-        const w = window as any;
-        const { Terminal, store, openTerminal, routeTerminalMessage, setTerminalPrefs } = w.TerminalUI;
-        setTerminalPrefs({ smoothScroll: smooth });
-        const open = Terminal.prototype.open;
-        Terminal.prototype.open = function (host: HTMLElement) {
-          w.term = this;
-          open.call(this, host);
-        };
-        const mount = document.getElementById('mount')!;
-        mount.style.width = '800px';
-        mount.style.height = '420px';
-        const worker = { id: 'pixel', name: 'Pixel', kind: 'agent', color: '#89d9ed', status: 'idle', cols: 100, rows: 20, open: false };
-        store.floor = 'floor';
-        store.workers.set(worker.id, worker);
-        w.messages = [];
-        w.opened = [];
-        // Every path the terminal asks about exists, as itself.
-        const realFetch = window.fetch.bind(window);
-        window.fetch = (async (url: string, init?: RequestInit) => {
-          const body = JSON.parse(String(init?.body ?? '{}'));
-          if (String(url).includes('/api/term/paths')) return new Response(JSON.stringify({ paths: body.paths.map((p: string) => ({ path: `/checkout/${p.replace(/:\d+$/, '')}`, displayPath: p })), local: true }));
-          if (String(url).includes('/api/term/path/open')) {
-            w.opened.push(...body.paths);
-            return new Response(JSON.stringify({ ok: true }));
-          }
-          return realFetch(url, init);
-        }) as typeof fetch;
-        w.net = {
-          up: true,
-          send(msg: any) {
-            w.messages.push(msg);
-            if (msg.t === 'worker.attach') queueMicrotask(() => routeTerminalMessage({ t: 'term.snapshot', workerId: worker.id, data: '', cols: worker.cols, rows: worker.rows, shared: false }));
-            if (msg.t === 'term.resize') queueMicrotask(() => store.apply({ t: 'worker.update', worker: { ...worker, cols: msg.cols, rows: msg.rows } }));
-            return true;
-          },
-          async request() {
-            return { ok: true };
-          },
-          onStatus() {
-            return () => {};
-          },
-        };
-        w.feed = (data: string) => new Promise<void>((resolve) => w.term.write(data, resolve));
-        w.lines = (from: number, count: number) => Array.from({ length: count }, (_, i) => `line ${from + i} src/file-${from + i}.ts`).join('\r\n');
-        // An opaque red picture, for a Kitty image the test can find by its pixels.
-        const red = document.createElement('canvas');
-        red.width = red.height = 8;
-        const g = red.getContext('2d')!;
-        g.fillStyle = '#ff0000';
-        g.fillRect(0, 0, 8, 8);
-        w.png = red.toDataURL('image/png').split(',')[1];
-        w.frames = async (n = 3) => {
-          for (let i = 0; i < n; i++) await new Promise(requestAnimationFrame);
-        };
-        w.pixel = () => w.TerminalUI.pixelScrollOf(w.term);
-        // No named arrow functions in here: tsx would wrap them in a helper the page doesn't have.
-        w.scroller = () => w.term._core._viewport._scrollableElement;
-        w.cellH = () => w.term._core._renderService.dimensions.css.cell.height;
-        w.scrollTop = () => w.scroller().getScrollPosition().scrollTop;
-        /** Where the screen's first row sits when nothing is moved: the clipping box xterm scrolls in. */
-        w.box = () => w.scroller().getDomNode().getBoundingClientRect();
-        /** The buffer line whose pixels sit at `clientY`, from xterm's own scroll position alone. */
-        w.lineAt = (clientY: number) => Math.floor((clientY - w.box().top + w.scrollTop()) / w.cellH());
-        /** The text the page draws at a point inside the terminal's clipping box (rows take no pointer events, so find them by their boxes). */
-        w.textAt = (clientX: number, clientY: number) => {
-          const box = w.box();
-          if (clientY < box.top || clientY >= box.bottom) return null;
-          for (const row of document.querySelectorAll('.xterm-rows > div')) {
-            const r = row.getBoundingClientRect();
-            if (clientX >= r.left && clientX < r.right && clientY >= r.top && clientY < r.bottom) return row.textContent?.trimEnd() ?? '';
-          }
-          return null;
-        };
-        w.expected = (line: number) => w.term.buffer.active.getLine(line)?.translateToString(true) ?? null;
-        w.handle = openTerminal(w.net, worker.id, undefined, undefined, { mount, focus: false, hideTeam: true });
-      },
-      { smooth },
-    );
+    await page.evaluate(() => {
+      const w = window as any;
+      const { Terminal, store, openTerminal, routeTerminalMessage } = w.TerminalUI;
+      const open = Terminal.prototype.open;
+      Terminal.prototype.open = function (host: HTMLElement) {
+        w.term = this;
+        open.call(this, host);
+      };
+      const mount = document.getElementById('mount')!;
+      mount.style.width = '800px';
+      mount.style.height = '420px';
+      const worker = { id: 'pixel', name: 'Pixel', kind: 'agent', color: '#89d9ed', status: 'idle', cols: 100, rows: 20, open: false };
+      store.floor = 'floor';
+      store.workers.set(worker.id, worker);
+      w.messages = [];
+      w.opened = [];
+      // Every path the terminal asks about exists, as itself.
+      const realFetch = window.fetch.bind(window);
+      window.fetch = (async (url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        if (String(url).includes('/api/term/paths')) return new Response(JSON.stringify({ paths: body.paths.map((p: string) => ({ path: `/checkout/${p.replace(/:\d+$/, '')}`, displayPath: p })), local: true }));
+        if (String(url).includes('/api/term/path/open')) {
+          w.opened.push(...body.paths);
+          return new Response(JSON.stringify({ ok: true }));
+        }
+        return realFetch(url, init);
+      }) as typeof fetch;
+      w.net = {
+        up: true,
+        send(msg: any) {
+          w.messages.push(msg);
+          if (msg.t === 'worker.attach') queueMicrotask(() => routeTerminalMessage({ t: 'term.snapshot', workerId: worker.id, data: '', cols: worker.cols, rows: worker.rows, shared: false }));
+          if (msg.t === 'term.resize') queueMicrotask(() => store.apply({ t: 'worker.update', worker: { ...worker, cols: msg.cols, rows: msg.rows } }));
+          return true;
+        },
+        async request() {
+          return { ok: true };
+        },
+        onStatus() {
+          return () => {};
+        },
+      };
+      w.feed = (data: string) => new Promise<void>((resolve) => w.term.write(data, resolve));
+      w.lines = (from: number, count: number) => Array.from({ length: count }, (_, i) => `line ${from + i} src/file-${from + i}.ts`).join('\r\n');
+      // An opaque red picture, for a Kitty image the test can find by its pixels.
+      const red = document.createElement('canvas');
+      red.width = red.height = 8;
+      const g = red.getContext('2d')!;
+      g.fillStyle = '#ff0000';
+      g.fillRect(0, 0, 8, 8);
+      w.png = red.toDataURL('image/png').split(',')[1];
+      w.frames = async (n = 3) => {
+        for (let i = 0; i < n; i++) await new Promise(requestAnimationFrame);
+      };
+      w.pixel = () => w.TerminalUI.pixelScrollOf(w.term);
+      // No named arrow functions in here: tsx would wrap them in a helper the page doesn't have.
+      w.scroller = () => w.term._core._viewport._scrollableElement;
+      w.cellH = () => w.term._core._renderService.dimensions.css.cell.height;
+      w.scrollTop = () => w.scroller().getScrollPosition().scrollTop;
+      /** Where the screen's first row sits when nothing is moved: the clipping box xterm scrolls in. */
+      w.box = () => w.scroller().getDomNode().getBoundingClientRect();
+      /** The buffer line whose pixels sit at `clientY`, from xterm's own scroll position alone. */
+      w.lineAt = (clientY: number) => Math.floor((clientY - w.box().top + w.scrollTop()) / w.cellH());
+      /** The text the page draws at a point inside the terminal's clipping box (rows take no pointer events, so find them by their boxes). */
+      w.textAt = (clientX: number, clientY: number) => {
+        const box = w.box();
+        if (clientY < box.top || clientY >= box.bottom) return null;
+        for (const row of document.querySelectorAll('.xterm-rows > div')) {
+          const r = row.getBoundingClientRect();
+          if (clientX >= r.left && clientX < r.right && clientY >= r.top && clientY < r.bottom) return row.textContent?.trimEnd() ?? '';
+        }
+        return null;
+      };
+      w.expected = (line: number) => w.term.buffer.active.getLine(line)?.translateToString(true) ?? null;
+      w.handle = openTerminal(w.net, worker.id, undefined, undefined, { mount, focus: false, hideTeam: true });
+    });
     await page.waitForFunction(() => !!(window as any).term?.element && !(window as any).term.options.disableStdin);
     await page.evaluate(async () => {
       const w = window as any;
@@ -620,8 +616,11 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
     assert.ok(await page.evaluate(() => (window as any).messages.some((m: any) => m.t === 'term.input' && m.data.startsWith('\x1b[<64;'))));
   });
 
-  await t.test('with smooth scrolling off, the screen keeps whole rows as before', async () => {
-    const page = await rig(false);
+  await t.test('with smoothScrollDuration forced to 0, the screen keeps whole rows', async () => {
+    const page = await rig();
+    await page.evaluate(() => {
+      (window as any).term.options.smoothScrollDuration = 0;
+    });
     await wheel(page, -4.4);
     const state = await page.evaluate(() => {
       const w = window as any;

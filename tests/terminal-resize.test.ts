@@ -328,10 +328,18 @@ test('inline terminals follow pane geometry without focus or stale size rollback
 
   await t.test('a scrolled-up reader keeps its exact history and input readiness across backgrounding', async () => {
     const page = await rig();
-    const before = await page.evaluate(async () => {
+    await page.evaluate(async () => {
       const w = window as any;
       await new Promise<void>((resolve) => w.term.write(Array.from({ length: 100 }, (_, i) => `history ${i}\r\n`).join(''), resolve));
+      await new Promise(requestAnimationFrame);
       w.term.scrollToTop();
+    });
+    await page.waitForFunction(() => {
+      const b = (window as any).term.buffer.active;
+      return b.baseY > 0 && b.viewportY === 0;
+    });
+    const before = await page.evaluate(() => {
+      const w = window as any;
       w.messages = [];
       w.visibility(true);
       return { viewport: w.term.buffer.active.viewportY, base: w.term.buffer.active.baseY };

@@ -4,23 +4,24 @@ import { SMOOTH_SCROLL_MS, TERMINAL_DEFAULTS, followTerminalPrefs, isDefaultTerm
 
 test('nothing saved, or something that is not an object, is the defaults', () => {
   for (const raw of [undefined, null, 'block', 7, [], [{ cursorStyle: 'bar' }]]) assert.deepEqual(normalizeTerminalPrefs(raw), TERMINAL_DEFAULTS);
-  assert.deepEqual(TERMINAL_DEFAULTS, { lineHeight: 'default', cursorStyle: 'block', cursorBlink: true, smoothScroll: false, scrollSpeed: 'default', optionIsMeta: true });
+  assert.deepEqual(TERMINAL_DEFAULTS, { lineHeight: 'default', cursorStyle: 'block', cursorBlink: true, scrollSpeed: 'default', optionIsMeta: true });
   assert.equal(isDefaultTerminalPrefs(normalizeTerminalPrefs({})), true);
 });
 
 test('values that are unknown, mistyped or for another setting fall back to their default', () => {
-  const prefs = normalizeTerminalPrefs({ lineHeight: 'relaxed', cursorStyle: 'beam', cursorBlink: 'false', smoothScroll: true, scrollSpeed: 2, optionIsMeta: false, extra: 1 });
-  assert.deepEqual(prefs, { lineHeight: 'relaxed', cursorStyle: 'block', cursorBlink: true, smoothScroll: true, scrollSpeed: 'default', optionIsMeta: false });
+  const prefs = normalizeTerminalPrefs({ lineHeight: 'relaxed', cursorStyle: 'beam', cursorBlink: 'false', smoothScroll: false, scrollSpeed: 2, optionIsMeta: false, extra: 1 });
+  assert.deepEqual(prefs, { lineHeight: 'relaxed', cursorStyle: 'block', cursorBlink: true, scrollSpeed: 'default', optionIsMeta: false });
   assert.equal('extra' in prefs, false);
+  assert.equal('smoothScroll' in prefs, false);
   assert.equal(isDefaultTerminalPrefs(prefs), false);
 });
 
-test('the defaults open a terminal as it opened before the settings existed', () => {
-  assert.deepEqual(terminalOptions(TERMINAL_DEFAULTS), { lineHeight: 1.1, cursorStyle: 'block', cursorBlink: true, smoothScrollDuration: 0, scrollSensitivity: 1, macOptionIsMeta: true });
+test('the defaults open a terminal with smooth scrolling always on', () => {
+  assert.deepEqual(terminalOptions(TERMINAL_DEFAULTS), { lineHeight: 1.1, cursorStyle: 'block', cursorBlink: true, smoothScrollDuration: SMOOTH_SCROLL_MS, scrollSensitivity: 1, macOptionIsMeta: true });
 });
 
 test('each choice sets its xterm option', () => {
-  const opts = terminalOptions(normalizeTerminalPrefs({ lineHeight: 'compact', cursorStyle: 'underline', cursorBlink: false, smoothScroll: true, scrollSpeed: 'fast', optionIsMeta: false }));
+  const opts = terminalOptions(normalizeTerminalPrefs({ lineHeight: 'compact', cursorStyle: 'underline', cursorBlink: false, scrollSpeed: 'fast', optionIsMeta: false }));
   assert.deepEqual(opts, { lineHeight: 1, cursorStyle: 'underline', cursorBlink: false, smoothScrollDuration: SMOOTH_SCROLL_MS, scrollSensitivity: 2, macOptionIsMeta: false });
   assert.ok(SMOOTH_SCROLL_MS > 0);
   assert.equal(terminalOptions(normalizeTerminalPrefs({ lineHeight: 'relaxed' })).lineHeight, 1.25);
@@ -33,7 +34,7 @@ test('an open terminal follows every change, re-fits only when its rows change h
   const term = { options: { ...terminalOptions(), fontSize: 14 } };
   let resized = 0;
   const off = followTerminalPrefs(term as never, { fixed: { cursorBlink: false }, resized: () => resized++ });
-  setTerminalPrefs({ smoothScroll: true, cursorStyle: 'bar' });
+  setTerminalPrefs({ cursorStyle: 'bar' });
   assert.equal(term.options.smoothScrollDuration, SMOOTH_SCROLL_MS);
   assert.equal(term.options.cursorStyle, 'bar');
   assert.equal(term.options.cursorBlink, false, 'a fixed option wins over the choice');
