@@ -3,11 +3,15 @@
 A companion app for your phone. Pair it with your office once over Tailscale HTTPS, and from anywhere on your tailnet you can see every worker, hire new ones, watch their live terminals, prompt them, and read and comment on the floor's Whiteboard. Both devices need Tailscale, even on the same Wi-Fi. Current offices no longer expose plain HTTP or LAN-only access. If you paired over HTTP before, scan the new HTTPS pairing code and remove the old office entry from the phone. Older hosts' pairing links remain readable for compatibility.
 
 <p>
-  <img src="docs/home.jpg" alt="The office's workers listed by floor, each with its status, model, task and branch" width="19%">
-  <img src="docs/thread.jpg" alt="A worker's Thread: your message, its activity and its Markdown reply, with the composer under it" width="19%">
-  <img src="docs/worker.jpg" alt="A worker's live terminal in Raw TTY with the quick keys and composer under it" width="19%">
-  <img src="docs/hire.jpg" alt="The hire screen: Droid or Shell, a task, a model, the reasoning effort, where it runs and its worktree" width="19%">
-  <img src="docs/notification.jpg" alt="Notifications that a worker is done and another needs you, with a reply box" width="19%">
+  <img src="docs/workers.jpg" alt="The Workers tab: every worker across every floor, each with its floor, repository, model, status and task" width="24%">
+  <img src="docs/home.jpg" alt="The Office tab: the floor chips, Mission Control's Orchestrator and Grok Bot, and the current floor's workers" width="24%">
+  <img src="docs/thread.jpg" alt="A worker's Thread: its activity summary, its Markdown reply with a pull request link and its changed files, with the composer under it" width="24%">
+  <img src="docs/worker.jpg" alt="A worker's live terminal in Raw TTY with the quick keys and composer under it" width="24%">
+</p>
+<p>
+  <img src="docs/board.jpg" alt="The Board tab: the floor's Whiteboard cards with search, format filters and Ping a worker" width="24%">
+  <img src="docs/hire.jpg" alt="The hire screen: Droid or Shell, a task, a model, the reasoning effort, where it runs, its worktree and other repositories to also work in" width="24%">
+  <img src="docs/notification.jpg" alt="Notifications that a worker is done and another needs you, with a reply box" width="24%">
 </p>
 
 ## What it does
