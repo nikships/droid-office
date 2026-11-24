@@ -14,7 +14,8 @@ function showScrollbar(element: Element) {
   );
 }
 
-function input() {
+function input(event: Event) {
+  if (event.target instanceof Element && event.target.closest('.xterm')) return;
   lastInput = performance.now();
 }
 
@@ -29,7 +30,7 @@ document.addEventListener(
   'keydown',
   (event) => {
     if (isEditable(event.target)) return;
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Tab'].includes(event.key)) input();
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Tab'].includes(event.key)) input(event);
   },
   true,
 );
