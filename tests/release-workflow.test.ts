@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { runInNewContext } from 'node:vm';
-import { androidVersionChanged, changedFiles, checksFor } from '../.github/scripts/release-changes.mjs';
+import { androidVersionChanged, changedFiles, checksFor, unpublishedChecks } from '../.github/scripts/release-changes.mjs';
 
 const none = { node: false, website: false, mac: false, android: false };
 const all = { node: true, website: true, mac: true, android: true };
@@ -80,6 +80,47 @@ test('pushes compare the entire before/after range, including deletions and both
   assert.deepEqual(calls, [['diff', '--name-only', '-z', '--no-renames', 'a'.repeat(40), 'b'.repeat(40), '--']]);
   assert.deepEqual(files, ['android/app/build.gradle.kts', 'archive/build.gradle.kts', 'src/client/file with\nnewline.ts']);
   assert.deepEqual(checksFor(files), { ...none, node: true, mac: true, android: true });
+});
+
+test('pushes rebuild platforms changed since the last published release, even after a failed run', () => {
+  const calls: string[][] = [];
+  const git = (args: string[]) => {
+    calls.push(args);
+    if (args[0] === 'rev-parse') return 'published\n';
+    if (args[0] === 'diff') return 'android/app/src/main/java/HireSheet.kt\0';
+    return '';
+  };
+  assert.deepEqual(
+    unpublishedChecks({ after: 'head' }, git, () => 'v0.1.1\n', '0.1'),
+    { ...none, android: true },
+  );
+  assert.deepEqual(calls, [
+    ['rev-parse', '--verify', 'v0.1.1^{commit}'],
+    ['merge-base', '--is-ancestor', 'published', 'head'],
+    ['diff', '--name-only', '-z', '--no-renames', 'published', 'head', '--'],
+  ]);
+  assert.deepEqual(
+    unpublishedChecks(
+      { after: 'head' },
+      git,
+      () => {
+        throw new Error('offline');
+      },
+      '0.1',
+    ),
+    all,
+  );
+  assert.deepEqual(
+    unpublishedChecks(
+      { after: 'head' },
+      () => {
+        throw new Error('missing tag');
+      },
+      () => 'v0.1.1',
+      '0.1',
+    ),
+    all,
+  );
 });
 
 test('PRs use their merge-base diff and initial pushes use the full tree; manual runs do not diff', () => {

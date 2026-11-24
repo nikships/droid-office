@@ -55,6 +55,20 @@ export function androidVersionChanged(files, eventName, event, git, minor) {
   );
 }
 
+export function unpublishedChecks(event, git, latest, minor) {
+  try {
+    const tag = latest().trim();
+    if (!tag) throw new Error('No published release');
+    const base = git(['rev-parse', '--verify', `${tag}^{commit}`]).trim();
+    git(['merge-base', '--is-ancestor', base, event.after]);
+    const files = git(['diff', '--name-only', '-z', '--no-renames', base, event.after, '--']).split('\0').filter(Boolean);
+    return checksFor(files, { androidVersionChanged: androidVersionChanged(files, 'push', { before: base }, git, minor) });
+  } catch {
+    // Never reuse an asset when the published baseline cannot be established.
+    return checksFor([], { manual: true });
+  }
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
   const git = (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
@@ -64,6 +78,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     manual: process.env.GITHUB_EVENT_NAME === 'workflow_dispatch',
     androidVersionChanged: androidVersionChanged(files, process.env.GITHUB_EVENT_NAME, event, git, minor),
   });
+  if (process.env.GITHUB_EVENT_NAME === 'push') {
+    const pending = unpublishedChecks(event, git, () => execFileSync('gh', ['release', 'view', '--json', 'tagName', '--jq', '.tagName'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }), minor);
+    for (const key of Object.keys(checks)) checks[key] ||= pending[key];
+  }
   const version = `${minor}.${git(['rev-list', '--count', 'HEAD']).trim()}`;
   console.log(JSON.stringify({ files, checks, version }, null, 2));
   appendFileSync(

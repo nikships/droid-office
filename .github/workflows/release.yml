@@ -7,7 +7,8 @@ name: Release
 # version, package.json's major.minor plus the number of commits on main (v0.1.68, v0.1.69, ...),
 # so the app always sees it as newer; bump package.json for a new minor.
 #
-# PRs and pushes use the same path filters for Node checks, the website and each platform.
+# PRs use their diff; pushes also include changes since the last published release, so a failed
+# release cannot leave a platform's reused asset behind. An unknown baseline rebuilds everything.
 # PRs compile and test, but never version, package, sign or upload release artifacts.
 # Test/docs-only changes publish nothing. Manual runs check everything, releasing only on main.
 #
@@ -140,6 +141,8 @@ jobs:
         run: .github/scripts/runner-toolchain.sh node
       - name: Find the checks and platforms this change can affect
         id: paths
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/release-changes.mjs
 
       # A run that failed before `publish` leaves its artifacts behind, and nothing on a PR run
