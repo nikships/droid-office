@@ -70,7 +70,7 @@ export const OWNER_TOOLS = [
     [
       'Prompt or steer an independent floor worker (check office_look first; for subagents use team_message; never prompt a worker at a permission prompt). Accepts worker (or workerId/name) and prompt (or text).',
       ...MESSAGE_DELIVERY,
-      'Cloud workers take neither queue nor urgent: to stop one, call office_worker_interrupt, then send the prompt without urgent.',
+      'Cloud workers take no queue or urgent: to stop one, call office_worker_interrupt, then send the prompt without either flag.',
     ].join(' '),
     z
       .strictObject({

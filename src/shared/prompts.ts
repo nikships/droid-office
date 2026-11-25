@@ -10,15 +10,15 @@ import { forgeWords } from './floors.js';
 
 /** How a message sent to a worker lands, by its flags. Shared by the lead guide, the tool descriptions and the Orchestrator brief. */
 export const MESSAGE_DELIVERY = [
-  'Default (queue and urgent omitted): a working worker takes the message mid-turn, and its turn carries on with it. team_message queues it for the worker hooks, which hand it over at its next tool step or as its turn would otherwise end; if the hooks cannot take it, it is typed in as a steer. office_worker_prompt types it in as a steer. An idle or done worker starts a new turn with it.',
-  '`queue: true`: a working worker holds the message in its queue and runs it as a new turn when the current turn ends. Nothing is interrupted. An idle or done worker has no turn to wait for, so it gets the message at once, as the default does. Queued messages show in `worker_queue` and in the roster.',
-  '`urgent: true`: Sends Escape to stop the running turn or blocking command, then types the message in once Droid has stopped, waiting up to about a second for that; if Droid is still busy, it arrives as a steer. Messages already in its queue are not removed, and Droid may start them before this one. `worker_queue` lists or clears them.',
-  'A blocking command (a watch, or a tool call that has run 15 seconds or more) holds plain messages until it ends.',
+  'By default a working worker takes the message mid-turn, without ending its turn: team_message hands it to the worker hooks at its next step, falling back to a typed steer; office_worker_prompt types it in as a steer. An idle or done worker starts a new turn with it.',
+  '`queue: true`: a working worker holds the message in its queue and runs it as a new turn when the current turn ends. Nothing is interrupted. An idle, done, or sleeping worker has no turn to wait for, so it gets the message at once, as the default does. Queued messages show in `worker_queue` and in the roster.',
+  '`urgent: true`: Sends Escape to stop the running turn or blocking command, then types the message in once Droid has stopped, waiting briefly for that; if Droid is still busy, it arrives as a steer. Messages already in its queue are not removed, and Droid may start them before this one. `worker_queue` lists, clears or promotes them.',
+  'A blocking command (a watch, or a tool call that has run 15 seconds or more) holds default and queued (non-urgent) messages until it ends.',
 ];
 
 /** What the team_message reply's `delivery` says about the path a message took. */
 export const MESSAGE_REPLY =
-  'The team_message reply names the path it took in `delivery`: next_step (queued for the worker hooks, which hand it over at its next step), queued_turn (held until its turn ends), interrupted (Escape was sent to its running turn, then the message was typed in), sent (typed in now), or resumed (a sleeping worker was woken with it). A warning means a blocking command holds plain messages.';
+  'The team_message reply names the path it took in `delivery`: next_step (queued for the worker hooks, which hand it over at its next step), queued_turn (held until its turn ends), interrupted (Escape was sent to its running turn, then the message was typed in), sent (typed in now), or resumed (a sleeping worker was woken with it). A `warning` means a blocking command is holding the (non-urgent) message.';
 
 export type PromptGroup = 'workers' | 'issues' | 'pulls' | 'changes' | 'repos' | 'worktrees' | 'subagents' | 'visits' | 'whiteboard' | 'orchestrator' | 'wand' | 'office';
 
