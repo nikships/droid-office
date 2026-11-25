@@ -118,7 +118,9 @@ export function createHttpHandler(ctx: HttpContext) {
       }
       // Props keep their names when a release or a regenerate changes them (manifest.json gains rows),
       // so a cached copy is checked every load; an immutable one would hide new props after an update.
-      if (p.startsWith('/props/')) {
+      // The companion's theme artwork is drawn from CSS and <img>, which can't append the LAN token
+      // either. A release can repaint a theme under the same name, so cached copies revalidate.
+      if (p.startsWith('/props/') || p.startsWith('/themes/')) {
         const file = publicFile(p);
         if (file) return serveFile(res, file, 'revalidate', req);
         res.writeHead(404).end();

@@ -1,5 +1,5 @@
 /** The categories down the side of Settings, grouped so a setting's place can be guessed: what is only yours, what workers do, and what the whole office shares. */
-export type SettingsPane = 'you' | 'sound' | 'graphics' | 'thread' | 'terminal' | 'workers' | 'models' | 'subagents' | 'orchestrator' | 'connections' | 'office' | 'phone';
+export type SettingsPane = 'you' | 'sound' | 'graphics' | 'appearance' | 'thread' | 'terminal' | 'workers' | 'models' | 'subagents' | 'orchestrator' | 'connections' | 'office' | 'phone';
 
 /** The sidebar groups, in order. Every pane belongs to exactly one. */
 export type SettingsSection = 'Personal' | 'Workers' | 'Office';
@@ -26,6 +26,14 @@ export const SETTINGS_PANES: PaneDef[] = [
   { id: 'you', icon: '🧍', label: 'You', section: 'Personal', scope: 'Just you', blurb: 'Your character, what you hold and the mouse. Kept in this browser.' },
   { id: 'sound', icon: '🔊', label: 'Sound & alerts', section: 'Personal', scope: 'Just you', blurb: 'How loud the office is for you, and how it tells you a worker needs you.' },
   { id: 'graphics', icon: '🖥️', label: 'Display', section: 'Personal', scope: 'Just you', blurb: 'How this screen draws the office.' },
+  {
+    id: 'appearance',
+    icon: '🎨',
+    label: 'Appearance',
+    section: 'Personal',
+    scope: 'Just you',
+    blurb: 'The companion’s theme, wallpaper, glass and motion. Kept in this browser.',
+  },
   {
     id: 'thread',
     icon: '💬',
@@ -85,6 +93,8 @@ export function resolveSettingsPane(want: string | undefined): SettingsPane | un
 
 /** Settings only the 3D office has: your character and controls, its sound, how it draws, Linear and Jira (shown on its issue board) and the sky. */
 const OFFICE = ['office'] as const;
+/** The companion's own look: the 3D office draws its own world instead. */
+const COMPANIONS = ['companion', 'mac-companion'] as const;
 /** Pairing devices and the Tailscale MCP: the office takes them only from its own page on its own computer (`ownPage` in server.ts), so the Mac app's companion has them and a browser's doesn't. */
 const OWN_COMPUTER = ['office', 'mac-companion'] as const;
 
@@ -114,6 +124,11 @@ export const SETTINGS_CARDS = [
   { pane: 'graphics', title: 'Frame rate limit', keywords: 'fps frame rate limit 40 60 120 performance graphics', on: OFFICE },
   { pane: 'graphics', title: 'Performance overlay', keywords: 'fps gpu frame pacing stats overlay diagnostics performance', on: OFFICE },
   { pane: 'graphics', title: 'Overhead lights', keywords: 'lights brightness ceiling lamps lighting dark', on: OFFICE },
+  { pane: 'appearance', title: 'Theme', keywords: 'theme themes color colour palette look skin dark gradient artwork og carbon nightly aurora appearance', on: COMPANIONS },
+  { pane: 'appearance', title: 'Wallpaper', keywords: 'wallpaper background picture image photo upload custom link url dim blur appearance', on: COMPANIONS },
+  { pane: 'appearance', title: 'Glass', keywords: 'glass transparency translucent frosted clear solid opacity blur panels appearance', on: COMPANIONS },
+  { pane: 'appearance', title: 'Motion', keywords: 'motion animation animated shader webgl live still moving background appearance', on: COMPANIONS },
+  { pane: 'appearance', title: 'Restore Appearance defaults', keywords: 'appearance reset restore defaults theme wallpaper glass motion', on: COMPANIONS },
   { pane: 'thread', title: 'Text size', keywords: 'thread text size font bigger smaller larger zoom scale small large conversation chat reading' },
   { pane: 'thread', title: 'Font', keywords: 'thread font typeface sans serif mono monospace text conversation chat reading' },
   { pane: 'thread', title: 'Spacing', keywords: 'thread spacing gap line height leading compact relaxed density padding conversation chat reading' },

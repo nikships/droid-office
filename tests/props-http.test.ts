@@ -8,7 +8,7 @@ import type { AddressInfo } from 'node:net';
 import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 
-test('props are revalidated each load, so an update that adds or changes one reaches a browser that cached the old set', { timeout: 30_000 }, async (t) => {
+test('props and theme artwork load without the LAN token and are revalidated each load, so an update that adds or changes one reaches a browser that cached the old set', { timeout: 30_000 }, async (t) => {
   const home = mkdtempSync(path.resolve('tests/.props-http-'));
   const cfg = loadConfig(['--home', home, '--projects', home, '--host', '127.0.0.1', '--weather', 'clear']);
   cfg.port = 0;
@@ -22,7 +22,7 @@ test('props are revalidated each load, so an update that adds or changes one rea
     rmSync(home, { recursive: true, force: true });
   });
 
-  for (const route of ['/props/manifest.json', '/props/robot-arm.glb']) {
+  for (const route of ['/props/manifest.json', '/props/robot-arm.glb', '/themes/carbons-copy.jpg', '/themes/previews/carbons-copy.webp']) {
     const first = await fetch(`${base}${route}`);
     assert.equal(first.status, 200, route);
     assert.equal(first.headers.get('cache-control'), 'no-cache', `${route} is never cached as immutable`);

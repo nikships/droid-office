@@ -1,0 +1,611 @@
+// The companion's themes (web /dashboard and the Mac app's companion): a palette for every surface,
+// and a backdrop behind the glass made of a CSS gradient, optional artwork and an optional WebGL
+// shader. OG is the companion as it always looked and changes nothing; every other theme is turned
+// into CSS custom properties by companionThemeVars.
+
+/** The WebGL scenes a backdrop can run (theme-stage.ts in the client draws them). */
+export const THEME_SHADERS = ['aurora', 'nebula', 'silk', 'grid', 'synthwave', 'starfield', 'fireflies', 'embers', 'caustics', 'petals', 'rain'] as const;
+export type ThemeShader = (typeof THEME_SHADERS)[number];
+
+/**
+ * A backdrop's moving layer. A `scene` paints the whole backdrop; an `overlay` paints light (stars,
+ * sparks, rain) on transparency over the artwork, mixed in with `blend`.
+ */
+export interface ThemeStageSpec {
+  shader: ThemeShader;
+  layer: 'scene' | 'overlay';
+  /** One to four #rrggbb colors the shader paints with, most prominent first. */
+  colors: readonly string[];
+  /** 1 is the shader's natural pace. */
+  speed: number;
+  /** How strongly the layer shows, 0–1. */
+  opacity: number;
+  blend: 'normal' | 'screen' | 'plus-lighter' | 'soft-light' | 'overlay';
+}
+
+export interface ThemeBackdrop {
+  /** CSS background layers under everything else; always present so the page never flashes empty. */
+  gradient: string;
+  /** Full-resolution artwork (5504 × 3072) served from the client's public folder as generated, never re-encoded. */
+  image?: string;
+  /** Where the artwork anchors when the window's shape crops it. */
+  position?: string;
+  stage?: ThemeStageSpec;
+  /** CSS layers drawn over the artwork and shader: vignettes, scanlines, haze. */
+  veil?: string;
+}
+
+export interface ThemeTerminal {
+  foreground: string;
+  cursor: string;
+  /** The cell color under the panes' glass, #rrggbb; the glass setting decides how much shows through. */
+  background: string;
+  selection: string;
+}
+
+export interface CompanionTheme {
+  id: string;
+  name: string;
+  /** One line for the gallery. */
+  blurb: string;
+  family: 'classic' | 'artwork' | 'shader' | 'gradient';
+  /** The opaque base: the page, modals, menus and popovers. */
+  bg: string;
+  /** What the glass of the header, the side and the panes is tinted with. */
+  tint: string;
+  text: string;
+  /** Secondary text. */
+  muted: string;
+  accent: string;
+  /** The second color of the backdrop, for edges and glows. */
+  accent2: string;
+  /** Hairlines are this color at low alpha. */
+  line: string;
+  /** How opaque the panes are at the default glass, 0–1. Light artwork needs more. */
+  glass: number;
+  backdrop: ThemeBackdrop;
+  terminal: ThemeTerminal;
+}
+
+const scene = (shader: ThemeShader, colors: readonly string[], opts: Partial<Omit<ThemeStageSpec, 'shader' | 'colors'>> = {}): ThemeStageSpec => ({
+  shader,
+  colors,
+  layer: 'scene',
+  speed: 1,
+  opacity: 1,
+  blend: 'normal',
+  ...opts,
+});
+const overlay = (shader: ThemeShader, colors: readonly string[], opts: Partial<Omit<ThemeStageSpec, 'shader' | 'colors'>> = {}): ThemeStageSpec => ({
+  shader,
+  colors,
+  layer: 'overlay',
+  speed: 1,
+  opacity: 0.85,
+  blend: 'screen',
+  ...opts,
+});
+
+const VIGNETTE = 'radial-gradient(120% 90% at 50% 40%, transparent 55%, rgba(0, 0, 0, .55) 100%)';
+
+export const COMPANION_THEMES = [
+  {
+    id: 'og',
+    name: 'OG',
+    blurb: 'The original companion: OLED black, hairlines and Factory orange.',
+    family: 'classic',
+    bg: '#020202',
+    tint: '#020202',
+    text: '#eeeeee',
+    muted: '#a3a3a3',
+    accent: '#ee6018',
+    accent2: '#ee6018',
+    line: '#ffffff',
+    glass: 1,
+    backdrop: { gradient: '#020202' },
+    terminal: { foreground: '#eeeeee', cursor: '#ee6018', background: '#000000', selection: '#2a2a2a' },
+  },
+  {
+    id: 'carbons-copy',
+    name: 'Carbon’s Copy',
+    blurb: 'Woven carbon, a forge-orange edge and sparks in the dark.',
+    family: 'artwork',
+    bg: '#07070a',
+    tint: '#0a0a0e',
+    text: '#f2f0ed',
+    muted: '#aaa6a1',
+    accent: '#ff6a1f',
+    accent2: '#7484ff',
+    line: '#ffffff',
+    glass: 0.74,
+    backdrop: {
+      gradient: 'radial-gradient(70% 90% at 0% 100%, rgba(255, 106, 31, .28), transparent 60%), radial-gradient(60% 80% at 100% 0%, rgba(116, 132, 255, .22), transparent 60%), linear-gradient(160deg, #0b0b10, #050506)',
+      image: '/themes/carbons-copy.jpg',
+      position: '30% 50%',
+      stage: overlay('embers', ['#ff7a2b', '#ffb067', '#7484ff'], { opacity: 0.7, speed: 0.8 }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#f2f0ed', cursor: '#ff6a1f', background: '#050507', selection: '#3a2418' },
+  },
+  {
+    id: 'nightly-orbit',
+    name: 'Nightly Orbit',
+    blurb: 'A violet dawn breaking over a sleeping planet.',
+    family: 'artwork',
+    bg: '#07051a',
+    tint: '#0b0820',
+    text: '#f1eeff',
+    muted: '#aea6cf',
+    accent: '#a97bff',
+    accent2: '#ff7a45',
+    line: '#d9ccff',
+    glass: 0.72,
+    backdrop: {
+      gradient: 'radial-gradient(90% 60% at 50% 110%, rgba(169, 123, 255, .45), transparent 65%), radial-gradient(40% 40% at 85% 15%, rgba(255, 122, 69, .14), transparent 70%), linear-gradient(180deg, #05031a, #0b0628)',
+      image: '/themes/nightly-orbit.jpg',
+      position: '50% 80%',
+      stage: overlay('starfield', ['#ffffff', '#cbb8ff', '#ffb08a'], { opacity: 0.9, speed: 0.6 }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#f1eeff', cursor: '#a97bff', background: '#05031a', selection: '#33245c' },
+  },
+  {
+    id: 'neo-tokyo',
+    name: 'Neo Tokyo',
+    blurb: 'Rain on the glass, neon on the river.',
+    family: 'artwork',
+    bg: '#06060d',
+    tint: '#090914',
+    text: '#f4f1ff',
+    muted: '#aaa5c2',
+    accent: '#ff3f8e',
+    accent2: '#2fe0ff',
+    line: '#e2dcff',
+    glass: 0.72,
+    backdrop: {
+      gradient: 'radial-gradient(60% 70% at 85% 30%, rgba(255, 63, 142, .25), transparent 65%), radial-gradient(50% 60% at 15% 70%, rgba(47, 224, 255, .2), transparent 65%), linear-gradient(180deg, #07071a, #05050a)',
+      image: '/themes/neo-tokyo.jpg',
+      position: '60% 50%',
+      stage: overlay('rain', ['#9feaff', '#ff8cc0', '#ffffff'], { opacity: 0.55, speed: 1 }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#f4f1ff', cursor: '#ff3f8e', background: '#05050c', selection: '#4a1a33' },
+  },
+  {
+    id: 'kyoto-firefly',
+    name: 'Kyoto Firefly',
+    blurb: 'A mossy temple garden lit by drifting fireflies.',
+    family: 'artwork',
+    bg: '#04100c',
+    tint: '#061510',
+    text: '#eef6ef',
+    muted: '#a1b8aa',
+    accent: '#f3c45a',
+    accent2: '#4fd1a1',
+    line: '#d7f0e0',
+    glass: 0.72,
+    backdrop: {
+      gradient: 'radial-gradient(70% 70% at 30% 60%, rgba(79, 209, 161, .2), transparent 65%), radial-gradient(40% 40% at 80% 70%, rgba(243, 196, 90, .14), transparent 70%), linear-gradient(180deg, #06140f, #020806)',
+      image: '/themes/kyoto-firefly.jpg',
+      position: '50% 50%',
+      stage: overlay('fireflies', ['#ffd76a', '#c9ff7a', '#ffaa3b'], { opacity: 1, speed: 0.7, blend: 'plus-lighter' }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#eef6ef', cursor: '#f3c45a', background: '#030d09', selection: '#2c3a1e' },
+  },
+  {
+    id: 'orbital-foundry',
+    name: 'Orbital Foundry',
+    blurb: 'A ring forge burning against the black of space.',
+    family: 'artwork',
+    bg: '#0a0505',
+    tint: '#100707',
+    text: '#fbefea',
+    muted: '#c0a59c',
+    accent: '#ff5a36',
+    accent2: '#ffb347',
+    line: '#ffd9cc',
+    glass: 0.74,
+    backdrop: {
+      gradient: 'radial-gradient(50% 60% at 55% 45%, rgba(255, 90, 54, .35), transparent 70%), radial-gradient(80% 60% at 50% 100%, rgba(255, 179, 71, .12), transparent 70%), linear-gradient(180deg, #120606, #050202)',
+      image: '/themes/orbital-foundry.jpg',
+      position: '50% 45%',
+      stage: overlay('embers', ['#ff5a36', '#ffb347', '#ffe2a8'], { opacity: 0.85, speed: 1.1 }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#fbefea', cursor: '#ff5a36', background: '#080303', selection: '#4a1d14' },
+  },
+  {
+    id: 'abyssal-biolume',
+    name: 'Abyssal',
+    blurb: 'Bioluminescent currents deep in the trench.',
+    family: 'artwork',
+    bg: '#020b14',
+    tint: '#03101c',
+    text: '#eaf8fb',
+    muted: '#93b4bf',
+    accent: '#2ee6d6',
+    accent2: '#7a6bff',
+    line: '#c9f4ff',
+    glass: 0.72,
+    backdrop: {
+      gradient: 'radial-gradient(60% 60% at 30% 40%, rgba(46, 230, 214, .22), transparent 65%), radial-gradient(60% 60% at 80% 70%, rgba(122, 107, 255, .22), transparent 65%), linear-gradient(180deg, #03182a, #01060c)',
+      image: '/themes/abyssal-biolume.jpg',
+      position: '50% 40%',
+      stage: overlay('caustics', ['#2ee6d6', '#7a6bff', '#bafcff'], { opacity: 0.55, speed: 0.7 }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#eaf8fb', cursor: '#2ee6d6', background: '#010910', selection: '#0f3a44' },
+  },
+  {
+    id: 'astral-cathedral',
+    name: 'Astral Cathedral',
+    blurb: 'Monoliths floating through a lavender haze.',
+    family: 'artwork',
+    bg: '#0d0a16',
+    tint: '#120e1f',
+    text: '#f5f0ff',
+    muted: '#b6aacb',
+    accent: '#c39bff',
+    accent2: '#f3c46b',
+    line: '#e6dbff',
+    glass: 0.74,
+    backdrop: {
+      gradient: 'radial-gradient(60% 80% at 50% 30%, rgba(195, 155, 255, .35), transparent 70%), radial-gradient(30% 40% at 50% 60%, rgba(243, 196, 107, .14), transparent 70%), linear-gradient(180deg, #1a1230, #07050d)',
+      image: '/themes/astral-cathedral.jpg',
+      position: '50% 40%',
+      stage: overlay('nebula', ['#c39bff', '#f3c46b', '#ffffff'], { opacity: 0.5, speed: 0.5, blend: 'screen' }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#f5f0ff', cursor: '#c39bff', background: '#0a0712', selection: '#3a2c5a' },
+  },
+  {
+    id: 'sakura-mist',
+    name: 'Sakura Mist',
+    blurb: 'A pastel dawn with cherry blossoms on the wind.',
+    family: 'artwork',
+    bg: '#1a1117',
+    tint: '#22161e',
+    text: '#fff4f8',
+    muted: '#d2b6c3',
+    accent: '#ff8fb8',
+    accent2: '#ffd1e0',
+    line: '#ffe0ec',
+    glass: 0.84,
+    backdrop: {
+      gradient: 'radial-gradient(70% 60% at 70% 30%, rgba(255, 209, 224, .7), transparent 70%), linear-gradient(180deg, #f4dbe6, #e6e1f2)',
+      image: '/themes/sakura-mist.jpg',
+      position: '50% 50%',
+      stage: overlay('petals', ['#ffb7cf', '#ffd9e6', '#ff8fb8'], { opacity: 0.95, speed: 0.7, blend: 'normal' }),
+      veil: 'radial-gradient(120% 90% at 50% 40%, transparent 60%, rgba(40, 18, 30, .35) 100%)',
+    },
+    terminal: { foreground: '#fff4f8', cursor: '#ff8fb8', background: '#160e13', selection: '#5a2c40' },
+  },
+  {
+    id: 'aurora',
+    name: 'Aurora',
+    blurb: 'Northern lights rippling over a polar night.',
+    family: 'shader',
+    bg: '#030a10',
+    tint: '#050f17',
+    text: '#ecfaf5',
+    muted: '#9bb9b0',
+    accent: '#47f0b0',
+    accent2: '#8a6bff',
+    line: '#cffbea',
+    glass: 0.7,
+    backdrop: {
+      gradient: 'radial-gradient(80% 50% at 50% 0%, rgba(71, 240, 176, .3), transparent 70%), radial-gradient(60% 50% at 80% 20%, rgba(138, 107, 255, .25), transparent 70%), linear-gradient(180deg, #04121c, #010407)',
+      stage: scene('aurora', ['#47f0b0', '#2fb8ff', '#8a6bff', '#020812'], { speed: 0.6 }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#ecfaf5', cursor: '#47f0b0', background: '#020a0f', selection: '#14423a' },
+  },
+  {
+    id: 'blueprint',
+    name: 'Blueprint',
+    blurb: 'A drafting table at midnight: grid lines and cyan ink.',
+    family: 'shader',
+    bg: '#041226',
+    tint: '#06172e',
+    text: '#eaf4ff',
+    muted: '#9db5d3',
+    accent: '#4cc3ff',
+    accent2: '#8fd8ff',
+    line: '#cfe8ff',
+    glass: 0.72,
+    backdrop: {
+      gradient: 'radial-gradient(80% 70% at 50% 20%, rgba(76, 195, 255, .2), transparent 70%), linear-gradient(180deg, #082044, #030c1a)',
+      stage: scene('grid', ['#4cc3ff', '#8fd8ff', '#0a2a55', '#041226'], { speed: 0.5 }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#eaf4ff', cursor: '#4cc3ff', background: '#030e1e', selection: '#143a66' },
+  },
+  {
+    id: 'outrun',
+    name: 'Outrun',
+    blurb: 'A neon horizon racing toward a chrome sun.',
+    family: 'shader',
+    bg: '#0b0418',
+    tint: '#10061f',
+    text: '#fbefff',
+    muted: '#c3a8d6',
+    accent: '#ff4fd8',
+    accent2: '#2de2ff',
+    line: '#f4d6ff',
+    glass: 0.72,
+    backdrop: {
+      gradient: 'radial-gradient(60% 40% at 50% 60%, rgba(255, 79, 216, .35), transparent 70%), linear-gradient(180deg, #12052a 0%, #2a0838 55%, #07020f 100%)',
+      stage: scene('synthwave', ['#ff4fd8', '#2de2ff', '#ffb347', '#0b0418'], { speed: 0.8 }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#fbefff', cursor: '#ff4fd8', background: '#090312', selection: '#4a1450' },
+  },
+  {
+    id: 'solar-silk',
+    name: 'Solar Silk',
+    blurb: 'Molten silk in Factory orange and magenta.',
+    family: 'shader',
+    bg: '#0c0507',
+    tint: '#12070a',
+    text: '#fff1ec',
+    muted: '#c9a69c',
+    accent: '#ff7a2f',
+    accent2: '#ff3d7f',
+    line: '#ffdccf',
+    glass: 0.72,
+    backdrop: {
+      gradient: 'radial-gradient(70% 70% at 20% 80%, rgba(255, 122, 47, .4), transparent 70%), radial-gradient(60% 60% at 85% 20%, rgba(255, 61, 127, .3), transparent 70%), linear-gradient(160deg, #1a0709, #060203)',
+      stage: scene('silk', ['#ff7a2f', '#ff3d7f', '#6a1fff', '#0c0507'], { speed: 0.5 }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#fff1ec', cursor: '#ff7a2f', background: '#0a0405', selection: '#4a1c18' },
+  },
+  {
+    id: 'deep-field',
+    name: 'Deep Field',
+    blurb: 'Drifting nebulae and a thousand distant suns.',
+    family: 'shader',
+    bg: '#05040c',
+    tint: '#080712',
+    text: '#eef0ff',
+    muted: '#a4a8c8',
+    accent: '#7aa2ff',
+    accent2: '#ff7ad9',
+    line: '#d6deff',
+    glass: 0.7,
+    backdrop: {
+      gradient: 'radial-gradient(60% 60% at 30% 40%, rgba(122, 162, 255, .25), transparent 70%), radial-gradient(50% 50% at 75% 65%, rgba(255, 122, 217, .2), transparent 70%), linear-gradient(180deg, #080818, #020205)',
+      stage: scene('nebula', ['#7aa2ff', '#ff7ad9', '#ffd59a', '#05040c'], { speed: 0.4 }),
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#eef0ff', cursor: '#7aa2ff', background: '#04030a', selection: '#262c5a' },
+  },
+  {
+    id: 'velvet',
+    name: 'Velvet',
+    blurb: 'A still mesh of plum and indigo. No motion, easy on the battery.',
+    family: 'gradient',
+    bg: '#0b0714',
+    tint: '#110b1d',
+    text: '#f6f0ff',
+    muted: '#b4a8c9',
+    accent: '#b98cff',
+    accent2: '#ff7ab6',
+    line: '#e8dcff',
+    glass: 0.7,
+    backdrop: {
+      gradient:
+        'radial-gradient(55% 65% at 15% 20%, rgba(185, 140, 255, .45), transparent 70%), radial-gradient(50% 60% at 85% 30%, rgba(255, 122, 182, .3), transparent 70%), radial-gradient(70% 60% at 60% 100%, rgba(90, 80, 255, .35), transparent 70%), linear-gradient(160deg, #150c26, #07040d)',
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#f6f0ff', cursor: '#b98cff', background: '#090611', selection: '#3a2a5c' },
+  },
+  {
+    id: 'glacier',
+    name: 'Glacier',
+    blurb: 'Cold blue light through polar ice.',
+    family: 'gradient',
+    bg: '#04101a',
+    tint: '#061522',
+    text: '#eef8ff',
+    muted: '#a0b8c8',
+    accent: '#7fd4ff',
+    accent2: '#c6f0ff',
+    line: '#d6f1ff',
+    glass: 0.7,
+    backdrop: {
+      gradient:
+        'radial-gradient(60% 50% at 70% 0%, rgba(198, 240, 255, .35), transparent 70%), radial-gradient(60% 60% at 10% 80%, rgba(60, 140, 220, .35), transparent 70%), conic-gradient(from 200deg at 60% 40%, rgba(127, 212, 255, .12), transparent 30%, rgba(127, 212, 255, .08) 60%, transparent), linear-gradient(180deg, #0b2236, #020910)',
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#eef8ff', cursor: '#7fd4ff', background: '#030c14', selection: '#173d55' },
+  },
+  {
+    id: 'dune',
+    name: 'Dune',
+    blurb: 'Warm sand under a low copper sun.',
+    family: 'gradient',
+    bg: '#120c07',
+    tint: '#18100a',
+    text: '#fbf3ea',
+    muted: '#c9b49d',
+    accent: '#f0a35e',
+    accent2: '#e86a3a',
+    line: '#ffe8cf',
+    glass: 0.74,
+    backdrop: {
+      gradient: 'radial-gradient(45% 45% at 75% 35%, rgba(240, 163, 94, .55), transparent 70%), radial-gradient(90% 50% at 30% 100%, rgba(232, 106, 58, .35), transparent 70%), linear-gradient(180deg, #2a1709 0%, #160c06 60%, #0a0604 100%)',
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#fbf3ea', cursor: '#f0a35e', background: '#0e0905', selection: '#4a3018' },
+  },
+  {
+    id: 'phosphor',
+    name: 'Phosphor',
+    blurb: 'A green CRT glow with faint scanlines.',
+    family: 'gradient',
+    bg: '#020a04',
+    tint: '#030e06',
+    text: '#d9ffe4',
+    muted: '#8fbf9c',
+    accent: '#39ff88',
+    accent2: '#b6ff5c',
+    line: '#c8ffd8',
+    glass: 0.78,
+    backdrop: {
+      gradient: 'radial-gradient(80% 70% at 50% 50%, rgba(57, 255, 136, .16), transparent 75%), linear-gradient(180deg, #041a0a, #010502)',
+      veil: 'repeating-linear-gradient(180deg, rgba(0, 0, 0, .22) 0 1px, transparent 1px 3px), radial-gradient(120% 90% at 50% 45%, transparent 55%, rgba(0, 0, 0, .7) 100%)',
+    },
+    terminal: { foreground: '#c8ffd8', cursor: '#39ff88', background: '#010703', selection: '#164a26' },
+  },
+  {
+    id: 'graphite',
+    name: 'Graphite',
+    blurb: 'Monochrome glass with nothing but white for an accent.',
+    family: 'gradient',
+    bg: '#09090a',
+    tint: '#0e0e10',
+    text: '#f2f2f2',
+    muted: '#a6a6a8',
+    accent: '#e9e9ea',
+    accent2: '#8a8a90',
+    line: '#ffffff',
+    glass: 0.72,
+    backdrop: {
+      gradient: 'radial-gradient(60% 60% at 80% 10%, rgba(255, 255, 255, .1), transparent 70%), radial-gradient(70% 60% at 10% 100%, rgba(255, 255, 255, .06), transparent 70%), linear-gradient(160deg, #18181b, #050506)',
+      veil: VIGNETTE,
+    },
+    terminal: { foreground: '#eeeeee', cursor: '#e9e9ea', background: '#060607', selection: '#3a3a3e' },
+  },
+] as const satisfies readonly CompanionTheme[];
+
+export type CompanionThemeId = (typeof COMPANION_THEMES)[number]['id'];
+
+export const COMPANION_THEME_IDS: readonly CompanionThemeId[] = COMPANION_THEMES.map((t) => t.id);
+export const OG_THEME_ID: CompanionThemeId = 'og';
+export const DEFAULT_THEME_ID: CompanionThemeId = 'carbons-copy';
+
+/** The gallery's copy of a theme's artwork, sized for a card at any pixel ratio (lossless, from the full-resolution file). */
+export function themePreview(theme: Pick<CompanionTheme, 'backdrop'>): string | undefined {
+  return theme.backdrop.image?.replace(/^\/themes\/([^/]+)\.jpg$/, '/themes/previews/$1.webp');
+}
+
+export function companionTheme(id: string | undefined): CompanionTheme {
+  return COMPANION_THEMES.find((t) => t.id === id) ?? COMPANION_THEMES.find((t) => t.id === DEFAULT_THEME_ID)!;
+}
+
+/** How see-through the glass is: Clear shows more backdrop, Solid none (and blurs nothing). */
+export const GLASS_LEVELS = ['clear', 'frosted', 'solid'] as const;
+export type GlassLevel = (typeof GLASS_LEVELS)[number];
+
+// ---- Colors ----------------------------------------------------------------------------------------
+
+export interface Rgb {
+  r: number;
+  g: number;
+  b: number;
+}
+
+/** #rgb or #rrggbb as 0–255 channels. */
+export function parseHex(hex: string): Rgb {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) throw new Error(`Not a #rrggbb color: ${hex}`);
+  const s = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
+  return { r: parseInt(s.slice(0, 2), 16), g: parseInt(s.slice(2, 4), 16), b: parseInt(s.slice(4, 6), 16) };
+}
+
+const hex2 = (n: number) =>
+  Math.round(Math.min(255, Math.max(0, n)))
+    .toString(16)
+    .padStart(2, '0');
+export const toHex = ({ r, g, b }: Rgb) => `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+
+/** `a` moved `t` of the way to `b`. */
+export function mixHex(a: string, b: string, t: number): string {
+  const x = parseHex(a);
+  const y = parseHex(b);
+  return toHex({ r: x.r + (y.r - x.r) * t, g: x.g + (y.g - x.g) * t, b: x.b + (y.b - x.b) * t });
+}
+
+const round3 = (n: number) => Math.round(n * 1000) / 1000;
+export function rgba(hex: string, alpha: number): string {
+  const { r, g, b } = parseHex(hex);
+  return `rgba(${r}, ${g}, ${b}, ${round3(Math.min(1, Math.max(0, alpha)))})`;
+}
+
+/** WCAG relative luminance. */
+export function luminance(hex: string): number {
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const { r, g, b } = parseHex(hex);
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** WCAG contrast ratio, 1–21. */
+export function contrastRatio(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** What reads on an accent-filled button: white, or the theme's dark base when the accent is light. */
+export function accentInk(theme: Pick<CompanionTheme, 'accent' | 'bg'>): string {
+  return contrastRatio('#ffffff', theme.accent) >= contrastRatio(theme.bg, theme.accent) ? '#ffffff' : theme.bg;
+}
+
+// ---- CSS -------------------------------------------------------------------------------------------
+
+/** Pane opacity at each glass level, from the theme's own. */
+export function glassAlpha(theme: Pick<CompanionTheme, 'glass'>, level: GlassLevel): number {
+  if (level === 'solid') return 1;
+  return round3(Math.min(1, Math.max(0.3, level === 'clear' ? theme.glass - 0.16 : theme.glass)));
+}
+
+/**
+ * The custom properties a theme sets on the companion's page. The kit's own tokens (--bg, --text,
+ * --accent…) are retinted; `--th-*` are the glass and chrome the themed stylesheet layer reads.
+ */
+export function companionThemeVars(theme: CompanionTheme, level: GlassLevel = 'frosted'): Record<string, string> {
+  const pane = glassAlpha(theme, level);
+  const chrome = level === 'solid' ? 1 : round3(Math.max(0.3, pane - 0.1));
+  const term = level === 'solid' ? 1 : round3(Math.min(1, pane + 0.12));
+  const ink = accentInk(theme);
+  return {
+    '--bg': theme.bg,
+    '--surface': mixHex(theme.bg, theme.text, 0.035),
+    '--surface-raised': mixHex(theme.bg, theme.text, 0.06),
+    '--surface-hover': mixHex(theme.bg, theme.text, 0.085),
+    '--text': theme.text,
+    '--text-secondary': theme.muted,
+    '--text-tertiary': rgba(theme.text, 0.5),
+    '--text-inverse': ink === '#ffffff' ? theme.bg : ink,
+    '--border': rgba(theme.line, 0.09),
+    '--border-strong': rgba(theme.line, 0.18),
+    '--accent': theme.accent,
+    '--accent-hover': mixHex(theme.accent, '#ffffff', 0.14),
+    '--accent-pressed': mixHex(theme.accent, '#000000', 0.16),
+    '--accent-muted': rgba(theme.accent, 0.16),
+    '--shadow-window': `0 24px 64px rgba(0, 0, 0, .55), 0 0 0 1px ${rgba(theme.line, 0.05)}`,
+    '--th-accent-ink': ink,
+    '--th-accent2': theme.accent2,
+    '--th-glow': rgba(theme.accent, 0.35),
+    '--th-focus': rgba(theme.accent, 0.6),
+    '--th-focus-ring': rgba(theme.accent, 0.14),
+    '--th-chrome': rgba(theme.tint, chrome),
+    '--th-chrome-deep': rgba(mixHex(theme.tint, '#000000', 0.25), Math.min(1, chrome + 0.06)),
+    '--th-side': rgba(theme.tint, chrome),
+    '--th-pane': rgba(theme.tint, pane),
+    '--th-term': rgba(theme.terminal.background, term),
+    '--th-pop': rgba(theme.bg, level === 'solid' ? 1 : 0.94),
+    '--th-hover': rgba(theme.text, 0.06),
+    '--th-active': rgba(theme.text, 0.09),
+    '--th-blur': level === 'solid' ? '0px' : level === 'clear' ? '14px' : '22px',
+  };
+}
+
+/** The colors the terminal draws with in a theme, over the ANSI palette it keeps. */
+export function companionTerminalColors(theme: CompanionTheme): { foreground: string; cursor: string; cursorAccent: string; selectionBackground: string } {
+  return { foreground: theme.terminal.foreground, cursor: theme.terminal.cursor, cursorAccent: theme.terminal.background, selectionBackground: theme.terminal.selection };
+}

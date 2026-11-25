@@ -24,6 +24,7 @@ import { onThreadViewPrefs, resetThreadViewPrefs, setThreadViewPrefs, isDefaultT
 import { isDefaultTerminalPrefs, onTerminalPrefs, resetTerminalPrefs, setTerminalPrefs, terminalPrefs, type TerminalPrefs } from './terminal-prefs';
 import { onTermFontSize, setTermFontSize, termFontSize, TERM_FONT_DEFAULT, TERM_FONT_MAX, TERM_FONT_MIN, TERM_FONT_STEP } from './term-font';
 import { openHostUpdate } from './host-update';
+import { appearanceSettings } from './appearance-settings';
 import { openPhone, pairedPhones } from './phone';
 import { companionState, openCompanion } from './companion';
 import { remoteMcpSettings } from './remote-mcp';
@@ -978,6 +979,7 @@ function phoneRows(companion: boolean): Node[] {
 export function openSettings(net: Net, opts: SettingsOptions) {
   const { surface, first, hireForSetup } = opts;
   const only = opts.surface === 'office' ? officeRows(net, opts.office) : undefined;
+  const appearance = surface === 'office' ? undefined : appearanceSettings();
   const threadPane = threadRows();
   const terminalPane = terminalRows();
   const shown = settingsPanes(surface);
@@ -1504,6 +1506,15 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   // ---- The panes ----------------------------------------------------------------------------------
   const panes: Partial<Record<SettingsPane, Node[]>> = {
     ...(only ? { you: only.you, sound: only.sound, graphics: only.graphics } : {}),
+    ...(appearance
+      ? {
+          appearance: [
+            group(null, card('Theme', appearance.theme)),
+            group('Backdrop', card('Wallpaper', appearance.wallpaper), card('Glass', appearance.glass), card('Motion', appearance.motion)),
+            group(null, card('Restore Appearance defaults', appearance.restore)),
+          ],
+        }
+      : {}),
     thread: threadPane.groups,
     terminal: terminalPane.groups,
     workers: [
@@ -1733,6 +1744,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       wide.removeEventListener('change', orient);
       for (const off of offStore) off();
       only?.dispose();
+      appearance?.dispose();
       threadPane.dispose();
       terminalPane.dispose();
       factoryKey.dispose();

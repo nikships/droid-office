@@ -6,7 +6,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import type { Net } from '../net';
 import { store } from '../state';
 import { withToken } from '../token';
-import { TERM_THEME } from '../term-theme';
+import { TERM_THEME, onTermTheme, termTheme, termThemeTransparent } from '../term-theme';
 import { focusReports, suppressMirrorQueries, TerminalMirror } from '../term-mirror';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { colorDot } from './kit';
@@ -271,7 +271,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     ...terminalOptions(),
     fontFamily: TERM_FONT,
     fontSize: termFontSize(),
-    theme: TERM_THEME,
+    theme: termTheme(),
+    allowTransparency: termThemeTransparent(),
     minimumContrastRatio: 4.5,
     disableStdin: true,
     scrollback: 5000,
@@ -501,6 +502,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     mirror.disconnect();
     offFont();
     offPrefs();
+    offTheme();
     ro.disconnect();
     net.send({ t: 'worker.detach', workerId });
     term.dispose();
@@ -622,6 +624,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       sendSize();
     },
   });
+  const offTheme = onTermTheme(() => (term.options.theme = termTheme()));
 
   term.attachCustomKeyEventHandler((e) => {
     if (e.ctrlKey && e.key === ']' && (!inline || inline.onLeave)) {
@@ -758,7 +761,8 @@ export function openOfficeShell(net: Net) {
     ...terminalOptions(),
     fontFamily: TERM_FONT,
     fontSize: termFontSize(),
-    theme: TERM_THEME,
+    theme: termTheme(),
+    allowTransparency: termThemeTransparent(),
     minimumContrastRatio: 4.5,
     scrollback: 5000,
     allowProposedApi: true,
@@ -899,6 +903,7 @@ export function openOfficeShell(net: Net) {
       mirror?.disconnect();
       offFont();
       offPrefs();
+      offTheme();
       ro.disconnect();
       net.send({ t: 'shell.detach' });
       term.dispose();
@@ -924,6 +929,7 @@ export function openOfficeShell(net: Net) {
       sendSize();
     },
   });
+  const offTheme = onTermTheme(() => (term.options.theme = termTheme()));
   const zoomBy = (dir: 1 | -1) => {
     setTermFontSize(stepTermFont(term.options.fontSize ?? termFontSize(), dir));
     term.focus();

@@ -2328,6 +2328,20 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .dashboard :where(.list-row:hover, .menu-item:hover, .prompt-item:hover, .wt-slash-item:hover, .wt-slash-item[aria-selected="true"], .wt-mention-item:hover, .wt-mention-item[aria-selected="true"], .disclosure > summary:hover, .dash-team-toggle:hover) { box-shadow: inset 0 0 0 1px var(--border-strong); }
 .dashboard :is(.input, .modal textarea, .modal input, .modal select):focus { border-color: rgba(238, 96, 24, .6); box-shadow: 0 0 0 3px rgba(238, 96, 24, .1); }
 
+/* A companion theme's backdrop (ui/companion-theme.ts): gradient, WebGL stage, artwork, dim and veil, fixed under the whole page. OG never creates it. */
+.theme-backdrop { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; contain: strict; }
+.theme-backdrop > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+.theme-backdrop-base { z-index: 0; }
+.theme-backdrop-stage { z-index: 1; display: block; }
+.theme-backdrop-stage[data-layer=overlay] { z-index: 3; }
+.theme-backdrop-art { z-index: 2; object-fit: cover; opacity: 0; transition: opacity .6s var(--ease); user-select: none; }
+.theme-backdrop-art.ready { opacity: 1; }
+/* A blurred picture bleeds past the window so its soft edge never shows. */
+.theme-backdrop-art.blurred { inset: -64px; width: calc(100% + 128px); height: calc(100% + 128px); }
+.theme-backdrop-dim { z-index: 4; }
+.theme-backdrop-veil { z-index: 5; }
+@media (prefers-reduced-motion: reduce) { .theme-backdrop-art { transition: none; } }
+
 /* The Triage Console header: 36px sunken instrument deck + 32px architectural triage floor bays. */
 .dash-top { flex: none; display: flex; flex-direction: column; background: #0a0a0a; border-bottom: 1px solid rgba(255, 255, 255, .18); }
 .dash-top-upper { display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 10px 0 var(--space-3); background: #060606; }
@@ -3995,3 +4009,5 @@ button.wt-setting:hover { background: var(--surface-hover); color: var(--text); 
 .term-thread-host > .worker-thread { width: 100%; }
 .term-view { flex: none; }
 .modal.term .wt-scroll > .dash-question { padding: 0; }
+
+/* Appearance settings (ui/appearance-settings.ts): the theme gallery and the wallpaper controls. */
