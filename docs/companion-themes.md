@@ -21,7 +21,26 @@ The remaining themes have no bundled wallpaper. **Aurora, Blueprint, Outrun, Sol
 
 ## Surface contract
 
-![How a theme definition becomes tokens on the web and Mac companion, from the required palette to optional per-surface treatments.](assets/companion-themes/contract.svg)
+```mermaid
+flowchart LR
+    def["CompanionTheme.immersive<br/>Optional key → authored CSS value"]
+    def -->|value| css["companionThemeVars<br/>--th-KEY: value"]
+    def -->|presence| gate["Active key on body<br/>data-immersive~=KEY"]
+    css --> paint["Matching surface rule<br/>uses var(--th-KEY)"]
+    gate --> paint
+    def -. omitted key .-> base["No matching rule<br/>Original component CSS"]
+    paint --> type["Type · heading-font / caption-font<br/>Floor, worker and pane titles; section captions"]
+    paint --> chrome["Chrome · chrome-finish / panel-radius / panel-edge<br/>Header, sidebar, pane edges and empty card"]
+    paint --> badges["Badges · badge-face / badge-ink / imprint<br/>Mission Control badge, empty icon, floor nameplate"]
+    paint --> controls["Controls · control-finish / control-radius<br/>Buttons, segments, pills and filters"]
+    paint --> focus["Focus and selection · focus-outline / selection<br/>Keyboard focus and selected UI text, not xterm"]
+    paint --> rows["Rows and dividers · row-hover / row-active / section-rule<br/>Worker rows, directory filters and section separators"]
+    paint --> sheets["Sheets · sheet-finish<br/>Menus, popovers, modal headers and Settings"]
+    paint --> scroll["Scrollbar · scrollbar-thumb<br/>Roster, directory and Settings scroll areas"]
+    paint --> motion["Motion · control-motion<br/>Button and filter hover / press; gated off in Still or Reduce"]
+```
+
+[Open the rendered contract diagram](assets/companion-themes/contract.svg).
 
 Add `immersive` to a registry entry, not a theme-ID selector. Its keys come from `IMMERSIVE_KEYS`; values are trusted local CSS, never user input. `companionThemeVars` emits `--th-<key>` and the painter puts active key names in `body.dataset.immersive`. Every treatment rule in [`style.css`](../src/client/style.css) requires its own `.themed[data-immersive~="<key>"]`. An omitted key runs **no rule**, so the original component CSS wins without a theme-wide fallback. Switching clears the old properties and replaces the key list. OG has neither.
 
@@ -48,6 +67,8 @@ Carbon uses woven graphite panels, instrument captions, asymmetric corners and a
 ## Carbon’s Copy in the running companion
 
 Same floor, viewport, Frosted glass and reduced motion in both captures. The hero crops omit the device name.
+
+[![Carbon’s Copy field guide: all 18 keys with annotated crops of the surfaces they paint.](assets/companion-themes/capability-sheet.webp)](assets/companion-themes/capability-sheet.webp)
 
 | Original Carbon’s Copy | Immersive Carbon’s Copy |
 | --- | --- |
