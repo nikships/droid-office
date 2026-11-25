@@ -534,20 +534,21 @@ export function rgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${round3(Math.min(1, Math.max(0, alpha)))})`;
 }
 
+const linear = (c: number) => {
+  const s = c / 255;
+  return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+};
+const rgbLuminance = ({ r, g, b }: Rgb) => 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+const ratioOf = (x: number, y: number) => (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+
 /** WCAG relative luminance. */
 export function luminance(hex: string): number {
-  const lin = (c: number) => {
-    const s = c / 255;
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  };
-  const { r, g, b } = parseHex(hex);
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return rgbLuminance(parseHex(hex));
 }
 
 /** WCAG contrast ratio, 1–21. */
 export function contrastRatio(a: string, b: string): number {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
+  return ratioOf(luminance(a), luminance(b));
 }
 
 /** What reads on an accent-filled button: white, or the theme's dark base when the accent is light. */
@@ -563,13 +564,67 @@ export function glassAlpha(theme: Pick<CompanionTheme, 'glass'>, level: GlassLev
   return round3(Math.min(1, Math.max(0.3, level === 'clear' ? theme.glass - 0.16 : theme.glass)));
 }
 
+/** The header's and the side's opacity: a step clearer than the panes, and the thinnest glass on the page. */
+export function chromeAlpha(theme: Pick<CompanionTheme, 'glass'>, level: GlassLevel): number {
+  return level === 'solid' ? 1 : round3(Math.max(0.3, glassAlpha(theme, level) - 0.1));
+}
+
+/** The strongest shade a picture needs: enough to keep text readable over a white one. */
+export const MAX_PICTURE_SHADE = 0.9;
+
+/**
+ * The least black veil (0–MAX_PICTURE_SHADE) over a picture whose bright areas are `gray` (0–255)
+ * that keeps the theme's text at 7:1 and its secondary text at 4.5:1 on the page's thinnest glass.
+ */
+export function pictureShade(theme: Pick<CompanionTheme, 'glass' | 'tint' | 'text' | 'muted'>, level: GlassLevel, gray: number): number {
+  const alpha = chromeAlpha(theme, level);
+  const tint = parseHex(theme.tint);
+  const text = luminance(theme.text);
+  const muted = luminance(theme.muted);
+  const readable = (shade: number) => {
+    const v = Math.min(255, Math.max(0, gray)) * (1 - shade) * (1 - alpha);
+    const ground = rgbLuminance({ r: tint.r * alpha + v, g: tint.g * alpha + v, b: tint.b * alpha + v });
+    return ratioOf(text, ground) >= 7 && ratioOf(muted, ground) >= 4.5;
+  };
+  if (readable(0)) return 0;
+  let lo = 0;
+  let hi = MAX_PICTURE_SHADE;
+  while (hi - lo > 0.005) {
+    const mid = (lo + hi) / 2;
+    if (readable(mid)) hi = mid;
+    else lo = mid;
+  }
+  return Math.ceil(hi * 100) / 100;
+}
+
+/**
+ * How bright a picture's bright areas are, as one gray level (0–255): the 90th percentile of its
+ * pixels' luminance, from RGBA bytes. Transparent pixels count as the dark base they show.
+ */
+export function brightGray(rgba: ArrayLike<number>): number {
+  const n = Math.floor(rgba.length / 4);
+  if (!n) return 0;
+  const lin = (c: number) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  const ys = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = rgba[i * 4 + 3] / 255;
+    ys[i] = a * (0.2126 * lin(rgba[i * 4]) + 0.7152 * lin(rgba[i * 4 + 1]) + 0.0722 * lin(rgba[i * 4 + 2]));
+  }
+  ys.sort();
+  const y = ys[Math.min(n - 1, Math.floor(n * 0.9))];
+  return Math.round(255 * (y <= 0.00304 ? y * 12.92 : 1.055 * y ** (1 / 2.4) - 0.055));
+}
+
 /**
  * The custom properties a theme sets on the companion's page. The kit's own tokens (--bg, --text,
  * --accent…) are retinted; `--th-*` are the glass and chrome the themed stylesheet layer reads.
  */
 export function companionThemeVars(theme: CompanionTheme, level: GlassLevel = 'frosted'): Record<string, string> {
   const pane = glassAlpha(theme, level);
-  const chrome = level === 'solid' ? 1 : round3(Math.max(0.3, pane - 0.1));
+  const chrome = chromeAlpha(theme, level);
   const ink = accentInk(theme);
   return {
     '--bg': theme.bg,

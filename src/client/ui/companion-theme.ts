@@ -8,6 +8,7 @@ import {
   DEFAULT_THEME_ID,
   GLASS_LEVELS,
   OG_THEME_ID,
+  brightGray,
   companionTerminalColors,
   companionTheme,
   companionThemeVars,
@@ -15,6 +16,7 @@ import {
   type CompanionThemeId,
   type GlassLevel,
   type ThemeStageSpec,
+  pictureShade,
 } from '../../shared/companion-themes';
 import { setTermThemeColors } from '../term-theme';
 import { savedPrefs, type PrefOptions } from './saved-prefs';
@@ -93,6 +95,8 @@ let backdrop: Backdrop | undefined;
 let applied: string[] = [];
 let wallSrc: string | null = null;
 let reduceMotion: MediaQueryList | undefined;
+/** Each shown picture's bright gray (brightGray), measured once. */
+const pictureGrays = new Map<string, number>();
 const wallListeners = new Set<(src: string | null) => void>();
 
 /** The owner's wallpaper as something an <img> can show (an object URL for a kept file), or null. */
@@ -176,11 +180,13 @@ function paint(p: AppearancePrefs) {
   const b = (backdrop ??= makeBackdrop());
   b.root.hidden = false;
   b.base.style.background = theme.backdrop.gradient;
-  showPicture(b, backdropPicture(p, theme, wallSrc), theme.backdrop.position ?? '50% 50%');
+  const picture = backdropPicture(p, theme, wallSrc);
+  showPicture(b, picture, theme.backdrop.position ?? '50% 50%');
   const blur = BLUR_PX[p.blur];
   b.art.style.filter = blur ? `blur(${blur}px)` : '';
   b.art.classList.toggle('blurred', blur > 0);
-  b.dim.style.background = DIM_ALPHA[p.dim] ? `rgba(0, 0, 0, ${DIM_ALPHA[p.dim]})` : 'transparent';
+  const dim = Math.max(DIM_ALPHA[p.dim], picture ? pictureShade(theme, p.glass, pictureGrays.get(picture) ?? 0) : 0);
+  b.dim.style.background = dim ? `rgba(0, 0, 0, ${dim})` : 'transparent';
   b.veil.style.background = theme.backdrop.veil ?? 'none';
   const spec = b.stage ? backdropStage(p, theme, wallSrc) : null;
   b.canvas.hidden = !spec;
@@ -192,13 +198,49 @@ function paint(p: AppearancePrefs) {
   b.stage?.show(spec, animating(p));
 }
 
-/** Resolves once `src` is decoded, so a theme switch never shows its artwork half-drawn. */
-function decoded(src: string | null): Promise<void> {
-  if (!src) return Promise.resolve();
+const crossSite = (src: string) => /^https?:/i.test(src) && new URL(src, location.href).origin !== location.origin;
+
+/** How bright `img`'s bright areas are, from a small copy drawn only to be read (the page still shows the original). */
+function grayOf(img: HTMLImageElement): number {
+  const w = 96;
+  const h = Math.max(1, Math.round((w * img.naturalHeight) / Math.max(1, img.naturalWidth)));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return 255;
+  ctx.drawImage(img, 0, 0, w, h);
+  return brightGray(ctx.getImageData(0, 0, w, h).data);
+}
+
+async function load(src: string, cors: boolean): Promise<HTMLImageElement | null> {
   const img = new Image();
   img.decoding = 'async';
+  if (cors) img.crossOrigin = 'anonymous';
   img.src = src;
-  return img.decode().catch(() => {});
+  return img.decode().then(
+    () => img,
+    () => null,
+  );
+}
+
+/**
+ * Resolves once `src` is decoded, so a theme switch never shows its artwork half-drawn, and its
+ * brightness is known. A picture from a site that won't let the page read it counts as white.
+ */
+async function prepare(src: string | null): Promise<void> {
+  if (!src) return;
+  const other = crossSite(src);
+  const [shown, readable] = await Promise.all([load(src, false), other && !pictureGrays.has(src) ? load(src, true) : null]);
+  if (pictureGrays.has(src)) return;
+  const img = other ? readable : shown;
+  let gray = 255;
+  try {
+    if (img) gray = grayOf(img);
+  } catch {
+    // a tainted canvas: the site didn't allow reading the picture
+  }
+  pictureGrays.set(src, gray);
 }
 
 let lastTheme: string | undefined;
@@ -210,7 +252,7 @@ async function switchTo(p: AppearancePrefs) {
   const changedTheme = lastTheme !== undefined && lastTheme !== p.theme;
   lastTheme = p.theme;
   const theme = companionTheme(p.theme);
-  if (theme.id !== OG_THEME_ID) await decoded(backdropPicture(p, theme, wallSrc));
+  if (theme.id !== OG_THEME_ID) await prepare(backdropPicture(p, theme, wallSrc));
   if (ticket !== pending) return;
   const transition = (document as Document & { startViewTransition?: (fn: () => void) => unknown }).startViewTransition;
   if (changedTheme && transition && !reduceMotion?.matches) transition.call(document, () => paint(p));

@@ -2338,7 +2338,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .theme-backdrop-art.ready { opacity: 1; }
 /* A blurred picture bleeds past the window so its soft edge never shows. */
 .theme-backdrop-art.blurred { inset: -64px; width: calc(100% + 128px); height: calc(100% + 128px); }
-.theme-backdrop-dim { z-index: 4; }
+.theme-backdrop-dim { z-index: 4; transition: background-color .4s var(--ease); }
 .theme-backdrop-veil { z-index: 5; }
 @media (prefers-reduced-motion: reduce) { .theme-backdrop-art { transition: none; } }
 
