@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ORCHESTRATOR_ID } from '../../shared/mission-control.js';
+import { MESSAGE_DELIVERY } from '../../shared/prompts.js';
 import type { ClientMsg } from '../../shared/protocol.js';
 import { AUTO_DESK } from '../../shared/protocol.js';
 import { formatImageLines, type StoredImageMeta } from '../office-images.js';
@@ -66,7 +67,11 @@ export const OWNER_TOOLS = [
   tool(
     'worker.prompt',
     'office_worker_prompt',
-    'Prompt or steer an independent floor worker (check office_look first; for subagents use team_message; never prompt a worker at a permission prompt). Accepts worker (or workerId/name) and prompt (or text). Default queue: false steers during a running turn; queue: true waits for turn end; urgent: true interrupts via Escape and delivers immediately.',
+    [
+      'Prompt or steer an independent floor worker (check office_look first; for subagents use team_message; never prompt a worker at a permission prompt). Accepts worker (or workerId/name) and prompt (or text).',
+      ...MESSAGE_DELIVERY,
+      'Cloud workers take neither queue nor urgent: to stop one, call office_worker_interrupt, then send the prompt without urgent.',
+    ].join(' '),
     z
       .strictObject({
         ...worker,

@@ -4,6 +4,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  MESSAGE_DELIVERY,
+  MESSAGE_REPLY,
   PROMPTS,
   PROMPT_IDS,
   PROMPT_MAX,
@@ -400,4 +402,17 @@ test('worker prompts do not confine workers to their starting checkout or worksp
   assert.doesNotMatch(system, /Work in the checkout/i);
   assert.match(policy, /owner's base for new work in this repository/);
   assert.doesNotMatch(PROMPTS['worker.repos'].text, /Make every change inside these folders/i);
+});
+
+test('message delivery says what each flag does, for leads and the Orchestrator', () => {
+  const delivery = MESSAGE_DELIVERY.join(' ');
+  for (const flag of [/`queue: true`/, /`urgent: true`/, /blocking command/]) assert.match(delivery, flag, 'each flag and blocking commands are explained');
+  assert.match(MESSAGE_REPLY, /`delivery`/, 'the reply explains its delivery values');
+  for (const stale of [/interrupts blocking commands/, /steers at the next step/, /queue: true` waits for turn end/, /goes in as a new turn right away/]) {
+    assert.doesNotMatch(delivery, stale);
+    assert.doesNotMatch(PROMPTS['orchestrator.system'].text, stale);
+    assert.doesNotMatch(INSTRUCTIONS, stale);
+  }
+  assert.ok(INSTRUCTIONS.includes(delivery), 'the lead guide carries the delivery text');
+  assert.ok(PROMPTS['orchestrator.system'].text.includes(`Message delivery: ${delivery}`), 'the Orchestrator brief carries the delivery text');
 });
