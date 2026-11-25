@@ -2342,6 +2342,106 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .theme-backdrop-veil { z-index: 5; }
 @media (prefers-reduced-motion: reduce) { .theme-backdrop-art { transition: none; } }
 
+/* Every theme but OG (companion-theme.ts sets .themed and the --th-* glass on <body>): the page turns to glass over the theme's backdrop. OG never matches these rules, so it stays exactly as it was. */
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .45s; animation-timing-function: var(--ease); }
+/* The body's own background would paint over the backdrop (which sits at z-index -1 under it). */
+body.themed { background: transparent; }
+.themed .backdrop { background: rgba(0, 0, 0, .5); backdrop-filter: blur(10px) saturate(1.2); }
+.themed .modal { background: var(--th-pop); backdrop-filter: blur(32px) saturate(1.6); }
+.themed .settings-nav { background: transparent; }
+.themed .btn.accent { color: var(--th-accent-ink); }
+.themed .dash-count { color: var(--th-accent-ink); }
+.themed .prompt-input:hover { border-color: color-mix(in srgb, var(--text) 24%, transparent); }
+.themed .prompt-input:focus-within { border-color: var(--th-focus); }
+.themed :is(.input, .modal textarea, .modal input, .modal select):focus { border-color: var(--th-focus); box-shadow: 0 0 0 3px var(--th-focus-ring); }
+
+.themed .dash-top { background: var(--th-chrome); border-bottom-color: var(--border-strong); backdrop-filter: blur(var(--th-blur)) saturate(1.6); }
+.themed .dash-top-upper { background: rgba(0, 0, 0, .18); }
+.themed .dash-top-lower { background: transparent; }
+.themed .dash-git-pill { background: var(--th-hover); }
+.themed .dash-top .dash-top-btn:hover:where(:not(:disabled)) { background: var(--th-active); }
+.themed .dash-all-workers[aria-pressed=true] { background: var(--th-active); }
+.themed .dash-top .dash-layout-trigger { background: transparent; }
+.themed .dash-top .dash-layout-trigger:hover:where(:not(:disabled)) { background: var(--th-hover); }
+.themed .dash-top .dash-layout-trigger.on { background: var(--th-active); }
+.themed .dash-floor-chip:hover:enabled { background: var(--th-hover); }
+.themed .dash-floor-chip.on { background: var(--th-active); color: var(--text); }
+.themed .dash-floor-chip.on::before { box-shadow: 0 0 12px var(--th-glow); }
+.themed :is(.dash-quiet-bay, .dash-end-bay) { background: rgba(0, 0, 0, .14); }
+.themed .dash-quiet-bay:hover:enabled, .themed .dash-quiet-bay.open { background: var(--th-active); }
+.themed .dash-end-bay:hover:enabled { background: var(--th-hover); }
+.themed .dash-floor-track { color: color-mix(in srgb, var(--text) 28%, transparent); }
+.themed .dash-quiet-pop { border-color: var(--border-strong); background: var(--th-pop); backdrop-filter: blur(28px) saturate(1.6); }
+.themed :is(.dash-quiet-search, .dash-quiet-foot) { background: var(--th-hover); }
+.themed .dash-quiet-section { border-bottom-color: var(--border); background: rgba(0, 0, 0, .16); }
+.themed .dash-quiet-row { border-bottom-color: var(--border); }
+.themed .dash-quiet-row:hover:enabled, .themed .dash-quiet-row.cursor { background: var(--th-active); }
+.themed .dash-quiet-act { background: transparent; }
+.themed .dash-banner[data-tone=accent] { border-bottom-color: color-mix(in srgb, var(--accent) 30%, transparent); background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent), color-mix(in srgb, var(--accent) 3%, transparent)); }
+
+.themed .dash-side { background: var(--th-side); backdrop-filter: blur(var(--th-blur)) saturate(1.6); }
+.themed .dash-roster-caption, .themed .dash-row-meta { color: var(--text-tertiary); }
+.themed .dash-row-meta-sep { color: color-mix(in srgb, var(--text) 30%, transparent); }
+.themed .dash-worker-team { background: color-mix(in srgb, var(--text) 3%, transparent); }
+.themed .dash-worker-team.has-focus { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.themed .dash-team-toggle:hover { background: var(--th-hover); }
+.themed .dash-row.on .dash-row-open { background: var(--th-hover); }
+.themed .dash-row.on::before { box-shadow: 0 0 10px var(--th-glow); }
+.themed .dash-mission { background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 64px); }
+.themed :is(.dash-row-floor, .dash-team-chip-floor) { background: var(--th-hover); }
+.themed .dash-team-nav { background: transparent; }
+.themed .dash-team-chip:hover, .themed .dash-team-chip[aria-current=true] { background: var(--th-hover); }
+.themed .dash-team-chip[aria-current=true] { border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
+
+.themed .dash-main { background: transparent; }
+.themed .dash-building { background: var(--th-pane); backdrop-filter: blur(var(--th-blur)) saturate(1.5); }
+.themed .dash-building-worker:hover:enabled { background: var(--th-hover); }
+.themed .dash-pane { border-color: var(--border); background: var(--th-pane); backdrop-filter: blur(var(--th-blur)) saturate(1.5); box-shadow: inset 0 1px 0 var(--border), 0 10px 30px rgba(0, 0, 0, .28); }
+.themed .dash-pane.focused { border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong)); box-shadow: inset 0 1px 0 var(--border-strong), 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent), 0 0 32px color-mix(in srgb, var(--accent) 12%, transparent), 0 12px 36px rgba(0, 0, 0, .34); }
+.themed .dash-workspace[data-layout=single] .dash-pane[data-mode=empty] { background: transparent; box-shadow: none; backdrop-filter: none; }
+.themed .dash-pane-head { border-bottom-color: var(--border); }
+.themed .dash-pane.focused .dash-pane-no { color: var(--th-accent-ink); box-shadow: 0 0 10px var(--th-glow); }
+.themed .dash-pane-head .dash-pane-views.seg > .btn:is(.on, [aria-pressed=true]) { color: var(--text); }
+.themed .dash-pane-head .btn.ghost:where(:not(:hover, :focus-visible)) { color: var(--text-secondary); }
+.themed .dash-pane-body, .themed .dash-pane[data-mode=terminal] .dash-pane-body { background: transparent; }
+/* One layer of glass per pane: a terminal pane trades the pane's tint for the terminal's, rather than stacking both. */
+.themed .dash-pane[data-mode=terminal] { background: var(--th-term); }
+/* A pane's terminal is an inline .modal.term: the pane's glass is its ground, so nothing under the text paints over it. */
+.themed .modal.term.inline { background: transparent; backdrop-filter: none; }
+.themed .modal.term .term-host, .themed .xterm .xterm-viewport { background: transparent; }
+.themed .xterm .composition-view { background: var(--bg); }
+.themed .dash-pane-drop { background: color-mix(in srgb, var(--bg) 82%, transparent); }
+.themed .dash-empty > .btn:not(.accent) { border-color: var(--border-strong); color: var(--text); }
+.themed .dash-pick { background: var(--th-hover); }
+.themed .dash-pick:hover:enabled { background: var(--th-active); }
+.themed .dash-handle::before { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.themed .dash-handle::after { background: var(--border-strong); }
+.themed .dash-layout-pop { background: var(--th-pop); backdrop-filter: blur(28px) saturate(1.6); }
+.themed .dash-layout[aria-checked=true] { color: var(--text); }
+.themed :is(.dash-layout[aria-checked=true], .dash-layout-now) rect.lead { fill: color-mix(in srgb, var(--accent) 35%, transparent); }
+.themed .dash-preview { border-color: var(--border); background: var(--th-term); color: var(--text); }
+.themed .dash-preview::before { background: linear-gradient(var(--bg), transparent); opacity: .7; }
+
+/* The Thread keeps its own warm palette in OG; a theme hands it the page's, over the pane's glass. */
+.themed .worker-thread {
+  --bg: inherit;
+  --text: inherit;
+  --text-secondary: inherit;
+  --text-tertiary: inherit;
+  --border: inherit;
+  --border-strong: inherit;
+  --surface: color-mix(in srgb, var(--text) 4%, transparent);
+  --surface-raised: color-mix(in srgb, var(--text) 6%, transparent);
+  --surface-hover: color-mix(in srgb, var(--text) 8%, transparent);
+  --wt-user-bubble: color-mix(in srgb, var(--text) 10%, transparent);
+  --wt-code-bg: color-mix(in srgb, var(--text) 6%, transparent);
+  --wt-tool-label: var(--text-secondary);
+  --wt-input-border: color-mix(in srgb, var(--text) 24%, transparent);
+  --wt-input-hover: color-mix(in srgb, var(--text) 32%, transparent);
+  --wt-input-focus: var(--th-focus);
+  background: transparent;
+}
+.themed :is(.wt-latest, .wt-search, .wt-mermaid-menu) { background: var(--th-pop); backdrop-filter: blur(20px) saturate(1.5); }
 /* The Triage Console header: 36px sunken instrument deck + 32px architectural triage floor bays. */
 .dash-top { flex: none; display: flex; flex-direction: column; background: #0a0a0a; border-bottom: 1px solid rgba(255, 255, 255, .18); }
 .dash-top-upper { display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 10px 0 var(--space-3); background: #060606; }

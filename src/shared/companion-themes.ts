@@ -570,7 +570,6 @@ export function glassAlpha(theme: Pick<CompanionTheme, 'glass'>, level: GlassLev
 export function companionThemeVars(theme: CompanionTheme, level: GlassLevel = 'frosted'): Record<string, string> {
   const pane = glassAlpha(theme, level);
   const chrome = level === 'solid' ? 1 : round3(Math.max(0.3, pane - 0.1));
-  const term = level === 'solid' ? 1 : round3(Math.min(1, pane + 0.12));
   const ink = accentInk(theme);
   return {
     '--bg': theme.bg,
@@ -597,7 +596,7 @@ export function companionThemeVars(theme: CompanionTheme, level: GlassLevel = 'f
     '--th-chrome-deep': rgba(mixHex(theme.tint, '#000000', 0.25), Math.min(1, chrome + 0.06)),
     '--th-side': rgba(theme.tint, chrome),
     '--th-pane': rgba(theme.tint, pane),
-    '--th-term': rgba(theme.terminal.background, term),
+    '--th-term': rgba(theme.terminal.background, pane),
     '--th-pop': rgba(theme.bg, level === 'solid' ? 1 : 0.94),
     '--th-hover': rgba(theme.text, 0.06),
     '--th-active': rgba(theme.text, 0.09),

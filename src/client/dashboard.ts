@@ -243,7 +243,6 @@ const subscriptions = h(
   icon('usage', 14),
 );
 const settingsBtn = h('button.btn.icon.sm.ghost.dash-top-btn', { type: 'button', 'aria-label': 'Settings', title: 'Settings (⌘ ,)', onclick: () => void showSettings() }, icon('settings', 14));
-const appearanceBtn = h('button.btn.icon.sm.ghost.dash-top-btn.dash-appearance', { type: 'button', 'aria-label': 'Appearance', title: 'Theme and wallpaper', onclick: () => void showSettings('appearance') }, icon('palette', 14));
 
 const bannerIcon = h('span.dash-banner-icon');
 const bannerText = h('p.dash-banner-text');
@@ -404,7 +403,7 @@ const layoutPop = h(
   h('div.dash-layout-pop-row', {}, h('span', {}, 'Terminal text'), zoomSeg),
 );
 const layoutMenu = h('div.dash-layout-menu', {}, layoutTrigger, layoutPop);
-const upperDeck = h('div.dash-top-upper', {}, brand, gitPill, dragSpacer, pulse, topSep, h('div.dash-top-end', {}, allWorkersBtn, layoutMenu, board, subscriptions, appearanceBtn, settingsBtn));
+const upperDeck = h('div.dash-top-upper', {}, brand, gitPill, dragSpacer, pulse, topSep, h('div.dash-top-end', {}, allWorkersBtn, layoutMenu, board, subscriptions, settingsBtn));
 const top = h('header.dash-top', {}, upperDeck, lowerDeck);
 
 function showLayouts(open: boolean, refocus = false) {
@@ -1269,7 +1268,7 @@ function paintNow() {
   // An empty floor's pane carries the orange Hire; once someone works here the sidebar's does.
   agentBtn.classList.toggle('accent', !here || store.workers.size > 0);
   board.disabled = !up || !here;
-  subscriptions.disabled = settingsBtn.disabled = appearanceBtn.disabled = !up;
+  subscriptions.disabled = settingsBtn.disabled = !up;
   sideToggle.disabled = !authorized;
   sideToggle.hidden = !authorized || showingWorkers;
   layoutMenu.hidden = !authorized || showingWorkers;
@@ -1290,7 +1289,7 @@ function paintNow() {
   authPanel.hidden = authorized;
   lowerDeck.hidden = !authorized;
   topSep.hidden = !authorized;
-  board.hidden = subscriptions.hidden = appearanceBtn.hidden = settingsBtn.hidden = !authorized;
+  board.hidden = subscriptions.hidden = settingsBtn.hidden = !authorized;
   paintBanner();
   if (!authorized) {
     document.title = companionDocumentTitle(officeName, 0, nativeCompanion);
