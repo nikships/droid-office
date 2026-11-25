@@ -62,7 +62,7 @@ function jpegSize(buf: Buffer) {
   throw new Error('no start-of-frame marker');
 }
 
-test('the registry: OG first and unchanged, Carbon’s Copy the dark default, every id unique', () => {
+test('the registry: OG first, unchanged and the default, every id unique', () => {
   assert.equal(new Set(COMPANION_THEME_IDS).size, COMPANION_THEMES.length);
   assert.ok(COMPANION_THEMES.length >= 15, 'an extensive set');
   assert.equal(COMPANION_THEMES[0].id, OG_THEME_ID);
@@ -72,8 +72,8 @@ test('the registry: OG first and unchanged, Carbon’s Copy the dark default, ev
   assert.equal('image' in og.backdrop || 'stage' in og.backdrop, false, 'OG paints no backdrop');
   assert.deepEqual(og.terminal, { foreground: TERM_THEME.foreground, cursor: TERM_THEME.cursor, background: TERM_THEME.background, selection: TERM_THEME.selectionBackground });
 
-  assert.equal(DEFAULT_THEME_ID, 'carbons-copy');
-  const carbon = companionTheme(DEFAULT_THEME_ID);
+  assert.equal(DEFAULT_THEME_ID, OG_THEME_ID);
+  const carbon = companionTheme('carbons-copy');
   assert.equal(carbon.name, 'Carbon’s Copy');
   assert.ok(lum(carbon.bg) < 0.01, 'a dark theme');
   assert.equal(companionTheme('no-such-theme').id, DEFAULT_THEME_ID);
@@ -160,7 +160,7 @@ test('brightGray reads the bright tenth of a picture', () => {
 test('artwork ships at full resolution with a lossless gallery preview', () => {
   const art = themed.filter((t) => t.backdrop.image);
   assert.ok(art.length >= 8);
-  assert.ok(companionTheme('carbons-copy').backdrop.image, 'the default has artwork');
+  assert.ok(companionTheme('carbons-copy').backdrop.image, 'Carbon’s Copy has artwork');
   for (const t of art) {
     const image = t.backdrop.image!;
     assert.match(image, /^\/themes\/[a-z-]+\.jpg$/);
@@ -189,7 +189,7 @@ test('every shader is used, and every stage is well formed', () => {
 });
 
 test('appearance prefs and the backdrop they pick', () => {
-  assert.equal(APPEARANCE_DEFAULTS.theme, 'carbons-copy');
+  assert.equal(APPEARANCE_DEFAULTS.theme, OG_THEME_ID);
   assert.deepEqual(normalizeAppearancePrefs({ theme: 'bogus', glass: 'clear', motion: 'warp', dim: 'high' }), { ...APPEARANCE_DEFAULTS, glass: 'clear', dim: 'high' });
   const carbon = companionTheme('carbons-copy');
   const aurora = companionTheme('aurora');

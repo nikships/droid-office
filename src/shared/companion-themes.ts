@@ -484,7 +484,7 @@ export type CompanionThemeId = (typeof COMPANION_THEMES)[number]['id'];
 
 export const COMPANION_THEME_IDS: readonly CompanionThemeId[] = COMPANION_THEMES.map((t) => t.id);
 export const OG_THEME_ID: CompanionThemeId = 'og';
-export const DEFAULT_THEME_ID: CompanionThemeId = 'carbons-copy';
+export const DEFAULT_THEME_ID: CompanionThemeId = 'og';
 
 /** The gallery's copy of a theme's artwork, sized for a card at any pixel ratio (lossless, from the full-resolution file). */
 export function themePreview(theme: Pick<CompanionTheme, 'backdrop'>): string | undefined {

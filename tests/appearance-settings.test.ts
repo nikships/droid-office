@@ -33,7 +33,8 @@ test('appearance-settings loads in Node without DOM globals and groups all 19 th
     COMPANION_THEMES.length,
   );
   assert.equal(groups[0].themes[0].id, OG_THEME_ID);
-  assert.equal(groups[1].themes[0].id, DEFAULT_THEME_ID);
+  assert.equal(DEFAULT_THEME_ID, OG_THEME_ID);
+  assert.equal(groups[1].themes[0].id, 'carbons-copy');
   assert.equal(THEME_FAMILY_META.length, 4);
 
   const subset = groupThemesByFamily(COMPANION_THEMES.filter((t) => t.family === 'shader'));
