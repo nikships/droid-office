@@ -61,7 +61,7 @@ fun BotScreen(bot: MissionAgent, embedded: Boolean, onBack: () -> Unit, onOpenWo
     val w = bot.worker
     val look = statusLook(w.state)
     val insets = if (embedded) WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.End) else WindowInsets.safeDrawing
-    Column(Modifier.fillMaxSize().tagged(Tags.Bot.SCREEN).background(Palette.Bg).windowInsetsPadding(insets)) {
+    Column(Modifier.fillMaxSize().tagged(Tags.Bot.SCREEN).background(Palette.Screen).windowInsetsPadding(insets)) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
             BotTile(bot.grokBot, if (w.state.asleep) Palette.TextSecondary else look.color, small = true)

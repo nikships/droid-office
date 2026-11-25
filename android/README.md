@@ -16,6 +16,8 @@ A companion app for your phone. Pair it with your office once over Tailscale HTT
 
 ## What it does
 
+- **Appearance.** Open **Me → Appearance**, or **Appearance** on the welcome screen before pairing. Pick an artwork to use its wallpaper, moving overlay and colors on this device. **Original** restores the original Android look. The selection survives restarts and office switches; it does not change the web companion. See the [artwork port checklist](artwork-port.md).
+
 One answer workspace walks a whole AskUser questionnaire: a step bar lists every question (done ones with their answer) and **Submit and continue** sends the current answer, then shows the worker's next question in the same dialog. If you haven't touched a question that gets answered in Raw TTY, the workspace moves on to the next one by itself; a started draft is kept and flagged as stale instead. Questionnaires on newer Droid CLIs end with **Review your answers**: check the summary, then tap **Submit answers** to finish, and the workspace closes. Editing remains available in Raw TTY. Changing an answer or disconnecting invalidates the old review; nothing submits automatically. Older CLIs without this extra step continue to work.
 
 - **Account-free models.** When Airgapped mode is enabled on the host in Settings → Connections → Droid, the phone receives only custom/BYOK models. Hosted remembered picks and arbitrary typed ids are not offered in that mode. Factory cloud choices disappear with the paused Factory connection. This is no-account operation, not a network sandbox.
@@ -108,6 +110,8 @@ adb shell "am start -a android.intent.action.VIEW -d 'droidoffice://pair?v=1&nam
 ```
 
 ## Drive it with adb
+
+`artwork.open` opens `artwork.picker`. Tap the radio row `artwork.choice/<theme-id>` (or `artwork.choice/default` for Original), then `artwork.close`. The selected row is exposed to accessibility.
 
 Thread image galleries expose `worker.thread.image_viewer.previous`, `.next` and `.count`; `.download` saves the original bytes through Android's document picker. Markdown previews load a higher-resolution picture when opened, and Raw TTY images use the same viewer. Mermaid actions offer **Download as SVG** (`worker.thread.diagram.download`) and **Share SVG** (`worker.thread.diagram.share`), which shares an actual SVG file with a temporary read grant. The diagram zoom readout follows WebView's actual scale, including pinch gestures.
 

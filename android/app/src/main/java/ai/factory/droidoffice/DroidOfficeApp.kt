@@ -8,6 +8,8 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import ai.factory.droidoffice.data.OfficeStore
+import ai.factory.droidoffice.ui.theme.Palette
+import ai.factory.droidoffice.ui.theme.artwork.Artworks
 import ai.factory.droidoffice.core.UpdateController
 import ai.factory.droidoffice.net.NetworkMonitor
 import ai.factory.droidoffice.net.OfficeApi
@@ -27,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 class DroidOfficeApp : Application() {
@@ -67,6 +70,9 @@ class AppGraph(val app: Application) {
     val updates = UpdateController(scope, GitHubUpdates(app, connection::appRelease))
 
     init {
+        scope.launch {
+            store.snapshot.map { it.settings.artworkId }.distinctUntilChanged().collect { Palette.artwork = Artworks.find(it) }
+        }
         // The office answers the release check, so it waits until the app is on screen and connected.
         scope.launch {
             combine(visibility.foreground, connection.link) { shown, link -> shown && link.phase == Phase.Connected }

@@ -824,6 +824,10 @@ document.addEventListener(
 window.office = {
   receive(msg) {
     switch (msg.t) {
+      case 'colors':
+        term.options.theme = { ...THEME, ...msg.theme };
+        document.documentElement.style.backgroundColor = document.body.style.backgroundColor = term.options.theme.background;
+        break;
       case 'config':
         term.options.fontSize = READABLE_PX * (msg.fontScale > 0 ? msg.fontScale : 1);
         view = msg.view;

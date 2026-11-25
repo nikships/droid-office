@@ -102,7 +102,7 @@ fun MainTabs(
     }
     val shown = requestedTab ?: tab ?: MainTab.Office
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Palette.Bg)) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(Palette.Screen)) {
         val wide = maxWidth >= 840.dp
         val content: @Composable (Modifier) -> Unit = { m ->
             BoxWithConstraints(m) {

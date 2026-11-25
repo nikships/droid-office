@@ -326,7 +326,7 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavig
         }
     }
 
-    Box(Modifier.fillMaxSize().tagged(Tags.Screen.BOARD_CARD).background(Palette.Bg)) {
+    Box(Modifier.fillMaxSize().tagged(Tags.Screen.BOARD_CARD).background(Palette.Screen)) {
         Column(Modifier.fillMaxSize().imePadding()) {
             if (floorMissing) {
                 Gone(onBack, floorGone = true)

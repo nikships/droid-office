@@ -95,6 +95,7 @@ import ai.factory.droidoffice.ui.onboarding.ScanScreen
 import ai.factory.droidoffice.ui.onboarding.WelcomeScreen
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.Palette
+import ai.factory.droidoffice.ui.theme.artwork.ArtworkBackdrop
 import ai.factory.droidoffice.ui.worker.WorkerScreen
 import ai.factory.droidoffice.core.WorkerStatus
 import kotlinx.coroutines.delay
@@ -363,6 +364,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
 
     CompositionLocalProvider(LocalGraph provides graph, LocalSnackbar provides snackbar, LocalSnackbarLift provides snackbarLift, LocalHapticFeedback provides haptics, LocalOpenUpdates provides { showUpdate = true }) {
         Box(Modifier.fillMaxSize().background(Palette.Bg)) {
+            Palette.artwork?.let { ArtworkBackdrop(it) }
             NavDisplay(
                 backStack = stack,
                 onBack = { nav.pop() },

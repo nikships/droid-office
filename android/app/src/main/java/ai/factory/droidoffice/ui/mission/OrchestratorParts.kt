@@ -225,7 +225,7 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
     val team = MissionControl.team(state)
     val follow = rememberFollow(onOpenWorker)
     Column(
-        Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Bg).windowInsetsPadding(paneInsets(embedded))
+        Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Screen).windowInsetsPadding(paneInsets(embedded))
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom)),
     ) {
         IdleHeader(embedded, onBack, if (state == null) "Mission Control" else if (!on) "Mission Control · off" else if (blocked != null) "Mission Control · blocked" else "Mission Control · ready", onMenu = if (state == null) null else ({ menu = true }))

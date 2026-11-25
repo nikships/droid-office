@@ -165,7 +165,7 @@ fun WorkersScreen(
         )
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().tagged(Tags.Screen.WORKERS).background(Palette.Bg)) {
+    BoxWithConstraints(Modifier.fillMaxSize().tagged(Tags.Screen.WORKERS).background(Palette.Screen)) {
         val wide = maxWidth >= 840.dp
         Row(Modifier.fillMaxSize()) {
             Box(if (wide) Modifier.width(420.dp).fillMaxHeight() else Modifier.fillMaxSize()) {

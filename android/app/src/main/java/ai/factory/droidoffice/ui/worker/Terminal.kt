@@ -92,6 +92,9 @@ fun Terminal(
     val latestLive by rememberUpdatedState(live)
     val latestFit by rememberUpdatedState(onFit)
     val latestScale by rememberUpdatedState(fontScale)
+    val ink = Palette.artwork?.terminal
+    val colors = remember(ink) { TermPage.colors(ink?.foreground, ink?.cursor, ink?.background, ink?.selection) }
+    val latestColors by rememberUpdatedState(colors)
     val latestKittyFlags by rememberUpdatedState(onKittyFlags)
     val workerName = if (workerId == ORCHESTRATOR_ID) {
         data.mission?.orchestrator?.agent?.worker?.name ?: "Orchestrator"
@@ -106,6 +109,7 @@ fun Terminal(
             onMessage = { msg ->
                 when (msg) {
                     PageMsg.Ready -> {
+                        p.send(latestColors)
                         p.send(TermPage.config(latestScale, latestView))
                         val feed = connection.feed(workerId)
                         if (feed == null || !feed.listen(p.listener)) connection.resnapshot(workerId)
@@ -129,6 +133,7 @@ fun Terminal(
         }
     }
     LaunchedEffect(page, view) { page.send(TermPage.view(view)) }
+    LaunchedEffect(page, colors) { page.send(colors) }
     LaunchedEffect(page, fontScale) { page.send(TermPage.config(fontScale, view)) }
     LaunchedEffect(page, directInput, live) { page.typeDirectly(directInput && live) }
     LaunchedEffect(page, csiEnter) { page.setCsiEnter(csiEnter) }

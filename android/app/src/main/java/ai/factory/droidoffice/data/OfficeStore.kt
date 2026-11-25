@@ -91,6 +91,7 @@ data class AppSettings(
     val quickKeys: List<String>? = null,
     /** The owner last picked Thread over Raw TTY on a worker, so workers open on their thread. */
     val threadView: Boolean = false,
+    val artworkId: String? = null,
 )
 
 data class StoreSnapshot(
@@ -129,6 +130,7 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
                 recentModels = p[RECENT_MODELS]?.split('\n')?.filter { it.isNotBlank() }?.distinct()?.take(4).orEmpty(),
                 quickKeys = QuickKeys.decode(p[QUICK_KEYS]),
                 threadView = p[THREAD_VIEW] ?: false,
+                artworkId = p[ArtworkPreference.key],
             ),
             loaded = true,
         )
@@ -202,6 +204,7 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
             p[RECENT_MODELS] = s.recentModels.take(4).joinToString("\n")
             s.quickKeys?.let { p[QUICK_KEYS] = QuickKeys.encode(it) } ?: p.remove(QUICK_KEYS)
             p[THREAD_VIEW] = s.threadView
+            ArtworkPreference.write(p, s.artworkId)
         }
     }
 

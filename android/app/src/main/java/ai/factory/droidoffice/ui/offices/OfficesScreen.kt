@@ -87,6 +87,7 @@ import ai.factory.droidoffice.core.Workers
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
+import ai.factory.droidoffice.ui.theme.artwork.ArtworkPickerButton
 import kotlinx.coroutines.launch
 
 @Composable
@@ -123,7 +124,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
 
     // As the Me tab it sits above the tab bar, which takes the bottom inset.
     val insets = if (embedded) WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal) else WindowInsets.safeDrawing
-    Column(Modifier.fillMaxSize().tagged(if (embedded) Tags.Screen.ME else Tags.Screen.OFFICES).background(Palette.Bg).windowInsetsPadding(insets)) {
+    Column(Modifier.fillMaxSize().tagged(if (embedded) Tags.Screen.ME else Tags.Screen.OFFICES).background(Palette.Screen).windowInsetsPadding(insets)) {
         if (embedded) {
             Text("Me", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 4.dp))
         } else {
@@ -165,6 +166,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                     SecondaryButton(if (mission.settings.on) "Orchestrator" else "Orchestrator · off", { orchestrator = true }, Modifier.fillMaxWidth().tagged(Tags.Orchestrator.SETTINGS), icon = OfficeIcons.Orbit)
                 }
 
+                ArtworkPickerButton()
                 Eyebrow("Notifications", Modifier.padding(start = 4.dp, top = 26.dp, bottom = 8.dp))
                 Column(Modifier.fillMaxWidth().panel()) {
                     if (!canNotify) {

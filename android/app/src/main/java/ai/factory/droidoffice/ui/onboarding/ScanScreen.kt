@@ -294,7 +294,7 @@ private fun Frame(locked: Boolean) {
 
 @Composable
 private fun NoCamera(denied: Boolean, onAsk: () -> Unit, onSettings: () -> Unit, onPaste: () -> Unit) {
-    Box(Modifier.fillMaxSize().background(Palette.Bg).dotGrid(), contentAlignment = Alignment.Center) {
+    Box(Modifier.fillMaxSize().background(Palette.Screen).dotGrid(), contentAlignment = Alignment.Center) {
         Column(
             Modifier.widthIn(max = 480.dp).fillMaxWidth().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,

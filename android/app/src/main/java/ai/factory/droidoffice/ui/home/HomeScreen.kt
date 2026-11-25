@@ -160,7 +160,7 @@ fun HomeScreen(onOpenWorker: (String) -> Unit, selected: String?, onCloseWorker:
     // The catalogue names the models on the cards.
     LaunchedEffect(link.phase, link.officeId) { if (link.phase == Phase.Connected) connection.models() }
 
-    BoxWithConstraints(Modifier.fillMaxSize().tagged(Tags.Screen.HOME).background(Palette.Bg)) {
+    BoxWithConstraints(Modifier.fillMaxSize().tagged(Tags.Screen.HOME).background(Palette.Screen)) {
         val wide = maxWidth >= 840.dp
 
         Row(Modifier.fillMaxSize()) {

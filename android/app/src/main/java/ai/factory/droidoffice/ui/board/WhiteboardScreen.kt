@@ -113,7 +113,7 @@ fun WhiteboardScreen(onOpenCard: (floor: String, card: String) -> Unit) {
         }
     }
 
-    Column(Modifier.fillMaxSize().tagged(Tags.Screen.BOARD).background(Palette.Bg)) {
+    Column(Modifier.fillMaxSize().tagged(Tags.Screen.BOARD).background(Palette.Screen)) {
         Row(
             Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,

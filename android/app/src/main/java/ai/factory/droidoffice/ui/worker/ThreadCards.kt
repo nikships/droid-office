@@ -114,11 +114,11 @@ import kotlinx.coroutines.delay
 
 // The app's V3 transcript tokens (index.css core-v2 dark, toolContainer constants in the bundle).
 /** --core-v2-transcript-tool-label: a row's icon and verb. */
-private val ToolLabel = ThreadPalette.TextSecondary
+private val ToolLabel get() = ThreadPalette.TextSecondary
 /** --core-v2-text-tertiary: what a row acted on, and muted end labels. */
-private val ToolDetail = ThreadPalette.TextTertiary
+private val ToolDetail get() = ThreadPalette.TextTertiary
 /** --core-v2-border-inner: the open content's frame. */
-private val ToolBorder = ThreadPalette.BorderStrong
+private val ToolBorder get() = ThreadPalette.BorderStrong
 private val Ease = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 /** A group closing on its own while the thread follows the bottom sheds its height evenly. */
 private val EaseInOut = CubicBezierEasing(0.45f, 0f, 0.55f, 1f)

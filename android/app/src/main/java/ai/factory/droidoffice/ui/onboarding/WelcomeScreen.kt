@@ -63,6 +63,7 @@ import ai.factory.droidoffice.ui.components.UpdateRow
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
+import ai.factory.droidoffice.ui.theme.artwork.ArtworkPickerButton
 import kotlinx.coroutines.delay
 
 @Composable
@@ -72,7 +73,8 @@ fun WelcomeScreen(onScan: () -> Unit, onLink: (PairingInvite) -> Unit, pendingDe
     LaunchedEffect(Unit) { rise.animateTo(1f, tween(900)) }
 
     Box(
-        Modifier.fillMaxSize().tagged(Tags.Screen.WELCOME).background(Palette.Bg).dotGrid().drawBehind {
+        Modifier.fillMaxSize().tagged(Tags.Screen.WELCOME).background(Palette.Screen).then(if (Palette.artwork == null) Modifier.dotGrid() else Modifier).drawBehind {
+            if (Palette.artwork != null) return@drawBehind
             drawRect(Brush.radialGradient(listOf(Palette.Accent.copy(alpha = 0.16f), Color.Transparent), center = Offset(size.width / 2, size.height * 0.2f), radius = size.width * 0.9f))
             drawRect(Brush.verticalGradient(listOf(Color.Transparent, Palette.Bg), startY = size.height * 0.45f, endY = size.height))
         },
@@ -145,6 +147,7 @@ fun WelcomeScreen(onScan: () -> Unit, onLink: (PairingInvite) -> Unit, pendingDe
                     modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
+                ArtworkPickerButton()
                 UpdateRow()
             }
         }

@@ -101,7 +101,7 @@ fun PairScreen(invite: PairingInvite, onDone: () -> Unit, onRescan: () -> Unit, 
         haptics.performHapticFeedback(if (ui is PairUi.Paired) HapticFeedbackType.Confirm else HapticFeedbackType.Reject)
     }
 
-    Box(Modifier.fillMaxSize().tagged(Tags.Screen.PAIR).background(Palette.Bg).dotGrid()) {
+    Box(Modifier.fillMaxSize().tagged(Tags.Screen.PAIR).background(Palette.Screen).dotGrid()) {
         Column(
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState()).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,

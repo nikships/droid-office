@@ -30,6 +30,13 @@ object Tags {
         const val SNACKBAR = "app.snackbar"
     }
 
+    object Artwork {
+        const val OPEN = "artwork.open"
+        const val PICKER = "artwork.picker"
+        const val CLOSE = "artwork.close"
+        fun choice(id: String) = "artwork.choice/$id"
+    }
+
     /** The bottom tabs. */
     object Tab {
         const val BAR = "tab.bar"

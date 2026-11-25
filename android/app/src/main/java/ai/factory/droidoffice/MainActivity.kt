@@ -5,12 +5,15 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
+import androidx.compose.runtime.DisposableEffect
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import ai.factory.droidoffice.core.DeepLinks
 import ai.factory.droidoffice.core.Pairing
 import ai.factory.droidoffice.ui.AppRoot
 import ai.factory.droidoffice.ui.Incoming
 import ai.factory.droidoffice.ui.theme.DroidOfficeTheme
+import ai.factory.droidoffice.ui.theme.Palette
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
@@ -25,6 +28,14 @@ class MainActivity : ComponentActivity() {
         splash.setKeepOnScreenCondition { !graph.store.snapshot.value.loaded }
         if (savedInstanceState == null) incoming.value = read(intent)
         setContent {
+            val themed = Palette.artwork != null
+            DisposableEffect(themed) {
+                if (themed) {
+                    val dark = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    enableEdgeToEdge(statusBarStyle = dark, navigationBarStyle = dark)
+                }
+                onDispose { if (themed) enableEdgeToEdge() }
+            }
             DroidOfficeTheme {
                 AppRoot(graph, incoming)
             }

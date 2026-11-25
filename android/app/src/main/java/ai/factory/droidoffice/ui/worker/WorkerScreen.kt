@@ -269,7 +269,7 @@ fun WorkerScreen(
     }
 
     Column(
-        Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Bg).windowInsetsPadding(paneInsets(embedded))
+        Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Screen).windowInsetsPadding(paneInsets(embedded))
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom)),
     ) {
         if (worker == null) {

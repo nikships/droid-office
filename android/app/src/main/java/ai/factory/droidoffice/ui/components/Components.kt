@@ -282,7 +282,7 @@ fun Eyebrow(text: String, modifier: Modifier = Modifier, color: Color = Palette.
 }
 
 /** A hairline-bordered surface: the office's panel. */
-fun Modifier.panel(shape: RoundedCornerShape = RoundedCornerShape(12.dp), color: Color = Palette.Surface, border: Color = Palette.Border) =
+fun Modifier.panel(shape: RoundedCornerShape = RoundedCornerShape(12.dp), color: Color = Palette.Pane, border: Color = Palette.Border) =
     this.clip(shape).background(color).border(1.dp, border, shape)
 
 @Composable
@@ -339,7 +339,8 @@ private fun RowScope.ButtonContent(text: String, icon: ImageVector?, loading: Bo
         Icon(icon, null, Modifier.size(18.dp))
         Box(Modifier.width(8.dp))
     }
-    Text(text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val ink = if (Palette.artwork != null) androidx.compose.material3.LocalContentColor.current else Color.Unspecified
+    Text(text, color = ink, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
 /** A thin rotating arc, lighter than Material's indicator. */

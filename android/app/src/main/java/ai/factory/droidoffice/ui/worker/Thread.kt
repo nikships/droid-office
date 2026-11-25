@@ -538,7 +538,7 @@ internal fun Thread(
     }
     val pictures = remember(effectiveFloor, w.id) { effectiveFloor?.let { PictureSource(it, w.id) } }
     val floorDir = remember(data.floors, effectiveFloor) { data.floors.firstOrNull { it.id == effectiveFloor }?.dir }
-    Column(modifier.background(ThreadPalette.Bg).tagged(Tags.Worker.THREAD)) {
+    Column(modifier.background(if (Palette.artwork == null) ThreadPalette.Bg else Color.Transparent).tagged(Tags.Worker.THREAD)) {
         if (search) {
             ThreadSearchBar(
                 query = searchQuery,
