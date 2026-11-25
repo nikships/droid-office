@@ -235,13 +235,13 @@ function selectors(list: string) {
   return out;
 }
 
-test('OG stays untouched: only rules scoped to .themed read the theme’s glass', () => {
+test('OG stays untouched: only .themed rules, and the theme UI that sets its own (.theme-*), read the theme’s glass', () => {
   const css = readFileSync(new URL('../src/client/style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   let checked = 0;
   for (const [, head, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     if (!/var\(--th-/.test(body)) continue;
     for (const sel of selectors(head)) {
-      assert.match(sel, /^(body)?\.themed\b/, `${sel} reads --th-* outside .themed`);
+      assert.match(sel, /^((body)?\.themed\b|\.theme-)/, `${sel} reads --th-* outside .themed`);
       checked++;
     }
   }

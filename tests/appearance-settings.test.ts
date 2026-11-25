@@ -113,25 +113,25 @@ test('descriptions explain OG flat look, empty custom wallpaper guidance, glass 
   const aurora = companionTheme('aurora');
   const velvet = companionTheme('velvet');
 
-  assert.match(themeDescription(og), /original flat/i);
-  assert.match(wallpaperDescription(og, 'theme', false), /original flat look/i);
-  assert.match(wallpaperDescription(og, 'custom', false), /original flat look/i);
-  assert.match(glassDescription(og, 'frosted'), /original flat look/i);
-  assert.match(motionDescription(og, 'live', false), /original flat look/i);
+  assert.match(themeDescription(og), /original companion/i);
+  assert.equal(themeDescription(carbon), 'Carbon’s Copy: Woven carbon, a forge-orange edge and sparks in the dark.');
+  assert.match(wallpaperDescription(og, 'theme', false), /OG has no backdrop/);
+  assert.match(wallpaperDescription(og, 'custom', true), /OG has no backdrop/);
+  assert.match(glassDescription(og, 'frosted'), /always opaque/);
+  assert.match(motionDescription(og, 'live', false), /no backdrop to animate/);
 
-  assert.match(wallpaperDescription(carbon, 'custom', false), /Choose a picture below or paste a link/);
-  assert.match(wallpaperDescription(carbon, 'custom', true), /full resolution/);
-  assert.match(wallpaperDescription(carbon, 'theme', false), /4K artwork/);
+  assert.match(wallpaperDescription(carbon, 'custom', false), /Drop a picture or paste a link/);
+  assert.match(wallpaperDescription(carbon, 'custom', true), /kept exactly as you chose it/);
+  assert.match(wallpaperDescription(carbon, 'theme', false), /full-resolution artwork/);
   assert.match(wallpaperDescription(aurora, 'theme', false), /Your picture/);
   assert.match(wallpaperDescription(carbon, 'none', false), /No picture/);
 
   assert.match(glassDescription(carbon, 'clear'), /more of the backdrop/i);
-  assert.match(glassDescription(carbon, 'frosted'), /blur and tint/i);
+  assert.match(glassDescription(carbon, 'frosted'), /tinted glass/i);
   assert.match(glassDescription(carbon, 'solid'), /Opaque panels/i);
 
-  assert.match(motionDescription(velvet, 'live', false), /Still themes have no motion anyway/);
+  assert.match(motionDescription(velvet, 'live', false), /doesn’t move/);
   assert.match(motionDescription(aurora, 'live', true), /Reduce motion/);
-  assert.match(motionDescription(aurora, 'still', false), /Reduce motion/);
-  assert.match(motionDescription(aurora, 'live', false), /Reduce motion/);
-  assert.match(motionDescription(aurora, 'live', false), /Still themes have no motion anyway/);
+  assert.match(motionDescription(aurora, 'still', false), /one still frame/);
+  assert.match(motionDescription(aurora, 'live', false), /full frame rate/);
 });

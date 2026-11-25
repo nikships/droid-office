@@ -2,21 +2,8 @@
 // how see-through the glass is and whether the backdrop moves. Saved in this browser
 // (companion-theme.ts + wallpaper-store.ts) and applied live to the whole page.
 
-import { COMPANION_THEMES, DEFAULT_THEME_ID, GLASS_LEVELS, OG_THEME_ID, companionTheme, companionThemeVars, themePreview, type CompanionTheme, type GlassLevel } from '../../shared/companion-themes';
-import {
-  APPEARANCE_MOTION,
-  WALLPAPER_BLURS,
-  WALLPAPER_DIMS,
-  WALLPAPER_SOURCES,
-  appearancePrefs,
-  customWallpaperSrc,
-  isDefaultAppearancePrefs,
-  onAppearancePrefs,
-  onCustomWallpaperSrc,
-  resetAppearancePrefs,
-  setAppearancePrefs,
-  type AppearancePrefs,
-} from './companion-theme';
+import { COMPANION_THEMES, DEFAULT_THEME_ID, OG_THEME_ID, companionTheme, companionThemeVars, themePreview, type CompanionTheme, type GlassLevel } from '../../shared/companion-themes';
+import { appearancePrefs, customWallpaperSrc, isDefaultAppearancePrefs, onAppearancePrefs, onCustomWallpaperSrc, resetAppearancePrefs, setAppearancePrefs, type AppearancePrefs } from './companion-theme';
 import { h } from './dom';
 import { clearWallpaper, loadWallpaper, onWallpaper, saveWallpaperFile, saveWallpaperUrl, wallpaperUrlError, type CustomWallpaper } from './wallpaper-store';
 
@@ -118,38 +105,31 @@ export function describeCustomWallpaper(w: CustomWallpaper): { name: string; det
 }
 
 export function themeDescription(theme: CompanionTheme): string {
-  if (theme.id === OG_THEME_ID) {
-    return 'OG keeps the original flat black and orange look. Pick another theme for 4K artwork, translucent glass and live backdrops.';
-  }
-  return `${theme.name}: ${theme.blurb}`;
+  return theme.id === OG_THEME_ID ? 'The original companion: flat black, hairlines and Factory orange.' : `${theme.name}: ${theme.blurb}`;
 }
 
 export function wallpaperDescription(theme: CompanionTheme, wallpaper: AppearancePrefs['wallpaper'], hasCustom: boolean): string {
-  if (theme.id === OG_THEME_ID) {
-    return wallpaper === 'custom'
-      ? 'OG keeps the original flat look with no backdrop. Pick another theme above to see your picture behind the glass (wallpaper, glass and motion apply to the other themes).'
-      : 'OG keeps the original flat look (wallpaper, glass and motion apply to the other themes).';
-  }
-  if (wallpaper === 'none') return 'No picture behind the glass; only the theme’s gradient and shader show.';
+  if (theme.id === OG_THEME_ID) return 'OG has no backdrop. Pick another theme to show a picture behind the glass.';
+  if (wallpaper === 'none') return 'No picture: the theme’s gradient and motion show behind the glass.';
   if (wallpaper === 'custom') {
-    return hasCustom ? 'Your picture behind the glass, kept byte for byte at full resolution.' : 'Choose a picture below or paste a link. Until you pick one, the theme’s own backdrop stays visible.';
+    return hasCustom ? 'Your picture, kept exactly as you chose it. Bright areas get just enough shade to keep text readable.' : 'Drop a picture or paste a link. Until then the theme’s own backdrop shows.';
   }
-  return theme.backdrop.image ? 'The theme’s full-resolution 4K artwork behind the glass.' : 'This theme has no artwork image of its own. Choose Your picture to put a photo behind its glass.';
+  return theme.backdrop.image ? 'The theme’s full-resolution artwork.' : 'This theme has no artwork. Choose Your picture to show one behind the glass.';
 }
 
 export function glassDescription(theme: CompanionTheme, glass: GlassLevel): string {
-  if (theme.id === OG_THEME_ID) return 'OG keeps the original flat look with opaque panels (wallpaper, glass and motion apply to the other themes).';
-  if (glass === 'clear') return 'Shows more of the backdrop through the top bar, sidebar and panes.';
-  if (glass === 'solid') return 'Opaque panels with no backdrop blur.';
-  return 'Balanced blur and tint so text stays readable over bright backdrops.';
+  if (theme.id === OG_THEME_ID) return 'OG’s panels are always opaque.';
+  if (glass === 'clear') return 'Shows more of the backdrop through the header, sidebar and panes.';
+  if (glass === 'solid') return 'Opaque panels, no blur.';
+  return 'Blurred, tinted glass over the backdrop.';
 }
 
 export function motionDescription(theme: CompanionTheme, motion: AppearancePrefs['motion'], systemReducedMotion = false): string {
-  if (theme.id === OG_THEME_ID) return 'OG keeps the original flat look with no backdrop animation (wallpaper, glass and motion apply to the other themes).';
-  if (!theme.backdrop.stage) return 'Still themes have no motion anyway. Your system’s Reduce motion setting also keeps animated backdrops still.';
-  if (systemReducedMotion) return 'Held on a still frame because your system’s Reduce motion setting is on. Still themes have no motion anyway.';
-  if (motion === 'still') return 'Holds the backdrop shader on one still frame. Your system’s Reduce motion setting also keeps it still, and Still themes have no motion anyway.';
-  return 'Animates the backdrop shader at full display frame rate. Your system’s Reduce motion setting also keeps it still, and Still themes have no motion anyway.';
+  if (theme.id === OG_THEME_ID) return 'OG has no backdrop to animate.';
+  if (!theme.backdrop.stage) return 'This theme’s backdrop doesn’t move.';
+  if (systemReducedMotion) return 'Held still because your system’s Reduce motion setting is on.';
+  if (motion === 'still') return 'The backdrop holds one still frame.';
+  return 'The backdrop moves at your display’s full frame rate.';
 }
 
 const WALLPAPER_LABELS: readonly (readonly [AppearancePrefs['wallpaper'], string])[] = [
@@ -359,12 +339,6 @@ export function appearanceSettings(): {
   restore: AppearanceSectionParts;
   dispose: () => void;
 } {
-  void WALLPAPER_SOURCES;
-  void WALLPAPER_DIMS;
-  void WALLPAPER_BLURS;
-  void GLASS_LEVELS;
-  void APPEARANCE_MOTION;
-
   const groups = groupThemesByFamily(COMPANION_THEMES);
   const groupSizes = groups.map((g) => g.themes.length);
   const orderedThemes = groups.flatMap((g) => g.themes);
