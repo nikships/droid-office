@@ -87,90 +87,97 @@ const frag = (body: string) => `#version 300 es\n${HEADER}${body}`;
 
 // ---- Scenes ----------------------------------------------------------------------------------------
 
-/** Curtains of northern light over a polar night: a green hem, cyan and violet above, faint stars. */
+/** Curtains of northern light over a polar night and a dark ridge: a bright green hem, cyan and violet rays above it. */
 const AURORA = frag(`
 void main() {
   vec2 p = centered();
   float t = uTime;
+  float px = devicePx();
   vec3 night = tone(3);
-  vec3 col = mix(night * 1.7 + vec3(0.004, 0.012, 0.02), night * 0.6, smoothstep(-0.5, 0.5, p.y));
-  col += vec3(0.75, 0.85, 1.0) * (starLayer(p, 90.0, 0.35, t) + starLayer(p + 3.1, 160.0, 0.25, t) * 0.6) * smoothstep(-0.3, 0.3, p.y) * 0.7;
+  vec3 col = mix(night * 2.6 + vec3(0.0, 0.014, 0.02), night * 0.5, smoothstep(-0.4, 0.5, p.y));
+  col += vec3(0.8, 0.9, 1.0) * (starLayer(p, 70.0, 0.09, t) + 0.6 * starLayer(p + 3.1, 140.0, 0.07, t)) * smoothstep(-0.3, 0.2, p.y);
   vec3 glow = vec3(0.0);
   for (int i = 0; i < 3; i++) {
     float fi = float(i);
-    float x = p.x * (1.0 - 0.18 * fi) + fi * 1.7;
-    float fold = fbm(vec2(x * 0.8 - t * (0.03 + 0.012 * fi), fi * 4.1 + t * 0.015));
-    float hem = -0.04 + 0.11 * fi + 0.32 * (fold - 0.5) + 0.035 * sin(x * 2.3 + t * 0.09 + fi);
+    float x = p.x * (1.0 - 0.15 * fi) + fi * 1.37;
+    float s = t * (0.03 + 0.012 * fi);
+    float hem = 0.0 + 0.1 * fi + 0.12 * sin(x * 1.6 + s * 1.7 + fi * 2.0) + 0.2 * (fbm(vec2(x * 0.7 - s, fi * 3.0)) - 0.5) - 0.12 * p.x * (1.0 - fi);
     float d = p.y - hem;
-    float edge = smoothstep(-0.03, 0.005, d);
-    float rise = exp(-max(d, 0.0) * (3.2 + 1.2 * fi));
-    float streak = noise(vec2(x * 22.0 + fold * 9.0 - t * 0.18, fi * 9.0 + t * 0.05));
-    streak = 0.35 + 0.65 * streak * streak;
-    float shimmer = 0.75 + 0.25 * sin(x * 7.0 - t * 0.6 + fold * 6.0);
-    vec3 c = mix(tone(0), tone(1), smoothstep(0.02, 0.22, d));
-    c = mix(c, tone(2), smoothstep(0.14, 0.42, d));
-    glow += c * edge * rise * streak * shimmer * (0.8 - 0.2 * fi);
+    float rx = x + d * 0.1;
+    float n1 = noise(vec2(rx * 24.0 - s * 5.0, fi * 11.0 + d * 2.5));
+    float n2 = noise(vec2(rx * 70.0 + s * 8.0, fi * 5.0));
+    float reach = mix(0.03, 0.22, n1 * n1) * (1.0 - 0.2 * fi);
+    float body = exp(-max(-d, 0.0) * 80.0) * exp(-max(d, 0.0) / reach) * (1.0 - 0.7 * smoothstep(0.1, 0.5, p.y));
+    float ray = mix(0.35, 1.0, n1 * 0.7 + n2 * 0.3);
+    float along = smoothstep(0.38, 0.8, fbm(vec2(x * 1.1 + s * 1.4, fi * 7.0 + 2.0)));
+    float hemLine = exp(-abs(d + 0.004) * 60.0);
+    vec3 c = mix(tone(0), tone(1), smoothstep(0.03, 0.18, d));
+    c = mix(c, tone(2), smoothstep(0.12, 0.36, d));
+    float haze = exp(-max(-d, 0.0) * 30.0) * exp(-max(d, 0.0) * 5.0) * 0.22;
+    glow += c * along * (body * ray + hemLine * 0.3 + haze) * (1.0 - 0.2 * fi);
   }
-  col += glow * 0.85;
-  col += tone(0) * 0.06 * exp(-abs(p.y + 0.5) * 5.0);
-  col = 1.0 - exp(-col * 1.15);
+  float ridge = -0.3 + 0.07 * fbm(vec2(p.x * 2.2 + 4.0, 0.5)) + 0.025 * noise(vec2(p.x * 12.0, 2.0));
+  float land = smoothstep(ridge + px, ridge - px, p.y);
+  col += glow * (1.0 - land);
+  col += tone(0) * 0.05 * exp(-max(p.y - ridge, 0.0) * 9.0) * (1.0 - land);
+  col = mix(col, night * 0.35 + tone(0) * 0.012, land);
+  col += tone(1) * 0.08 * smoothstep(2.5 * px, 0.0, abs(p.y - ridge));
+  col = 1.0 - exp(-col * 1.2);
   outColor = sceneColor(col);
 }
-`);
-
-/** Drifting nebulae over a field of distant stars; as an overlay, only the glowing gas and the brightest stars. */
+`); /** Drifting nebulae over a field of distant stars; as an overlay, only the glowing gas and the brightest stars. */
 const NEBULA = frag(`
 void main() {
   vec2 p = centered();
   float t = uTime * 0.02;
-  vec2 q = p * 1.5;
-  vec2 w = vec2(fbm(q + vec2(0.0, t)), fbm(q + vec2(5.2, 1.3) - vec2(t * 0.7, 0.0)));
-  float f = fbm(q + 1.9 * w + vec2(t * 0.4, -t * 0.3));
-  float gas = smoothstep(0.38, 0.95, f);
-  float lane = smoothstep(0.45, 0.75, fbm(q * 2.3 + w * 1.5 - t * 0.2));
-  vec3 cloud = mix(tone(0), tone(1), smoothstep(0.35, 0.7, w.x));
-  vec3 light = cloud * gas * (0.55 + 0.45 * lane) * 0.85 + tone(2) * pow(gas, 3.5) * 0.55;
-  float stars = starLayer(p, 70.0, 0.22, uTime) + starLayer(p + 1.7, 140.0, 0.3, uTime) * 0.7 + starLayer(p - 4.3, 260.0, 0.4, uTime) * 0.45;
+  vec2 q = p * 1.35 + vec2(t * 0.4, -t * 0.15);
+  vec2 w = vec2(fbm(q * 0.9 + vec2(0.0, t)), fbm(q * 0.9 + vec2(5.2, 1.3) - vec2(t * 0.7, 0.0)));
+  float f = fbm(q + 2.3 * w);
+  float gas = pow(smoothstep(0.4, 1.0, f), 1.8);
+  float ridge = 1.0 - abs(2.0 * f - 1.0);
+  float filament = pow(ridge, 10.0) * smoothstep(0.2, 0.6, w.x);
+  vec3 cloud = mix(tone(0), tone(1), smoothstep(0.35, 0.7, w.y + 0.25 * (f - 0.5)));
+  float dust = smoothstep(0.52, 0.78, w.x * 0.6 + f * 0.5);
+  vec3 light = (cloud * gas * 2.0 + tone(2) * pow(gas, 2.6) * 1.2 + mix(cloud, vec3(1.0), 0.35) * filament * 0.22) * (1.0 - 0.45 * dust);
+  float stars = starLayer(p, 45.0, 0.05, uTime) * 1.3 + starLayer(p + 1.7, 110.0, 0.08, uTime) * 0.7 + starLayer(p - 4.3, 230.0, 0.1, uTime) * 0.4;
 #ifdef OVERLAY
-  outColor = lightColor(light * 0.9 + vec3(stars) * 0.5);
+  outColor = lightColor(light * 0.8 + vec3(stars) * 0.4);
 #else
-  vec3 col = tone(3) + light + vec3(0.85, 0.9, 1.0) * stars * (1.0 - gas * 0.5);
-  col = 1.0 - exp(-col * 1.25);
+  vec3 col = tone(3) * 0.8 + light + vec3(0.85, 0.9, 1.0) * stars * (1.0 - gas * 0.6);
+  col = 1.0 - exp(-col * 1.3);
   outColor = sceneColor(col);
 #endif
 }
 `);
-
-/** Flowing cloth: a warped fold field lit from above, deep shadows and bright sheen along the crests. */
+/** Flowing cloth: a warped fold field lit from one side, deep shadows and bright sheen along the crests. */
 const SILK = frag(`
 float silk(vec2 p, float t) {
-  vec2 q = p * 1.3;
-  q.x += 0.42 * sin(q.y * 1.6 + t * 1.1);
-  q.y += 0.36 * sin(q.x * 1.25 - t * 0.9 + 1.3);
-  q.x += 0.20 * sin(q.y * 2.9 - t * 1.4 + 2.1);
-  q.y += 0.16 * sin(q.x * 2.4 + t * 1.2 + 0.7);
-  return sin(q.x * 2.1 + q.y * 1.4) * 0.6 + sin(q.x * 0.9 - q.y * 2.3 + t * 0.4) * 0.4;
+  vec2 q = p * 1.5;
+  q += 0.32 * vec2(sin(q.y * 1.4 + t * 1.1), sin(q.x * 1.2 - t * 0.9 + 1.3));
+  q += 0.16 * vec2(sin(q.y * 2.6 - t * 1.3 + 2.1), sin(q.x * 2.2 + t * 1.2 + 0.7));
+  return sin(dot(q, vec2(5.0, 3.2))) * 0.7 + sin(dot(q, vec2(1.4, -2.6)) + t * 0.5) * 0.3;
 }
 void main() {
   vec2 p = centered();
-  float t = uTime * 0.18;
-  float e = 0.002;
+  float t = uTime * 0.2;
+  float e = 0.0015;
   float h = silk(p, t);
-  vec3 n = normalize(vec3(silk(p - vec2(e, 0.0), t) - silk(p + vec2(e, 0.0), t), silk(p - vec2(0.0, e), t) - silk(p + vec2(0.0, e), t), 8.0 * e));
-  vec3 l = normalize(vec3(-0.4, 0.6, 0.7));
+  vec2 grad = vec2(silk(p + vec2(e, 0.0), t) - silk(p - vec2(e, 0.0), t), silk(p + vec2(0.0, e), t) - silk(p - vec2(0.0, e), t)) / (2.0 * e);
+  vec3 n = normalize(vec3(-grad * 0.24, 1.0));
+  vec3 l = normalize(vec3(-0.5, 0.6, 0.62));
   float diffuse = max(dot(n, l), 0.0);
-  float sheen = pow(max(dot(reflect(-l, n), vec3(0.0, 0.0, 1.0)), 0.0), 24.0);
-  float m = smoothstep(-0.7, 0.7, p.x * 0.7 - p.y * 0.6 + 0.3 * h);
+  float sheen = pow(max(dot(normalize(l + vec3(0.0, 0.0, 1.0)), n), 0.0), 14.0);
+  float m = smoothstep(-0.8, 0.8, p.x * 0.8 - p.y * 0.5 + 0.2 * h);
   vec3 hue = mix(tone(0), tone(1), m);
-  hue = mix(hue, tone(2), smoothstep(0.35, 1.0, -h * 0.5 + p.y * 0.6 + 0.2));
-  vec3 col = mix(tone(3), hue, pow(diffuse, 1.8) * 0.9);
-  col += mix(hue, vec3(1.0, 0.95, 0.9), 0.5) * sheen * 0.55;
-  col *= 0.75 + 0.25 * smoothstep(-0.8, 0.4, h);
+  hue = mix(hue, tone(2), smoothstep(0.25, 1.0, p.y * 0.9 - p.x * 0.5 - h * 0.2));
+  float light = pow(diffuse, 1.8);
+  vec3 col = tone(3) + hue * (0.08 + 0.85 * light);
+  col += mix(hue, vec3(1.0, 0.92, 0.85), 0.4) * sheen * 0.45;
+  col *= 0.6 + 0.4 * smoothstep(-1.6, 1.2, p.x - p.y * 0.4 + 0.6);
+  col = 1.0 - exp(-col * 1.5);
   outColor = sceneColor(col);
 }
-`);
-
-/** A drafting table at midnight: a drifting ink grid, a protractor turning slowly, a scan of light. */
+`); /** A drafting table at midnight: a drifting ink grid, a protractor turning slowly, a scan of light. */
 const GRID = frag(`
 float lines(vec2 x, float w) {
   vec2 d = abs(fract(x - 0.5) - 0.5) / max(fwidth(x), 1e-5);
@@ -216,6 +223,8 @@ void main() {
   float t = uTime;
   float px = devicePx();
   float hz = -0.1;
+  float sunMask = 0.0;
+  vec3 sunColor = vec3(0.0);
   vec3 col;
   if (p.y > hz) {
     float k = p.y - hz;
@@ -224,17 +233,19 @@ void main() {
     vec2 s = p - vec2(0.0, hz + 0.2);
     float d = length(s);
     float rad = 0.23;
-    vec3 sun = mix(tone(0), tone(2), smoothstep(-rad, rad * 0.8, s.y));
+    vec3 sun = mix(tone(0), mix(tone(2), vec3(1.0, 0.93, 0.55), 0.35), smoothstep(-rad * 0.9, rad * 0.7, s.y));
     float y = (s.y + rad) / (2.0 * rad);
     float gap = mix(0.42, 0.0, smoothstep(0.0, 0.55, y));
     float slat = step(gap, fract(y * 14.0 + t * 0.12));
     float disc = smoothstep(rad + 1.5 * px, rad - 1.5 * px, d) * slat;
     col += tone(0) * 0.35 * exp(-max(d - rad, 0.0) * 6.0);
-    col = mix(col, sun, disc);
+    sunMask = disc;
+    sunColor = sun;
     float ridge = hz + 0.035 + 0.07 * fbm(vec2(p.x * 2.6 + 11.0, 1.0)) * smoothstep(0.0, 0.6, abs(p.x));
     float hill = smoothstep(ridge + px, ridge - px, p.y);
     vec3 rock = tone(3) * 0.7 + tone(1) * 0.08 * smoothstep(ridge - 0.05, ridge, p.y);
     col = mix(col, rock, hill);
+    sunMask *= 1.0 - hill;
     col += tone(1) * 0.35 * smoothstep(2.0 * px, 0.0, abs(p.y - ridge));
   } else {
     float depth = 0.32 / max(hz - p.y, 1e-4);
@@ -249,6 +260,7 @@ void main() {
   }
   col += tone(0) * 0.45 * exp(-abs(p.y - hz) * 60.0);
   col = 1.0 - exp(-col * 1.3);
+  col = mix(col, sunColor, sunMask);
   outColor = sceneColor(col);
 }
 `);
