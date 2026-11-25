@@ -2355,7 +2355,8 @@ body.themed { background: transparent; }
 .themed .prompt-input:focus-within { border-color: var(--th-focus); }
 .themed :is(.input, .modal textarea, .modal input, .modal select):focus { border-color: var(--th-focus); box-shadow: 0 0 0 3px var(--th-focus-ring); }
 
-.themed .dash-top { background: var(--th-chrome); border-bottom-color: var(--border-strong); backdrop-filter: blur(var(--th-blur)) saturate(1.6); }
+/* Its glass makes the header a stacking context: lift it over the panes so its menus open above them. */
+.themed .dash-top { position: relative; z-index: 30; background: var(--th-chrome); border-bottom-color: var(--border-strong); backdrop-filter: blur(var(--th-blur)) saturate(1.6); }
 .themed .dash-top-upper { background: rgba(0, 0, 0, .18); }
 .themed .dash-top-lower { background: transparent; }
 .themed .dash-git-pill { background: var(--th-hover); }
@@ -2371,7 +2372,8 @@ body.themed { background: transparent; }
 .themed .dash-quiet-bay:hover:enabled, .themed .dash-quiet-bay.open { background: var(--th-active); }
 .themed .dash-end-bay:hover:enabled { background: var(--th-hover); }
 .themed .dash-floor-track { color: color-mix(in srgb, var(--text) 28%, transparent); }
-.themed .dash-quiet-pop { border-color: var(--border-strong); background: var(--th-pop); backdrop-filter: blur(28px) saturate(1.6); }
+/* The header's glass is the backdrop root of anything inside it, so its menus can't frost the panes below: they stay opaque. */
+.themed .dash-quiet-pop { border-color: var(--border-strong); background: var(--bg); }
 .themed :is(.dash-quiet-search, .dash-quiet-foot) { background: var(--th-hover); }
 .themed .dash-quiet-section { border-bottom-color: var(--border); background: rgba(0, 0, 0, .16); }
 .themed .dash-quiet-row { border-bottom-color: var(--border); }
@@ -2416,7 +2418,7 @@ body.themed { background: transparent; }
 .themed .dash-pick:hover:enabled { background: var(--th-active); }
 .themed .dash-handle::before { background: color-mix(in srgb, var(--accent) 55%, transparent); }
 .themed .dash-handle::after { background: var(--border-strong); }
-.themed .dash-layout-pop { background: var(--th-pop); backdrop-filter: blur(28px) saturate(1.6); }
+.themed .dash-layout-pop { background: var(--bg); }
 .themed .dash-layout[aria-checked=true] { color: var(--text); }
 .themed :is(.dash-layout[aria-checked=true], .dash-layout-now) rect.lead { fill: color-mix(in srgb, var(--accent) 35%, transparent); }
 .themed .dash-preview { border-color: var(--border); background: var(--th-term); color: var(--text); }
