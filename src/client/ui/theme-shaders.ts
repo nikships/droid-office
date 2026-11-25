@@ -157,7 +157,7 @@ void main() {
     float fi = float(i);
     float x = p.x * (1.0 - 0.15 * fi) + fi * 1.37;
     float s = t * (0.03 + 0.012 * fi);
-    float hem = 0.1 * fi + 0.12 * sin(x * 1.6 + s * 1.7 + fi * 2.0) + 0.07 * sin(x * 2.9 - s * 1.3 + fi * 5.1) + 0.03 * sin(x * 5.3 + s * 2.1 + fi) - 0.12 * p.x * (1.0 - fi);
+    float hem = -0.07 + 0.1 * fi + 0.1 * sin(x * 1.6 + s * 1.7 + fi * 2.0) + 0.08 * sin(x * 3.1 - s * 1.3 + fi * 5.1) + 0.03 * sin(x * 5.3 + s * 2.1 + fi) - 0.1 * p.x * (1.0 - fi);
     float d = p.y - hem;
     float rx = x + d * 0.1;
     float n1 = noise1(rx * 24.0 - s * 5.0 + fi * 11.0);
@@ -165,7 +165,7 @@ void main() {
     float reach = mix(0.03, 0.22, n1 * n1) * (1.0 - 0.2 * fi);
     float body = exp(-max(-d, 0.0) * 80.0) * exp(-max(d, 0.0) / reach) * (1.0 - 0.7 * smoothstep(0.1, 0.5, p.y));
     float ray = mix(0.35, 1.0, n1 * 0.7 + n2 * 0.3);
-    float along = smoothstep(0.35, 0.85, 0.5 + 0.3 * sin(x * 1.3 + s * 1.4 + fi * 7.0) + 0.2 * sin(x * 2.7 - s * 0.9 + fi * 3.0));
+    float along = smoothstep(0.28, 0.8, 0.5 + 0.3 * sin(x * 1.3 + s * 1.4 + fi * 7.0) + 0.2 * sin(x * 2.7 - s * 0.9 + fi * 3.0));
     float hemLine = exp(-abs(d + 0.004) * 60.0);
     vec3 c = mix(tone(0), tone(1), smoothstep(0.03, 0.18, d));
     c = mix(c, tone(2), smoothstep(0.12, 0.36, d));
