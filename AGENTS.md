@@ -13,6 +13,7 @@ A 3D browser and Mac office where one owner hires Droid workers at desks and wor
 | Factory: API key, computers, sessions, credits, CI, AutoWiki, cloud workers | [docs/factory.md](docs/factory.md) |
 | Linear: connection, tickets, autopilot and worker tools | [docs/linear.md](docs/linear.md) |
 | Whiteboard: cards, live iframe bridge, marks and comments, Chromium renders | [docs/whiteboard.md](docs/whiteboard.md) |
+| Companion appearance: artwork themes, immersive treatments and migration checklist | [docs/companion-themes.md](docs/companion-themes.md) |
 | Setup & Subscriptions: Droid install and sign-in, welcome, DroidProxy, quota, pace and model eligibility, Artificial Analysis benchmarks | [docs/subscriptions.md](docs/subscriptions.md) |
 | Office MCP: worker tools for teams, subagents, visits, questions and Whiteboards | [docs/office-mcp.md](docs/office-mcp.md) |
 | Mission Control: Orchestrator, external Tailscale bots, remote MCP | [docs/mission-control.md](docs/mission-control.md) |

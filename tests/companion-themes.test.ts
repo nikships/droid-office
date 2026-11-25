@@ -6,6 +6,7 @@ import {
   COMPANION_THEME_IDS,
   DEFAULT_THEME_ID,
   GLASS_LEVELS,
+  IMMERSIVE_KEYS,
   MAX_PICTURE_SHADE,
   OG_THEME_ID,
   THEME_SHADERS,
@@ -112,6 +113,25 @@ test('glass levels: Solid is opaque and sharp, Clear shows more than Frosted, th
     assert.equal(companionThemeVars(t, 'solid')['--th-blur'], '0px');
   }
   assert.deepEqual(companionTerminalColors(companionTheme('carbons-copy')), { foreground: '#f2f0ed', cursor: '#ff6a1f', cursorAccent: '#050507', selectionBackground: '#3a2418' });
+});
+
+test('immersive treatments are additive, independently optional and do not change glass or terminal colors', () => {
+  const carbon = companionTheme('carbons-copy');
+  assert.equal(carbon.immersive?.['heading-font'], 'var(--font-mono)');
+  const base = { ...carbon, immersive: undefined };
+  for (const glass of GLASS_LEVELS) {
+    const original = companionThemeVars(base, glass);
+    const full = companionThemeVars(carbon, glass);
+    const partial = companionThemeVars({ ...base, immersive: { 'heading-font': 'serif' } }, glass);
+    assert.deepEqual(partial, { ...original, '--th-heading-font': 'serif' });
+    for (const [key, value] of Object.entries(carbon.immersive!)) {
+      assert.equal(full[`--th-${key}`], value);
+      assert.ok(!(`--th-${key}` in original));
+      delete full[`--th-${key}`];
+    }
+    assert.deepEqual(full, original);
+  }
+  assert.deepEqual(companionTerminalColors(carbon), companionTerminalColors(base));
 });
 
 test('color helpers', () => {
@@ -247,4 +267,17 @@ test('OG stays untouched: only .themed rules, and the theme UI that sets its own
     }
   }
   assert.ok(checked > 20, `only ${checked} themed selectors found: is the parse still right?`);
+});
+
+test('each selector consuming an immersive treatment requires that exact key on the theme root', () => {
+  const css = readFileSync(new URL('../src/client/style.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const used = new Set<string>();
+  for (const [, head, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    for (const key of IMMERSIVE_KEYS) {
+      if (!body.includes(`var(--th-${key})`) && !body.includes(`var(--th-${key},`)) continue;
+      for (const sel of selectors(head)) assert.ok(sel.startsWith(`.themed[data-immersive~="${key}"]`), `${sel} requires ${key}`);
+      used.add(key);
+    }
+  }
+  assert.deepEqual([...used].sort(), [...IMMERSIVE_KEYS].sort());
 });

@@ -2448,6 +2448,39 @@ body.themed { background: transparent; }
   background: transparent;
 }
 .themed :is(.wt-latest, .wt-search, .wt-mermaid-menu) { background: var(--th-pop); backdrop-filter: blur(20px) saturate(1.5); }
+/* Immersive treatments are independent. Without the corresponding key this stylesheet does not
+   participate in the cascade, even on a theme that opts into some other treatment. */
+.themed[data-immersive~="heading-font"] :is(.dash-side-title, .dash-pane-name, .dash-row-name, .dash-empty h3, .dash-building-head h1) { font-family: var(--th-heading-font); }
+.themed[data-immersive~="caption-font"] :is(.dash-roster-heading, .dash-mission-title, .dash-building-columns, .settings-nav-section, .dash-layout-pop-title) { font: var(--th-caption-font); letter-spacing: .15em; color: var(--text-secondary); }
+.themed[data-immersive~="chrome-finish"] :is(.dash-top-upper, .dash-worker-team, .dash-side-head, .dash-side-foot, .dash-workspace[data-layout=single] .dash-pane[data-mode=empty] .dash-empty) { background-image: var(--th-chrome-finish); }
+.themed[data-immersive~="chrome-finish"] .dash-side { background-image: linear-gradient(90deg, transparent 3px, var(--th-side) 4px, var(--th-side) calc(100% - 5px), transparent calc(100% - 4px)), var(--th-chrome-finish); }
+.themed[data-immersive~="panel-radius"] :is(.dash-pane, .dash-empty-icon, .dash-workspace[data-layout=single] .dash-pane[data-mode=empty] .dash-empty) { border-radius: var(--th-panel-radius); }
+.themed[data-immersive~="panel-edge"] :is(.dash-pane-head, .dash-side-head, .dash-building-head, .dash-workspace[data-layout=single] .dash-empty) { position: relative; }
+.themed[data-immersive~="panel-edge"] :is(.dash-pane-head, .dash-side-head, .dash-building-head, .dash-workspace[data-layout=single] .dash-empty)::after { content: ''; pointer-events: none; position: absolute; inset: auto 0 0; height: 3px; background: var(--th-panel-edge); }
+.themed[data-immersive~="badge-face"] :is(.dash-empty-icon, .dash-mission-mark) { background-image: var(--th-badge-face); }
+.themed[data-immersive~="badge-ink"] .dash-empty-icon { color: var(--th-badge-ink); }
+.themed[data-immersive~="imprint"] :is(.dash-empty, .dash-side-head)::before { content: var(--th-imprint); display: block; width: fit-content; padding: 4px 16px 4px 8px; margin-bottom: var(--space-3); clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%); background: var(--accent); color: var(--th-accent-ink); font: 700 10px/1.4 var(--font-mono); letter-spacing: .14em; }
+.themed[data-immersive~="control-finish"] :is(.btn, .seg, .pill, .dash-building-filter, .dash-git-pill) { background-image: var(--th-control-finish); }
+.themed[data-immersive~="control-radius"] :is(.btn, .seg, .pill, .dash-building-filter, .dash-git-pill) { border-radius: var(--th-control-radius); }
+.themed[data-immersive~="focus-outline"] :is(button, input, select, textarea, [tabindex]):focus-visible { outline: var(--th-focus-outline); outline-offset: -1px; }
+.themed[data-immersive~="selection"] :is(.dash-top, .dash-side, .dash-empty, .dash-building, .worker-thread, .modal:not(.term)) ::selection { color: var(--text); background-color: var(--th-selection); }
+.themed[data-immersive~="row-hover"] :is(.dash-row-open:hover, .dash-building-worker:hover:enabled) { background-image: var(--th-row-hover); }
+.themed[data-immersive~="row-active"] :is(.dash-row.on .dash-row-open, .dash-building-worker:active:enabled, .dash-building-filter[aria-pressed=true]) { background-image: var(--th-row-active); }
+.themed[data-immersive~="section-rule"] :is(.dash-mission, .settings-nav-section)::after, .themed[data-immersive~="section-rule"] .dash-side-foot::before { content: ''; display: block; flex: none; height: 3px; margin-block: 3px; background: var(--th-section-rule); }
+.themed[data-immersive~="sheet-finish"] :is(.modal:not(.term), .modal:not(.term) > header, .settings-nav, .dash-layout-pop, .dash-quiet-pop, .dash-worker-menu) { background-image: var(--th-sheet-finish); }
+/* Keep the terminal's deliberately quiet scrollbar and ANSI selection independent of the UI. */
+.themed[data-immersive~="scrollbar-thumb"] :is(.settings-pane, .settings-nav, .dash-workers, .dash-building)::-webkit-scrollbar { width: 6px; }
+.themed[data-immersive~="scrollbar-thumb"] :is(.settings-pane, .settings-nav, .dash-workers, .dash-building)::-webkit-scrollbar-thumb { background: var(--th-scrollbar-thumb); border-radius: 1px; }
+@supports not selector(::-webkit-scrollbar) {
+  .themed[data-immersive~="scrollbar-thumb"] :is(.settings-pane, .settings-nav, .dash-workers, .dash-building) { scrollbar-color: var(--th-scrollbar-thumb) transparent; }
+}
+/* The painter omits this key for Still or system reduced motion. */
+.themed[data-immersive~="control-motion"] :is(.btn, .dash-building-filter) { transition: translate var(--th-control-motion), color var(--th-control-motion), background-color var(--th-control-motion), border-color var(--th-control-motion); }
+@media (hover: hover) {
+  .themed[data-immersive~="control-motion"] :is(.btn, .dash-building-filter):hover:enabled { translate: 0 -1px; }
+}
+.themed[data-immersive~="control-motion"] :is(.btn, .dash-building-filter):active:enabled { translate: 0 2px; }
+
 /* The Triage Console header: 36px sunken instrument deck + 32px architectural triage floor bays. */
 .dash-top { flex: none; display: flex; flex-direction: column; background: #0a0a0a; border-bottom: 1px solid rgba(255, 255, 255, .18); }
 .dash-top-upper { display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 10px 0 var(--space-3); background: #060606; }

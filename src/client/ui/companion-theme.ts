@@ -165,6 +165,9 @@ function paint(p: AppearancePrefs) {
   const og = theme.id === OG_THEME_ID;
   body.dataset.theme = theme.id;
   body.classList.toggle('themed', !og);
+  const treatments = Object.keys(theme.immersive ?? {}).filter((key) => key !== 'control-motion' || animating(p));
+  if (!og && treatments.length) body.dataset.immersive = treatments.join(' ');
+  else delete body.dataset.immersive;
   for (const key of applied) body.style.removeProperty(key);
   applied = [];
   if (!og) {

@@ -43,6 +43,29 @@ export interface ThemeTerminal {
   selection: string;
 }
 
+/** Optional surface treatments. Values are trusted CSS from this registry, never saved preferences. */
+export const IMMERSIVE_KEYS = [
+  'heading-font',
+  'caption-font',
+  'panel-radius',
+  'chrome-finish',
+  'panel-edge',
+  'badge-face',
+  'badge-ink',
+  'imprint',
+  'control-finish',
+  'control-radius',
+  'focus-outline',
+  'selection',
+  'row-hover',
+  'row-active',
+  'section-rule',
+  'sheet-finish',
+  'scrollbar-thumb',
+  'control-motion',
+] as const;
+export type ImmersiveTheme = Partial<Record<(typeof IMMERSIVE_KEYS)[number], string>>;
+
 export interface CompanionTheme {
   id: string;
   name: string;
@@ -65,6 +88,7 @@ export interface CompanionTheme {
   glass: number;
   backdrop: ThemeBackdrop;
   terminal: ThemeTerminal;
+  immersive?: ImmersiveTheme;
 }
 
 const scene = (shader: ThemeShader, colors: readonly string[], opts: Partial<Omit<ThemeStageSpec, 'shader' | 'colors'>> = {}): ThemeStageSpec => ({
@@ -126,6 +150,27 @@ export const COMPANION_THEMES = [
       veil: VIGNETTE,
     },
     terminal: { foreground: '#f2f0ed', cursor: '#ff6a1f', background: '#050507', selection: '#3a2418' },
+    immersive: {
+      'heading-font': 'var(--font-mono)',
+      'caption-font': '750 11px/1.5 var(--font-mono)',
+      'panel-radius': '2px 16px 2px 16px',
+      'chrome-finish':
+        'linear-gradient(105deg, transparent, #10101638 50%, #09090d9c), repeating-linear-gradient(125deg, #33333d99 0 2px, #14141bb3 2px 4px, #08080b88 4px 7px), repeating-linear-gradient(36deg, #35323ddd 0 3px, #0b0b1188 3px 7px)',
+      'panel-edge': 'linear-gradient(110deg, var(--accent) 0 28px, transparent 28px 31px, var(--accent) 31px 37px, transparent 37px 40px, var(--accent) 40px 43px, #ff6a1f75 43px, #7484ff78)',
+      'badge-face': 'linear-gradient(135deg, #32221d, #101017 64%, #272b46)',
+      'badge-ink': '#ff975d',
+      imprint: '"CC—01     /     CARBON SERIES" / ""',
+      'control-finish': 'linear-gradient(180deg, #ffffff38 0 1px, transparent 1px 45%, #00000013 47% 94%, #05050870 95%), linear-gradient(115deg, transparent 6px, #03030726 7px 8px, transparent 9px)',
+      'control-radius': '1px 8px 1px 8px',
+      'focus-outline': '4px double #ffa26a',
+      selection: '#673114',
+      'row-hover': 'linear-gradient(90deg, #bc774a 0 2px, #272020 2px, #141419 70%)',
+      'row-active': 'linear-gradient(105deg, #ff8e4b 0 4px, #100e12 4px 7px, #473027 7px, #17151c 60%, #242536)',
+      'section-rule': 'repeating-linear-gradient(118deg, #b46437 0 3px, #241c1b 3px 7px)',
+      'sheet-finish': 'linear-gradient(125deg, #28212aeb, #0c0c10e6 38%, #171823eb), repeating-linear-gradient(45deg, #373342 0 2px, #101017 2px 5px)',
+      'scrollbar-thumb': '#bc865e',
+      'control-motion': '140ms cubic-bezier(.18,.8,.26,1)',
+    },
   },
   {
     id: 'nightly-orbit',
@@ -624,6 +669,7 @@ export function companionThemeVars(theme: CompanionTheme, level: GlassLevel = 'f
   const chrome = chromeAlpha(theme, level);
   const ink = accentInk(theme);
   return {
+    ...Object.fromEntries(Object.entries(theme.immersive ?? {}).map(([key, value]) => [`--th-${key}`, value])),
     '--bg': theme.bg,
     '--surface': mixHex(theme.bg, theme.text, 0.035),
     '--surface-raised': mixHex(theme.bg, theme.text, 0.06),

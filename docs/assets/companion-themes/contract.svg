@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 840" role="img" aria-labelledby="title desc">
+  <title id="title">Companion theme contract: definition, renderer and surfaces</title>
+  <desc id="desc">OG leaves the UI kit untouched. Other definitions supply palette, backdrop and terminal colors. Optional immersive keys flow through companionThemeVars into a small set of dashboard surfaces. Sound, the 3D office, native Android and semantic state are not controlled by this contract.</desc>
+  <style>
+    text { font: 15px system-ui,sans-serif; fill: #eef0ef }
+    .title { font-size: 26px; font-weight: 650 }
+    .label { font: 12px ui-monospace,monospace; fill: #ff9c66; letter-spacing: 1px }
+    .detail { fill: #bcbfc5; font-size: 14px }
+    .row { fill: #16171d; stroke: #393b46 }
+    .flow { fill: none; stroke: #7a7e91; stroke-width: 1.5 }
+  </style>
+  <rect width="940" height="840" fill="#101115"/>
+  <text x="28" y="34" class="label">DROID OFFICE  /  APPEARANCE</text>
+  <text x="28" y="72" class="title">From theme definition to companion surface</text>
+
+  <rect x="28" y="102" width="228" height="96" rx="4" class="row"/>
+  <text x="44" y="129" class="label">01  /  REGISTRY</text>
+  <text x="44" y="159">CompanionTheme</text>
+  <text x="44" y="181" class="detail">Selected by its saved ID</text>
+  <path d="M256 149h46m-7 -5 7 5 -7 5" class="flow"/>
+  <rect x="308" y="102" width="278" height="96" rx="4" class="row"/>
+  <text x="324" y="129" class="label">02  /  RESOLVE</text>
+  <text x="324" y="159">companionThemeVars</text>
+  <text x="324" y="181" class="detail">Palette + supplied immersive keys</text>
+  <path d="M586 149h46m-7 -5 7 5 -7 5" class="flow"/>
+  <rect x="638" y="102" width="274" height="96" rx="4" class="row"/>
+  <text x="654" y="129" class="label">03  /  PAINT</text>
+  <text x="654" y="159">Browser or Mac /dashboard</text>
+  <text x="654" y="181" class="detail">Each selector requires its own key</text>
+
+  <text x="28" y="234" class="label">DEFINITION GROUP</text>
+  <text x="340" y="234" class="label">SURFACES AND DEFAULTS</text>
+  <g stroke="#383a43"><path d="M28 246h884M28 289h884M28 332h884M28 375h884M28 418h884M28 461h884M28 504h884M28 547h884"/></g>
+  <text x="28" y="273">Palette / glass</text>
+  <text x="340" y="273" class="detail">Page, Thread, controls, menus and panes · OG keeps the kit</text>
+  <text x="28" y="316">Backdrop / stage / terminal</text>
+  <text x="340" y="316" class="detail">Wallpaper and ambient motion · terminal cursor, ink and selection</text>
+  <text x="28" y="359">Optional · heading-font / caption-font</text>
+  <text x="340" y="359" class="detail">Titles and instrument captions · original typography otherwise</text>
+  <text x="28" y="402">Optional · chrome-finish / panel-radius</text>
+  <text x="340" y="402" class="detail">Header, team shell, empty card / pane corners · existing glass and radius</text>
+  <text x="28" y="445">Optional · panel-edge</text>
+  <text x="340" y="445" class="detail">Floor, directory and pane headers, empty card · no registration rule by default</text>
+  <text x="28" y="488">Optional · badge-face / badge-ink</text>
+  <text x="340" y="488" class="detail">Mission Control and workspace icon surfaces · original badge and ink</text>
+  <text x="28" y="531">Optional · imprint</text>
+  <text x="340" y="531" class="detail">Decorative nameplate in the sidebar and empty state · absent by default</text>
+  <g stroke="#383a43"><path d="M28 590h884M28 633h884M28 676h884M28 719h884M28 762h884"/></g>
+  <text x="28" y="574">Optional · control-finish / control-radius</text>
+  <text x="340" y="574" class="detail">Buttons, segments, filters, pills · existing face and corners otherwise</text>
+  <text x="28" y="617">Optional · focus-outline / selection</text>
+  <text x="340" y="617" class="detail">Keyboard focus and UI text selection · original indicators otherwise</text>
+  <text x="28" y="660">Optional · row-hover / row-active</text>
+  <text x="340" y="660" class="detail">Sidebar, worker directory, filters · original row states otherwise</text>
+  <text x="28" y="703">Optional · section-rule / sheet-finish</text>
+  <text x="340" y="703" class="detail">Section dividers, menus, sheets and Settings · existing surfaces otherwise</text>
+  <text x="28" y="746">Optional · scrollbar-thumb / control-motion</text>
+  <text x="340" y="746" class="detail">UI scroll thumb and live hover/press · no signature motion in Still or Reduce</text>
+  <text x="28" y="792" class="label">BOUNDARIES</text>
+  <text x="150" y="792" class="detail">Motion preferences and shared view transitions stay in charge. No theme sound.</text>
+  <text x="150" y="816" class="detail">No changes to native Android, 3D desks or avatars, status colors, or ANSI output.</text>
+</svg>
