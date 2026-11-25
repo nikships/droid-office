@@ -2333,6 +2333,7 @@ html:has(body.dashboard), body.dashboard { overflow: auto; }
 .theme-backdrop > * { position: absolute; inset: 0; width: 100%; height: 100%; }
 .theme-backdrop-base { z-index: 0; }
 .theme-backdrop-stage { z-index: 1; display: block; }
+.theme-backdrop-stage[hidden] { display: none; }
 .theme-backdrop-stage[data-layer=overlay] { z-index: 3; }
 .theme-backdrop-art { z-index: 2; object-fit: cover; opacity: 0; transition: opacity .6s var(--ease); user-select: none; }
 .theme-backdrop-art.ready { opacity: 1; }
