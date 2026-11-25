@@ -39,11 +39,11 @@ export function groupThemesByFamily<T extends Pick<CompanionTheme, 'family'>>(th
 }
 
 /** Splits each family's flat indices into visual rows of at most `columns` tiles. */
-export function galleryIndexRows(groupSizes: readonly number[], columns: number): number[][] {
-  const cols = Math.max(1, Math.floor(columns) || 1);
+export function galleryIndexRows(groupSizes: readonly number[], columns: number | readonly number[]): number[][] {
   const rows: number[][] = [];
   let cursor = 0;
-  for (const size of groupSizes) {
+  for (const [group, size] of groupSizes.entries()) {
+    const cols = Math.max(1, Math.floor(typeof columns === 'number' ? columns : (columns[group] ?? 1)) || 1);
     for (let i = 0; i < size; i += cols) {
       rows.push(Array.from({ length: Math.min(cols, size - i) }, (_, k) => cursor + i + k));
     }
@@ -57,7 +57,7 @@ export function galleryIndexRows(groupSizes: readonly number[], columns: number)
  * theme in order; Up/Down step to the row above or below in the same column (clamping on shorter
  * partial rows); Home and End jump to the first and last theme. Returns null for unrelated keys.
  */
-export function galleryNextIndex(current: number, key: string, groupSizes: readonly number[], columns = 1): number | null {
+export function galleryNextIndex(current: number, key: string, groupSizes: readonly number[], columns: number | readonly number[] = 1): number | null {
   const total = groupSizes.reduce((sum, n) => sum + n, 0);
   if (total <= 0 || current < 0 || current >= total) return null;
   if (key === 'Home') return 0;
@@ -367,8 +367,12 @@ export function appearanceSettings(): {
     }
     const active = tiles.indexOf(e.target as HTMLButtonElement);
     const from = active >= 0 ? active : rovingIndex;
-    const sampleGrid = grids.find((g) => g.children.length > 1) ?? grids[0];
-    const next = galleryNextIndex(from, e.key, groupSizes, measuredColumns(sampleGrid));
+    const next = galleryNextIndex(
+      from,
+      e.key,
+      groupSizes,
+      grids.map((grid) => measuredColumns(grid)),
+    );
     if (next === null) return;
     e.preventDefault();
     setRoving(next);
@@ -399,6 +403,7 @@ export function appearanceSettings(): {
   let storedWallpaper: CustomWallpaper | null = null;
   let fallbackBlobUrl: string | null = null;
   let wallTicket = 0;
+  let wallLoadTicket = 0;
   let wallBusy = false;
   let errorText = '';
   let disposed = false;
@@ -547,20 +552,11 @@ export function appearanceSettings(): {
       const drop = h(
         'div.wallpaper-drop',
         {
-          role: 'button',
-          tabindex: 0,
-          'aria-label': 'Drop a picture here, or click to choose from your computer',
+          role: 'group',
+          'aria-label': 'Drop a picture here, or choose from your computer',
           onclick: (e: Event) => {
             if ((e.target as HTMLElement | null)?.closest('button')) return;
             fileInput.click();
-          },
-          onkeydown: (e: Event) => {
-            const ke = e as KeyboardEvent;
-            if (ke.target !== drop) return;
-            if (ke.key === 'Enter' || ke.key === ' ') {
-              ke.preventDefault();
-              fileInput.click();
-            }
           },
         },
         h('span.wallpaper-drop-icon', { 'aria-hidden': 'true' }, pictureGlyph()),
@@ -636,7 +632,7 @@ export function appearanceSettings(): {
     for (const s of [wallpaper, dim, blur, glass, motion]) s.paint(prefs);
 
     customPanel.classList.toggle('hidden', prefs.wallpaper !== 'custom');
-    const showTuning = prefs.wallpaper === 'custom' || (prefs.wallpaper === 'theme' && !og && Boolean(activeTheme.backdrop.image));
+    const showTuning = prefs.wallpaper === 'custom' ? Boolean(storedWallpaper) : prefs.wallpaper === 'theme' && !og && Boolean(activeTheme.backdrop.image);
     tuning.classList.toggle('hidden', !showTuning);
 
     themeDesc.textContent = themeDescription(activeTheme);
@@ -648,8 +644,9 @@ export function appearanceSettings(): {
   };
 
   const refreshStoredWallpaper = async () => {
+    const my = ++wallLoadTicket;
     const loaded = await loadWallpaper();
-    if (disposed) return;
+    if (disposed || my !== wallLoadTicket) return;
     revokeFallbackUrl();
     storedWallpaper = loaded;
     if (loaded?.kind === 'url' && !linkInput.value) linkInput.value = loaded.url;

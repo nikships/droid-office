@@ -71,6 +71,17 @@ test('gallery keyboard navigation steps across tiles, rows, partial rows and wra
   assert.equal(galleryNextIndex(0, 'ArrowRight', [], 3), null);
 });
 
+test('gallery vertical navigation follows each family’s own column count', () => {
+  const sizes = [1, 8, 5];
+  const columns = [1, 3, 2];
+  assert.deepEqual(galleryIndexRows(sizes, columns), [[0], [1, 2, 3], [4, 5, 6], [7, 8], [9, 10], [11, 12], [13]]);
+  assert.equal(galleryNextIndex(0, 'ArrowDown', sizes, columns), 1);
+  assert.equal(galleryNextIndex(1, 'ArrowUp', sizes, columns), 0);
+  assert.equal(galleryNextIndex(4, 'ArrowUp', sizes, columns), 1);
+  assert.equal(galleryNextIndex(8, 'ArrowDown', sizes, columns), 10);
+  assert.equal(galleryNextIndex(9, 'ArrowUp', sizes, columns), 7);
+});
+
 test('wallpaper metadata formatting preserves original-file messaging and extracts link names', () => {
   assert.equal(formatWallpaperBytes(0), '0 B');
   assert.equal(formatWallpaperBytes(512), '512 B');

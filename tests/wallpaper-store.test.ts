@@ -5,6 +5,9 @@ import test from 'node:test';
 // database, each decode waits until the test settles it, and no channel opens (it would hold Node open).
 const kept = new Map<string, unknown>();
 const decodes: Array<{ src: string; settle: (ok: boolean) => void }> = [];
+const puts: Array<() => void> = [];
+let holdPuts = false;
+let blockOpen = false;
 
 function request<T>(tx: { oncomplete?: () => void }, act: () => T) {
   const req: { result?: T } = {};
@@ -19,15 +22,28 @@ Object.assign(globalThis, {
   BroadcastChannel: undefined,
   indexedDB: {
     open() {
-      const req: { result?: unknown; onsuccess?: () => void } = {};
+      const req: { result?: unknown; onsuccess?: () => void; onblocked?: () => void } = {};
       queueMicrotask(() => {
+        if (blockOpen) {
+          blockOpen = false;
+          req.onblocked?.();
+          return;
+        }
         req.result = {
           close() {},
           transaction() {
             const tx: { oncomplete?: () => void; objectStore?: () => unknown } = {};
             tx.objectStore = () => ({
               get: (key: string) => request(tx, () => kept.get(key)),
-              put: (value: unknown, key: string) => request(tx, () => void kept.set(key, value)),
+              put: (value: unknown, key: string) => {
+                if (!holdPuts) return request(tx, () => void kept.set(key, value));
+                const req = {};
+                puts.push(() => {
+                  kept.set(key, value);
+                  tx.oncomplete?.();
+                });
+                return req;
+              },
               delete: (key: string) => request(tx, () => void kept.delete(key)),
             });
             return tx;
@@ -80,6 +96,39 @@ test('the newest choice wins over an older one that finishes later', async () =>
   const now = await loadWallpaper();
   assert.equal(now?.kind, 'file');
   assert.equal(now?.kind === 'file' && now.name, 'mine.png');
+});
+
+test('removing during an IndexedDB write cannot resurrect the old wallpaper', async () => {
+  kept.clear();
+  decodes.length = 0;
+  puts.length = 0;
+  holdPuts = true;
+  try {
+    const saving = saveWallpaperUrl('https://example.com/stale.jpg');
+    await tick();
+    decodes.shift()?.settle(true);
+    await tick();
+    assert.equal(puts.length, 1, 'the approved put is in flight');
+    const clearing = clearWallpaper();
+    await tick();
+    puts.shift()?.();
+    await saving;
+    await clearing;
+    assert.equal(await loadWallpaper(), null);
+  } finally {
+    holdPuts = false;
+    puts.length = 0;
+  }
+});
+
+test('a blocked wallpaper store rejects instead of leaving a save pending', async () => {
+  kept.clear();
+  decodes.length = 0;
+  const saving = saveWallpaperUrl('https://example.com/blocked.jpg');
+  await tick();
+  decodes.shift()?.settle(true);
+  blockOpen = true;
+  await assert.rejects(saving, /blocked by another tab/);
 });
 
 test('a link this browser cannot draw is refused and keeps the current wallpaper', async () => {

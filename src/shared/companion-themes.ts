@@ -631,7 +631,7 @@ export function companionThemeVars(theme: CompanionTheme, level: GlassLevel = 'f
     '--text': theme.text,
     '--text-secondary': theme.muted,
     '--text-tertiary': rgba(theme.text, 0.5),
-    '--text-inverse': ink === '#ffffff' ? theme.bg : ink,
+    '--text-inverse': theme.bg,
     '--border': rgba(theme.line, 0.09),
     '--border-strong': rgba(theme.line, 0.18),
     '--accent': theme.accent,

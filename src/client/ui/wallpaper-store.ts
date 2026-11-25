@@ -13,6 +13,17 @@ const listeners = new Set<() => void>();
 let channel: BroadcastChannel | null | undefined;
 /** Bumped by every change asked for, so a picture still being checked never lands over a later choice. */
 let latest = 0;
+/** Serializes writes, so a removal can't slip between an approved write and its completion. */
+let writes: Promise<void> = Promise.resolve();
+
+function enqueueWrite<T>(write: () => Promise<T>): Promise<T> {
+  const result = writes.then(write);
+  writes = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
 
 function bus(): BroadcastChannel | null {
   if (channel !== undefined) return channel;
@@ -35,9 +46,18 @@ function announce() {
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
+    let blocked = false;
     req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      // A blocked request can still succeed later; don't leak that connection after rejecting.
+      if (blocked) req.result.close();
+      else resolve(req.result);
+    };
     req.onerror = () => reject(req.error ?? new Error('IndexedDB unavailable'));
+    req.onblocked = () => {
+      blocked = true;
+      reject(new Error('The wallpaper store is blocked by another tab. Close it and try again.'));
+    };
   });
 }
 
@@ -101,8 +121,11 @@ export async function saveWallpaperFile(file: File): Promise<void> {
   } finally {
     URL.revokeObjectURL(src);
   }
+  await enqueueWrite(async () => {
+    if (mine !== latest) return;
+    await run('readwrite', (s) => s.put({ kind: 'file', blob: file, name: file.name }, KEY));
+  });
   if (mine !== latest) return;
-  await run('readwrite', (s) => s.put({ kind: 'file', blob: file, name: file.name }, KEY));
   announce();
 }
 
@@ -112,14 +135,17 @@ export async function saveWallpaperUrl(url: string): Promise<void> {
   const value = url.trim();
   const mine = ++latest;
   if (!(await drawable(value))) throw new Error('That link didn’t load as a picture. Check it opens in a new tab.');
+  await enqueueWrite(async () => {
+    if (mine !== latest) return;
+    await run('readwrite', (s) => s.put({ kind: 'url', url: value }, KEY));
+  });
   if (mine !== latest) return;
-  await run('readwrite', (s) => s.put({ kind: 'url', url: value }, KEY));
   announce();
 }
 
 export async function clearWallpaper(): Promise<void> {
   latest++;
-  await run('readwrite', (s) => s.delete(KEY));
+  await enqueueWrite(() => run('readwrite', (s) => s.delete(KEY)));
   announce();
 }
 

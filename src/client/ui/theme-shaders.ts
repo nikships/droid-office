@@ -512,7 +512,7 @@ void main() {
   vec4 c = petal(p + vec2(4.7, 0.0), 20.0, t * 0.7, 1.0, 0.6, 0.16);
   c = over(petal(p + vec2(1.9, 0.6), 10.0, t * 0.85, 1.0, 0.85, 0.12), c);
   c = over(petal(p, 4.6, t, 6.0, 0.8, 0.08), c);
-  outColor = vec4(c.rgb + dither() * c.a, c.a);
+  outColor = vec4(min(c.rgb + dither() * c.a, vec3(c.a)), c.a);
 }
 `);
 /** Rain slanting past the lens at three depths, tinted by the neon, and beads that land on the glass and fade. */

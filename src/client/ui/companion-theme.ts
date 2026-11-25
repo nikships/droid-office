@@ -98,7 +98,7 @@ let reduceMotion: MediaQueryList | undefined;
 /** Each shown picture's bright gray (brightGray), measured once. */
 const pictureGrays = new Map<string, number>();
 /** Pictures from other sites still to be read for their gray (readAcrossSites). */
-const unread = new Set<string>();
+const unread = new Map<string, number>();
 const wallListeners = new Set<(src: string | null) => void>();
 
 /** The owner's wallpaper as something an <img> can show (an object URL for a kept file), or null. */
@@ -190,7 +190,7 @@ function paint(p: AppearancePrefs) {
   const blur = BLUR_PX[p.blur];
   b.art.style.filter = blur ? `blur(${blur}px)` : '';
   b.art.classList.toggle('blurred', blur > 0);
-  const dim = Math.max(DIM_ALPHA[p.dim], picture ? pictureShade(theme, p.glass, pictureGrays.get(picture) ?? 0) : 0);
+  const dim = Math.max(DIM_ALPHA[p.dim], picture ? pictureShade(theme, p.glass, pictureGrays.get(picture) ?? 255) : 0);
   b.dim.style.background = dim ? `rgba(0, 0, 0, ${dim})` : 'transparent';
   b.veil.style.background = theme.backdrop.veil ?? 'none';
   const spec = b.stage ? backdropStage(p, theme, wallSrc) : null;
@@ -247,17 +247,17 @@ async function prepare(src: string | null): Promise<void> {
   if (!src) return;
   const art = backdrop?.art;
   if (pictureGrays.has(src) && art?.getAttribute('src') === src && art.complete && art.naturalWidth) return;
+  const quantile = src === wallSrc ? 1 : 0.9;
   const shown = await load(src, false);
   if (pictureGrays.has(src)) return;
   // The bundled artwork keeps the panes over its darker parts; the owner's picture can be any photo,
   // cropped anywhere by the window, so it is judged by its brightest part.
-  const quantile = src === wallSrc ? 1 : 0.9;
   if (!crossSite(src)) {
     pictureGrays.set(src, grayOf(shown, quantile));
     return;
   }
   pictureGrays.set(src, 255);
-  unread.add(src);
+  unread.set(src, quantile);
 }
 
 /**
@@ -265,9 +265,12 @@ async function prepare(src: string | null): Promise<void> {
  * two requests for one URL behind each other, so reading it first could hold the picture back.
  */
 function readAcrossSites(src: string | null) {
-  if (!src || !unread.delete(src)) return;
+  if (!src) return;
+  const quantile = unread.get(src);
+  if (quantile === undefined) return;
+  unread.delete(src);
   void load(src, true).then((img) => {
-    const gray = grayOf(img, src === wallSrc ? 1 : 0.9);
+    const gray = grayOf(img, quantile);
     if (gray === 255 || pictureGrays.get(src) !== 255) return;
     pictureGrays.set(src, gray);
     const p = appearancePrefs();
@@ -292,12 +295,20 @@ async function switchTo(p: AppearancePrefs) {
   else paint(p);
 }
 
+let wallpaperReloads = 0;
+
 async function reloadWallpaper() {
+  const mine = ++wallpaperReloads;
   const w = await loadWallpaper();
+  if (mine !== wallpaperReloads) return;
   const next = !w ? null : w.kind === 'file' ? URL.createObjectURL(w.blob) : w.url;
   const old = wallSrc;
   wallSrc = next;
   await switchTo(appearancePrefs());
+  if (mine !== wallpaperReloads) {
+    if (next && next !== wallSrc && next.startsWith('blob:')) URL.revokeObjectURL(next);
+    return;
+  }
   if (old && old !== wallSrc) {
     pictureGrays.delete(old);
     unread.delete(old);
