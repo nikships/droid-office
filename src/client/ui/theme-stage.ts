@@ -166,11 +166,7 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
 
   function draw() {
     if (lost || destroyed) return;
-    if (!spec) {
-      clear();
-      return;
-    }
-    const p = programFor(spec);
+    const p = spec && programFor(spec);
     if (!p) {
       clear();
       return;

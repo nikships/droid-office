@@ -602,17 +602,13 @@ export function pictureShade(theme: Pick<CompanionTheme, 'glass' | 'tint' | 'tex
  * luminance (the 90th percentile by default, 1 for the brightest), from RGBA bytes. Transparent
  * pixels count as the dark base they show.
  */
-export function brightGray(rgba: ArrayLike<number>, quantile = 0.9): number {
-  const n = Math.floor(rgba.length / 4);
+export function brightGray(pixels: ArrayLike<number>, quantile = 0.9): number {
+  const n = Math.floor(pixels.length / 4);
   if (!n) return 0;
-  const lin = (c: number) => {
-    const s = c / 255;
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  };
   const ys = new Float64Array(n);
   for (let i = 0; i < n; i++) {
-    const a = rgba[i * 4 + 3] / 255;
-    ys[i] = a * (0.2126 * lin(rgba[i * 4]) + 0.7152 * lin(rgba[i * 4 + 1]) + 0.0722 * lin(rgba[i * 4 + 2]));
+    const a = pixels[i * 4 + 3] / 255;
+    ys[i] = a * (0.2126 * linear(pixels[i * 4]) + 0.7152 * linear(pixels[i * 4 + 1]) + 0.0722 * linear(pixels[i * 4 + 2]));
   }
   ys.sort();
   const y = ys[Math.min(n - 1, Math.floor(n * quantile))];

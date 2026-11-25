@@ -4202,9 +4202,10 @@ button.wt-setting:hover { background: var(--surface-hover); color: var(--text); 
   background: color-mix(in srgb, var(--th-pane, var(--bg)) 74%, transparent);
   backdrop-filter: blur(9px) saturate(1.25); -webkit-backdrop-filter: blur(9px) saturate(1.25);
 }
-.theme-tile:where([data-glass=solid]) :where(.theme-mock-top) { background: var(--th-chrome, var(--surface-raised)); backdrop-filter: none; -webkit-backdrop-filter: none; }
-.theme-tile:where([data-glass=solid]) :where(.theme-mock-side) { background: var(--th-side, var(--surface)); backdrop-filter: none; -webkit-backdrop-filter: none; }
-.theme-tile:where([data-glass=solid]) :where(.theme-mock-pane) { background: var(--th-pane, var(--bg)); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.theme-tile:where([data-glass=solid]) :where(.theme-mock-top, .theme-mock-side, .theme-mock-pane) { backdrop-filter: none; -webkit-backdrop-filter: none; }
+.theme-tile:where([data-glass=solid]) :where(.theme-mock-top) { background: var(--th-chrome, var(--surface-raised)); }
+.theme-tile:where([data-glass=solid]) :where(.theme-mock-side) { background: var(--th-side, var(--surface)); }
+.theme-tile:where([data-glass=solid]) :where(.theme-mock-pane) { background: var(--th-pane, var(--bg)); }
 .theme-mock:where(.flat) { inset: 11px 11px 8px; }
 .theme-mock:where(.flat) :where(.theme-mock-top, .theme-mock-side, .theme-mock-pane) { backdrop-filter: none; -webkit-backdrop-filter: none; }
 .theme-mock:where(.flat) :where(.theme-mock-top) { background: #0c0c0c; }
@@ -4278,8 +4279,9 @@ button.wt-setting:hover { background: var(--surface-hover); color: var(--text); 
   transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease);
 }
 .wallpaper-current:where(.dropping) { border-color: var(--accent); background: var(--accent-muted); }
-.wallpaper-thumb { flex: none; width: 96px; height: 54px; border-radius: var(--radius); border: 1px solid var(--border); object-fit: cover; background: var(--surface); display: block; }
-.wallpaper-thumb-empty { flex: none; display: grid; place-items: center; width: 96px; height: 54px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); }
+.wallpaper-thumb, .wallpaper-thumb-empty { flex: none; width: 96px; height: 54px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); }
+.wallpaper-thumb { display: block; object-fit: cover; }
+.wallpaper-thumb-empty { display: grid; place-items: center; color: var(--text-secondary); }
 .wallpaper-info { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .wallpaper-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 var(--text-body)/var(--leading-body) var(--font-sans); color: var(--text); }
 .wallpaper-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 var(--text-small)/var(--leading-small) var(--font-sans); color: var(--text-secondary); }

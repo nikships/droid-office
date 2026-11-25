@@ -45,10 +45,7 @@ export function galleryIndexRows(groupSizes: readonly number[], columns: number)
   let cursor = 0;
   for (const size of groupSizes) {
     for (let i = 0; i < size; i += cols) {
-      const end = Math.min(size, i + cols);
-      const row: number[] = [];
-      for (let j = i; j < end; j++) row.push(cursor + j);
-      if (row.length) rows.push(row);
+      rows.push(Array.from({ length: Math.min(cols, size - i) }, (_, k) => cursor + i + k));
     }
     cursor += size;
   }
@@ -164,50 +161,24 @@ const MOTION_LABELS: readonly (readonly [AppearancePrefs['motion'], string])[] =
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string>): SVGElementTagNameMap[K] {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
+  return el;
+}
+
 function checkGlyph(): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 12 12');
-  svg.setAttribute('width', '10');
-  svg.setAttribute('height', '10');
-  svg.setAttribute('aria-hidden', 'true');
-  const p = document.createElementNS(SVG_NS, 'path');
-  p.setAttribute('d', 'M2.3 6.2 4.9 8.8 9.7 3.4');
-  p.setAttribute('fill', 'none');
-  p.setAttribute('stroke', 'currentColor');
-  p.setAttribute('stroke-width', '1.9');
-  p.setAttribute('stroke-linecap', 'round');
-  p.setAttribute('stroke-linejoin', 'round');
+  const svg = svgEl('svg', { viewBox: '0 0 12 12', width: '10', height: '10', 'aria-hidden': 'true' });
+  const p = svgEl('path', { d: 'M2.3 6.2 4.9 8.8 9.7 3.4', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.9', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
   svg.append(p);
   return svg;
 }
 
 function pictureGlyph(): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 20 20');
-  svg.setAttribute('width', '18');
-  svg.setAttribute('height', '18');
-  svg.setAttribute('aria-hidden', 'true');
-  const rect = document.createElementNS(SVG_NS, 'rect');
-  rect.setAttribute('x', '2.25');
-  rect.setAttribute('y', '3.25');
-  rect.setAttribute('width', '15.5');
-  rect.setAttribute('height', '13.5');
-  rect.setAttribute('rx', '2');
-  rect.setAttribute('fill', 'none');
-  rect.setAttribute('stroke', 'currentColor');
-  rect.setAttribute('stroke-width', '1.4');
-  const sun = document.createElementNS(SVG_NS, 'circle');
-  sun.setAttribute('cx', '7');
-  sun.setAttribute('cy', '7.8');
-  sun.setAttribute('r', '1.4');
-  sun.setAttribute('fill', 'currentColor');
-  const hills = document.createElementNS(SVG_NS, 'path');
-  hills.setAttribute('d', 'M3 15.2 7.6 10.8 11.2 14 13.8 11.6 17 15.2');
-  hills.setAttribute('fill', 'none');
-  hills.setAttribute('stroke', 'currentColor');
-  hills.setAttribute('stroke-width', '1.4');
-  hills.setAttribute('stroke-linecap', 'round');
-  hills.setAttribute('stroke-linejoin', 'round');
+  const svg = svgEl('svg', { viewBox: '0 0 20 20', width: '18', height: '18', 'aria-hidden': 'true' });
+  const rect = svgEl('rect', { x: '2.25', y: '3.25', width: '15.5', height: '13.5', rx: '2', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.4' });
+  const sun = svgEl('circle', { cx: '7', cy: '7.8', r: '1.4', fill: 'currentColor' });
+  const hills = svgEl('path', { d: 'M3 15.2 7.6 10.8 11.2 14 13.8 11.6 17 15.2', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
   svg.append(rect, sun, hills);
   return svg;
 }

@@ -77,15 +77,15 @@ interface Rig {
 }
 
 function rig(t: { after(fn: () => void): void }, { webgl = true } = {}): Rig {
-  const saved = {
+  const saved: Record<string, PropertyDescriptor | undefined> = {
     document: Object.getOwnPropertyDescriptor(globalThis, 'document'),
     window: Object.getOwnPropertyDescriptor(globalThis, 'window'),
-    raf: Object.getOwnPropertyDescriptor(globalThis, 'requestAnimationFrame'),
-    caf: Object.getOwnPropertyDescriptor(globalThis, 'cancelAnimationFrame'),
-    ro: Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver'),
+    requestAnimationFrame: Object.getOwnPropertyDescriptor(globalThis, 'requestAnimationFrame'),
+    cancelAnimationFrame: Object.getOwnPropertyDescriptor(globalThis, 'cancelAnimationFrame'),
+    ResizeObserver: Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver'),
   };
   t.after(() => {
-    for (const [key, desc] of Object.entries({ document: saved.document, window: saved.window, requestAnimationFrame: saved.raf, cancelAnimationFrame: saved.caf, ResizeObserver: saved.ro })) {
+    for (const [key, desc] of Object.entries(saved)) {
       if (desc) Object.defineProperty(globalThis, key, desc);
       else delete (globalThis as Record<string, unknown>)[key];
     }
@@ -182,9 +182,9 @@ function rig(t: { after(fn: () => void): void }, { webgl = true } = {}): Rig {
   r.canvas = canvas;
   r.resize = (width, height) => observer?.([{ devicePixelContentBoxSize: [{ inlineSize: width, blockSize: height }], contentBoxSize: [{ inlineSize: width / 2, blockSize: height / 2 }] }]);
   r.tick = (now) => {
-    const pending = [...frames.entries()];
+    const pending = [...frames.values()];
     frames.clear();
-    for (const [, fn] of pending) fn(now);
+    for (const fn of pending) fn(now);
   };
   r.setHidden = (hidden) => {
     doc.hidden = hidden;
