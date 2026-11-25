@@ -35,6 +35,17 @@ export function stageSize(cssW: number, cssH: number, dpr: number): { width: num
   return { width: Math.max(1, Math.round(cssW * ratio)), height: Math.max(1, Math.round(cssH * ratio)) };
 }
 
+/**
+ * The drawing buffer from a ResizeObserver entry's sizes: the device-pixel box where the browser
+ * reports one that matches the pixel ratio (it is exact where CSS × ratio rounds), else CSS × ratio.
+ * Chromium's device-scale emulation reports CSS pixels as the device box.
+ */
+export function observedSize(device: { inlineSize: number; blockSize: number } | undefined, cssW: number, cssH: number, dpr: number): { width: number; height: number } {
+  const scaled = stageSize(cssW, cssH, dpr);
+  if (device && Math.abs(device.inlineSize - scaled.width) <= 1 && Math.abs(device.blockSize - scaled.height) <= 1) return { width: Math.max(1, device.inlineSize), height: Math.max(1, device.blockSize) };
+  return scaled;
+}
+
 /** The moment (shader seconds) a still stage holds, and where a moving one starts: each shader's best-composed frame. */
 export const STILL_TIMES: Record<ThemeShader, number> = {
   aurora: 14,
@@ -214,13 +225,13 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
 
   const observer = new ResizeObserver((entries) => {
     const e = entries[entries.length - 1];
-    const device = e.devicePixelContentBoxSize?.[0];
-    if (device) resize(device.inlineSize, device.blockSize);
-    else {
-      const box = e.contentBoxSize?.[0];
-      const size = stageSize(box ? box.inlineSize : e.contentRect.width, box ? box.blockSize : e.contentRect.height, window.devicePixelRatio);
-      if (box ? box.inlineSize : e.contentRect.width) resize(size.width, size.height);
-    }
+    const box = e.contentBoxSize?.[0];
+    const cssW = box ? box.inlineSize : e.contentRect.width;
+    const cssH = box ? box.blockSize : e.contentRect.height;
+    // A hidden canvas measures 0 × 0; keep the buffer it had.
+    if (!cssW || !cssH) return;
+    const size = observedSize(e.devicePixelContentBoxSize?.[0], cssW, cssH, window.devicePixelRatio);
+    resize(size.width, size.height);
   });
   try {
     observer.observe(canvas, { box: 'device-pixel-content-box' });

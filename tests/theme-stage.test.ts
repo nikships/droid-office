@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { COMPANION_THEMES, THEME_SHADERS, type ThemeStageSpec } from '../src/shared/companion-themes.js';
 import { THEME_FRAGMENT_SHADERS, THEME_VERTEX_SHADER } from '../src/client/ui/theme-shaders.js';
-import { STILL_TIMES, colorCount, colorUniforms, createThemeStage, fragmentSource, stageSize } from '../src/client/ui/theme-stage.js';
+import { STILL_TIMES, colorCount, colorUniforms, createThemeStage, fragmentSource, observedSize, stageSize } from '../src/client/ui/theme-stage.js';
 
 const close = (actual: ArrayLike<number>, expected: number[]) => {
   assert.equal(actual.length, expected.length);
@@ -27,6 +27,12 @@ test('stageSize covers every device pixel', () => {
   assert.deepEqual(stageSize(2560, 1440, 2), { width: 5120, height: 2880 });
   assert.deepEqual(stageSize(0, 0, 2), { width: 1, height: 1 });
   assert.deepEqual(stageSize(800, 600, Number.NaN), { width: 800, height: 600 });
+});
+
+test('observedSize trusts the device-pixel box only where it matches the pixel ratio', () => {
+  assert.deepEqual(observedSize({ inlineSize: 2881, blockSize: 1799 }, 1440.4, 899.6, 2), { width: 2881, height: 1799 });
+  assert.deepEqual(observedSize({ inlineSize: 1440, blockSize: 900 }, 1440, 900, 2), { width: 2880, height: 1800 });
+  assert.deepEqual(observedSize(undefined, 1440, 900, 1.5), { width: 2160, height: 1350 });
 });
 
 test('every shader has a GLSL ES 3.00 source with the stage contract', () => {
@@ -174,7 +180,7 @@ function rig(t: { after(fn: () => void): void }, { webgl = true } = {}): Rig {
   };
   (canvas as unknown as { getContext: () => unknown }).getContext = () => (webgl ? gl : null);
   r.canvas = canvas;
-  r.resize = (width, height) => observer?.([{ devicePixelContentBoxSize: [{ inlineSize: width, blockSize: height }] }]);
+  r.resize = (width, height) => observer?.([{ devicePixelContentBoxSize: [{ inlineSize: width, blockSize: height }], contentBoxSize: [{ inlineSize: width / 2, blockSize: height / 2 }] }]);
   r.tick = (now) => {
     const pending = [...frames.entries()];
     frames.clear();

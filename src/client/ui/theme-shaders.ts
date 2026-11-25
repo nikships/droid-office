@@ -43,7 +43,42 @@ float noise(vec2 p) {
   vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
   return mix(mix(hash12(i), hash12(i + vec2(1.0, 0.0)), u.x), mix(hash12(i + vec2(0.0, 1.0)), hash12(i + vec2(1.0, 1.0)), u.x), u.y);
 }
+float hash11(float p) {
+  p = fract(p * 0.1031);
+  p *= p + 33.33;
+  p *= p + p;
+  return fract(p);
+}
+float noise1(float x) {
+  float i = floor(x);
+  float f = fract(x);
+  return mix(hash11(i), hash11(i + 1.0), f * f * f * (f * (f * 6.0 - 15.0) + 10.0));
+}
+float fbm1(float x) {
+  return (noise1(x) * 0.5 + noise1(x * 2.03 + 17.0) * 0.25 + noise1(x * 4.01 + 41.0) * 0.125) / 0.875;
+}
 const mat2 OCTAVE = mat2(1.6, 1.2, -1.2, 1.6);
+// Two independent value noises for the price of one lattice walk.
+vec2 noise2(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  return mix(mix(hash22(i), hash22(i + vec2(1.0, 0.0)), u.x), mix(hash22(i + vec2(0.0, 1.0)), hash22(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+vec2 fbm3x2(vec2 p) {
+  vec2 v = noise2(p) * 0.5;
+  p = OCTAVE * p;
+  v += noise2(p) * 0.25;
+  p = OCTAVE * p;
+  return (v + noise2(p) * 0.125) / 0.875;
+}
+float fbm3(vec2 p) {
+  float v = noise(p) * 0.5;
+  p = OCTAVE * p;
+  v += noise(p) * 0.25;
+  p = OCTAVE * p;
+  return (v + noise(p) * 0.125) / 0.875;
+}
 float fbm(vec2 p) {
   float v = 0.0;
   float a = 0.5;
@@ -74,6 +109,24 @@ float starLayer(vec2 p, float scale, float chance, float t) {
   float twinkle = 0.7 + 0.3 * sin(t * (0.6 + 2.2 * h.y) + h.x * 40.0);
   return core * twinkle * mix(0.25, 1.0, pow(fract(h.x * 7.13 + h.y * 3.7), 3.0));
 }
+// Like starLayer, tinted by the theme, with a soft halo and, where spikes is 1, diffraction spikes on the brightest.
+vec3 starCell(vec2 p, float scale, float chance, float t, float spikes) {
+  vec2 g = p * scale;
+  vec3 h = hash32(floor(g) + scale * 3.7);
+  if (h.z > chance) return vec3(0.0);
+  vec2 f = fract(g) - 0.5 - (h.xy - 0.5) * 0.6;
+  float px = scale * devicePx();
+  float mag = pow(fract(h.x * 7.13 + h.y * 3.7), 2.5);
+  float r = px * mix(0.8, 2.1, mag);
+  float core = exp(-dot(f, f) / (r * r));
+  float halo = exp(-length(f) / (px * 6.0)) * 0.05 * mag;
+  float bright = step(0.86, mag) * spikes;
+  vec2 a = abs(f);
+  float spike = bright * (exp(-a.x / (px * 0.7)) * exp(-a.y / (px * 9.0)) + exp(-a.y / (px * 0.7)) * exp(-a.x / (px * 9.0))) * 0.35;
+  float twinkle = 0.62 + 0.38 * sin(t * (0.8 + 2.4 * h.y) + h.x * 40.0);
+  vec3 tint = mix(vec3(1.0), tone(int(h.y * 3.0)), 0.25 + 0.6 * fract(h.z * 31.0));
+  return tint * (core + halo + spike) * twinkle * mix(0.3, 1.15, mag);
+}
 vec4 sceneColor(vec3 c) { return vec4(clamp(c + dither(), 0.0, 1.0), 1.0); }
 // Light over transparency, premultiplied: alpha is the light's strength, the color its hue.
 vec4 lightColor(vec3 c) {
@@ -96,28 +149,29 @@ void main() {
   vec3 night = tone(3);
   vec3 col = mix(night * 2.6 + vec3(0.0, 0.014, 0.02), night * 0.5, smoothstep(-0.4, 0.5, p.y));
   col += vec3(0.8, 0.9, 1.0) * (starLayer(p, 70.0, 0.09, t) + 0.6 * starLayer(p + 3.1, 140.0, 0.07, t)) * smoothstep(-0.3, 0.2, p.y);
+  float ridge = -0.3 + 0.07 * fbm1(p.x * 2.2 + 4.0) + 0.025 * noise1(p.x * 12.0 + 2.0);
+  float land = smoothstep(ridge + px, ridge - px, p.y);
   vec3 glow = vec3(0.0);
   for (int i = 0; i < 3; i++) {
+    if (land >= 1.0) break;
     float fi = float(i);
     float x = p.x * (1.0 - 0.15 * fi) + fi * 1.37;
     float s = t * (0.03 + 0.012 * fi);
-    float hem = 0.0 + 0.1 * fi + 0.12 * sin(x * 1.6 + s * 1.7 + fi * 2.0) + 0.2 * (fbm(vec2(x * 0.7 - s, fi * 3.0)) - 0.5) - 0.12 * p.x * (1.0 - fi);
+    float hem = 0.1 * fi + 0.12 * sin(x * 1.6 + s * 1.7 + fi * 2.0) + 0.07 * sin(x * 2.9 - s * 1.3 + fi * 5.1) + 0.03 * sin(x * 5.3 + s * 2.1 + fi) - 0.12 * p.x * (1.0 - fi);
     float d = p.y - hem;
     float rx = x + d * 0.1;
-    float n1 = noise(vec2(rx * 24.0 - s * 5.0, fi * 11.0 + d * 2.5));
-    float n2 = noise(vec2(rx * 70.0 + s * 8.0, fi * 5.0));
+    float n1 = noise1(rx * 24.0 - s * 5.0 + fi * 11.0);
+    float n2 = noise1(rx * 70.0 + s * 8.0 + fi * 5.0);
     float reach = mix(0.03, 0.22, n1 * n1) * (1.0 - 0.2 * fi);
     float body = exp(-max(-d, 0.0) * 80.0) * exp(-max(d, 0.0) / reach) * (1.0 - 0.7 * smoothstep(0.1, 0.5, p.y));
     float ray = mix(0.35, 1.0, n1 * 0.7 + n2 * 0.3);
-    float along = smoothstep(0.38, 0.8, fbm(vec2(x * 1.1 + s * 1.4, fi * 7.0 + 2.0)));
+    float along = smoothstep(0.35, 0.85, 0.5 + 0.3 * sin(x * 1.3 + s * 1.4 + fi * 7.0) + 0.2 * sin(x * 2.7 - s * 0.9 + fi * 3.0));
     float hemLine = exp(-abs(d + 0.004) * 60.0);
     vec3 c = mix(tone(0), tone(1), smoothstep(0.03, 0.18, d));
     c = mix(c, tone(2), smoothstep(0.12, 0.36, d));
     float haze = exp(-max(-d, 0.0) * 30.0) * exp(-max(d, 0.0) * 5.0) * 0.22;
     glow += c * along * (body * ray + hemLine * 0.3 + haze) * (1.0 - 0.2 * fi);
   }
-  float ridge = -0.3 + 0.07 * fbm(vec2(p.x * 2.2 + 4.0, 0.5)) + 0.025 * noise(vec2(p.x * 12.0, 2.0));
-  float land = smoothstep(ridge + px, ridge - px, p.y);
   col += glow * (1.0 - land);
   col += tone(0) * 0.05 * exp(-max(p.y - ridge, 0.0) * 9.0) * (1.0 - land);
   col = mix(col, night * 0.35 + tone(0) * 0.012, land);
@@ -129,30 +183,32 @@ void main() {
 const NEBULA = frag(`
 void main() {
   vec2 p = centered();
-  float t = uTime * 0.02;
-  vec2 q = p * 1.35 + vec2(t * 0.4, -t * 0.15);
-  vec2 w = vec2(fbm(q * 0.9 + vec2(0.0, t)), fbm(q * 0.9 + vec2(5.2, 1.3) - vec2(t * 0.7, 0.0)));
-  float f = fbm(q + 2.3 * w);
-  #ifdef OVERLAY
+  float t = uTime * 0.035;
+  vec2 q = p * 1.9 + vec2(t * 0.5, -t * 0.2);
+  vec2 w = fbm3x2(q * 0.6 + vec2(t * -0.3, t));
+  float f = fbm3(q + 1.7 * w);
+#ifdef OVERLAY
   float gas = smoothstep(0.3, 0.95, f);
 #else
-  float gas = pow(smoothstep(0.4, 1.0, f), 1.8);
+  float gas = smoothstep(0.36, 0.88, f) * smoothstep(0.2, 0.6, w.x);
 #endif
-  float ridge = 1.0 - abs(2.0 * f - 1.0);
-  float filament = pow(ridge, 10.0) * smoothstep(0.2, 0.6, w.x);
-  vec3 cloud = mix(tone(0), tone(1), smoothstep(0.35, 0.7, w.y + 0.25 * (f - 0.5)));
-  float dust = smoothstep(0.52, 0.78, w.x * 0.6 + f * 0.5);
-  vec3 light = (cloud * gas * 2.0 + tone(2) * pow(gas, 2.6) * 1.2 + mix(cloud, vec3(1.0), 0.35) * filament * 0.22) * (1.0 - 0.45 * dust);
-  float stars = starLayer(p, 45.0, 0.05, uTime) * 1.3 + starLayer(p + 1.7, 110.0, 0.08, uTime) * 0.7 + starLayer(p - 4.3, 230.0, 0.1, uTime) * 0.4;
+  // Fine wisps only where there is gas to carry them.
+  if (gas > 0.003) gas *= 0.45 + 0.9 * fbm3(q * 4.3 + w * 3.0 - t * 0.6);
+  float region = smoothstep(0.45, 0.65, w.y + 0.25 * (f - 0.5));
+  vec3 cloud = mix(tone(0), tone(1), region);
+  float dust = smoothstep(0.5, 0.78, w.x * 0.55 + f * 0.5);
+  vec3 light = (cloud * (gas * 0.5 + gas * gas * 1.2) + tone(2) * pow(gas, 4.0) * 1.1) * (1.0 - 0.5 * dust) + cloud * 0.03 * smoothstep(0.2, 0.7, f);
+  vec3 stars = starCell(p, 32.0, 0.12, uTime, 1.0) + vec3(starLayer(p + 1.7, 90.0, 0.1, uTime) * 0.7 + starLayer(p - 4.3, 200.0, 0.1, uTime) * 0.4);
 #ifdef OVERLAY
-  outColor = lightColor(light * 0.75 + vec3(stars) * 0.35);
+  outColor = lightColor(light * 0.6 + stars * 0.35);
 #else
-  vec3 col = tone(3) * 0.8 + light + vec3(0.85, 0.9, 1.0) * stars * (1.0 - gas * 0.6);
-  col = 1.0 - exp(-col * 1.3);
+  vec3 col = tone(3) * 0.8 + light + stars * (1.0 - gas * 0.5);
+  col = 1.0 - exp(-col * 1.25);
   outColor = sceneColor(col);
 #endif
 }
 `);
+
 /** Flowing cloth: a warped fold field lit from one side, deep shadows and bright sheen along the crests. */
 const SILK = frag(`
 float silk(vec2 p, float t) {
@@ -273,23 +329,6 @@ void main() {
 
 /** Stars twinkling in three slowly drifting depths, a few bright ones with soft spikes, and now and then a shooting star. */
 const STARFIELD = frag(`
-vec3 starCell(vec2 p, float scale, float chance, float t, float spikes) {
-  vec2 g = p * scale;
-  vec3 h = hash32(floor(g) + scale * 3.7);
-  if (h.z > chance) return vec3(0.0);
-  vec2 f = fract(g) - 0.5 - (h.xy - 0.5) * 0.6;
-  float px = scale * devicePx();
-  float mag = pow(fract(h.x * 7.13 + h.y * 3.7), 2.5);
-  float r = px * mix(0.8, 2.1, mag);
-  float core = exp(-dot(f, f) / (r * r));
-  float halo = exp(-length(f) / (px * 6.0)) * 0.05 * mag;
-  float bright = step(0.86, mag) * spikes;
-  vec2 a = abs(f);
-  float spike = bright * (exp(-a.x / (px * 0.7)) * exp(-a.y / (px * 9.0)) + exp(-a.y / (px * 0.7)) * exp(-a.x / (px * 9.0))) * 0.35;
-  float twinkle = 0.62 + 0.38 * sin(t * (0.8 + 2.4 * h.y) + h.x * 40.0);
-  vec3 tint = mix(vec3(1.0), tone(int(h.y * 3.0)), 0.25 + 0.6 * fract(h.z * 31.0));
-  return tint * (core + halo + spike) * twinkle * mix(0.3, 1.15, mag);
-}
 void main() {
   vec2 p = centered();
   float t = uTime;
@@ -323,20 +362,21 @@ const FIREFLIES = frag(`
 vec3 swarm(vec2 p, float scale, float t, float soft) {
   vec2 g = p * scale;
   vec2 id = floor(g);
+  vec2 side = step(0.5, fract(g)) * 2.0 - 1.0;
   float px = scale * devicePx();
   vec3 c = vec3(0.0);
-  for (int y = -1; y <= 1; y++) {
-    for (int x = -1; x <= 1; x++) {
-      vec2 cell = id + vec2(float(x), float(y));
+  for (int y = 0; y <= 1; y++) {
+    for (int x = 0; x <= 1; x++) {
+      vec2 cell = id + vec2(float(x), float(y)) * side;
       vec3 h = hash32(cell + scale * 1.7);
       if (h.z > 0.55) continue;
-      vec2 wander = 0.42 * vec2(sin(t * (0.21 + 0.2 * h.x) + h.y * 30.0) + 0.4 * sin(t * 0.53 + h.x * 9.0), cos(t * (0.17 + 0.2 * h.y) + h.x * 21.0) + 0.4 * cos(t * 0.47 + h.y * 7.0));
-      vec2 pos = cell + 0.5 + (h.xy - 0.5) * 0.4 + wander;
+      vec2 wander = 0.3 * vec2(sin(t * (0.21 + 0.2 * h.x) + h.y * 30.0) + 0.4 * sin(t * 0.53 + h.x * 9.0), cos(t * (0.17 + 0.2 * h.y) + h.x * 21.0) + 0.4 * cos(t * 0.47 + h.y * 7.0));
+      vec2 pos = cell + 0.5 + (h.xy - 0.5) * 0.12 + wander;
       vec2 d = g - pos;
       float r2 = dot(d, d);
       float blink = pow(0.5 + 0.5 * sin(t * (0.5 + 0.6 * h.y) + h.x * 50.0), 3.0);
       float core = exp(-r2 / (px * px * mix(4.0, 9.0, h.y) * soft * soft));
-      float halo = exp(-r2 * 26.0 / (soft * soft)) * 0.22;
+      float halo = exp(-r2 * 26.0 / (soft * soft)) * 0.22 * smoothstep(0.25, 0.09, r2);
       vec3 tint = tone(int(fract(h.x * 13.0) * 3.0));
       c += tint * (core * 1.3 + halo) * blink;
     }
@@ -373,7 +413,7 @@ vec3 sparks(vec2 p, float scale, float rise, float t, float soft, float chance) 
     float w = px * mix(1.0, 1.9, h.y) * soft;
     float len = w * mix(1.3, 3.2, h.x);
     float core = exp(-(local.x * local.x) / (w * w) - (local.y * local.y) / (len * len));
-    float glow = exp(-dot(d, d) / (w * w * 40.0)) * 0.1;
+    float glow = exp(-dot(d, d) / (w * w * 40.0)) * 0.16;
     float flicker = 0.6 + 0.4 * sin(t * (6.0 + 8.0 * h.x) + h.y * 60.0) * sin(t * 2.3 + h.x * 11.0);
     float heat = 0.3 + 0.7 * fract(h.z * 17.0 + h.x);
     vec3 tint = mix(tone(0), tone(1), heat * fract(h.y * 23.0));
