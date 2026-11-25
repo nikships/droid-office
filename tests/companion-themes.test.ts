@@ -154,6 +154,7 @@ test('brightGray reads the bright tenth of a picture', () => {
   assert.ok(Math.abs(brightGray(px(10, [128, 128, 128, 255])) - 128) <= 1);
   assert.equal(brightGray([...px(85, [0, 0, 0, 255]), ...px(15, [255, 255, 255, 255])]), 255);
   assert.equal(brightGray([...px(95, [0, 0, 0, 255]), ...px(5, [255, 255, 255, 255])]), 0, 'a few sparks do not shade the whole picture');
+  assert.equal(brightGray([...px(95, [0, 0, 0, 255]), ...px(5, [255, 255, 255, 255])], 1), 255, 'at 1 the brightest part decides');
 });
 
 test('artwork ships at full resolution with a lossless gallery preview', () => {

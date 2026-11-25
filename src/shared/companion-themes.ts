@@ -598,10 +598,11 @@ export function pictureShade(theme: Pick<CompanionTheme, 'glass' | 'tint' | 'tex
 }
 
 /**
- * How bright a picture's bright areas are, as one gray level (0–255): the 90th percentile of its
- * pixels' luminance, from RGBA bytes. Transparent pixels count as the dark base they show.
+ * How bright a picture's bright areas are, as one gray level (0–255): the `quantile` of its pixels'
+ * luminance (the 90th percentile by default, 1 for the brightest), from RGBA bytes. Transparent
+ * pixels count as the dark base they show.
  */
-export function brightGray(rgba: ArrayLike<number>): number {
+export function brightGray(rgba: ArrayLike<number>, quantile = 0.9): number {
   const n = Math.floor(rgba.length / 4);
   if (!n) return 0;
   const lin = (c: number) => {
@@ -614,7 +615,7 @@ export function brightGray(rgba: ArrayLike<number>): number {
     ys[i] = a * (0.2126 * lin(rgba[i * 4]) + 0.7152 * lin(rgba[i * 4 + 1]) + 0.0722 * lin(rgba[i * 4 + 2]));
   }
   ys.sort();
-  const y = ys[Math.min(n - 1, Math.floor(n * 0.9))];
+  const y = ys[Math.min(n - 1, Math.floor(n * quantile))];
   return Math.round(255 * (y <= 0.00304 ? y * 12.92 : 1.055 * y ** (1 / 2.4) - 0.055));
 }
 

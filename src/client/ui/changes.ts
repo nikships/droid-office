@@ -10,7 +10,7 @@ import { attachKittyTerminal } from '../term-kitty';
 import { attachPixelScroll } from '../term-pixel-scroll';
 import { attachTerminalScrollbar } from '../term-scrollbar';
 import { withToken } from '../token';
-import { TERM_THEME } from '../term-theme';
+import { onTermTheme, termTheme, termThemeTransparent } from '../term-theme';
 import { h, openModal, toast, type Modal } from './dom';
 import { colorDot, emptyState } from './kit';
 import { confirmDialog, openPrompt } from './prompt';
@@ -199,13 +199,26 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       return scrollAtOnce(t, () => t.scrollToBottom());
     }
     const fixed = { cursorBlink: false };
-    const t = new Terminal({ ...terminalOptions(), ...fixed, fontFamily: TERM_FONT, fontSize: termFontSize(), theme: TERM_THEME, minimumContrastRatio: 4.5, disableStdin: true, scrollback: 5000, allowProposedApi: true });
+    const t = new Terminal({
+      ...terminalOptions(),
+      ...fixed,
+      fontFamily: TERM_FONT,
+      fontSize: termFontSize(),
+      theme: termTheme(),
+      allowTransparency: termThemeTransparent(),
+      minimumContrastRatio: 4.5,
+      disableStdin: true,
+      scrollback: 5000,
+      allowProposedApi: true,
+    });
     const offPrefs = followTerminalPrefs(t, { fixed });
     // The log keeps its PTY's rows and columns; only its cells grow or shrink.
     const offFont = onTermFontSize((px) => (t.options.fontSize = px));
+    const offTheme = onTermTheme(() => (t.options.theme = termTheme()));
     unfollow = () => {
       offPrefs();
       offFont();
+      offTheme();
     };
     const unicode = new Unicode11Addon();
     t.loadAddon(unicode);

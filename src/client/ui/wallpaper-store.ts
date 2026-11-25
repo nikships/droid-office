@@ -11,6 +11,8 @@ const CHANNEL = 'droid-office.companion-wallpaper';
 
 const listeners = new Set<() => void>();
 let channel: BroadcastChannel | null | undefined;
+/** Bumped by every change asked for, so a picture still being checked never lands over a later choice. */
+let latest = 0;
 
 function bus(): BroadcastChannel | null {
   if (channel !== undefined) return channel;
@@ -92,12 +94,14 @@ async function drawable(src: string): Promise<boolean> {
 
 /** Keeps `file` as the wallpaper, byte for byte. Rejects with a message when this browser can't show it. */
 export async function saveWallpaperFile(file: File): Promise<void> {
+  const mine = ++latest;
   const src = URL.createObjectURL(file);
   try {
     if (!(await drawable(src))) throw new Error(`This browser can’t show “${file.name}”. Try a JPEG, PNG, WebP or AVIF.`);
   } finally {
     URL.revokeObjectURL(src);
   }
+  if (mine !== latest) return;
   await run('readwrite', (s) => s.put({ kind: 'file', blob: file, name: file.name }, KEY));
   announce();
 }
@@ -106,12 +110,15 @@ export async function saveWallpaperUrl(url: string): Promise<void> {
   const error = wallpaperUrlError(url);
   if (error) throw new Error(error);
   const value = url.trim();
+  const mine = ++latest;
   if (!(await drawable(value))) throw new Error('That link didn’t load as a picture. Check it opens in a new tab.');
+  if (mine !== latest) return;
   await run('readwrite', (s) => s.put({ kind: 'url', url: value }, KEY));
   announce();
 }
 
 export async function clearWallpaper(): Promise<void> {
+  latest++;
   await run('readwrite', (s) => s.delete(KEY));
   announce();
 }

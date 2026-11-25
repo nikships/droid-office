@@ -512,6 +512,9 @@ export function appearanceSettings(): {
   const removeCustom = async () => {
     const my = ++wallTicket;
     setError('');
+    // Removing outranks a picture still being checked, which then isn't kept (wallpaper-store.ts).
+    wallBusy = false;
+    paintBusy();
     try {
       await clearWallpaper();
       if (disposed || my !== wallTicket) return;

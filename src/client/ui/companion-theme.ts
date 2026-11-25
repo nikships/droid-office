@@ -97,6 +97,8 @@ let wallSrc: string | null = null;
 let reduceMotion: MediaQueryList | undefined;
 /** Each shown picture's bright gray (brightGray), measured once. */
 const pictureGrays = new Map<string, number>();
+/** Pictures from other sites still to be read for their gray (readAcrossSites). */
+const unread = new Set<string>();
 const wallListeners = new Set<(src: string | null) => void>();
 
 /** The owner's wallpaper as something an <img> can show (an object URL for a kept file), or null. */
@@ -129,7 +131,10 @@ function makeBackdrop(): Backdrop {
   art.alt = '';
   art.decoding = 'async';
   art.draggable = false;
-  art.addEventListener('load', () => art.classList.add('ready'));
+  art.addEventListener('load', () => {
+    art.classList.add('ready');
+    readAcrossSites(art.getAttribute('src'));
+  });
   const canvas = document.createElement('canvas');
   canvas.className = 'theme-backdrop-stage';
   const dim = layer('dim');
@@ -200,8 +205,12 @@ function paint(p: AppearancePrefs) {
 
 const crossSite = (src: string) => /^https?:/i.test(src) && new URL(src, location.href).origin !== location.origin;
 
-/** How bright `img`'s bright areas are, from a small copy drawn only to be read (the page still shows the original). */
-function grayOf(img: HTMLImageElement): number {
+/**
+ * How bright `img`'s bright areas are (brightGray at `quantile`), from a small copy drawn only to be
+ * read (the page still shows the original). A picture the page may not read counts as white.
+ */
+function grayOf(img: HTMLImageElement | null, quantile: number): number {
+  if (!img) return 255;
   const w = 96;
   const h = Math.max(1, Math.round((w * img.naturalHeight) / Math.max(1, img.naturalWidth)));
   const canvas = document.createElement('canvas');
@@ -210,7 +219,12 @@ function grayOf(img: HTMLImageElement): number {
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return 255;
   ctx.drawImage(img, 0, 0, w, h);
-  return brightGray(ctx.getImageData(0, 0, w, h).data);
+  try {
+    return brightGray(ctx.getImageData(0, 0, w, h).data, quantile);
+  } catch {
+    // a tainted canvas: the site didn't allow reading the picture
+    return 255;
+  }
 }
 
 async function load(src: string, cors: boolean): Promise<HTMLImageElement | null> {
@@ -226,21 +240,39 @@ async function load(src: string, cors: boolean): Promise<HTMLImageElement | null
 
 /**
  * Resolves once `src` is decoded, so a theme switch never shows its artwork half-drawn, and its
- * brightness is known. A picture from a site that won't let the page read it counts as white.
+ * brightness is known. A picture on another site is read through a second (CORS) request instead:
+ * it counts as white until that answers, then the backdrop is shaded again.
  */
 async function prepare(src: string | null): Promise<void> {
   if (!src) return;
-  const other = crossSite(src);
-  const [shown, readable] = await Promise.all([load(src, false), other && !pictureGrays.has(src) ? load(src, true) : null]);
+  const art = backdrop?.art;
+  if (pictureGrays.has(src) && art?.getAttribute('src') === src && art.complete && art.naturalWidth) return;
+  const shown = await load(src, false);
   if (pictureGrays.has(src)) return;
-  const img = other ? readable : shown;
-  let gray = 255;
-  try {
-    if (img) gray = grayOf(img);
-  } catch {
-    // a tainted canvas: the site didn't allow reading the picture
+  // The bundled artwork keeps the panes over its darker parts; the owner's picture can be any photo,
+  // cropped anywhere by the window, so it is judged by its brightest part.
+  const quantile = src === wallSrc ? 1 : 0.9;
+  if (!crossSite(src)) {
+    pictureGrays.set(src, grayOf(shown, quantile));
+    return;
   }
-  pictureGrays.set(src, gray);
+  pictureGrays.set(src, 255);
+  unread.add(src);
+}
+
+/**
+ * Reads a picture from another site through CORS once the backdrop has shown it: the browser queues
+ * two requests for one URL behind each other, so reading it first could hold the picture back.
+ */
+function readAcrossSites(src: string | null) {
+  if (!src || !unread.delete(src)) return;
+  void load(src, true).then((img) => {
+    const gray = grayOf(img, src === wallSrc ? 1 : 0.9);
+    if (gray === 255 || pictureGrays.get(src) !== 255) return;
+    pictureGrays.set(src, gray);
+    const p = appearancePrefs();
+    if (backdropPicture(p, companionTheme(p.theme), wallSrc) === src) paint(p);
+  });
 }
 
 let lastTheme: string | undefined;
@@ -255,7 +287,8 @@ async function switchTo(p: AppearancePrefs) {
   if (theme.id !== OG_THEME_ID) await prepare(backdropPicture(p, theme, wallSrc));
   if (ticket !== pending) return;
   const transition = (document as Document & { startViewTransition?: (fn: () => void) => unknown }).startViewTransition;
-  if (changedTheme && transition && !reduceMotion?.matches) transition.call(document, () => paint(p));
+  // The transition paints later; by then a newer change may already have painted.
+  if (changedTheme && transition && !reduceMotion?.matches) transition.call(document, () => ticket === pending && paint(p));
   else paint(p);
 }
 
@@ -265,7 +298,11 @@ async function reloadWallpaper() {
   const old = wallSrc;
   wallSrc = next;
   await switchTo(appearancePrefs());
-  if (old?.startsWith('blob:')) URL.revokeObjectURL(old);
+  if (old && old !== wallSrc) {
+    pictureGrays.delete(old);
+    unread.delete(old);
+    if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+  }
   for (const fn of wallListeners) fn(wallSrc);
 }
 
