@@ -14,6 +14,7 @@ import kotlin.random.Random
 internal val NightlyOrbit = Artwork(
     id = "nightly-orbit", name = "Nightly Orbit", blurb = "A violet dawn breaking over a sleeping planet.",
     image = R.drawable.art_nightly_orbit, preview = R.drawable.preview_nightly_orbit,
+    portrait = PortraitArt(R.drawable.art_nightly_orbit_portrait, focalX = .72f, focalY = .77f),
     x = .5f, y = .8f,
     bg = Color(0xFF07051A), tint = Color(0xFF0B0820), text = Color(0xFFF1EEFF), muted = Color(0xFFAEA6CF),
     accent = Color(0xFFA97BFF), accent2 = Color(0xFFFF7A45), line = Color(0xFFD9CCFF), glass = .72f,
