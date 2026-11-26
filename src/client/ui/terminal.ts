@@ -9,11 +9,13 @@ import { withToken } from '../token';
 import { TERM_THEME, onTermTheme, termTheme, termThemeTransparent } from '../term-theme';
 import { focusReports, suppressMirrorQueries, TerminalMirror } from '../term-mirror';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
+import { orchestratorIcon } from './icons';
 import { colorDot } from './kit';
+import { ORCHESTRATOR_ID } from '../../shared/mission-control';
 import { OFFICE_SHELL_ID } from '../../shared/office-shell';
 import type { ServerMsg, WorkerInfo } from '../../shared/protocol';
 import { teamSummary, workerTeams } from '../../shared/team';
-import { buildingAgent, missionLead } from '../mission';
+import { buildingAgent, missionLead, orchestratorBlocked } from '../mission';
 import { missionTeamLine } from '../mission-office';
 import { forkRefusal } from '../../shared/worker-fork';
 import { openForkWorker } from './fork-worker';
@@ -193,7 +195,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         // A building agent has no desk for a fork to sit at.
         const fork = info.kind === 'agent' && info.deskId ? h('button.btn', { type: 'button', onclick: () => openForkWorker(net, workerId) }, 'Fork') : null;
         const close = h('button.btn.icon.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close', onclick: () => modal.close() }, '✕');
-        const element = h('header', {}, colorDot(info.color), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, viewSwitch, zoom, changes, fork), close);
+        const mark = info.id === ORCHESTRATOR_ID ? h('span.dash-mission-mark.sm', { 'aria-hidden': 'true' }, orchestratorIcon(11, { animated: !orchestratorBlocked(store.missionControl) })) : colorDot(info.color);
+        const element = h('header', {}, mark, h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, viewSwitch, zoom, changes, fork), close);
         const zoomBy = (dir: 1 | -1) => {
           setTermFontSize(stepTermFont(term.options.fontSize ?? termFontSize(), dir));
           if (threadView) setThreadView('raw');

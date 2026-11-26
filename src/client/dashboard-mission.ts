@@ -10,7 +10,7 @@ import { statusDot, statusIcon, workerDot, workerStatusIcon, WORKER_MIME } from 
 import { reconcileChildren, todoMeter } from './dashboard-roster';
 import { botLine, buildingAgent, orchestratorBlocked, orchestratorLine } from './mission';
 import { h, STATUS_LABEL, timeAgo } from './ui/dom';
-import { grokBotLogo, icon } from './ui/icons';
+import { grokBotLogo, icon, orchestratorIcon } from './ui/icons';
 import { modelBadgeLabel, modelBadgeNode } from './ui/models';
 
 export interface MissionRosterState {
@@ -90,7 +90,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
         body.inert = !sectionOpen;
       },
     },
-    h('span.dash-mission-title', {}, icon('satellite', 12), h('span', {}, 'Mission Control')),
+    h('span.dash-mission-title', {}, orchestratorIcon(12, { animated: false }), h('span', {}, 'Mission Control')),
     caption,
     h('span.dash-mission-chevron', { 'aria-hidden': 'true' }, icon('chevron', 12)),
   );
@@ -191,7 +191,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
       r.open.setAttribute('aria-label', `Open ${w.name}, ${role}, ${status}: ${line}`);
       r.split?.setAttribute('aria-label', `Open ${w.name} in a new pane`);
       let mark: Element;
-      if (orchestrator) mark = icon('satellite', 13);
+      if (orchestrator) mark = orchestratorIcon(13, { animated: !blocked });
       else if (agent.grokBot) mark = grokBotLogo(20);
       else mark = icon('bot', 13);
       r.open.replaceChildren(

@@ -188,17 +188,21 @@ object MissionControl {
     }
 
     /** ORCHESTRATOR_PITCH in src/client/mission.ts. */
-    const val PITCH = "Tell it what you want done anywhere in the building. It plans, hires workers on any floor, answers their questions, checks their work and reports back. It leaves code changes to the workers it hires."
+    const val PITCH = "The building’s own agent. It plans work, hires workers on any floor, answers their questions, checks diffs, and reports back. Code changes happen in its workers, never in its own hands."
 
     /** ORCHESTRATOR_MODEL_CHANGE: when a new model or reasoning level takes over. */
     const val MODEL_CHANGE = "A change takes over when its current turn ends, in the same conversation."
 
     /** ORCHESTRATOR_EXAMPLES. */
     val examples = listOf(
-        "Get CI green on every floor",
-        "Triage the open issues across my projects and put workers on the top three",
-        "What is everyone doing?",
+        "Run a merge train and get all the open PRs merged across my floors, in order.",
+        "Fan out different models on multiple workers to search for creative new features or improvements to make to the codebase.",
+        "Get CI green on every floor, find the flakes, and fix them so it stays green.",
+        "Triage every open issue across my projects and put workers on the three that matter most.",
     )
+
+    /** ORCHESTRATOR_EXAMPLE_TAGS. */
+    val exampleTags = listOf("Merge train", "Model fan-out", "Green build", "Triage")
 
     const val READY = "Ready for a task anywhere in the building"
 

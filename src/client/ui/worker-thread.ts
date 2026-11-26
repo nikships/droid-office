@@ -640,12 +640,13 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     true,
   );
 
+  const showingIntro = () => !empty.hidden && empty.classList.contains('wt-intro') && streamNode.hidden && opts.question.hidden;
   let followingLayout = true;
   let viewportWidth = scroll.clientWidth;
   let viewportHeight = scroll.clientHeight;
   const resize = new ResizeObserver(() => {
     updateClamps();
-    if (followingLayout && !inspecting && !history.historical) follow();
+    if (followingLayout && !inspecting && !history.historical && !showingIntro()) follow();
     viewportWidth = scroll.clientWidth;
     viewportHeight = scroll.clientHeight;
     updateLatest();
@@ -692,11 +693,16 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const follow = (quick = false) => {
     inspecting = false;
     followingLayout = true;
+    if (showingIntro()) return;
     if (quick) motion.quick();
     else motion.snap();
     latest.classList.add('hidden');
   };
   const updateLatest = () => {
+    if (showingIntro()) {
+      latest.classList.add('hidden');
+      return;
+    }
     const distance = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
     latest.classList.toggle('hidden', !history.historical && !inspecting && distance <= 120);
     labelLatest(history.historical ? 'Back to the latest' : inspecting && atBottom() ? 'Follow latest' : 'Scroll to bottom');
@@ -1191,6 +1197,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const key = JSON.stringify([error, received, starting, cloudWaiting, connected, !!intro]);
     if (key === emptyKey) return;
     emptyKey = key;
+    const enteringIntro = !!intro && !empty.classList.contains('wt-intro');
     empty.classList.toggle('wt-intro', !!intro);
     if (intro) empty.removeAttribute('role');
     else empty.setAttribute('role', 'status');
@@ -1207,6 +1214,10 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     else if (cloudWaiting)
       empty.replaceChildren(h('span.spinner.wt-loading-spinner', { 'aria-hidden': true }), h('b', {}, `Starting on ${worker.cloud?.computerName}…`), h('p', {}, 'Its messages appear here as Factory lists them, a few seconds behind.'));
     else empty.replaceChildren(h('span.wt-empty-mark', { 'aria-hidden': true }), h('b', {}, 'No messages yet. Start a conversation!'));
+    if (enteringIntro) {
+      motion.cancel();
+      scroll.scrollTop = 0;
+    }
   };
 
   const paintLive = () => {
@@ -1356,7 +1367,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     empty.hidden = rows.length > 0;
     paintEmpty();
     paintPlan();
-    if (stick) {
+    if (showingIntro()) updateLatest();
+    else if (stick) {
       if (paintedOnce && !older && followingLayout) motion.follow();
       else follow();
     } else if (older) scroll.scrollTop = top + scroll.scrollHeight - height;

@@ -2580,7 +2580,7 @@ export async function startServer(cfg: Config) {
       case 'orchestrator.reset':
         threadWatches?.unwatchWorker(ORCHESTRATOR_ID);
         orchestrator.reset();
-        toastAll(`🛰️ ${who} started a new conversation with the Orchestrator`);
+        toastAll(`${who} started a new conversation with the Orchestrator`);
         done();
         break;
       case 'orchestrator.set': {

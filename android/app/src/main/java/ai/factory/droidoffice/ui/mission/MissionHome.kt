@@ -5,7 +5,14 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,13 +40,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -128,7 +143,7 @@ private fun OrchestratorOffRow(onOpen: () -> Unit) {
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AgentTile(OfficeIcons.Orbit, Palette.TextSecondary, small = true)
+        OrchestratorTile(Palette.TextSecondary, small = true, animated = false)
         Column(Modifier.weight(1f).padding(start = 10.dp)) {
             Text("Orchestrator is off", style = MaterialTheme.typography.titleSmall)
             Text("Open it to turn it on", style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary)
@@ -156,7 +171,7 @@ private fun OrchestratorCard(agent: MissionAgent?, team: List<MissionTeamMember>
             .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            AgentTile(OfficeIcons.Orbit, if (loud) Palette.Danger else OrchestratorTint)
+            OrchestratorTile(if (loud) Palette.Danger else OrchestratorTint, animated = blocked == null)
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(ORCHESTRATOR_NAME, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.weight(1f))
@@ -256,6 +271,72 @@ internal fun AgentTile(icon: ImageVector, tint: Color, small: Boolean = false) {
         Modifier.size(if (small) 26.dp else 32.dp).clip(shape).background(tint.copy(alpha = 0.1f)).border(1.dp, tint.copy(alpha = 0.4f), shape),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, null, Modifier.size(if (small) 15.dp else 18.dp), tint = tint) }
+}
+
+/** The Orchestrator's Circuit Core mark in a tile, animating the outbound dispatch arrow in the draw phase. */
+@Composable
+internal fun OrchestratorTile(tint: Color, small: Boolean = false, animated: Boolean = true) {
+    val shape = RoundedCornerShape(if (small) 5.dp else 6.dp)
+    Box(
+        Modifier.size(if (small) 26.dp else 32.dp).clip(shape).background(tint.copy(alpha = 0.1f)).border(1.dp, tint.copy(alpha = 0.4f), shape),
+        contentAlignment = Alignment.Center,
+    ) { OrchestratorMark(tint, Modifier.size(if (small) 15.dp else 18.dp), animated = animated) }
+}
+
+private fun pulsePhase(t: Float): Float = when {
+    t < 0.42f -> 0f
+    t < 0.50f -> {
+        val x = (t - 0.42f) / 0.08f
+        x * x * (3f - 2f * x)
+    }
+    t < 0.84f -> 1f
+    t < 0.92f -> {
+        val x = 1f - (t - 0.84f) / 0.08f
+        x * x * (3f - 2f * x)
+    }
+    else -> 0f
+}
+
+/**
+ * Draw-phase Circuit Core mark matching `orchestratorIcon` in src/client/ui/icons.ts. Reading the
+ * infinite phase inside Canvas keeps layout bounds still so `uiautomator dump` idles.
+ */
+@Composable
+internal fun OrchestratorMark(tint: Color, modifier: Modifier = Modifier, animated: Boolean = true) {
+    val phase = if (animated) {
+        rememberInfiniteTransition(label = "orchestrator").animateFloat(
+            0f, 1f, infiniteRepeatable(tween(2100, easing = LinearEasing), RepeatMode.Restart), label = "phase",
+        )
+    } else null
+    val arrow = remember { Path() }
+    Canvas(modifier) {
+        val u = size.minDimension / 24f
+        val stroke = Stroke(1.75f * u, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val p = if (animated) pulsePhase(phase?.value ?: 0f) else 0f
+
+        // Outer square (7, 7, 10, 10, rx=2)
+        drawRoundRect(tint, Offset(7f * u, 7f * u), Size(10f * u, 10f * u), CornerRadius(2f * u), style = stroke)
+        // Inner core (10.5, 10.5, 3, 3, rx=0.6)
+        drawRoundRect(tint.copy(alpha = if (animated) 1f - 0.32f * p else 1f), Offset(10.5f * u, 10.5f * u), Size(3f * u, 3f * u), CornerRadius(0.6f * u))
+        // Top stem + node
+        drawLine(tint, Offset(12f * u, 7f * u), Offset(12f * u, 4.5f * u), strokeWidth = 1.75f * u, cap = StrokeCap.Round)
+        drawRoundRect(tint.copy(alpha = if (animated) 0.55f + 0.45f * p else 1f), Offset(10.5f * u, 1.5f * u), Size(3f * u, 3f * u), CornerRadius(0.6f * u))
+        // Left stem + node
+        drawLine(tint, Offset(7f * u, 12f * u), Offset(4.5f * u, 12f * u), strokeWidth = 1.75f * u, cap = StrokeCap.Round)
+        drawRoundRect(tint.copy(alpha = if (animated) 0.55f + 0.45f * (1f - p) else 1f), Offset(1.5f * u, 10.5f * u), Size(3f * u, 3f * u), CornerRadius(0.6f * u))
+        // Bottom plinth
+        drawLine(tint, Offset(12f * u, 17f * u), Offset(12f * u, 20.5f * u), strokeWidth = 1.75f * u, cap = StrokeCap.Round)
+        drawLine(tint, Offset(7f * u, 20.5f * u), Offset(17f * u, 20.5f * u), strokeWidth = 1.75f * u, cap = StrokeCap.Round)
+        // Outbound dispatch arrow
+        val dx = if (animated) 1.35f * p else 0f
+        val arrowTint = tint.copy(alpha = if (animated) 0.75f + 0.25f * p else 1f)
+        drawLine(arrowTint, Offset((17f + dx) * u, 12f * u), Offset((21f + dx) * u, 12f * u), strokeWidth = 1.75f * u, cap = StrokeCap.Round)
+        arrow.reset()
+        arrow.moveTo((18.75f + dx) * u, 9.75f * u)
+        arrow.lineTo((21f + dx) * u, 12f * u)
+        arrow.lineTo((18.75f + dx) * u, 14.25f * u)
+        drawPath(arrow, arrowTint, style = stroke)
+    }
 }
 
 /** An external bot's mark: the Grok Bot logo when webhook push is configured, otherwise the generic antenna tile. */

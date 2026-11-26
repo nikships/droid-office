@@ -1,5 +1,5 @@
 import { rankItems, type PaletteItem, type PaletteMatch } from '../../shared/palette';
-import { h, openModal, type Modal } from './dom';
+import { h, openModal, type Child, type Modal } from './dom';
 import { emptyState } from './kit';
 
 // The command palette (Ctrl+K, ⌘K on a Mac): a few letters find a worker, an issue, a pull request,
@@ -7,7 +7,7 @@ import { emptyState } from './kit';
 // Shift+Enter walks you over to it first. What there is to find comes from main.ts.
 
 export interface PaletteEntry extends PaletteItem {
-  icon: string;
+  icon: Child;
   /** What kind of thing it is, shown on the right: "Worker", "PR", "Action". */
   kind: string;
   /** Opens it, as clicking it (or E in front of it) in the office does. */

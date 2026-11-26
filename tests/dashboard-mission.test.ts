@@ -27,7 +27,8 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
     target: 'es2022',
   }).outputFiles[0].text;
   await page.setContent('<!doctype html><nav id="mission" class="dash-mission"></nav><div id="panes"></div><div id="modal-root"></div>');
-  const styles = await page.addStyleTag({ content: readFileSync(new URL('../src/client/style.css', import.meta.url), 'utf8') });
+  const css = readFileSync(new URL('../src/client/style.css', import.meta.url), 'utf8');
+  const styles = await page.addStyleTag({ content: css });
   await page.addScriptTag({ content: 'window.__name = (fn) => fn;' });
   await page.addScriptTag({ content: bundle });
   await page.evaluate(() => {
@@ -217,7 +218,20 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   const pane = page.locator('.dash-pane');
   assert.equal(await pane.getAttribute('data-mode'), 'thread');
   assert.equal(await pane.locator('.orc-intro').count(), 1);
-  assert.equal(await pane.locator('.orc-example').count(), 3);
+  assert.equal(await pane.locator('.orc-intro .orc-mark').count(), 1, 'Circuit Core mark renders inside the intro');
+  assert.equal(await pane.locator('.orc-intro .orc-hero-bus').count(), 1, '3-rail schematic bus renders in the hero');
+  assert.equal(await pane.locator('.orc-example').count(), 4);
+  const introStyles = await page.addStyleTag({ content: `${css}\n#panes > .dash-pane { width: 640px; height: 720px; }` });
+  await pane.evaluate((el: HTMLElement) => {
+    el.style.height = '260px';
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const introScroll = await pane.locator('.wt-scroll').evaluate((el) => ({ top: el.scrollTop, overflow: el.scrollHeight - el.clientHeight }));
+  assert.ok(introScroll.overflow > 120, 'the fixture actually overflows the pane');
+  assert.equal(introScroll.top, 0, 'resizing a short pane keeps the intro screen scrolled to the top');
+  assert.equal(await pane.locator('.wt-latest').isHidden(), true, 'scroll-to-bottom button stays hidden on the empty intro screen');
+  await introStyles.evaluate((el) => el.remove());
+  await pane.evaluate((el: HTMLElement) => el.style.removeProperty('height'));
   assert.equal(await pane.locator('.dash-pane-views').isHidden(), true, 'no TTY before there is a session');
   assert.equal(await pane.locator('.dash-home').count(), 0, 'nothing to send home');
   assert.equal(await pane.locator('.dash-orc-reset').isDisabled(), true, 'no conversation to start over yet');
@@ -243,7 +257,7 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   assert.equal(await pane.locator('form').first().isHidden(), true);
   assert.equal(await pane.locator('.dash-pane-head .dash-status').getAttribute('data-mark'), 'blocked');
   assert.equal(await pane.locator('.dash-pane-task').innerText(), 'Can’t start yet', 'the reason is said once, in place of the composer');
-  assert.equal(await pane.locator('.orc-example:disabled').count(), 3, 'no composer to fill');
+  assert.equal(await pane.locator('.orc-example:disabled').count(), 4, 'no composer to fill');
 
   // A session already running when something blocks a new start keeps its status, its composer and Stop.
   await page.evaluate(() => {

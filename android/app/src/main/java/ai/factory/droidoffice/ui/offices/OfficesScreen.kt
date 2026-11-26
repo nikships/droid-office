@@ -163,7 +163,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                 // An office from before Mission Control has no Orchestrator to set.
                 if (mission != null) {
                     Spacer(Modifier.height(10.dp))
-                    SecondaryButton(if (mission.settings.on) "Orchestrator" else "Orchestrator · off", { orchestrator = true }, Modifier.fillMaxWidth().tagged(Tags.Orchestrator.SETTINGS), icon = OfficeIcons.Orbit)
+                    SecondaryButton(if (mission.settings.on) "Orchestrator" else "Orchestrator · off", { orchestrator = true }, Modifier.fillMaxWidth().tagged(Tags.Orchestrator.SETTINGS), icon = OfficeIcons.Orchestrator)
                 }
 
                 ArtworkPickerButton()

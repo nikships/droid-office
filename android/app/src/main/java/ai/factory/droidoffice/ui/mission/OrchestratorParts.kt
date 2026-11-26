@@ -1,5 +1,12 @@
 package ai.factory.droidoffice.ui.mission
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -54,6 +61,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.liveRegion
@@ -193,10 +207,10 @@ internal fun OrchestratorBlocked(reason: String) {
 
 /** The header the Orchestrator's screens share before its session exists. */
 @Composable
-private fun IdleHeader(embedded: Boolean, onBack: () -> Unit, sub: String, onMenu: (() -> Unit)?) {
+private fun IdleHeader(embedded: Boolean, onBack: () -> Unit, sub: String, animated: Boolean, onMenu: (() -> Unit)?) {
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-        AgentTile(OfficeIcons.Orbit, OrchestratorTint, small = true)
+        OrchestratorTile(OrchestratorTint, small = true, animated = animated)
         Column(Modifier.weight(1f).padding(start = 10.dp)) {
             Text(ORCHESTRATOR_NAME, style = MaterialTheme.typography.titleLarge, maxLines = 1, modifier = Modifier.tagged(Tags.Worker.NAME))
             Text(sub, style = LocalOfficeType.current.monoBody.copy(color = Palette.TextSecondary, fontSize = MaterialTheme.typography.bodySmall.fontSize), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.META))
@@ -206,7 +220,7 @@ private fun IdleHeader(embedded: Boolean, onBack: () -> Unit, sub: String, onMen
 }
 
 /**
- * The Orchestrator with no session yet: what it is for and two or three things to ask it, over a
+ * The Orchestrator with no session yet: what it is for and four wide-open prompts to ask it, over a
  * composer whose first prompt starts it. While it is off, what that means and a way to turn it on.
  */
 @Composable
@@ -228,7 +242,13 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
         Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Screen).windowInsetsPadding(paneInsets(embedded))
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom)),
     ) {
-        IdleHeader(embedded, onBack, if (state == null) "Mission Control" else if (!on) "Mission Control · off" else if (blocked != null) "Mission Control · blocked" else "Mission Control · ready", onMenu = if (state == null) null else ({ menu = true }))
+        IdleHeader(
+            embedded,
+            onBack,
+            if (state == null) "Mission Control" else if (!on) "Mission Control · off" else if (blocked != null) "Mission Control · blocked" else "Mission Control · ready",
+            animated = on && blocked == null,
+            onMenu = if (state == null) null else ({ menu = true }),
+        )
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
         if (team.isNotEmpty()) {
             TeamStrip(team, onOpen = { follow?.invoke(it) })
@@ -247,7 +267,7 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
                 )
                 !on -> Column(Modifier.widthIn(max = 420.dp).tagged(Tags.Orchestrator.OFF), horizontalAlignment = Alignment.CenterHorizontally) {
                     Spacer(Modifier.height(36.dp))
-                    AgentTile(OfficeIcons.Orbit, Palette.TextSecondary)
+                    OrchestratorTile(Palette.TextSecondary, animated = false)
                     Spacer(Modifier.height(14.dp))
                     Text("The Orchestrator is off", style = MaterialTheme.typography.headlineSmall)
                     Spacer(Modifier.height(6.dp))
@@ -273,39 +293,148 @@ internal fun OrchestratorIdle(state: OrchestratorState?, synced: Boolean, embedd
 
 @Composable
 private fun Intro(enabled: Boolean, onExample: (String) -> Unit) {
-    Column(Modifier.widthIn(max = 460.dp).fillMaxWidth().tagged(Tags.Orchestrator.INTRO)) {
-        Spacer(Modifier.height(12.dp))
-        AgentTile(OfficeIcons.Orbit, OrchestratorTint)
-        Spacer(Modifier.height(16.dp))
-        Text("Run the whole building from here", style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(8.dp))
+    Column(Modifier.widthIn(max = 520.dp).fillMaxWidth().tagged(Tags.Orchestrator.INTRO)) {
+        Column(Modifier.fillMaxWidth().panel(RoundedCornerShape(3.dp), Palette.Surface, Palette.BorderStrong)) {
+            Row(
+                Modifier.fillMaxWidth().background(Palette.SurfaceRaised).padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("01", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Accent))
+                Spacer(Modifier.width(6.dp))
+                Eyebrow("Mission Control", Modifier.weight(1f))
+                Box(Modifier.size(5.dp).background(if (enabled) Palette.Accent else Palette.Warning, RoundedCornerShape(1.dp)))
+                Spacer(Modifier.width(6.dp))
+                Eyebrow("Building-wide agent")
+            }
+            HorizontalDivider(color = Palette.Border)
+            Row(
+                Modifier.fillMaxWidth().background(Palette.Bg).padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier.size(48.dp)
+                        .panel(RoundedCornerShape(3.dp), Palette.Surface, if (enabled) OrchestratorTint.copy(alpha = 0.5f) else Palette.BorderStrong),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    OrchestratorMark(if (enabled) OrchestratorTint else Palette.Warning, Modifier.size(28.dp), animated = enabled)
+                }
+                OrchestratorBus(enabled = enabled, modifier = Modifier.weight(1f).height(44.dp))
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("Point it at the building.", style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(6.dp))
         Text(
             MissionControl.PITCH,
             style = MaterialTheme.typography.bodyMedium, color = Palette.TextSecondary,
         )
-        Spacer(Modifier.height(22.dp))
-        Eyebrow("Try")
+        Spacer(Modifier.height(18.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("02", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Accent))
+            Spacer(Modifier.width(6.dp))
+            Eyebrow("Suggested dispatches")
+        }
         Spacer(Modifier.height(8.dp))
-        Column(Modifier.fillMaxWidth().panel(RoundedCornerShape(4.dp))) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             MissionControl.examples.forEachIndexed { i, example ->
-                if (i > 0) HorizontalDivider(color = Palette.Border)
-                Row(
+                val tag = MissionControl.exampleTags.getOrNull(i) ?: "Dispatch"
+                Column(
                     // An example only fills a composer that's there to take it.
-                    Modifier.fillMaxWidth().clickable(enabled = enabled, onClickLabel = "Use this prompt") { onExample(example) }
-                        .tagged(Tags.Orchestrator.example(i + 1)).padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    Modifier.fillMaxWidth()
+                        .panel(RoundedCornerShape(3.dp), Palette.Surface, Palette.BorderStrong)
+                        .clickable(enabled = enabled, onClickLabel = "Use this prompt") { onExample(example) }
+                        .tagged(Tags.Orchestrator.example(i + 1))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text("›", style = LocalOfficeType.current.monoBody.copy(color = if (enabled) Palette.Accent else Palette.TextTertiary))
-                    Spacer(Modifier.width(10.dp))
-                    Text(example, style = MaterialTheme.typography.bodyMedium, color = if (enabled) Palette.Text else Palette.TextSecondary, modifier = Modifier.weight(1f))
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("0${i + 1}", style = LocalOfficeType.current.eyebrow.copy(color = Palette.Accent))
+                        Spacer(Modifier.width(6.dp))
+                        Eyebrow(tag, Modifier.weight(1f), color = Palette.TextSecondary)
+                        Text("→", style = LocalOfficeType.current.monoBody.copy(color = if (enabled) Palette.TextTertiary else Palette.TextTertiary.copy(alpha = 0.5f)))
+                    }
+                    Text(example, style = MaterialTheme.typography.bodyMedium, color = if (enabled) Palette.Text else Palette.TextSecondary)
                 }
             }
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
         Text(
-            "It wakes for your prompts and for news from its own team, and its questions come to Asks like a worker's.",
+            "Wakes only on your prompt or when its own crew reports back.",
             style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary,
         )
+    }
+}
+
+/** Draw-phase 3-rail schematic bus from the Circuit Core emblem to worker pads. */
+@Composable
+private fun OrchestratorBus(enabled: Boolean, modifier: Modifier = Modifier) {
+    val phase = if (enabled) {
+        rememberInfiniteTransition(label = "bus").animateFloat(
+            0f, 1f, infiniteRepeatable(tween(2700, easing = LinearEasing), RepeatMode.Restart), label = "packet",
+        )
+    } else null
+    val rails = remember { Path() }
+    val railColor = Palette.BorderStrong
+    val accentColor = if (enabled) Palette.Accent else Palette.Warning
+    val padFill = Palette.SurfaceRaised
+    Canvas(modifier) {
+        val midY = size.height / 2f
+        val topY = 7f / 44f * size.height
+        val botY = 37f / 44f * size.height
+        val stroke = Stroke(1.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+        val pad = 5.dp.toPx()
+        val padX = size.width - pad
+        val busSpan = (size.width - 12.dp.toPx()).coerceAtLeast(80.dp.toPx()).coerceAtMost(165.dp.toPx())
+        val jx = (padX - busSpan).coerceAtLeast(8.dp.toPx())
+        val sx = (jx + 24.dp.toPx()).coerceAtMost(padX - 24.dp.toPx())
+        val jBox = 4.dp.toPx()
+        val jHalf = jBox / 2f
+
+        rails.reset()
+        rails.moveTo(0f, midY)
+        rails.lineTo(jx - jHalf, midY)
+        rails.moveTo(jx + jHalf, midY)
+        rails.lineTo(sx, midY)
+        rails.lineTo(sx, topY)
+        rails.lineTo(padX, topY)
+        rails.moveTo(jx + jHalf, midY)
+        rails.lineTo(padX, midY)
+        rails.moveTo(jx + jHalf, midY)
+        rails.lineTo(sx, midY)
+        rails.lineTo(sx, botY)
+        rails.lineTo(padX, botY)
+        drawPath(rails, railColor, style = stroke)
+
+        drawRoundRect(accentColor, Offset(jx - jHalf, midY - jHalf), Size(jBox, jBox), CornerRadius(0.6.dp.toPx()))
+        for (ry in floatArrayOf(topY, midY, botY)) {
+            drawRoundRect(padFill, Offset(padX, ry - pad / 2f), Size(pad, pad), CornerRadius(1.dp.toPx()))
+            drawRoundRect(railColor, Offset(padX, ry - pad / 2f), Size(pad, pad), CornerRadius(1.dp.toPx()), style = stroke)
+        }
+        if (enabled) {
+            val base = phase?.value ?: 0f
+            val pktW = 10.dp.toPx()
+            val pktH = 2.dp.toPx()
+            val pktEnd = padX - 5.dp.toPx() - pktW
+            fun drawPacket(startX: Float, railY: Float, offset: Float) {
+                val travel = (pktEnd - startX).coerceAtLeast(0f)
+                if (travel <= 0f) return
+                val t = (base + offset) % 1f
+                val alpha = when {
+                    t < 0.12f -> t / 0.12f
+                    t < 0.68f -> 1f
+                    t < 0.80f -> 1f - (t - 0.68f) / 0.12f
+                    else -> 0f
+                }
+                if (alpha <= 0f) return
+                val frac = (t / 0.68f).coerceIn(0f, 1f)
+                val eased = frac * frac * (3f - 2f * frac)
+                val x = startX + travel * eased
+                drawRoundRect(accentColor.copy(alpha = alpha), Offset(x, railY - pktH / 2f), Size(pktW, pktH), CornerRadius(0.5.dp.toPx()))
+            }
+            drawPacket(sx + 6.dp.toPx(), topY, 0f)
+            drawPacket(jx + 10.dp.toPx(), midY, 0.33f)
+            drawPacket(sx + 6.dp.toPx(), botY, 0.67f)
+        }
     }
 }
 
@@ -353,7 +482,7 @@ fun OrchestratorSheet(state: OrchestratorState, onDismiss: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                AgentTile(OfficeIcons.Orbit, OrchestratorTint)
+                OrchestratorTile(if (s.on) OrchestratorTint else Palette.TextSecondary, animated = s.on && state.blocked == null)
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     Text(ORCHESTRATOR_NAME, style = MaterialTheme.typography.headlineSmall)
                     Text("Plans and directs workers on every floor", style = MaterialTheme.typography.bodySmall)

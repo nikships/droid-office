@@ -33,7 +33,7 @@ export const PROMPT_GROUPS: Record<PromptGroup, string> = {
   subagents: '🧭 Subagents',
   visits: '🚶 Visits between workers',
   whiteboard: '🧑‍🎨 Whiteboard',
-  orchestrator: '🛰️ Orchestrator',
+  orchestrator: 'Orchestrator',
   office: 'Worker signs',
   wand: 'Droid wand',
 };

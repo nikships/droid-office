@@ -27,7 +27,7 @@ import {
 import { forgeOf, forgeWords, normalizeRepo, repoChoices as otherRepos, repoWebUrl } from '../shared/floors';
 import { OFFICE_SHELL_ID } from '../shared/office-shell';
 import { ORCHESTRATOR_ID, ORCHESTRATOR_NAME } from '../shared/mission-control';
-import { botLine, missionWaiting, missionWorker, orchestratorLine, orchestratorWorker } from './mission';
+import { botLine, missionWaiting, missionWorker, orchestratorBlocked, orchestratorLine, orchestratorWorker } from './mission';
 import { ORCHESTRATOR_SPOT, PHASE_WORD, missionStand, missionTeamLine, orchestratorAwake, orchestratorPhase, orchestratorWaiting } from './mission-office';
 import type { AgentEffort, CarriedIssue, FloorInfo, GhIssue, GongWhy, ServerMsg, WorkerInfo } from '../shared/protocol';
 import {
@@ -100,7 +100,8 @@ import { OfficeSound } from './sound';
 import { DesktopNotifier, askNotifyPermission, notifyPermission, waitingOnSomeone } from './notify';
 import { NextUp, waitingInOrder, waitingLabel } from './nextup';
 import { linkStep, parseWorkerLink, type WorkerLink } from './worker-link';
-import { $, h, clip, closeAllModals, lightboxOpen, modalOpen, onModalChange, openModalList, readingNow, toast, STATUS_LABEL } from './ui/dom';
+import { $, h, clip, closeAllModals, lightboxOpen, modalOpen, onModalChange, openModalList, readingNow, toast, STATUS_LABEL, type Child } from './ui/dom';
+import { orchestratorIcon } from './ui/icons';
 import { deskApproach, type ApproachPose } from './approach';
 import { createAutomation, facingToward, pitchToward, runCommand, type CameraPose } from './automation';
 import { onOpenTeammate, openOfficeShell, openTerminal, openTerminalFor, openTerminalStreams, routeTerminalMessage, terminalOnTop, type TerminalFind } from './ui/terminal';
@@ -1531,8 +1532,9 @@ function paletteEntries(): PaletteEntry[] {
   if (mc) {
     const o = orchestratorWorker(mc);
     const pose = missionPose('orchestrator', ORCHESTRATOR_SPOT);
+    const phase = orchestratorPhase(mc);
     out.push({
-      icon: '🛰️',
+      icon: orchestratorIcon(16, { animated: phase !== 'off' && !orchestratorBlocked(mc) }),
       kind: 'Building agent',
       title: o?.name ?? ORCHESTRATOR_NAME,
       detail: orchestratorLine(mc),
@@ -2287,11 +2289,11 @@ function hintFor(it: Interactable): Hint {
 /** At the Orchestrator: what it's doing and its team, and E, O and X. */
 function orchestratorHint(): Hint {
   const mc = store.missionControl;
-  const title = (text: string) => h('span.title', {}, text);
-  if (!mc) return { k: 'none', parts: [title('🛰️ Orchestrator'), aside('restart the office to get one')] };
+  const title = (...parts: Child[]) => h('span.title', {}, ...parts);
+  if (!mc) return { k: 'none', parts: [title(orchestratorIcon(13, { animated: false }), 'Orchestrator'), aside('restart the office to get one')] };
   const phase = orchestratorPhase(mc);
-  if (phase === 'off') return { k: 'off', parts: [title('🛰️ Orchestrator · off'), aside('directs workers on every floor'), key('E', 'Turn it on')] };
-  if (phase === 'blocked') return { k: `blocked|${mc.orchestrator.blocked}`, parts: [title("🛰️ Orchestrator · can't start"), aside(clip(mc.orchestrator.blocked ?? '', 56)), key('E', 'See why')] };
+  if (phase === 'off') return { k: 'off', parts: [title(orchestratorIcon(13, { animated: false }), 'Orchestrator · off'), aside('directs workers on every floor'), key('E', 'Turn it on')] };
+  if (phase === 'blocked') return { k: `blocked|${mc.orchestrator.blocked}`, parts: [title(orchestratorIcon(13, { animated: false }), "Orchestrator · can't start"), aside(clip(mc.orchestrator.blocked ?? '', 56)), key('E', 'See why')] };
   const w = orchestratorWorker(mc)!;
   const started = !!orchestratorAwake(mc);
   const busy = isBusy(w.status);
@@ -2299,7 +2301,14 @@ function orchestratorHint(): Hint {
   const team = missionTeamLine(mc.orchestrator.team) ?? '';
   return {
     k: ['orch', w.name, phase, doing, team, busy].join('|'),
-    parts: [title(`🛰️ ${w.name} · ${PHASE_WORD[phase]}`), doing ? aside(doing) : '', team ? aside(team) : '', key('E', busy ? 'Steer or queue' : 'Prompt'), started ? key('O', 'Terminal') : '', busy ? key('X', 'Stop') : ''],
+    parts: [
+      title(orchestratorIcon(13, { animated: phase === 'working' }), `${w.name} · ${PHASE_WORD[phase]}`),
+      doing ? aside(doing) : '',
+      team ? aside(team) : '',
+      key('E', busy ? 'Steer or queue' : 'Prompt'),
+      started ? key('O', 'Terminal') : '',
+      busy ? key('X', 'Stop') : '',
+    ],
   };
 }
 
@@ -2950,7 +2959,10 @@ const hudActions: HudAction[] = [
   // Up on the top bar while it works or waits on you.
   {
     id: 'orchestrator',
-    icon: '🛰️',
+    icon: () => {
+      const phase = orchestratorPhase(store.missionControl);
+      return orchestratorIcon(15, { animated: phase !== 'off' && phase !== 'blocked' });
+    },
     label: 'Orchestrator',
     section: 'Open',
     key: 'M',
