@@ -458,6 +458,29 @@ test('removal news reaches every guest whose scope held the worker, after it lef
   }
 });
 
+test('a worker across repositories leaves without a word to the floor links that never saw it', () => {
+  // Off every map by then: only the floors it worked in, sent with the removal, say it was never theirs.
+  const left = [{ id: 'gone', repos: [{ floor: 'B', name: 'beta', dir: '/Users/owner/beta', path: 'ws/beta', branch: 'office/gone', base: 'abc' }] }];
+  const removal = { t: 'worker.remove', workerId: 'gone' };
+  const building = { t: 'building.remove', floor: 'A', workerId: 'gone' };
+  for (const preset of ['view-floor', 'edit-floor'] as const) {
+    assert.equal(out(preset, removal, ctx({ via: 'floor', floor: 'A', about: left })), undefined, preset);
+    assert.equal(out(preset, building, ctx({ via: 'all', about: left })), undefined, preset);
+    // A worker of this floor alone still leaves in plain sight.
+    assert.ok(out(preset, removal, ctx({ via: 'floor', floor: 'A', about: [{ id: 'gone' }] })));
+    assert.ok(out(preset, building, ctx({ via: 'all', about: [{ id: 'gone' }] })));
+  }
+  for (const preset of ['view-office', 'edit-office'] as const) {
+    assert.ok(out(preset, removal, ctx({ via: 'floor', floor: 'A', about: left })), preset);
+    assert.ok(out(preset, building, ctx({ via: 'all', about: left })), preset);
+  }
+  // A single-worker link picked it: it sees its own worker go, other floors or not.
+  const pick: GuestScopeGrant = { preset: 'view-worker', floorId: 'A', workerId: 'gone' };
+  assert.ok(guestOutbound(pick, removal as ServerMsg, ctx({ via: 'floor', floor: 'A', about: left }), world));
+  assert.ok(guestOutbound(pick, building as ServerMsg, ctx({ via: 'all', about: left }), world));
+  assert.equal(guestOutbound({ ...pick, workerId: 'a1' }, removal as ServerMsg, ctx({ via: 'floor', floor: 'A', about: left }), world), undefined);
+});
+
 // Droid's permission menu as tests/ask-question.test.ts and tests/droid-screen.test.ts captured it.
 const PERMISSION_SCREEN = [
   '  Execute: git push origin HEAD',

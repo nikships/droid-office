@@ -790,13 +790,13 @@ export async function startServer(cfg: Config) {
         if (c) sendTo(c, { t: 'changes', state });
       }
     },
-    workerChanged: (floor, w) => {
+    workerChanged: (floor, w, about) => {
       answers.changed(typeof w === 'string' ? w : w.id, typeof w === 'string' ? undefined : w.status);
       if (typeof w === 'string') threadWatches?.unwatchWorker(w);
       else threadWatches?.notifyWorker(w.id);
       if (typeof w === 'string' || w.status !== 'needs_input') clearOffFloorThrottle(typeof w === 'string' ? w : w.id);
       if (floors.get(floor.id) === floor) {
-        if (typeof w === 'string') broadcast({ t: 'building.remove', floor: floor.id, workerId: w });
+        if (typeof w === 'string') broadcast({ t: 'building.remove', floor: floor.id, workerId: w }, undefined, false, about);
         else {
           broadcast({ t: 'building.worker', floor: floor.id, worker: w });
           if (w.status === 'needs_input') broadcastOffFloorScreen(floor, w.id);

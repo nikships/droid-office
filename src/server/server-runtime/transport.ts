@@ -31,7 +31,8 @@ export function createClientTransport({ clients, floors }: TransportContext) {
     const json = frameFor(c, msg, { via: 'direct' }, () => JSON.stringify(msg));
     if (json) c.ws.send(json);
   };
-  const broadcast = (msg: ServerMsg, except?: string, droppable = false): boolean => {
+  /** To every connection. `about`: workers the message names that may have left, for guests' scope. */
+  const broadcast = (msg: ServerMsg, except?: string, droppable = false, about?: readonly GuestNamed[]): boolean => {
     let json: string | undefined;
     const shared = () => (json ??= JSON.stringify(msg));
     let dropped = false;
@@ -41,7 +42,7 @@ export function createClientTransport({ clients, floors }: TransportContext) {
         dropped = true;
         continue;
       }
-      const frame = frameFor(c, msg, { via: 'all' }, shared);
+      const frame = frameFor(c, msg, { via: 'all', ...(about ? { about } : {}) }, shared);
       if (frame) c.ws.send(frame);
     }
     return dropped;
