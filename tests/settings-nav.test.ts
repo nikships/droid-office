@@ -53,6 +53,7 @@ test('every setting is in a category', () => {
     ['Tool calls', 'thread'],
     ['Thinking', 'thread'],
     ['Restore Thread defaults', 'thread'],
+    ['Terminal engine', 'terminal'],
     ['Terminal text size', 'terminal'],
     ['Line spacing', 'terminal'],
     ['Cursor shape', 'terminal'],

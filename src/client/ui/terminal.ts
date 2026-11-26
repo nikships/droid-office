@@ -1,8 +1,6 @@
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import { WebLinksAddon } from '@xterm/addon-web-links';
+import { createTerminalEngine } from '../term-engine';
+import { attachEngineFeatures } from '../term-engine/features';
 import { TerminalPathLinksAddon } from './terminal-path-links';
-import { Unicode11Addon } from '@xterm/addon-unicode11';
 import type { Net } from '../net';
 import { store } from '../state';
 import { withToken } from '../token';
@@ -23,13 +21,11 @@ import { creditsNote } from '../../shared/factory-sessions';
 import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { loadFonts, TERM_FONT } from '../fonts';
-import { attachKittyTerminal, type ExpandedKittyImage } from '../term-kitty';
-import { attachPixelScroll } from '../term-pixel-scroll';
-import { attachTerminalScrollbar } from '../term-scrollbar';
+import type { ExpandedKittyImage } from '../term-kitty';
 import { wantsCsiEnter } from '../term-keys';
 import { viewPicture } from './picture-viewer';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
-import { followTerminalPrefs, scrollAtOnce, terminalOptions } from './terminal-prefs';
+import { followTerminalPrefs, scrollAtOnce, terminalOptions, terminalPrefs } from './terminal-prefs';
 import { mountWorkerThread, type WorkerThread } from './worker-thread';
 
 function openKittyPicture(img: ExpandedKittyImage, about: string, isAlive: () => boolean, focusTerm: () => void, state: { modal: Modal | null }) {
@@ -279,49 +275,39 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   };
 
   const pathLinks = new TerminalPathLinksAddon({ floor: () => store.floor ?? '', workerId, workerName: info.name, inert: readOnly });
-  const term = new Terminal({
-    ...terminalOptions(),
-    fontFamily: TERM_FONT,
-    fontSize: termFontSize(),
-    theme: termTheme(),
-    allowTransparency: termThemeTransparent(),
-    minimumContrastRatio: 4.5,
-    disableStdin: true,
-    scrollback: 5000,
-    allowProposedApi: true,
-    linkHandler: pathLinks.linkHandler,
-  });
-  const fit = new FitAddon();
-  term.loadAddon(fit);
-  term.loadAddon(pathLinks);
-  // The addon's default opens a blank window and then assigns its location. Electron's window
-  // open handler only sees the blank URL and denies it, so pass the real URL up front.
-  term.loadAddon(
-    new WebLinksAddon((event, uri) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      window.open(uri, '_blank', 'noopener,noreferrer');
-    }),
+  const engine = createTerminalEngine(
+    {
+      ...terminalOptions(),
+      fontFamily: TERM_FONT,
+      fontSize: termFontSize(),
+      theme: termTheme(),
+      allowTransparency: termThemeTransparent(),
+      minimumContrastRatio: 4.5,
+      disableStdin: true,
+      scrollback: 5000,
+      allowProposedApi: true,
+      linkHandler: pathLinks.linkHandler,
+    },
+    terminalPrefs().engine,
   );
-  // Unicode 11 widths, so powerline glyphs, emoji, CJK and combining marks take the cells
-  // they should instead of overlapping or leaving gaps (oh-my-zsh, agnoster…).
-  const unicode = new Unicode11Addon();
-  term.loadAddon(unicode);
-  term.unicode.activeVersion = '11';
+  const { term } = engine;
   let opened = false;
   let alive = true;
   const expanded = { modal: null as Modal | null };
-  const kitty = attachKittyTerminal(term, {
-    onExpandImage: (img) =>
-      openKittyPicture(
-        img,
-        store.worker(workerId)?.name ?? info.name,
-        () => alive,
-        () => term.focus(),
-        expanded,
-      ),
-  });
-  const pixel = attachPixelScroll(term);
-  attachTerminalScrollbar(term);
+  const features = attachEngineFeatures(
+    engine,
+    {
+      onExpandImage: (img) =>
+        openKittyPicture(
+          img,
+          store.worker(workerId)?.name ?? info.name,
+          () => alive,
+          () => term.focus(),
+          expanded,
+        ),
+    },
+    pathLinks,
+  );
 
   const offQueries = suppressMirrorQueries(term);
   const focus = focusReports();
@@ -353,7 +339,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       return;
     }
     try {
-      const size = fit.proposeDimensions();
+      const size = engine.proposeDimensions();
       if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
       // Match WorkerManager.resize's limits so the server can acknowledge the exact request.
       term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
@@ -414,6 +400,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
 
   /** Scrolls a search hit into view and lights it up for a few seconds. */
   const jumpTo = (f: TerminalFind) => {
+    const term = engine.xterm;
+    if (!term) return toast('Search highlights are available with the xterm engine.', 'warn');
     const buf = term.buffer.active;
     const row = findLine(buf, f.needle, f.fromEnd);
     if (row === undefined) return toast('That line has scrolled out of the terminal since', 'warn');
@@ -474,6 +462,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   if (inline) document.addEventListener('visibilitychange', visibility);
   if (document.hidden) visibility();
   const onMsg = (msg: ServerMsg) => {
+    if (engine.ghostty && !opened) return;
     if (msg.t === 'term.data' && msg.workerId === workerId) mirror.data(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === workerId) {
       term.options.disableStdin = true;
@@ -653,8 +642,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       return false;
     }
     if (!inline && e.key === 'Escape' && e.shiftKey) return false;
-    const action = kitty.keyAction(e, csiEnter());
-    if (action.do === 'default') return !pixel.handleKey(e);
+    const action = features.keyAction(e, csiEnter());
+    if (action.do === 'default') return !features.handleKey(e);
     if (action.do === 'send') {
       e.preventDefault();
       term.input(action.data);
@@ -734,17 +723,25 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   refresh();
   // xterm caches glyph widths when it opens. Opening after the shared font load prevents a
   // slow first visit from retaining fallback measurements even after the icons arrive.
-  void loadFonts().then(() => {
-    if (!alive) return;
-    term.open(host);
-    opened = true;
-    ro.observe(host);
-    adoptSharedSize = store.worker(workerId)?.open === true;
-    if (!threadView && (!inline || !document.hidden)) net.send({ t: 'worker.attach', workerId });
-    setTimeout(() => {
-      if (alive && inline?.focus !== false && !threadView) term.focus();
-    }, 50);
-  });
+  void loadFonts()
+    .then(async () => {
+      if (!alive) return;
+      await term.open(host);
+      if (!alive) return;
+      opened = true;
+      ro.observe(host);
+      adoptSharedSize = store.worker(workerId)?.open === true;
+      if (!threadView && (!inline || !document.hidden)) net.send({ t: 'worker.attach', workerId });
+      setTimeout(() => {
+        if (alive && inline?.focus !== false && !threadView) term.focus();
+      }, 50);
+    })
+    .catch((error: unknown) => {
+      if (alive) {
+        toast(`Could not open terminal: ${error}`, 'error');
+        modal.close();
+      }
+    });
   if (!inline) return;
   return {
     workerId,
@@ -776,43 +773,37 @@ export function openOfficeShell(net: Net) {
   const el = h('div.modal.full.term', { role: 'dialog', 'aria-label': 'Shell' }, h('header', {}, colorDot('#8d99ae'), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom), closeBtn), host);
 
   const pathLinks = new TerminalPathLinksAddon({ floor: () => store.floor ?? '', workerId: OFFICE_SHELL_ID });
-  const term = new Terminal({
-    ...terminalOptions(),
-    fontFamily: TERM_FONT,
-    fontSize: termFontSize(),
-    theme: termTheme(),
-    allowTransparency: termThemeTransparent(),
-    minimumContrastRatio: 4.5,
-    scrollback: 5000,
-    allowProposedApi: true,
-    linkHandler: pathLinks.linkHandler,
-  });
-  const fit = new FitAddon();
-  term.loadAddon(fit);
-  term.loadAddon(pathLinks);
-  term.loadAddon(
-    new WebLinksAddon((event, uri) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      window.open(uri, '_blank', 'noopener,noreferrer');
-    }),
+  const engine = createTerminalEngine(
+    {
+      ...terminalOptions(),
+      fontFamily: TERM_FONT,
+      fontSize: termFontSize(),
+      theme: termTheme(),
+      allowTransparency: termThemeTransparent(),
+      minimumContrastRatio: 4.5,
+      scrollback: 5000,
+      allowProposedApi: true,
+      linkHandler: pathLinks.linkHandler,
+    },
+    terminalPrefs().engine,
   );
-  const unicode = new Unicode11Addon();
-  term.loadAddon(unicode);
-  term.unicode.activeVersion = '11';
+  const { term } = engine;
   let shellAlive = true;
   const expanded = { modal: null as Modal | null };
-  const kitty = attachKittyTerminal(term, {
-    onExpandImage: (img) =>
-      openKittyPicture(
-        img,
-        'Shell',
-        () => shellAlive,
-        () => term.focus(),
-        expanded,
-      ),
-  });
-  const pixel = attachPixelScroll(term);
-  attachTerminalScrollbar(term);
+  const features = attachEngineFeatures(
+    engine,
+    {
+      onExpandImage: (img) =>
+        openKittyPicture(
+          img,
+          'Shell',
+          () => shellAlive,
+          () => term.focus(),
+          expanded,
+        ),
+    },
+    pathLinks,
+  );
 
   let opened = false;
   let shared = false;
@@ -835,7 +826,7 @@ export function openOfficeShell(net: Net) {
       return;
     }
     try {
-      const size = fit.proposeDimensions();
+      const size = engine.proposeDimensions();
       if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
       term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
     } catch {
@@ -866,6 +857,7 @@ export function openOfficeShell(net: Net) {
     () => net.send({ t: 'shell.attach' }),
   );
   const onMsg = (msg: ServerMsg) => {
+    if (engine.ghostty && !opened) return;
     if (msg.t === 'term.data' && msg.workerId === OFFICE_SHELL_ID) mirror?.data(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === OFFICE_SHELL_ID) {
       shared = msg.shared === true;
@@ -963,8 +955,8 @@ export function openOfficeShell(net: Net) {
       return false;
     }
     if (e.key === 'Escape' && e.shiftKey) return false;
-    const action = kitty.keyAction(e, false);
-    if (action.do === 'default') return !pixel.handleKey(e);
+    const action = features.keyAction(e, false);
+    if (action.do === 'default') return !features.handleKey(e);
     if (action.do === 'send') {
       e.preventDefault();
       term.input(action.data);
@@ -1033,14 +1025,22 @@ export function openOfficeShell(net: Net) {
     true,
   );
 
-  void loadFonts().then(() => {
-    if (current?.modal !== modal) return;
-    term.open(host);
-    opened = true;
-    ro.observe(host);
-    net.send({ t: 'shell.attach' });
-    setTimeout(() => {
-      if (current?.modal === modal) term.focus();
-    }, 50);
-  });
+  void loadFonts()
+    .then(async () => {
+      if (current?.modal !== modal) return;
+      await term.open(host);
+      if (!shellAlive) return;
+      opened = true;
+      ro.observe(host);
+      net.send({ t: 'shell.attach' });
+      setTimeout(() => {
+        if (current?.modal === modal) term.focus();
+      }, 50);
+    })
+    .catch((error: unknown) => {
+      if (shellAlive) {
+        toast(`Could not open shell: ${error}`, 'error');
+        modal.close();
+      }
+    });
 }

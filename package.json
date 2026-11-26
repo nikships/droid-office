@@ -56,6 +56,7 @@
     "@xterm/addon-unicode11": "^0.9.0",
     "@xterm/headless": "^6.0.0",
     "electron-updater": "^6.8.11",
+    "ghostty-web": "0.4.0-next.25.g835eb27",
     "mermaid": "^12.3.0",
     "playwright-core": "1.64.0",
     "selfsigned": "^5.5.0",

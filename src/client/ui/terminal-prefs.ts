@@ -2,7 +2,8 @@
 // browser and applied live to every open terminal. Text size keeps its own key (term-font.ts),
 // which the A− / A+ buttons share.
 
-import type { ITerminalOptions, Terminal } from '@xterm/xterm';
+import type { ITerminalOptions } from '@xterm/xterm';
+import type { ClientTerminal, TerminalEngineName } from '../term-engine/types';
 import { pixelScrollOf } from '../term-pixel-scroll';
 import { savedPrefs, type PrefOptions } from './saved-prefs';
 
@@ -11,6 +12,7 @@ export const TERM_CURSOR_STYLES = ['block', 'bar', 'underline'] as const;
 export const TERM_SCROLL_SPEEDS = ['slow', 'default', 'fast'] as const;
 
 export interface TerminalPrefs {
+  engine: TerminalEngineName;
   lineHeight: (typeof TERM_LINE_HEIGHTS)[number];
   cursorStyle: (typeof TERM_CURSOR_STYLES)[number];
   cursorBlink: boolean;
@@ -19,10 +21,11 @@ export interface TerminalPrefs {
   optionIsMeta: boolean;
 }
 
-export const TERMINAL_DEFAULTS: Readonly<TerminalPrefs> = Object.freeze({ lineHeight: 'default', cursorStyle: 'block', cursorBlink: true, scrollSpeed: 'default', optionIsMeta: true });
+export const TERMINAL_DEFAULTS: Readonly<TerminalPrefs> = Object.freeze({ engine: 'xterm', lineHeight: 'default', cursorStyle: 'block', cursorBlink: true, scrollSpeed: 'default', optionIsMeta: true });
 
 const BOTH = [true, false] as const;
 const OPTIONS: PrefOptions<TerminalPrefs> = {
+  engine: ['xterm', 'ghostty'],
   lineHeight: TERM_LINE_HEIGHTS,
   cursorStyle: TERM_CURSOR_STYLES,
   cursorBlink: BOTH,
@@ -62,7 +65,7 @@ export function terminalOptions(p: TerminalPrefs = terminalPrefs()): TerminalPre
  * Keeps `term` on the saved choices until the returned unlisten. `fixed` options win over the
  * choices (a read-only log never blinks); `resized` runs when its cells change height.
  */
-export function followTerminalPrefs(term: Pick<Terminal, 'options'>, opts: { fixed?: Partial<TerminalPrefOptions>; resized?: () => void } = {}): () => void {
+export function followTerminalPrefs(term: Pick<ClientTerminal, 'options'>, opts: { fixed?: Partial<TerminalPrefOptions>; resized?: () => void } = {}): () => void {
   return onTerminalPrefs((next) => {
     const before = term.options.lineHeight;
     Object.assign(term.options, terminalOptions(next), opts.fixed);
@@ -76,7 +79,7 @@ export function followTerminalPrefs(term: Pick<Terminal, 'options'>, opts: { fix
  * scroll), so scrolls that build on one another (or that should land at once, like a fresh
  * snapshot's) must not glide.
  */
-export function scrollAtOnce(term: Pick<Terminal, 'options'>, scroll: () => void) {
+export function scrollAtOnce(term: Pick<ClientTerminal, 'options'>, scroll: () => void) {
   const glide = term.options.smoothScrollDuration ?? 0;
   if (!glide) return scroll();
   term.options.smoothScrollDuration = 0;

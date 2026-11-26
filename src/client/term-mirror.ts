@@ -1,4 +1,4 @@
-import type { Terminal } from '@xterm/xterm';
+import type { ClientTerminal } from './term-engine/types';
 
 interface Snapshot {
   data: string;
@@ -6,7 +6,7 @@ interface Snapshot {
   rows: number;
   shared?: boolean;
 }
-type Sink = Pick<Terminal, 'reset' | 'resize' | 'write'>;
+type Sink = Pick<ClientTerminal, 'reset' | 'resize' | 'write'>;
 
 /** Async xterm writes stay ordered across snapshots, reconnects and disposal. Never retain an
  * unbounded stream while a snapshot is parsing; request a newer snapshot instead. */
@@ -119,7 +119,7 @@ export function focusReports() {
 
 /** The server's headless terminal already answers TUI queries. A passive mirror must not send
  * duplicate replies through onData or seize PTY sizing merely by rendering a query. */
-export function suppressMirrorQueries(term: Pick<Terminal, 'parser'>) {
+export function suppressMirrorQueries(term: Pick<ClientTerminal, 'parser'>) {
   const handlers = [
     ...['', '?', '>'].flatMap((prefix) => ['n', 'c'].map((final) => term.parser.registerCsiHandler({ ...(prefix ? { prefix } : {}), final }, () => true))),
     term.parser.registerCsiHandler({ prefix: '?', final: 'u' }, () => true),

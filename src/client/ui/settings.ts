@@ -219,6 +219,10 @@ function terminalRows() {
   size.addEventListener('input', () => {
     if (Number(size.value) !== termFontSize()) setTermFontSize(Number(size.value));
   });
+  const engine = choose('engine', 'Terminal engine', [
+    ['xterm', 'xterm'],
+    ['ghostty', 'Ghostty'],
+  ]);
   const lineHeight = choose('lineHeight', 'Line spacing', [
     ['compact', 'Compact'],
     ['default', 'Default'],
@@ -255,13 +259,14 @@ function terminalRows() {
     size.value = String(px);
     size.style.setProperty('--fill', `${((px - TERM_FONT_MIN) / (TERM_FONT_MAX - TERM_FONT_MIN)) * 100}%`);
     sizeValue.textContent = `${px} px`;
-    for (const choice of [lineHeight, cursorStyle, blink, speed, option]) choice.paint();
+    for (const choice of [engine, lineHeight, cursorStyle, blink, speed, option]) choice.paint();
     restore.disabled = isDefaultTerminalPrefs(terminalPrefs()) && px === TERM_FONT_DEFAULT;
   };
   paint();
   const offs = [onTerminalPrefs(paint), onTermFontSize(paint)];
   return {
     groups: [
+      group('Engine', card('Terminal engine', { desc: desc('Applies the next time you open a terminal. Ghostty is experimental; some xterm features are unavailable.'), control: engine.row })),
       group(
         'Text',
         card('Terminal text size', { desc: desc('How big terminal text draws. The A− and A+ buttons over a terminal change it too.'), control: h('div.volume', {}, size, sizeValue) }),

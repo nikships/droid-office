@@ -1,14 +1,12 @@
-import { Terminal } from '@xterm/xterm';
-import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { createTerminalEngine } from '../term-engine';
+import { attachEngineFeatures } from '../term-engine/features';
+import type { ClientTerminal } from '../term-engine';
 import { changedImageType, type ChangedFile, type ChangesState, type ServerMsg } from '../../shared/protocol';
 import { shipPromptVars } from '../../shared/prompts';
 import { isAsleep } from '../../shared/status';
 import { loadFonts, TERM_FONT } from '../fonts';
 import type { Net } from '../net';
 import { store, words } from '../state';
-import { attachKittyTerminal } from '../term-kitty';
-import { attachPixelScroll } from '../term-pixel-scroll';
-import { attachTerminalScrollbar } from '../term-scrollbar';
 import { withToken } from '../token';
 import { onTermTheme, termTheme, termThemeTransparent } from '../term-theme';
 import { h, openModal, toast, type Modal } from './dom';
@@ -16,7 +14,7 @@ import { colorDot, emptyState } from './kit';
 import { confirmDialog, openPrompt } from './prompt';
 import { officePrompt } from './prompts';
 import { onTermFontSize, termFontSize } from './term-font';
-import { followTerminalPrefs, scrollAtOnce, terminalOptions } from './terminal-prefs';
+import { followTerminalPrefs, scrollAtOnce, terminalOptions, terminalPrefs } from './terminal-prefs';
 
 // The Changes window at a desk: the files a worker changed and their diff against the branch the
 // office was opened on, refreshed while the worker works, with commit / discard / open-a-PR, and
@@ -190,7 +188,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
   );
 
   /** The worker's terminal, read-only, made the first time T shows it and attached until the window closes. */
-  let term: Terminal | null = null;
+  let term: ClientTerminal | null = null;
   let unfollow = () => {};
   let attached = false;
   let view: 'diff' | 'log' = 'diff';
@@ -201,18 +199,22 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       return scrollAtOnce(t, () => t.scrollToBottom());
     }
     const fixed = { cursorBlink: false };
-    const t = new Terminal({
-      ...terminalOptions(),
-      ...fixed,
-      fontFamily: TERM_FONT,
-      fontSize: termFontSize(),
-      theme: termTheme(),
-      allowTransparency: termThemeTransparent(),
-      minimumContrastRatio: 4.5,
-      disableStdin: true,
-      scrollback: 5000,
-      allowProposedApi: true,
-    });
+    const engine = createTerminalEngine(
+      {
+        ...terminalOptions(),
+        ...fixed,
+        fontFamily: TERM_FONT,
+        fontSize: termFontSize(),
+        theme: termTheme(),
+        allowTransparency: termThemeTransparent(),
+        minimumContrastRatio: 4.5,
+        disableStdin: true,
+        scrollback: 5000,
+        allowProposedApi: true,
+      },
+      terminalPrefs().engine,
+    );
+    const { term: t } = engine;
     const offPrefs = followTerminalPrefs(t, { fixed });
     // The log keeps its PTY's rows and columns; only its cells grow or shrink.
     const offFont = onTermFontSize((px) => (t.options.fontSize = px));
@@ -222,24 +224,27 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       offFont();
       offTheme();
     };
-    const unicode = new Unicode11Addon();
-    t.loadAddon(unicode);
-    t.unicode.activeVersion = '11';
-    attachKittyTerminal(t);
-    attachPixelScroll(t);
-    attachTerminalScrollbar(t);
+    attachEngineFeatures(engine);
     // Keys belong to the window (T, Esc), never to the program in the terminal.
     t.attachCustomKeyEventHandler(() => false);
     term = t;
-    void loadFonts().then(() => {
-      if (current?.modal !== modal || term !== t) return;
-      t.open(logHost);
-      // The PTY is shared and sized by whoever types to it, so this view takes its size rather than fitting.
-      const w = store.workers.get(workerId);
-      if (w) t.resize(w.cols, w.rows);
-      attached = true;
-      net.send({ t: 'worker.attach', workerId });
-    });
+    void loadFonts()
+      .then(async () => {
+        if (current?.modal !== modal || term !== t) return;
+        await t.open(logHost);
+        if (current?.modal !== modal || term !== t) return;
+        // The PTY is shared and sized by whoever types to it, so this view takes its size rather than fitting.
+        const w = store.workers.get(workerId);
+        if (w) t.resize(w.cols, w.rows);
+        attached = true;
+        net.send({ t: 'worker.attach', workerId });
+      })
+      .catch((error: unknown) => {
+        if (term === t) {
+          toast(`Could not open terminal log: ${error}`, 'error');
+          modal.close();
+        }
+      });
   };
 
   const setView = (next: 'diff' | 'log') => {
@@ -420,8 +425,8 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
   };
 
   const onMsg = (msg: ServerMsg) => {
-    if (msg.t === 'term.data' && msg.workerId === workerId) term?.write(msg.data);
-    else if (msg.t === 'term.snapshot' && msg.workerId === workerId && term) {
+    if (msg.t === 'term.data' && msg.workerId === workerId && attached) term?.write(msg.data);
+    else if (msg.t === 'term.snapshot' && msg.workerId === workerId && attached && term) {
       const t = term;
       t.reset();
       t.resize(msg.cols, msg.rows);
