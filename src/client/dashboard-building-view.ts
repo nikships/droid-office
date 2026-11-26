@@ -25,6 +25,8 @@ interface BuildingViewState {
   live: boolean;
   canHire: boolean;
   mission?: MissionControlState;
+  /** False on a view-only share link: no Hire Droid. */
+  work?: boolean;
 }
 
 /** A building-wide directory. Opening a row uses the workspace's existing cross-floor navigation. */
@@ -113,6 +115,7 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
     const focusedIndex = focused ? [...list.querySelectorAll('button')].indexOf(focused as HTMLButtonElement) : -1;
     const counts = buildingCounts(state.rows);
     total.textContent = String(counts.all);
+    hire.hidden = state.work === false;
     hire.disabled = !state.live || !state.canHire;
     hire.title = state.canHire ? 'Hire a Droid on the current floor' : 'Choose a project floor above to hire a Droid';
     const key = JSON.stringify([state.floors.map((f) => [f.id, f.name]), state.rows.some((r) => r.floorId === MISSION_FLOOR)]);
@@ -215,6 +218,9 @@ export function createBuildingView(host: { open(row: BuildingWorkerRow): void; w
         emptyTitle = 'No matching workers';
         description = 'Try another search, floor or status.';
         actions.push(clear);
+      } else if (state.live && state.work === false) {
+        emptyTitle = 'No workers in the building yet';
+        description = 'Workers from every shared floor appear here.';
       } else if (state.live) {
         emptyTitle = 'No workers in the building yet';
         description = state.canHire ? 'Hire a Droid on your current floor to get started. Workers from every floor appear here.' : 'Choose a project floor above to hire a Droid.';

@@ -12,6 +12,8 @@ import { authorColor, authorName, newId } from './whiteboard-view';
 
 export interface PanelHost {
   apply(ops: Op[], what?: string): Promise<boolean>;
+  /** Watch only: comments, stickies and pictures are listed without reply, edit, resolve, delete or reattach. */
+  readOnly?: boolean;
   surface(): Surface | null;
   changes(): ChangeItem[];
   fileUrl(hash: string): string;
@@ -97,7 +99,7 @@ export class Panel {
       ...card.stickies.filter((s) => detached('sticky', s.id)).map((s) => ({ kind: 'sticky' as const, id: s.id, label: s.text ? `Sticky: ${clipOne(s.text, 50)}` : 'Empty sticky' })),
       ...card.pictures.filter((p) => detached('picture', p.id)).map((p) => ({ kind: 'picture' as const, id: p.id, label: 'Picture' })),
     ];
-    if (lost.length) {
+    if (lost.length && !this.host.readOnly) {
       sections.push(
         this.section(
           'Detached',
@@ -132,7 +134,7 @@ export class Panel {
       threadList.append(toggle);
       if (this.showResolved) for (const t of resolved) threadList.append(this.thread(card, t, number.get(t.id) ?? 0, detached('thread', t.id)));
     }
-    sections.push(this.section('Comments', card.threads.length, card.threads.length ? threadList : h('p.wb-panel-hint', {}, 'In Mark up, click the card to pin a comment.')));
+    sections.push(this.section('Comments', card.threads.length, card.threads.length ? threadList : h('p.wb-panel-hint', {}, this.host.readOnly ? 'No comments yet.' : 'In Mark up, click the card to pin a comment.')));
 
     sections.push(
       this.section(
@@ -150,20 +152,22 @@ export class Panel {
                   { class: detached('sticky', s.id) ? 'detached' : '', onclick: () => this.goTo('sticky', s.id) },
                   h('span.list-icon', {}, sw),
                   h('span.list-main', {}, h('span.list-title', { title: s.text }, s.text ? clipOne(s.text) : 'Empty note'), h('span.list-meta', {}, authorName(s.stamps.text.author))),
-                  h(
-                    'span.list-end',
-                    {},
-                    h('button.btn.sm.ghost', { type: 'button', title: 'Edit the text', onclick: (e: Event) => (e.stopPropagation(), this.goTo('sticky', s.id), surface?.editSticky(s.id)) }, 'Edit'),
-                    h(
-                      'button.btn.sm.ghost.icon',
-                      { type: 'button', title: 'Delete', 'aria-label': 'Delete the sticky', onclick: (e: Event) => (e.stopPropagation(), void this.host.apply([{ op: 'sticky.rm', card: card.id, id: s.id }], 'Deleting the sticky')) },
-                      '✕',
-                    ),
-                  ),
+                  this.host.readOnly
+                    ? null
+                    : h(
+                        'span.list-end',
+                        {},
+                        h('button.btn.sm.ghost', { type: 'button', title: 'Edit the text', onclick: (e: Event) => (e.stopPropagation(), this.goTo('sticky', s.id), surface?.editSticky(s.id)) }, 'Edit'),
+                        h(
+                          'button.btn.sm.ghost.icon',
+                          { type: 'button', title: 'Delete', 'aria-label': 'Delete the sticky', onclick: (e: Event) => (e.stopPropagation(), void this.host.apply([{ op: 'sticky.rm', card: card.id, id: s.id }], 'Deleting the sticky')) },
+                          '✕',
+                        ),
+                      ),
                 );
               }),
             )
-          : h('p.wb-panel-hint', {}, 'In Mark up, drag on the card to place a sticky.'),
+          : h('p.wb-panel-hint', {}, this.host.readOnly ? 'No stickies yet.' : 'In Mark up, drag on the card to place a sticky.'),
       ),
     );
 
@@ -181,19 +185,21 @@ export class Panel {
                   { class: detached('picture', p.id) ? 'detached' : '', onclick: () => this.goTo('picture', p.id) },
                   h('span.list-icon', {}, h('img.wb-thumb-mini', { src: this.host.fileUrl(p.file.hash), alt: '' })),
                   h('span.list-main', {}, h('span.list-title', {}, `${p.box.w}×${p.box.h}`), h('span.list-meta', {}, authorName(p.stamps.file.author))),
-                  h(
-                    'span.list-end',
-                    {},
-                    h(
-                      'button.btn.sm.ghost.icon',
-                      { type: 'button', title: 'Delete', 'aria-label': 'Delete the picture', onclick: (e: Event) => (e.stopPropagation(), void this.host.apply([{ op: 'picture.rm', card: card.id, id: p.id }], 'Deleting the picture')) },
-                      '✕',
-                    ),
-                  ),
+                  this.host.readOnly
+                    ? null
+                    : h(
+                        'span.list-end',
+                        {},
+                        h(
+                          'button.btn.sm.ghost.icon',
+                          { type: 'button', title: 'Delete', 'aria-label': 'Delete the picture', onclick: (e: Event) => (e.stopPropagation(), void this.host.apply([{ op: 'picture.rm', card: card.id, id: p.id }], 'Deleting the picture')) },
+                          '✕',
+                        ),
+                      ),
                 ),
               ),
             )
-          : h('p.wb-panel-hint', {}, 'Paste, drop or pick a PNG, JPEG, WebP or GIF.'),
+          : h('p.wb-panel-hint', {}, this.host.readOnly ? 'No pictures yet.' : 'Paste, drop or pick a PNG, JPEG, WebP or GIF.'),
       ),
     );
 
@@ -251,8 +257,7 @@ export class Panel {
         first ? who(first.author) : null,
         h('span.wb-thread-when', {}, first ? timeAgo(first.at) : ''),
       ),
-      resolve,
-      del,
+      ...(this.host.readOnly ? [] : [resolve, del]),
     );
     const el = h('div.wb-thread', { 'data-thread': t.id, class: [t.resolved && 'resolved', open && 'open'].filter(Boolean).join(' ') }, head);
     if (detached) el.append(h('span.wb-thread-lost', {}, h('span.pill.lost', {}, 'detached'), 'What it was pinned to is gone from the page'));
@@ -265,6 +270,7 @@ export class Panel {
     }
     const isVideo = cardFormat(card) === 'video';
     for (const m of t.messages) el.append(this.messageEl(card, t, m, isVideo));
+    if (this.host.readOnly) return el;
     const ta = h('textarea.input.sm', { rows: '2', placeholder: isVideo ? 'Reply (use @00:12 to link a timestamp)…' : 'Reply…', 'aria-label': 'Reply', maxlength: '10000' });
     ta.value = this.drafts.get(t.id) ?? '';
     ta.addEventListener('input', () => this.drafts.set(t.id, ta.value));
@@ -290,6 +296,7 @@ export class Panel {
   private messageEl(card: Card, t: Thread, m: Message, isVideo: boolean): HTMLElement {
     const isEditing = this.editingMsg?.thread === t.id && this.editingMsg.message === m.id;
     const actions: HTMLElement[] = [];
+    if (this.host.readOnly) return h('div.wb-msg', {}, h('div.wb-msg-head', {}, who(m.author), h('span.wb-thread-when', {}, timeAgo(m.at))), this.messageText(m, isVideo));
     if (m.author.kind === 'owner' && !isEditing) {
       actions.push(
         h(
@@ -364,6 +371,10 @@ export class Panel {
         ),
       );
     }
+    return h('div.wb-msg', {}, head, this.messageText(m, isVideo));
+  }
+
+  private messageText(m: Message, isVideo: boolean): HTMLElement {
     const body = h('div.wb-msg-text');
     if (isVideo) {
       for (const part of parseTimecodeTokens(m.text)) {
@@ -373,6 +384,6 @@ export class Panel {
         } else body.append(part.text);
       }
     } else body.textContent = m.text;
-    return h('div.wb-msg', {}, head, body);
+    return body;
   }
 }

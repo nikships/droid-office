@@ -1,6 +1,6 @@
 import type { IBuffer, ILink, ILinkHandler, ITerminalAddon, Terminal } from '@xterm/xterm';
 import { parseTerminalPathRefs, terminalPathRef, type WorkspacePathMatch, type WorkspacePathRef } from '../../shared/path-links';
-import { withToken } from '../token';
+import { guestTokenOn, withToken } from '../token';
 import { toast } from './dom';
 import { openFilePreviewModal } from './file-preview';
 
@@ -54,7 +54,7 @@ export class TerminalPathLinksAddon implements ITerminalAddon {
         window.open(text, '_blank', 'noopener,noreferrer');
         return;
       }
-      if (!terminalPathRef(text)) return;
+      if (this.context.inert || !terminalPathRef(text)) return;
       event.preventDefault();
       void this.lookup(`${this.floor()}\0osc8\0${text}`, [text])
         .then(({ paths, local }) => {
@@ -67,7 +67,8 @@ export class TerminalPathLinksAddon implements ITerminalAddon {
     },
   };
 
-  constructor(private readonly context: { floor: string | (() => string); workerId: string; workerName?: string }) {}
+  /** `inert`: file paths aren't links (a view-only share link can't read the worker's files); web links still open. */
+  constructor(private readonly context: { floor: string | (() => string); workerId: string; workerName?: string; inert?: boolean }) {}
 
   private floor(): string {
     return typeof this.context.floor === 'function' ? this.context.floor() : this.context.floor;
@@ -78,7 +79,8 @@ export class TerminalPathLinksAddon implements ITerminalAddon {
   }
 
   private openResolved(raw: string, resolved: WorkspacePathRef, local: boolean): void {
-    if (!local) {
+    // A share link's guest is never on the office's computer: its files open as a preview.
+    if (!local || guestTokenOn()) {
       openFilePreviewModal({
         floor: this.floor(),
         workerId: this.context.workerId,
@@ -159,6 +161,7 @@ export class TerminalPathLinksAddon implements ITerminalAddon {
   }
 
   activate(term: Terminal): void {
+    if (this.context.inert) return;
     this.provider = term.registerLinkProvider({
       provideLinks: (row, callback) => {
         const buffer = term.buffer.active;

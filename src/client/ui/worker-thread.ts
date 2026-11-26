@@ -84,6 +84,8 @@ export interface ThreadOptions {
   interrupt?: boolean;
   /** A prompt starts the worker from rest: the composer stays open while it's asleep, with no Resume. */
   promptWakes?: boolean;
+  /** Watch only: no composer, queue, model settings, Stop, Resume, rewind or picture drops; the conversation still updates live. */
+  readOnly?: boolean;
 }
 
 const RECONCILE_INTERVAL_MS = 15_000;
@@ -129,6 +131,7 @@ const shortcut = (key: string, label: string) => h('span.wt-shortcut', {}, h('sp
 export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   let worker = opts.worker;
   const cloud = !!worker.cloud;
+  const readOnly = !!opts.readOnly;
   const screen = cloud ? undefined : opts.screen;
   const fallback = cloud ? 'open it in Factory' : 'open Raw TTY';
   let connected = false;
@@ -164,7 +167,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     return floorDirs.get(opts.floor) ?? store.floors.find((f) => f.id === opts.floor)?.dir;
   };
 
-  const canOpenFiles = (author: WorkerInfo): boolean => !author.cloud && (Boolean(opts.floor) || author.id === ORCHESTRATOR_ID);
+  // Watching only, the worker's files aren't readable: their paths stay plain text and their pictures aren't fetched.
+  const canOpenFiles = (author: WorkerInfo): boolean => !readOnly && !author.cloud && (Boolean(opts.floor) || author.id === ORCHESTRATOR_ID);
 
   const onOpenPathFor = (author: WorkerInfo): ((ref: WorkspacePathRef) => void) | undefined =>
     canOpenFiles(author)
@@ -582,7 +586,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       search.open();
     }
   });
-  images.dropZone(form);
+  if (!readOnly) images.dropZone(form);
   const detachQuote = attachQuoteReply(
     element,
     (_quote, text) => {
@@ -943,7 +947,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
         text: () => text,
         at: entryAt(entry),
         more,
-        ...(author.id === worker.id && !cloud ? { rewind: () => rewindConversation(row.id) } : {}),
+        ...(author.id === worker.id && !cloud && !readOnly ? { rewind: () => rewindConversation(row.id) } : {}),
       }),
     );
     return node;
@@ -1383,11 +1387,11 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
   const updateControls = () => {
     const broken = worker.cloud?.error;
     const blocked = opts.blocked?.();
-    const allowed = active && connected && !disposed && (opts.promptWakes || !isAsleep(worker.status)) && !worker.lost && !broken && !blocked;
+    const allowed = !readOnly && active && connected && !disposed && (opts.promptWakes || !isAsleep(worker.status)) && !worker.lost && !broken && !blocked;
     const waiting = worker.status === 'needs_input';
     const factoryOnline = store.factory.connection.connected && !store.factory.connection.rejected;
-    limitsBar.hidden = !waiting || !active || disposed || !connected || !!worker.lost || !!broken || !!blocked || !factoryOnline;
-    form.hidden = waiting || !!blocked;
+    limitsBar.hidden = readOnly || !waiting || !active || disposed || !connected || !!worker.lost || !!broken || !!blocked || !factoryOnline;
+    form.hidden = readOnly || waiting || !!blocked;
     blockedNote.hidden = !blocked;
     blockedText.textContent = blocked ?? '';
     if (needsOwnerInput(worker) && !waitingShown) requestAnimationFrame(() => opts.question.scrollIntoView({ block: 'nearest' }));
@@ -1431,11 +1435,11 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     empty.classList.toggle('error', !!error && !history.entries.length);
     if (!history.entries.length) paintEmpty();
     notice.textContent = connected
-      ? error || told || (broken && !opts.cloudErrorShown ? `${worker.name} can’t work: ${broken}` : '') || (isAsleep(worker.status) && !opts.promptWakes ? 'Resume this worker to send another message.' : '')
+      ? error || told || (broken && !opts.cloudErrorShown ? `${worker.name} can’t work: ${broken}` : '') || (isAsleep(worker.status) && !opts.promptWakes && !readOnly ? 'Resume this worker to send another message.' : '')
       : '';
     raw?.classList.toggle('hidden', !connected || !error);
     // A cloud worker's Resume reads its Factory session again, which is also how one that broke is checked.
-    resume.hidden = (!isAsleep(worker.status) || !!opts.promptWakes) && !broken;
+    resume.hidden = readOnly || ((!isAsleep(worker.status) || !!opts.promptWakes) && !broken);
     resume.disabled = !active || !connected || !!worker.lost || resuming;
     resume.textContent = broken ? (resuming ? 'Checking…' : 'Check again') : resuming ? 'Resuming…' : 'Resume';
     element.classList.toggle('has-feedback', !!notice.textContent);
@@ -1772,7 +1776,9 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
       else read(undefined, received && hasPushed ? RECONCILE_INTERVAL_MS : 1000);
       readTeam();
     },
-    dropZone: (zone, mark) => images.dropZone(zone, mark),
+    dropZone: (zone, mark) => {
+      if (!readOnly) images.dropZone(zone, mark);
+    },
     activate(on) {
       if (active === on) return;
       if (!on && scroll.isConnected) {

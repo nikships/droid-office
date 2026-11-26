@@ -73,6 +73,8 @@ export type Mode = BridgeMode;
 
 export interface SurfaceHost {
   floor: string;
+  /** Watch only: no Mark up, and no sticky, picture or comment changes. */
+  readOnly?: boolean;
   /** Applies the owner's batch (the window shows what went wrong). */
   apply(ops: Op[], what?: string): Promise<boolean>;
   /** Says something went wrong that isn't a batch: an upload, a file that isn't a picture. */
@@ -261,7 +263,7 @@ export class Surface {
     this.frameState = card.state;
     this.el = h(
       'div.wb-surface',
-      { class: card.kind === 'canvas' ? 'canvas' : 'html', tabindex: '-1', 'aria-label': 'Whiteboard viewport' },
+      { class: `${card.kind === 'canvas' ? 'canvas' : 'html'}${host.readOnly ? ' wb-readonly' : ''}`, tabindex: '-1', 'aria-label': 'Whiteboard viewport' },
       this.stage,
       this.banner,
       this.placeholder,
@@ -345,6 +347,7 @@ export class Surface {
   }
 
   setMode(mode: Mode) {
+    if (this.host.readOnly && mode === 'markup') return;
     this.setPan(false);
     if (this.mode === mode) return;
     this.mode = mode;
@@ -552,6 +555,7 @@ export class Surface {
 
   /** Waits for the owner to click where a detached (or any) mark goes now. */
   startReattach(kind: MarkKind, id: string) {
+    if (this.host.readOnly) return;
     this.picking?.release();
     const release = claimEscape(this.el, () => {
       if (!this.picking) return false;
@@ -572,6 +576,7 @@ export class Surface {
 
   /** Puts pictures on the card: at `at` (page px), or in the middle of what's in view. */
   async addPictures(files: File[], at?: Point): Promise<void> {
+    if (this.host.readOnly) return;
     const ok = files.filter((f) => (PICTURE_MIMES as readonly string[]).includes(f.type));
     if (!ok.length) {
       if (files.length) this.host.notify('A picture must be a PNG, JPEG, WebP or GIF');
@@ -1236,6 +1241,7 @@ export class Surface {
 
   /** Edits a sticky's text in place: Enter with ⌘/Ctrl or a click away saves, Esc puts it back. */
   editSticky(id: string) {
+    if (this.host.readOnly) return;
     const el = this.markEls.get(id);
     const s = this.card.stickies.find((x) => x.id === id);
     const text = el?.querySelector<HTMLElement>('.wb-sticky-text');
@@ -1302,7 +1308,7 @@ export class Surface {
   /** Moving or resizing a sticky or picture by a handle; it's sent when the drag ends. */
   private dragMark(handle: HTMLElement, el: HTMLElement, kind: 'sticky' | 'picture', id: string, what: 'move' | 'resize') {
     handle.addEventListener('pointerdown', (e) => {
-      if (this.pan || this.spacePan) return;
+      if (this.host.readOnly || this.pan || this.spacePan) return;
       if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return;
       e.preventDefault();
       e.stopPropagation();

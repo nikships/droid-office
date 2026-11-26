@@ -10,7 +10,22 @@ import { Net } from './net';
 import { VisiblePaint } from './visible-paint';
 import { bindFactory } from './factory';
 import { connectWhiteboard, store, words } from './state';
-import { setBrowserAuth, withToken } from './token';
+import { guestFetch, setBrowserAuth, setGuestAuth, withToken } from './token';
+import {
+  type CompanionAbilities,
+  forgetGuestToken,
+  guestAbilities,
+  guestBadge,
+  guestCloseOutcome,
+  guestHelloOutcome,
+  guestRefusalFinal,
+  guestTokenAtBoot,
+  guestUnavailableView,
+  hashWithoutGuestToken,
+  OWNER_ABILITIES,
+  parseGuestSession,
+} from './dashboard-guest';
+import { guestTokenFromHash, guestWsProtocols, type GuestSession, type GuestUnavailableReason } from '../shared/guest-links';
 import { $, closeAllModals, closeTopModal, h, modalOpen, onModalChange, openModal, toast } from './ui/dom';
 import { windowHeader } from './ui/kit';
 import { icon, type IconName } from './ui/icons';
@@ -85,20 +100,43 @@ const remember = (key: string, value: string) => {
     /* Drafts stay in this view if storage is blocked. */
   }
 };
+const guestTab = () => {
+  try {
+    return sessionStorage;
+  } catch {
+    return undefined;
+  }
+};
+/** A share link's token (`#g=`, kept for this tab only). With one, this page is a guest's and never the owner's. */
+const guestToken = guestTokenAtBoot(location.hash, guestTab());
+if (guestToken) {
+  history.replaceState(null, '', `${location.pathname}${hashWithoutGuestToken(location.hash)}`);
+  // Fetches to the office carry the token as a header; the request line never does.
+  window.fetch = guestFetch(() => location.href, window.fetch.bind(window));
+}
+/** The link's session once the office has said what it allows. */
+let session: GuestSession | undefined;
+/** What this page shows and offers: everything for the owner, what the link allows for a guest. */
+let abilities: CompanionAbilities = OWNER_ABILITIES;
+/** Why a guest's link opens nothing, for its status screen. */
+let guestReason: GuestUnavailableReason = 'unavailable';
+/** A guest's hello was throttled: no request goes out before this time. */
+let guestWaitUntil = 0;
 let credential = (() => {
+  if (guestToken) return undefined;
   try {
     return browserCredential(localStorage);
   } catch {
     return undefined;
   }
 })();
-let bootstrap = new URLSearchParams(location.search).get('t') ?? '';
-const workerLink = new DashboardWorkerLink(parseWorkerLink(location.hash));
+let bootstrap = guestToken ? '' : (new URLSearchParams(location.search).get('t') ?? '');
+const workerLink = new DashboardWorkerLink(guestToken ? undefined : parseWorkerLink(location.hash));
 const arrivedWithLink = !!bootstrap;
 const nativeCompanion = /Macintosh/.test(navigator.userAgent) && /Electron\//.test(navigator.userAgent);
 // Remove credentials before loading a card or navigating anywhere else.
 if (location.search || workerLink.pending) history.replaceState(null, '', location.pathname);
-const auth = () => setBrowserAuth(credential?.token ?? '', credential ? '' : bootstrap);
+const auth = () => (guestToken ? setGuestAuth(guestToken) : setBrowserAuth(credential?.token ?? '', credential ? '' : bootstrap));
 auth();
 
 /** How this page reached the office, which decides what pairing means here. */
@@ -110,7 +148,7 @@ const WHERE: Record<OriginKind, { icon: IconName; label: string; line: string }>
 };
 
 /** Why the office isn't showing: still connecting, unreachable, no access, unpaired, or turned off. */
-type Gate = 'connecting' | 'unreachable' | 'access' | 'revoked' | 'off';
+type Gate = 'connecting' | 'unreachable' | 'access' | 'revoked' | 'off' | 'ended';
 let gate: Gate = 'connecting';
 let authorized = false;
 let fresh = false;
@@ -266,7 +304,7 @@ const missionRoster = createMissionRoster(missionList, {
 const workerMenu = createWorkerMenu({
   state(id) {
     const worker = store.workers.get(id);
-    return worker ? { worker, floor, pane: paneOf(ws, id), live: live(), busy: busy.has(id), native: nativeCompanion } : undefined;
+    return worker ? { worker, floor, pane: paneOf(ws, id), live: live(), busy: busy.has(id), native: nativeCompanion, work: abilities.work } : undefined;
   },
   run(command, { worker: w, floor: intended, pane }) {
     switch (command) {
@@ -395,15 +433,12 @@ const layoutTrigger = h(
   layoutName,
   h('span.dash-layout-caret', { 'aria-hidden': 'true' }, icon('chevron', 11)),
 );
-const layoutPop = h(
-  'div.dash-layout-pop',
-  { id: 'dash-layout-pop', role: 'dialog', 'aria-label': 'Workspace layout', hidden: true },
-  h('p.dash-layout-pop-title', {}, 'Layout'),
-  layouts,
-  h('div.dash-layout-pop-row', {}, h('span', {}, 'Terminal text'), zoomSeg),
-);
+const layoutTitle = h('p.dash-layout-pop-title', {}, 'Layout');
+const layoutPop = h('div.dash-layout-pop', { id: 'dash-layout-pop', role: 'dialog', 'aria-label': 'Workspace layout', hidden: true }, layoutTitle, layouts, h('div.dash-layout-pop-row', {}, h('span', {}, 'Terminal text'), zoomSeg));
 const layoutMenu = h('div.dash-layout-menu', {}, layoutTrigger, layoutPop);
-const upperDeck = h('div.dash-top-upper', {}, brand, gitPill, dragSpacer, pulse, topSep, h('div.dash-top-end', {}, allWorkersBtn, layoutMenu, board, subscriptions, settingsBtn));
+/** On a share link's page: that it's a shared view, whether it can change anything, and until when. */
+const guestBadgeEl = h('span.dash-guest-badge', { hidden: true });
+const upperDeck = h('div.dash-top-upper', {}, brand, guestBadgeEl, gitPill, dragSpacer, pulse, topSep, h('div.dash-top-end', {}, allWorkersBtn, layoutMenu, board, subscriptions, settingsBtn));
 const top = h('header.dash-top', {}, upperDeck, lowerDeck);
 
 function showLayouts(open: boolean, refocus = false) {
@@ -422,7 +457,7 @@ function positionQuietPop() {
   quietPop.style.left = `${Math.round(Math.max(0, Math.min(rawLeft, maxLeft)))}px`;
 }
 function showQuiet(open: boolean, refocus = false) {
-  if (open === quietOpen) return;
+  if (open === quietOpen || (open && !abilities.floorSwitch)) return;
   if (open) {
     showLayouts(false);
     workerMenu.close();
@@ -596,7 +631,38 @@ function toggleMaxPane(i: number) {
 }
 /** A worker on this floor, or a building agent, which every floor's workspace can open. */
 function workerOf(id: string): WorkerInfo | undefined {
-  return store.workers.get(id) ?? missionWorker(store.missionControl, id);
+  return store.workers.get(id) ?? missionWorker(store.missionControl, id) ?? (id === abilities.worker ? pinnedLast : undefined);
+}
+/** The last a single-worker link saw of its worker, kept on screen after the worker leaves. */
+let pinnedLast: WorkerInfo | undefined;
+/** A single-worker link whose worker isn't in the office's latest snapshot: it was sent home or ended. */
+function workerAbsent() {
+  return !!abilities.worker && authorized && fresh && !floorClosed() && !store.workers.has(abilities.worker);
+}
+/** A floor or single-worker link whose floor isn't open: the office holds it in the lobby and brings it back when the floor opens. */
+function floorClosed() {
+  return !!abilities.floor && authorized && fresh && floor !== abilities.floor;
+}
+/** A single-worker link's workspace: that worker, alone in one pane. */
+function pinWorkspace(id: string) {
+  const w = store.workers.get(id);
+  if (w) pinnedLast = w;
+  ws.layout = 'single';
+  ws.auto = false;
+  ws.slots[0] = id;
+  ws.focused = 0;
+  ws.maximized = null;
+}
+function paintGuestBadge() {
+  guestBadgeEl.hidden = !session || !authorized;
+  if (!session) return;
+  const b = guestBadge(session);
+  const key = JSON.stringify(b);
+  if (guestBadgeEl.dataset.key === key) return;
+  guestBadgeEl.dataset.key = key;
+  guestBadgeEl.dataset.mode = session.write ? 'edit' : 'view';
+  guestBadgeEl.title = b.title;
+  guestBadgeEl.replaceChildren(icon('link', 12), h('b', {}, b.label), h('span.dash-guest-mode', {}, b.mode), b.expires ? h('span.dash-guest-expiry', {}, b.expires) : '');
 }
 /** Building agents open in this floor's panes: the workspace keeps them while Mission Control has them. */
 const inMission = (id: string) => !store.workers.has(id) && !!missionWorker(store.missionControl, id);
@@ -657,6 +723,7 @@ const paneHost: PaneHost = {
     changed();
   },
   close(i) {
+    if (abilities.worker) return;
     closeSlot(ws, i);
     changed();
     panes[ws.focused]?.focusContent();
@@ -683,9 +750,13 @@ const paneHost: PaneHost = {
   settings: (pane) => void showSettings(pane),
   changes: (id) => void showChanges(id),
   toWhiteboard: (id, path, intended) => void toBoard(id, path, intended),
+  work: () => abilities.work,
+  owner: () => abilities.owner,
+  pinned: () => !!abilities.worker,
 };
 /** A file a worker made, as a card on this floor's Whiteboard, opened there. */
 async function toBoard(workerId: string, path: string, intended: string) {
+  if (!abilities.work || !abilities.whiteboard) return;
   const { sendWorkspaceFile } = await import('./ui/thread-deliverable');
   whiteboard ??= await import('./ui/whiteboard');
   if (!live() || intended !== floor) return toast('Reconnect to the office to send it to the Whiteboard', 'warn');
@@ -694,6 +765,7 @@ async function toBoard(workerId: string, path: string, intended: string) {
 }
 /** A worker's Changes window: its changed files and their diff, with commit, discard and open a PR. */
 async function showChanges(id: string) {
+  if (!abilities.work) return;
   const w = store.workers.get(id);
   if (!w || w.cloud) return;
   if (w.lost) return toast(`${w.name}'s worktree is missing, so there are no changes to show`, 'warn');
@@ -773,13 +845,25 @@ for (const [handle, axis] of [
 // --- The connection --------------------------------------------------------------------------------
 
 const net = new Net(
-  () => ({ ...store.profile, name: 'Owner · browser' }),
+  () => ({ ...store.profile, name: guestToken ? 'Guest' : 'Owner · browser' }),
   () => null,
   {
     client: 'dashboard',
     device: () => credential?.token ?? '',
-    floor: () => (store.floor ?? read(DASHBOARD_FLOOR_KEY)) || null,
+    floor: () => (guestToken && session?.floorId) || (store.floor ?? read(DASHBOARD_FLOOR_KEY)) || null,
+    ...(guestToken
+      ? {
+          protocols: () => guestWsProtocols(guestToken),
+          closed: (code: number, reason: string) => {
+            const outcome = guestCloseOutcome(code, reason);
+            if (outcome.kind === 'reconnect') return false;
+            guestEnded(outcome.reason);
+            return true;
+          },
+        }
+      : {}),
     authorize: async (signal) => {
+      if (guestToken) return guestHello(signal);
       let response: Response;
       try {
         response = await fetch(withToken('/api/mobile/hello?client=dashboard'), { cache: 'no-store', credentials: 'same-origin', signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]) });
@@ -805,6 +889,17 @@ const net = new Net(
       return true;
     },
     unauthorized: () => {
+      if (guestToken) {
+        // A refused hello says why. A socket the office closed without saying asks hello again shortly.
+        const why = heardGuest;
+        heardGuest = undefined;
+        if (why) return guestEnded(why);
+        authorized = false;
+        fresh = false;
+        clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => void net.connect(), 5_000);
+        return paint();
+      }
       authorized = false;
       fresh = false;
       bootstrap = '';
@@ -824,6 +919,57 @@ const net = new Net(
 /** Why the last access check was refused, for `unauthorized` to show. */
 bindFactory(net);
 let heard: Gate | undefined;
+let heardGuest: GuestUnavailableReason | undefined;
+/** A share link's access check: what it allows, why it opens nothing, or that the office is out of reach. */
+async function guestHello(signal: AbortSignal): Promise<boolean> {
+  const unreachable = (why: string) => {
+    if (!authorized) {
+      gate = 'unreachable';
+      paint();
+    }
+    return new Error(why);
+  };
+  if (Date.now() < guestWaitUntil) throw unreachable('Waiting before asking again');
+  let response: Response;
+  try {
+    response = await fetch('/api/guest/hello', { cache: 'no-store', credentials: 'omit', signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]) });
+  } catch {
+    if (signal.aborted) throw new Error('Access check cancelled');
+    throw unreachable('Office unavailable');
+  }
+  const body: unknown = await response.json().catch(() => undefined);
+  if (signal.aborted) throw new Error('Access check cancelled');
+  const outcome = guestHelloOutcome(response.status, body, response.headers.get('retry-after'));
+  if (outcome.kind === 'refused') {
+    heardGuest = outcome.reason;
+    return false;
+  }
+  if (outcome.kind === 'throttled') guestWaitUntil = Date.now() + outcome.retryMs;
+  if (outcome.kind !== 'ok') throw unreachable('Office unavailable');
+  adoptSession(outcome.session);
+  authorized = true;
+  return true;
+}
+/** Takes on what the link allows. Panes are rebuilt when that changes, since they read it when made. */
+function adoptSession(next: GuestSession) {
+  const changedScope = JSON.stringify(next) !== JSON.stringify(session);
+  session = next;
+  abilities = guestAbilities(next);
+  if (changedScope && panes.length) disposePanes();
+}
+/** A share link that opens nothing any more: its status screen, and no reconnecting. */
+function guestEnded(reason: GuestUnavailableReason) {
+  guestReason = reason;
+  gate = 'ended';
+  authorized = false;
+  fresh = false;
+  clearTimeout(retryTimer);
+  // Sharing turned off can come back, so its tab keeps the link for Try again; the rest are over.
+  if (guestRefusalFinal(reason)) forgetGuestToken(guestTab());
+  closeAllModals();
+  net.close();
+  paint();
+}
 async function refusal(response: Response): Promise<Gate> {
   const body = (await response.json().catch(() => ({}))) as { companionOff?: boolean };
   return body.companionOff ? 'off' : credential ? 'revoked' : 'access';
@@ -847,6 +993,10 @@ net.onStatus((up) => {
   paint();
 });
 net.onMessage((msg) => {
+  if (guestToken && msg.t === 'welcome') {
+    const next = parseGuestSession(msg.guest);
+    if (next) adoptSession(next);
+  }
   const entering = msg.t === 'welcome' || msg.t === 'floor.enter';
   if (entering) {
     fresh = true;
@@ -892,17 +1042,18 @@ store.on('screens', (changedId) => {
   schedulePreviews();
 });
 async function showFloorOrder() {
+  if (!abilities.floorAdmin) return;
   const { openFloorOrder } = await import('./ui/floor-reorder');
   openFloorOrder(net);
 }
 async function addFloor() {
-  if (!live()) return;
+  if (!live() || !abilities.floorAdmin) return;
   [addFloorUi, folderUi] = await Promise.all([addFloorUi ?? import('./ui/add-floor'), folderUi ?? import('./ui/folder-browser')]);
   if (!live()) return;
   addFloorUi.openAddFloor(net, (id) => goFloor(id));
 }
 function goFloor(id: string) {
-  if (!live()) return;
+  if (!live() || !abilities.floorSwitch) return;
   showQuiet(false);
   showLayouts(false);
   if (showingWorkers) showWorkers(false);
@@ -960,6 +1111,10 @@ function measureFloorStrip() {
 }
 /** Shows the most relevant floors' full tabs that fit beside the strip's buttons, and folds the rest into "+N more". */
 function fitFloorStrip() {
+  if (!abilities.floorSwitch) {
+    quietTrigger.hidden = true;
+    return;
+  }
   const size = stripSize ?? measureFloorStrip();
   if (!size) return;
   const chips = [...floors.querySelectorAll<HTMLButtonElement>('button.dash-floor-chip')];
@@ -1036,6 +1191,14 @@ function followWorkerLink() {
   openHere(result.link.worker, true);
 }
 window.addEventListener('hashchange', () => {
+  // A share link pasted into this tab: keep its token for this tab, take it out of the address, and start as its guest.
+  if (guestTokenFromHash(location.hash)) {
+    guestTokenAtBoot(location.hash, guestTab());
+    history.replaceState(null, '', `${location.pathname}${hashWithoutGuestToken(location.hash)}`);
+    location.reload();
+    return;
+  }
+  if (guestToken) return;
   const next = parseWorkerLink(location.hash);
   if (!next) return;
   workerLink.set(next);
@@ -1264,33 +1427,49 @@ function paintNow() {
   addFloorBtn.classList.toggle('with-label', !hasFloors);
   addFloorLabel.hidden = hasFloors;
   reorderFloors.disabled = !up || store.floors.length < 2;
+  // A share link's page leaves out what its link doesn't cover rather than greying it out.
+  addFloorBtn.hidden = reorderFloors.hidden = quietAddBtn.hidden = quietReorderBtn.hidden = !abilities.floorAdmin;
+  floors.hidden = floorTrack.hidden = !abilities.floorSwitch;
+  agentBtn.hidden = !abilities.work;
+  shellBtn.hidden = abilities.guest;
+  layouts.hidden = layoutTitle.hidden = !!abilities.worker;
+  paintGuestBadge();
   agentBtn.disabled = shellBtn.disabled = !up || !here || busy.has('hire');
   // An empty floor's pane carries the orange Hire; once someone works here the sidebar's does.
   agentBtn.classList.toggle('accent', !here || store.workers.size > 0);
   board.disabled = !up || !here;
   subscriptions.disabled = settingsBtn.disabled = !up;
   sideToggle.disabled = !authorized;
-  sideToggle.hidden = !authorized || showingWorkers;
+  sideToggle.hidden = !authorized || showingWorkers || !abilities.roster;
   layoutMenu.hidden = !authorized || showingWorkers;
+  if (!abilities.building) showingWorkers = false;
   const link = up ? 'Connected' : authorized && !net.up ? 'Disconnected' : 'Connecting';
   linkDot.dataset.state = up ? 'up' : authorized && !net.up ? 'down' : 'wait';
   linkDot.setAttribute('aria-label', link);
   linkDot.title = link;
   content.classList.toggle('dash-stale', !up);
-  content.classList.toggle('side-closed', !sideOpen);
-  content.hidden = !authorized || showingWorkers;
+  content.classList.toggle('side-closed', !sideOpen || !abilities.roster);
+  // A single-worker link whose worker had already left before anything arrived: only that is shown.
+  const nobody = floorClosed() || (workerAbsent() && !pinnedLast);
+  content.hidden = !authorized || showingWorkers || nobody;
   buildingView.el.hidden = !authorized || !showingWorkers;
-  allWorkersBtn.hidden = !authorized;
+  allWorkersBtn.hidden = !authorized || !abilities.building;
   allWorkersBtn.disabled = !authorized;
   allWorkersBtn.setAttribute('aria-pressed', String(showingWorkers));
   $('dashboard')
     .querySelector('.dash-skip')
     ?.setAttribute('href', showingWorkers ? '#all-workers-heading' : '#worker-detail');
-  authPanel.hidden = authorized;
-  lowerDeck.hidden = !authorized;
+  authPanel.hidden = authorized && !nobody;
+  lowerDeck.hidden = !authorized || !abilities.roster;
   topSep.hidden = !authorized;
-  board.hidden = subscriptions.hidden = settingsBtn.hidden = !authorized;
+  board.hidden = !authorized || !abilities.whiteboard;
+  subscriptions.hidden = settingsBtn.hidden = !authorized || !abilities.owner;
   paintBanner();
+  if (nobody) {
+    gitPill.hidden = pulse.hidden = true;
+    disposePanes();
+    return paintGate();
+  }
   if (!authorized) {
     document.title = companionDocumentTitle(officeName, 0, nativeCompanion);
     gitPill.hidden = true;
@@ -1300,19 +1479,23 @@ function paintNow() {
     disposePanes();
     return paintGate();
   }
-  const buildingRows = buildingRoster({ floors: store.floors, building: store.building, currentFloor: store.floor, workers: store.workers.values(), mission: store.missionControl });
-  document.title = companionDocumentTitle(officeName, buildingWaitingCount({ buildingRows, mission: store.missionControl }), nativeCompanion);
+  const mission = abilities.missionControl ? store.missionControl : undefined;
+  const buildingRows = buildingRoster({ floors: store.floors, building: store.building, currentFloor: store.floor, workers: store.workers.values(), mission });
+  document.title = companionDocumentTitle(officeName, buildingWaitingCount({ buildingRows, mission }), nativeCompanion);
   latestBuildingRows = buildingRows;
   paintConsole(up, buildingRows);
+  if (!abilities.building) pulse.hidden = true;
+  if (!abilities.roster) gitPill.hidden = true;
   allWorkersCount.textContent = String(buildingRows.length);
   allWorkersBtn.setAttribute('aria-label', `All workers, ${buildingRows.length}`);
-  if (showingWorkers) buildingView.update({ rows: buildingRows, floors: store.floors, live: up, canHire: !!here, mission: store.missionControl });
+  if (showingWorkers) buildingView.update({ rows: buildingRows, floors: store.floors, live: up, canHire: !!here, mission, work: abilities.work });
   const b = store.floor && store.whiteboard.board(store.floor);
   const unread = b ? cardsNewestFirst(b).filter((c) => cardChanged(b, OWNER, c.id)).length : 0;
   boardCount.textContent = String(unread);
   boardCount.classList.toggle('hidden', !unread);
   board.setAttribute('aria-label', unread ? `Whiteboard, ${unread} unread` : 'Whiteboard');
-  if (fresh && wsFloor === floor) {
+  if (abilities.worker) pinWorkspace(abilities.worker);
+  else if (fresh && wsFloor === floor) {
     const { gone, filled } = syncWorkspace(ws, ordered(), onFloor, inMission);
     // A building agent leaves no floor: it was turned off or removed, which the office already says.
     for (const id of gone) if (names.has(id)) toast(`${names.get(id)} has left the floor.`, 'info');
@@ -1333,8 +1516,14 @@ function paintBanner() {
   let actionKind = '';
   if (authorized && !net.up) {
     tone = 'warn';
-    text = navigator.onLine ? 'Disconnected from the office. What you see may be out of date, and nothing you type is queued. Reconnecting…' : 'This computer is offline. Worker actions and terminal input are off; nothing will be replayed.';
+    if (!navigator.onLine) text = 'This computer is offline. Worker actions and terminal input are off; nothing will be replayed.';
+    else if (guestToken) text = 'The office is offline or restarting. What you see may be out of date. Reconnecting…';
+    else text = 'Disconnected from the office. What you see may be out of date, and nothing you type is queued. Reconnecting…';
     actionKind = 'reconnect';
+  } else if (workerAbsent() && pinnedLast) {
+    tone = 'info';
+    glyph = 'home';
+    text = `${pinnedLast.name} has left. This is the last of its work this link showed.`;
   } else if (switching) {
     tone = 'info';
     glyph = 'refresh';
@@ -1343,7 +1532,7 @@ function paintBanner() {
     tone = 'info';
     text = notice;
     actionKind = 'dismiss';
-  } else if (authorized && !credential && where !== 'local') {
+  } else if (authorized && !credential && !guestToken && where !== 'local') {
     tone = 'accent';
     glyph = 'key';
     text = 'This browser is using the office’s link for this start. Pair it to keep access after the office restarts.';
@@ -1377,7 +1566,56 @@ function paintBanner() {
   bannerActions.replaceChildren(...actions);
 }
 
+/** A share link's status screens: none names the office's address, paths or anything else about it. */
+function paintGuestGate() {
+  const retry = h(
+    'button.btn.primary',
+    {
+      type: 'button',
+      onclick: () => {
+        gate = 'connecting';
+        guestWaitUntil = 0;
+        paint();
+        void net.connect();
+      },
+    },
+    icon('refresh', 14),
+    'Try again',
+  );
+  let view: { gate: string; children: (HTMLElement | null)[] };
+  if (floorClosed()) {
+    view = {
+      gate: 'closed',
+      children: [h('div.dash-gate-icon', {}, icon('power', 28)), h('h2', {}, 'This floor isn’t open right now'), h('p', {}, 'The shared view comes back by itself when the floor opens again.')],
+    };
+  } else if (workerAbsent()) {
+    view = {
+      gate: 'left',
+      children: [h('div.dash-gate-icon', {}, icon('home', 28)), h('h2', {}, 'This worker has left'), h('p', {}, 'The worker this link shows was sent home or finished its work. There is nothing more to see here.')],
+    };
+  } else if (gate === 'ended') {
+    const { title, text } = guestUnavailableView(guestReason);
+    view = {
+      gate: 'ended',
+      children: [h('div.dash-gate-icon.warn', {}, icon(guestReason === 'disabled' ? 'power' : 'lock', 28)), h('h2', {}, title), h('p', {}, text), guestReason === 'disabled' ? h('div.row.dash-gate-actions', {}, retry) : null],
+    };
+  } else if (gate === 'unreachable') {
+    view = {
+      gate: 'unreachable',
+      children: [
+        h('div.dash-gate-icon.warn', {}, icon('alert', 28)),
+        h('h2', {}, 'The office is offline or restarting'),
+        h('p', {}, 'This page reconnects by itself as soon as the office is back.'),
+        h('div.row.dash-gate-actions', {}, retry),
+      ],
+    };
+  } else view = { gate: 'connecting', children: [h('div.spinner'), h('h2', {}, 'Opening the shared view…')] };
+  authPanel.dataset.gate = view.gate;
+  authPanel.replaceChildren(h('div.dash-gate-card', {}, ...view.children));
+}
+
 function paintGate() {
+  if (guestToken) return paintGuestGate();
   const steps = (
     where === 'local'
       ? []
@@ -1447,6 +1685,8 @@ function paintGate() {
       h('p', {}, 'It’s turned off on the office’s computer, in ', h('b', {}, '⚙️ Settings → Phone & web → Web companion'), '. Paired browsers stay paired, and this page opens by itself once it’s back on.'),
       h('div.row.dash-gate-actions', {}, retry),
     ],
+    // A share link's own status screen (paintGuestGate); an owner's page never ends this way.
+    ended: () => [h('div.spinner')],
   };
   authPanel.dataset.gate = gate;
   authPanel.replaceChildren(h('div.dash-gate-card', {}, ...views[gate](), whereChip));
@@ -1465,7 +1705,16 @@ function paintSide() {
     sideSub.replaceChildren(icon('branch', 12), h('span', { title: where }, subText));
   }
   roster.update({ floor, workers: [...store.workers.values()], focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id), mission: store.missionControl });
-  missionRoster.update({ mission: store.missionControl, floor, focused: focusedWorker(ws) ?? '', live: live(), pane: (id) => paneOf(ws, id), here: (id) => store.workers.get(id), shortcut: '⌘ O' });
+  missionRoster.update({
+    mission: abilities.missionControl ? store.missionControl : undefined,
+    floor,
+    focused: focusedWorker(ws) ?? '',
+    live: live(),
+    pane: (id) => paneOf(ws, id),
+    here: (id) => store.workers.get(id),
+    shortcut: '⌘ O',
+    owner: abilities.owner,
+  });
 }
 
 function paintWorkspace() {
@@ -1543,11 +1792,11 @@ function schedulePreviews() {
 
 /** A shell opens at once, as B at an empty desk does in the office: no prompt and no worktree. */
 function openShell() {
-  if (!live() || !store.currentFloor()) return;
+  if (!live() || !store.currentFloor() || abilities.guest) return;
   void action({ t: 'worker.spawn', deskId: 'auto', kind: 'shell' }, '', floor, 'Shell opened.').then(warn);
 }
 function hire(deskId = 'auto', targetPane?: number) {
-  if (!live() || !store.currentFloor()) return;
+  if (!live() || !store.currentFloor() || !abilities.work) return;
   const intended = floor;
   const key = draftKey(intended, 'hire:agent');
   const desk = deskId === 'auto' ? undefined : DESK_BY_ID.get(deskId)?.label;
@@ -1586,6 +1835,7 @@ const warn = (error: string | undefined) => {
   if (error) toast(error, 'warn');
 };
 function sendHome(w: WorkerInfo) {
+  if (!abilities.work) return;
   const intended = floor;
   const confirm = (cleanup: 'keep' | 'worktree' | 'all' = 'keep') => void action({ t: 'worker.kill', workerId: w.id, cleanup, deleteSession: false }, w.id, intended, `${w.name} went home.`).then(warn);
   void (promptUi ? Promise.resolve(promptUi) : import('./ui/prompt')).then((loadedPrompt) => {
@@ -1612,6 +1862,7 @@ function sendHome(w: WorkerInfo) {
 }
 /** The office's Settings, less what only the 3D office has (see SETTINGS_CARDS); the Mac app's companion also gets Phone & web. */
 async function showSettings(pane?: SettingsPane) {
+  if (!abilities.owner) return;
   [settingsUi, folderUi] = await Promise.all([settingsUi ?? import('./ui/settings'), folderUi ?? import('./ui/folder-browser')]);
   if (!live()) return;
   settingsUi.openSettings(net, { surface: nativeCompanion ? 'mac-companion' : 'companion', first: pane, hireForSetup: hireForWorktreeSetup });
@@ -1625,7 +1876,7 @@ window.addEventListener(OPEN_SETTINGS_EVENT, (e) => {
 });
 /** Settings' "Have a worker set it up…": the hire window with a task to write this repository's worktree setup and open a pull request. */
 function hireForWorktreeSetup() {
-  if (!live() || !store.currentFloor()) return;
+  if (!live() || !store.currentFloor() || !abilities.owner) return;
   const intended = floor;
   const now = store.worktreeSetup ? describeSetup(store.worktreeSetup.resolved) : 'runs what the office detects from its lockfiles';
   void (promptUi ? Promise.resolve(promptUi) : import('./ui/prompt')).then((loadedPrompt) => {
@@ -1646,9 +1897,10 @@ function hireForWorktreeSetup() {
   });
 }
 async function openBoard() {
+  if (!abilities.whiteboard) return;
   const intended = floor;
   whiteboard ??= await import('./ui/whiteboard');
-  if (live() && intended === floor && store.currentFloor()) whiteboard.openWhiteboard(net, { queueOffline: false });
+  if (live() && intended === floor && store.currentFloor()) whiteboard.openWhiteboard(net, { queueOffline: false, readOnly: !abilities.work });
 }
 
 // --- This browser's access ------------------------------------------------------------------------------
@@ -1672,6 +1924,7 @@ function forgetHere(text: string) {
 }
 
 function accessDialog() {
+  if (guestToken) return;
   const info = WHERE[where];
   const note = h('p.note', { role: 'status', hidden: true });
   const fail = (text: string) => {
@@ -1775,6 +2028,8 @@ window.addEventListener(
     workspaceShortcut(
       e,
       (command) => {
+        // A single-worker link's one pane stays as it is.
+        if (abilities.worker && (command.action === 'layout' || command.action === 'pane' || command.action === 'worker')) return;
         switch (command.action) {
           case 'floors':
             showQuiet(!quietOpen, quietOpen);
@@ -1869,7 +2124,7 @@ function sideKeys(e: KeyboardEvent) {
 workerList.addEventListener('keydown', sideKeys);
 missionList.addEventListener('keydown', sideKeys);
 window.addEventListener('storage', (event) => {
-  if (event.key !== BROWSER_KEY) return;
+  if (event.key !== BROWSER_KEY || guestToken) return;
   net.close();
   closeAllModals();
   try {

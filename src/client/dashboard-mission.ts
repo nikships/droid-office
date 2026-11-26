@@ -24,6 +24,8 @@ export interface MissionRosterState {
   here(id: string): WorkerInfo | undefined;
   /** The Orchestrator's shortcut, shown on its row. */
   shortcut?: string;
+  /** False on a share link: an Orchestrator that's off is left out rather than pointing at Settings. */
+  owner?: boolean;
 }
 
 export interface MissionRosterHost {
@@ -285,7 +287,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     if (orchestrator) {
       children.push(paintAgent(orchestrator, next));
       seen.add(ORCHESTRATOR_ID);
-    } else {
+    } else if (next.owner !== false) {
       off.disabled = !next.live;
       children.push(off);
     }

@@ -12,6 +12,8 @@ export interface WorkerMenuState {
   live: boolean;
   busy: boolean;
   native: boolean;
+  /** False on a view-only share link: only opening panes and copying are offered. */
+  work?: boolean;
 }
 interface Item {
   action: WorkerMenuAction;
@@ -43,7 +45,8 @@ export function workerMenuItems(s: WorkerMenuState): Item[] {
   items.push({ action: 'copy-name', label: 'Name', icon: 'copy', section: 'Copy' });
   if (w.worktree?.branch) items.push({ action: 'copy-branch', label: 'Branch', icon: 'branch', section: 'Copy' });
   items.push({ action: 'home', label: 'Send home…', icon: 'home', section: '', shortcut: s.native ? '⇧⌘W' : undefined });
-  return items.map((item) => ({ ...item, disabled: !!item.disabled || !s.live || (s.busy && item.section === 'Worker') || (s.busy && item.action === 'home') }));
+  const offered = s.work === false ? items.filter((item) => item.section === 'Workspace' || item.section === 'Copy') : items;
+  return offered.map((item) => ({ ...item, disabled: !!item.disabled || !s.live || (s.busy && item.section === 'Worker') || (s.busy && item.action === 'home') }));
 }
 
 export function createWorkerMenu(host: { state(id: string): WorkerMenuState | undefined; run(action: WorkerMenuAction, state: WorkerMenuState): void }) {

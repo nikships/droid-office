@@ -78,7 +78,8 @@ export function routeWhiteboardMessage(msg: ServerMsg) {
   if (show?.selection.kind === 'card') open.shown(actor.name, show.selection.id);
 }
 
-export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: boolean } = {}): void {
+/** `readOnly` watches the board: cards, marks and comments stay live, and nothing on the board can change from here. */
+export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: boolean; readOnly?: boolean } = {}): void {
   if (open) {
     if (opts.card) open.go(opts.card);
     return;
@@ -90,6 +91,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
   }
   const floor: string = here;
   const sync = store.whiteboard;
+  const readOnly = !!opts.readOnly;
 
   // ---- Frame of the window ----
   const titleEl = h('h2', {}, 'Whiteboard');
@@ -101,7 +103,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
   const header = h('header', {}, back, navSlot, titles, actions);
   const bars = h('div.wb-bars');
   const main = h('div.wb-main');
-  const el = h('div.modal.wb', { 'aria-label': 'Whiteboard', tabindex: '-1' }, header, bars, main);
+  const el = h('div.modal.wb', { 'aria-label': 'Whiteboard', tabindex: '-1', class: readOnly ? 'wb-readonly' : '' }, header, bars, main);
 
   let card: string | null = null;
   let surface: Surface | null = null;
@@ -150,6 +152,8 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
   /** Applies the owner's batch; what went wrong goes in a toast (an expired batch becomes a draft in the window). */
   async function apply(ops: Op[], what = 'That'): Promise<boolean> {
     if (!ops.length) return true;
+    // Watching changes nothing, not even where the wall points or what counts as read.
+    if (readOnly) return false;
     // The desktop companion does not author while disconnected. Batches already queued stay queued.
     if (opts.queueOffline === false && sync.state(floor) !== 'live') {
       if (ops.some((op) => op.op !== 'show' && op.op !== 'read')) toast('Disconnected. This edit was not sent. Edits already waiting stay queued until the office confirms them.', 'warn');
@@ -303,8 +307,8 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
             emptyState(
               '🧑‍🎨',
               'Nothing on the board yet',
-              'Ask a worker to put something on it ("put your plan on the Whiteboard"), drop or paste a Markdown/video/image/HTML file here, or create a card.',
-              h('div.row', {}, h('button.btn.accent', { type: 'button', onclick: addCard }, 'Add card'), h('button.btn', { type: 'button', onclick: newCanvas }, 'New canvas')),
+              readOnly ? 'Cards workers or the owner put here show up as they arrive.' : 'Ask a worker to put something on it ("put your plan on the Whiteboard"), drop or paste a Markdown/video/image/HTML file here, or create a card.',
+              readOnly ? undefined : h('div.row', {}, h('button.btn.accent', { type: 'button', onclick: addCard }, 'Add card'), h('button.btn', { type: 'button', onclick: newCanvas }, 'New canvas')),
             ),
           ),
         ),
@@ -331,6 +335,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
   }
 
   function wireGridDrop(wrap: HTMLElement): HTMLElement {
+    if (readOnly) return wrap;
     wrap.addEventListener('dragenter', (e) => {
       if (!e.dataTransfer?.types.includes('Files')) return;
       e.preventDefault();
@@ -401,11 +406,11 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
         role: 'listitem',
         'data-card': c.id,
         class: classes,
-        title: selecting ? `${on ? 'Unselect' : 'Select'} “${c.title}”` : `Open “${c.title}” (${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl'}-click to select)`,
+        title: selecting ? `${on ? 'Unselect' : 'Select'} “${c.title}”` : readOnly ? `Open “${c.title}”` : `Open “${c.title}” (${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl'}-click to select)`,
         'aria-pressed': selecting ? String(on) : undefined,
         onclick: (e: Event) => {
           const m = e as MouseEvent;
-          if (selecting || m.metaKey || m.ctrlKey || m.shiftKey) toggleSelected(c.id);
+          if (!readOnly && (selecting || m.metaKey || m.ctrlKey || m.shiftKey)) toggleSelected(c.id);
           else go(c.id);
         },
       },
@@ -444,10 +449,11 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     const actedAt = new Map<string, number>();
     el.classList.add('wb-on-card');
     setDoing(modal, `🧑‍🎨 on “${c.title}” at the Whiteboard`);
-    panel = new Panel({ apply, surface: () => surface, changes, fileUrl });
+    panel = new Panel({ apply, surface: () => surface, changes, fileUrl, readOnly });
     surface = new Surface(
       {
         floor,
+        readOnly,
         apply,
         notify: (text) => toast(text, 'warn'),
         acted: (name, ping) => {
@@ -528,11 +534,11 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     return h(
       'div.wb-toolbar',
       {},
-      h('div.seg', { role: 'radiogroup', 'aria-label': 'Mode' }, tb.use, tb.markup, tb.pan),
-      h('span.wb-key-hint', {}, h('span.key', { title: 'Switches between Use and Mark up' }, 'M'), tb.hint),
+      h('div.seg', { role: 'radiogroup', 'aria-label': 'Mode' }, tb.use, readOnly ? null : tb.markup, tb.pan),
+      readOnly ? h('span.wb-key-hint', {}, tb.hint) : h('span.wb-key-hint', {}, h('span.key', { title: 'Switches between Use and Mark up' }, 'M'), tb.hint),
       h('span.grow'),
-      h('button.btn.sm', { type: 'button', title: 'Add a PNG, JPEG, WebP or GIF (or paste or drop one)', onclick: () => pick.click() }, '🖼 Picture'),
-      pick,
+      readOnly ? null : h('button.btn.sm', { type: 'button', title: 'Add a PNG, JPEG, WebP or GIF (or paste or drop one)', onclick: () => pick.click() }, '🖼 Picture'),
+      readOnly ? null : pick,
       tb.marks,
       h(
         'div.seg.wb-zoom',
@@ -577,11 +583,13 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     tb.label.textContent = zoomLabel(s.zoom);
     tb.hint.textContent = s.pan
       ? 'Drag anywhere to pan. Use returns to the page.'
-      : s.mode === 'use'
-        ? canvas
-          ? 'Drag to pan. Mark up adds comments and stickies.'
-          : 'Click, type and press its buttons.'
-        : 'Click to pin a comment. Drag to place a sticky.';
+      : readOnly
+        ? 'View only: nothing you do here changes the card.'
+        : s.mode === 'use'
+          ? canvas
+            ? 'Drag to pan. Mark up adds comments and stickies.'
+            : 'Click, type and press its buttons.'
+          : 'Click to pin a comment. Drag to place a sticky.';
   }
 
   // ---- Header, bars ----
@@ -613,7 +621,8 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
         return;
       }
       const changedN = b ? changedCount(b) : 0;
-      sub.replaceChildren(b ? `${n} card${n === 1 ? '' : 's'} on ${store.currentFloor()?.name ?? 'this floor'}${changedN ? `, ${changedN} changed since you looked` : ''}` : 'Loading…');
+      sub.replaceChildren(b ? `${n} card${n === 1 ? '' : 's'} on ${store.currentFloor()?.name ?? 'this floor'}${changedN && !readOnly ? `, ${changedN} changed since you looked` : ''}` : 'Loading…');
+      if (readOnly) return actions.replaceChildren();
       actions.replaceChildren(
         h('button.btn.sm.accent', { type: 'button', onclick: addCard }, 'Add card'),
         h('button.btn.sm', { type: 'button', onclick: newCanvas }, 'New canvas'),
@@ -640,7 +649,8 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
     }
 
     const input = titleEl.querySelector<HTMLInputElement>('input.wb-title');
-    if (input && document.activeElement === input) {
+    if (readOnly) titleEl.replaceChildren(h('span.wb-title', { title: c.title }, c.title));
+    else if (input && document.activeElement === input) {
       // Leave a title being edited alone.
     } else {
       const t = h('input.wb-title', { type: 'text', value: c.title, maxlength: '120', 'aria-label': 'Title', title: 'Rename the card' });
@@ -689,6 +699,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
       copyBtn.textContent = (await copy(copyForAgent(c))) ? '✓ Copied' : 'Copy failed';
       setTimeout(() => (copyBtn.textContent = 'Copy for agent'), 1600);
     });
+    if (readOnly) return actions.replaceChildren(copyBtn);
     actions.replaceChildren(
       ...(editMdBtn ? [editMdBtn] : []),
       copyBtn,
@@ -918,8 +929,9 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
       return;
     }
     const s = surface;
-    if (k === 'm' || k === 'M') s.setMode(s.mode === 'use' ? 'markup' : 'use');
-    else if (k === 'h' || k === 'H') s.setPan(!s.pan);
+    if (k === 'm' || k === 'M') {
+      if (!readOnly) s.setMode(s.mode === 'use' ? 'markup' : 'use');
+    } else if (k === 'h' || k === 'H') s.setPan(!s.pan);
     else if ((k === 'f' || k === 'F') && !e.repeat) void s.toggleFullscreen();
     else if (k === '+' || k === '=') s.zoomBy(1);
     else if (k === '-' || k === '_') s.zoomBy(-1);
@@ -937,6 +949,7 @@ export function openWhiteboard(net: Net, opts: { card?: string; queueOffline?: b
   window.addEventListener('keydown', onKey, true);
   // A picture pasted on an open card becomes a picture mark; files pasted on the grid create artifact cards.
   const onPaste = (e: ClipboardEvent) => {
+    if (readOnly) return;
     if (!el.isConnected || modal.backdrop.nextElementSibling) return;
     const t = e.target as HTMLElement | null;
     if (t?.closest('input, textarea, [contenteditable]')) return;

@@ -127,6 +127,8 @@ export interface InlineTerminal {
   focus?: boolean;
   /** The containing pane already provides navigation between team members. */
   hideTeam?: boolean;
+  /** Watch only: no keystrokes, pastes, drops, focus reports or resizes reach the worker's terminal; it follows the terminal's own size. */
+  readOnly?: boolean;
 }
 
 /**
@@ -160,6 +162,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   // An external bot runs elsewhere and has no terminal here: its card in Mission Control stands in.
   if (!info || info.remote) return;
   const canThread = !inline && info.kind === 'agent' && !info.cloud;
+  const readOnly = !!inline?.readOnly;
   let thread: WorkerThread | undefined;
   let threadView = false;
   let setThreadView = (_next: 'thread' | 'raw', _focus = true) => {};
@@ -232,7 +235,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         };
       })();
   const disconnected = h('p.note.warn.hidden', { role: 'status' }, 'Disconnected. Terminal input is disabled until a fresh snapshot arrives.');
-  const host = h('div.term-host', { 'data-drop': 'Drop screenshots or files to put them in the terminal' });
+  const host = h('div.term-host', readOnly ? {} : { 'data-drop': 'Drop screenshots or files to put them in the terminal' });
   const threadHost = canThread ? h('div.term-thread-host', { hidden: true }) : null;
   // A lead's subagents, or a subagent's lead and teammates: one click to the next terminal.
   const team = h('div.term-team.chips.hidden', { role: 'group', 'aria-label': 'Team' });
@@ -266,7 +269,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     else team.replaceChildren(h('span.term-team-label', {}, summary ?? ''), ...mates.map(chip));
   };
 
-  const pathLinks = new TerminalPathLinksAddon({ floor: () => store.floor ?? '', workerId, workerName: info.name });
+  const pathLinks = new TerminalPathLinksAddon({ floor: () => store.floor ?? '', workerId, workerName: info.name, inert: readOnly });
   const term = new Terminal({
     ...terminalOptions(),
     fontFamily: TERM_FONT,
@@ -326,6 +329,11 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   let adoptSharedSize = false;
   /** Sizes the shared PTY to this window, or this window to the shared PTY (see adoptSharedSize). */
   const sendSize = (typing = false) => {
+    if (readOnly) {
+      const w = store.worker(workerId);
+      if (w && w.cols > 0 && w.rows > 0 && (w.cols !== term.cols || w.rows !== term.rows)) term.resize(w.cols, w.rows);
+      return;
+    }
     if (!mirror.ready || !opened || !net.up) return;
     if (!host.clientWidth || !host.clientHeight) return;
     if (typing || paneSizeChanged) adoptSharedSize = false;
@@ -429,10 +437,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     (snapshot) => {
       adoptSharedSize = snapshot.shared ?? adoptSharedSize;
       const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
-      if (focusIn) net.send({ t: 'term.input', workerId, data: focusIn });
+      if (focusIn && !readOnly) net.send({ t: 'term.input', workerId, data: focusIn });
       lastSentSize = '';
       pendingSizes.length = 0;
-      term.options.disableStdin = !net.up;
+      term.options.disableStdin = readOnly || !net.up;
       disconnected.classList.add('hidden');
       sendSize();
       scrollAtOnce(term, () => term.scrollToBottom());
@@ -450,7 +458,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       const changed = mirror.setVisible(!document.hidden);
       if (document.hidden && changed) net.send({ t: 'worker.detach', workerId });
       else if (!document.hidden && !changed && !mirror.ready) net.send({ t: 'worker.attach', workerId });
-      term.options.disableStdin = !net.up || !mirror.ready;
+      term.options.disableStdin = readOnly || !net.up || !mirror.ready;
     }
   };
   if (inline) document.addEventListener('visibilitychange', visibility);
@@ -603,7 +611,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       } else {
         thread.activate(false);
         net.send({ t: 'worker.attach', workerId });
-        term.options.disableStdin = !net.up;
+        term.options.disableStdin = readOnly || !net.up;
         sendSize();
         if (focus) setTimeout(() => alive && term.focus(), 0);
       }
@@ -644,7 +652,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     return false;
   });
   term.onData((data) => {
-    if (!mirror.ready || !net.up) return;
+    if (readOnly || !mirror.ready || !net.up) return;
     const kind = focus.classify(data);
     if (kind === 'repeat') return;
     // Focus moving is not typing, so it leaves the shared PTY at its size.
@@ -656,7 +664,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   // where they are, as a terminal does with a file dragged into it: Droid attaches a picture.
   let uploading = 0;
   const insertFiles = async (files: File[]) => {
-    if (!files.length || threadView) return;
+    if (readOnly || !files.length || threadView) return;
     if (!mirror.ready || !net.up) return toast('Disconnected. No files were sent.', 'warn');
     el.classList.toggle('uploading', ++uploading > 0);
     try {
@@ -681,13 +689,14 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   modal.backdrop.addEventListener('dragenter', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
+    if (readOnly) return;
     dragDepth++;
     el.classList.add('dropping');
   });
   modal.backdrop.addEventListener('dragover', (e) => {
     if (!hasFiles(e)) return;
     e.preventDefault();
-    e.dataTransfer!.dropEffect = 'copy';
+    e.dataTransfer!.dropEffect = readOnly ? 'none' : 'copy';
   });
   modal.backdrop.addEventListener('dragleave', (e) => {
     if (hasFiles(e) && --dragDepth <= 0) dragEnd();

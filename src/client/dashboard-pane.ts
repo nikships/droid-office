@@ -68,6 +68,12 @@ export interface PaneHost {
   changes?(id: string): void;
   /** Puts a file from a worker's workspace on this floor's Whiteboard. */
   toWhiteboard?(workerId: string, path: string, intendedFloor: string): void;
+  /** False on a view-only share link: the pane only watches. Absent means true. */
+  work?(): boolean;
+  /** False on a share link: Settings and other owner-only surfaces are left out. Absent means true. */
+  owner?(): boolean;
+  /** True on a single-worker share link: the pane can't be closed, swapped or pointed at a teammate. */
+  pinned?(): boolean;
 }
 
 export interface PaneState {
@@ -195,6 +201,9 @@ function renderPreview(into: HTMLElement, id: string, max: number) {
 }
 
 export function createPane(host: PaneHost, index: number): Pane {
+  const works = host.work?.() !== false;
+  const owns = host.owner?.() !== false;
+  const pinned = host.pinned?.() === true;
   // The pane's number is its handle: drag it onto another pane to swap them.
   const badge = h('span.dash-pane-no', { title: 'Drag to swap panes' }, String(index + 1));
   const who = h('span.dash-pane-who');
@@ -267,7 +276,7 @@ export function createPane(host: PaneHost, index: number): Pane {
   });
   const accepts = (e: DragEvent) => !!e.dataTransfer && (e.dataTransfer.types.includes(WORKER_MIME) || e.dataTransfer.types.includes(SLOT_MIME));
   el.addEventListener('dragover', (e) => {
-    if (!accepts(e) || !host.live()) return;
+    if (pinned || !accepts(e) || !host.live()) return;
     e.preventDefault();
     el.classList.add('drop-over');
   });
@@ -275,7 +284,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     if (!el.contains(e.relatedTarget as Node | null)) el.classList.remove('drop-over');
   });
   el.addEventListener('drop', (e) => {
-    if (!accepts(e)) return;
+    if (pinned || !accepts(e)) return;
     e.preventDefault();
     el.classList.remove('drop-over');
     const wid = e.dataTransfer?.getData(WORKER_MIME);
@@ -388,13 +397,14 @@ export function createPane(host: PaneHost, index: number): Pane {
               if (!orchestrator || orchestratorAwake(host.mission())) host.setView(w.id, 'terminal');
             },
         floor: intended,
-        ...(host.changes && !w.cloud ? { openChanges: (id: string) => host.changes?.(id) } : {}),
-        ...(host.toWhiteboard && !w.cloud ? { sendToWhiteboard: (id: string, path: string) => host.toWhiteboard?.(id, path, intended) } : {}),
+        ...(works ? {} : { readOnly: true }),
+        ...(works && host.changes && !w.cloud ? { openChanges: (id: string) => host.changes?.(id) } : {}),
+        ...(works && host.toWhiteboard && !w.cloud ? { sendToWhiteboard: (id: string, path: string) => host.toWhiteboard?.(id, path, intended) } : {}),
         ...(orchestrator
           ? {
               intro: () => (orchestratorStarted(host.mission()) ? undefined : (intro ??= orchestratorIntro())),
               blocked: () => orchestratorBlocked(host.mission()),
-              blockedAction: h('button.btn.sm', { type: 'button', onclick: () => host.settings(orchestratorSettingsPane(host.mission())) }, icon('settings', 13), 'Settings'),
+              ...(owns ? { blockedAction: h('button.btn.sm', { type: 'button', onclick: () => host.settings(orchestratorSettingsPane(host.mission())) }, icon('settings', 13), 'Settings') } : {}),
               interrupt: true,
               promptWakes: true,
             }
@@ -413,7 +423,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     const terminal = await host.terminal();
     opening = false;
     if (disposed || mode !== 'terminal' || id !== wid || term || !stage.isConnected || !host.usable(wid, intended)) return;
-    term = terminal.openTerminal(host.net, wid, undefined, undefined, { mount: stage, focus: takeFocus, hideTeam: true });
+    term = terminal.openTerminal(host.net, wid, undefined, undefined, { mount: stage, focus: takeFocus, hideTeam: true, readOnly: !works });
   }
 
   /** The Orchestrator's empty conversation: what it's for, and prompts that fill the composer. */
@@ -507,6 +517,10 @@ export function createPane(host: PaneHost, index: number): Pane {
   function paintTeam(w: WorkerInfo | undefined) {
     const mission = w && (buildingAgent(host.mission(), w.id) ?? missionLead(host.mission(), w.lead));
     // A bot's own pane lists its team in full, so only its subagents' panes get the strip.
+    if (pinned) {
+      teamNav.hidden = true;
+      return;
+    }
     if (w && mission && !(w.remote && w.id === mission.worker.id)) return paintMissionTeam(w, mission);
     if (w?.remote) {
       teamKey = '';
@@ -569,8 +583,9 @@ export function createPane(host: PaneHost, index: number): Pane {
     if (key === headKey) return;
     headKey = key;
     el.setAttribute('aria-label', w ? `Pane ${index + 1}: ${w.name}` : `Pane ${index + 1}: empty`);
-    badge.draggable = !!w;
-    closeBtn.hidden = !w;
+    badge.draggable = !!w && !pinned;
+    badge.title = pinned ? '' : 'Drag to swap panes';
+    closeBtn.hidden = !w || pinned;
     maxBtn.hidden = !s.canMaximize;
     maxBtn.replaceChildren(icon(s.maximized ? 'minimize' : 'maximize', 13));
     maxBtn.setAttribute('aria-label', s.maximized ? 'Restore layout' : 'Maximize pane');
@@ -627,10 +642,14 @@ export function createPane(host: PaneHost, index: number): Pane {
     // A building agent has no desk to send it home from, no branch to open a PR for, and nothing to fork.
     if (w.id === ORCHESTRATOR_ID)
       return actions.replaceChildren(
-        btn('New conversation', 'refresh', started, () => host.resetOrchestrator(), 'dash-orc-reset', started ? 'Start a new conversation' : 'No conversation yet'),
-        btn('Orchestrator settings', 'settings', true, () => host.settings('orchestrator'), 'dash-orc-settings', 'Settings → Orchestrator'),
+        ...(works ? [btn('New conversation', 'refresh', started, () => host.resetOrchestrator(), 'dash-orc-reset', started ? 'Start a new conversation' : 'No conversation yet')] : []),
+        ...(owns ? [btn('Orchestrator settings', 'settings', true, () => host.settings('orchestrator'), 'dash-orc-settings', 'Settings → Orchestrator')] : []),
       );
     if (w.remote) return actions.replaceChildren();
+    if (!works)
+      return actions.replaceChildren(
+        ...(w.pr ? [h('a.btn.sm.ghost.dash-pane-pr', { href: safeLink(w.pr.url), target: '_blank', rel: 'noopener noreferrer', title: `Pull request #${w.pr.number}` }, icon('pr', 13), h('span', {}, `#${w.pr.number}`))] : []),
+      );
     const asleep = isAsleep(w.status);
     const local = !w.cloud;
     const intended = host.floor();
@@ -701,15 +720,25 @@ export function createPane(host: PaneHost, index: number): Pane {
         {
           'data-live': String(host.live()),
           onclick: (e) => {
-            if (host.live() && e.target instanceof Element && !e.target.closest('button')) host.hire(index);
+            if (works && host.live() && e.target instanceof Element && !e.target.closest('button')) host.hire(index);
           },
         },
         h('div.dash-empty-icon', {}, icon('panes', 18)),
         h('h3', {}, s.anyone ? 'Open a worker here' : 'Nobody on this floor yet'),
-        h('p', {}, s.anyone ? (chips.length ? 'Pick someone from the floor, or drag them in from the list.' : 'Everyone on the floor is open in another pane.') : 'Hire a Droid and its terminal opens here.'),
+        h(
+          'p',
+          {},
+          s.anyone
+            ? chips.length
+              ? 'Pick someone from the floor, or drag them in from the list.'
+              : 'Everyone on the floor is open in another pane.'
+            : works
+              ? 'Hire a Droid and its terminal opens here.'
+              : 'Workers appear here when the owner hires them.',
+        ),
         chips.length ? h('div.dash-picks', {}, ...chips) : null,
         // The floor's one orange call to action when nobody works here yet; beside other panes the sidebar's Hire is.
-        h(s.anyone ? 'button.btn' : 'button.btn.accent', { type: 'button', disabled: !host.live(), onclick: () => host.hire(index) }, icon('plus', 14), 'Hire Droid here'),
+        works ? h(s.anyone ? 'button.btn' : 'button.btn.accent', { type: 'button', disabled: !host.live(), onclick: () => host.hire(index) }, icon('plus', 14), 'Hire Droid here') : null,
       ),
     );
   }
@@ -845,12 +874,14 @@ export function createPane(host: PaneHost, index: number): Pane {
           h(
             'p',
             {},
-            h('b', {}, `${w.name} needs you. `),
-            w.cloud
-              ? 'The office can’t answer this one from here: open its Factory session.'
-              : mode === 'thread'
-                ? 'This CLI dialog cannot be answered safely here. Open TTY to continue.'
-                : 'Its screen has no menu the companion can answer safely. Answer it in the terminal below.',
+            h('b', {}, works ? `${w.name} needs you. ` : `${w.name} is waiting for an answer. `),
+            !works
+              ? 'The owner answers it.'
+              : w.cloud
+                ? 'The office can’t answer this one from here: open its Factory session.'
+                : mode === 'thread'
+                  ? 'This CLI dialog cannot be answered safely here. Open TTY to continue.'
+                  : 'Its screen has no menu the companion can answer safely. Answer it in the terminal below.',
           ),
         ),
       );
@@ -891,7 +922,7 @@ export function createPane(host: PaneHost, index: number): Pane {
       h(
         'div.dash-question-card',
         {},
-        h('div.dash-question-top', {}, h('span.eyebrow', {}, `${w.name} needs your answer`), answered ? h('span.pill.done', {}, 'Sent') : null),
+        h('div.dash-question-top', {}, h('span.eyebrow', {}, works ? `${w.name} needs your answer` : `${w.name} is asking`), answered ? h('span.pill.done', {}, 'Sent') : null),
         h('h3.dash-question-preview', {}, display?.question ?? menu.question ?? 'Choose an answer'),
         h(
           'div.dash-question-summary',
@@ -900,36 +931,38 @@ export function createPane(host: PaneHost, index: number): Pane {
             ? 'Review and submit your answers to continue'
             : `${display?.position ? `Question ${display.position} of ${display.total} · ` : ''}${menu.multiSelect ? 'Select all that apply' : 'Select one answer'} · ${menu.choices.length} options`,
         ),
-        h(
-          'button.btn.accent',
-          {
-            type: 'button',
-            disabled: !live || questionReplying,
-            onclick: () => {
-              if (questionWorkspace || !qs) return;
-              void import('./ui/question-workspace').then(({ openQuestionWorkspace }) => {
-                if (questionWorkspace || !qs) return;
-                questionWorkspace = openQuestionWorkspace({
-                  name: w.name,
-                  state: qs,
-                  draft: questionDraft,
-                  onDraft: () => host.remember(draftKey(intended, `${w.id}:answer`), questionDraft.text),
-                  reply,
-                  review: () => {
-                    questionKey = '';
-                    paintQuestion(true);
-                  },
-                  // A cloud worker has no terminal to fall back on.
-                  raw: w.cloud ? undefined : () => host.setView(w.id, 'terminal'),
-                  onClose: () => {
-                    questionWorkspace = undefined;
-                  },
-                });
-              });
-            },
-          },
-          answered ? 'View answer status' : menu.review ? 'Review answers' : 'Answer questions',
-        ),
+        !works
+          ? h('p.note.info', {}, 'View only: the owner answers this one.')
+          : h(
+              'button.btn.accent',
+              {
+                type: 'button',
+                disabled: !live || questionReplying,
+                onclick: () => {
+                  if (questionWorkspace || !qs) return;
+                  void import('./ui/question-workspace').then(({ openQuestionWorkspace }) => {
+                    if (questionWorkspace || !qs) return;
+                    questionWorkspace = openQuestionWorkspace({
+                      name: w.name,
+                      state: qs,
+                      draft: questionDraft,
+                      onDraft: () => host.remember(draftKey(intended, `${w.id}:answer`), questionDraft.text),
+                      reply,
+                      review: () => {
+                        questionKey = '';
+                        paintQuestion(true);
+                      },
+                      // A cloud worker has no terminal to fall back on.
+                      raw: w.cloud ? undefined : () => host.setView(w.id, 'terminal'),
+                      onClose: () => {
+                        questionWorkspace = undefined;
+                      },
+                    });
+                  });
+                },
+              },
+              answered ? 'View answer status' : menu.review ? 'Review answers' : 'Answer questions',
+            ),
         questionReplying
           ? h('p.note.info', {}, 'Sending your answer…')
           : answered

@@ -4282,3 +4282,17 @@ button.wt-setting:hover { background: var(--surface-hover); color: var(--text); 
   .theme-tile, .wallpaper-drop, .wallpaper-current { transition: none; }
   .theme-tile:where(:hover) { transform: none; }
 }
+
+/* ---------- Guest companion (DOFF-961): a share link's page (dashboard-guest.ts). Its badge, and the Whiteboard watched without changing it ---------- */
+.dash-guest-badge { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface); font: 500 10.5px/1 var(--font-mono); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); white-space: nowrap; }
+.dash-guest-badge > :where(b) { font-weight: 600; color: var(--text); }
+.dash-guest-badge:where([data-mode='edit']) { border-color: var(--accent); }
+.dash-guest-badge:where([data-mode='edit']) > :where(svg) { color: var(--accent); }
+.dash-guest-mode::before, .dash-guest-expiry::before { content: '·'; margin-right: 6px; color: var(--text-secondary); }
+.themed .dash-guest-badge { background: var(--th-hover); }
+@media (max-width: 720px) {
+  .dash-guest-expiry { display: none; }
+}
+.wb-readonly :where(.wb-swatch, .wb-mark-x, .wb-resize) { display: none; }
+.wb-readonly :where(.wb-sticky, .wb-picture) { cursor: default; }
+/* ---------- end of Guest companion (DOFF-961) ---------- */

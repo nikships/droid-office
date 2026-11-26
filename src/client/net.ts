@@ -11,6 +11,10 @@ export interface NetOptions {
   /** Probe HTTP before each browser upgrade: failed upgrades cannot expose a 401 to JavaScript. */
   authorize?: (signal: AbortSignal) => Promise<boolean>;
   unauthorized?: () => void;
+  /** WebSocket subprotocols to offer (a share link's page offers its token this way, never in the URL). */
+  protocols?: () => string[] | undefined;
+  /** A close the office meant as final (a share link ended): true stops reconnecting. */
+  closed?: (code: number, reason: string) => boolean;
 }
 
 export class Net {
@@ -86,7 +90,9 @@ export class Net {
       if (t) q.set('t', t);
     }
     if (this.options.client) q.set('client', this.options.client);
-    const ws = new WebSocket(`${proto}://${location.host}/ws?${q}`);
+    const protocols = this.options.protocols?.();
+    const url = `${proto}://${location.host}/ws?${q}`;
+    const ws = protocols ? new WebSocket(url, protocols) : new WebSocket(url);
     this.ws = ws;
     ws.onopen = () => {
       if (this.ws !== ws || generation !== this.generation) return;
@@ -112,6 +118,7 @@ export class Net {
       this.uncertain();
       this.statusHandlers.forEach((h) => h(false));
       if (this.closedByUs) return;
+      if (this.options.closed?.(event.code, event.reason)) return this.close();
       // 4401: this device was unpaired. 4403: the owner turned the web companion off.
       if (event.code === 4401 || event.code === 4403) return this.unauthorized();
       this.schedule();

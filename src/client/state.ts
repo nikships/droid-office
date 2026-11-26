@@ -431,12 +431,13 @@ export class Store {
         this.connection = msg.connection;
         this.arrival = msg.arrival;
         this.floors = msg.floors;
-        this.projectsDir = msg.projectsDir;
-        this.upgrade = msg.upgrade;
-        this.machine = msg.machine;
+        // A share link's welcome (shared/guest-policy.ts) leaves out the owner-only parts below.
+        this.projectsDir = msg.projectsDir ?? { dir: '', custom: false };
+        this.upgrade = msg.upgrade ?? { available: false, phase: 'idle' };
+        this.machine = msg.machine ?? { cpu: 0, cores: 0, memUsed: 0, memTotal: 0, history: [], workers: 0 };
         this.clock = undefined; // compared again, in case it's another office (or the same one, restarted)
-        this.sky = msg.sky;
-        this.setJukebox(msg.jukebox);
+        this.sky = msg.sky ?? null;
+        if (msg.jukebox) this.setJukebox(msg.jukebox);
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.freshMain = msg.freshMain ?? { on: true };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
