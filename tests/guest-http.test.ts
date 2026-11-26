@@ -11,6 +11,7 @@ import { GUEST_FAILS_PER_SOURCE, GuestLinks } from '../src/server/guest-links.js
 import { GuestAudit } from '../src/server/guest-audit.js';
 import { createGuestHttp } from '../src/server/server-runtime/guest-http.js';
 import { send } from '../src/server/server-runtime/http-utils.js';
+import { isGuestClient, ownerDevices } from '../src/server/server-runtime/access.js';
 import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
@@ -189,12 +190,14 @@ test('ended links answer typed reasons, and wrong tokens are rate limited', asyn
   assert.equal(r.json().reason, 'revoked');
   assert.ok(!/office-mac|floor|\/projects/.test(r.body), 'no internal details');
   const live = make('view-office');
-  for (let i = 0; i < GUEST_FAILS_PER_SOURCE; i++) assert.equal((await call(base, '/api/guest/hello', { headers: auth('W'.repeat(43), { 'x-forwarded-for': '203.0.113.9' }) })).status, 401);
-  const limited = await call(base, '/api/guest/hello', { headers: auth(live.token, { 'x-forwarded-for': '203.0.113.9' }) });
+  const junk = (source: string) => call(base, '/api/guest/hello', { headers: auth('W'.repeat(43), { 'x-forwarded-for': source }) });
+  for (let i = 0; i < GUEST_FAILS_PER_SOURCE; i++) assert.equal((await junk('203.0.113.9')).status, 401);
+  const limited = await junk('203.0.113.9');
   assert.equal(limited.status, 429);
   assert.ok(Number(limited.headers['retry-after']) > 0);
   assert.equal(limited.json().reason, 'unavailable');
-  assert.equal((await call(base, '/api/guest/hello', { headers: auth(live.token, { 'x-forwarded-for': '198.51.100.1' }) })).status, 200);
+  assert.equal((await call(base, '/api/guest/hello', { headers: auth(live.token, { 'x-forwarded-for': '203.0.113.9' }) })).status, 200, 'a valid token passes while its source is limited');
+  assert.equal((await junk('198.51.100.1')).status, 401);
 });
 
 test('each preset reaches only in-scope floors, workers and Mission Control, and writes only when allowed', async (t) => {
@@ -210,7 +213,9 @@ test('each preset reaches only in-scope floors, workers and Mission Control, and
   assert.equal(await status(worker, '/api/thread/image?worker=w3&image=x'), 404);
   assert.equal(await status(worker, `/api/thread/image?worker=${ORCHESTRATOR_ID}&image=x`), 404);
   assert.equal(await status(worker, '/api/changes/file?worker=w1&floor=floor-a&path=a.png&side=new'), 200);
-  assert.equal(await status(worker, '/api/term/paths?worker=w1', 'POST'), 200);
+  assert.equal(await status(worker, '/api/term/paths?worker=w1', 'POST'), 404, 'view presets never resolve file paths');
+  assert.equal(await status(worker, '/api/term/file?worker=w1&path=~/.config/gh/hosts.yml'), 404);
+  assert.equal(await status(worker, '/api/thread/file?worker=w1&path=.env'), 404);
   assert.equal(await status(worker, '/api/whiteboard/file?floor=floor-a&card=c&hash=h'), 404, 'a worker link sees no Whiteboard');
   assert.equal(await status(worker, '/api/gh/pull?floor=floor-a&number=1'), 404);
   assert.equal(await status(worker, '/api/prompt/image?floor=floor-a', 'POST', PNG), 404);
@@ -218,8 +223,8 @@ test('each preset reaches only in-scope floors, workers and Mission Control, and
   assert.equal(await status(worker, '/api/agents/droid/models'), 404);
 
   const floor = make('view-floor', { floorId: 'floor-a' }).token;
-  assert.equal(await status(floor, '/api/thread/file?worker=w2&path=README.md'), 200);
-  assert.equal(await status(floor, '/api/thread/file?worker=w3&path=README.md'), 404);
+  assert.equal(await status(floor, '/api/thread/file?worker=w2&path=README.md'), 404, 'view presets never read files by path');
+  assert.equal(await status(floor, '/api/term/file?worker=w2&path=README.md'), 404);
   assert.equal(await status(floor, '/api/whiteboard/render/status?floor=floor-a&card=c'), 200);
   assert.equal(await status(floor, '/api/whiteboard/render/status?floor=floor-b&card=c'), 404);
   assert.equal(await status(floor, '/api/whiteboard/render/status?card=c'), 404, 'a floor route needs its floor');
@@ -237,6 +242,10 @@ test('each preset reaches only in-scope floors, workers and Mission Control, and
   assert.equal(await status(editFloor, '/api/term/drop?worker=w2&floor=floor-a&name=notes.txt', 'POST', PNG), 200);
   assert.equal(await status(editFloor, '/api/term/drop?worker=w3&name=notes.txt', 'POST', PNG), 404);
   assert.equal(await status(editFloor, '/api/thread/files?worker=w1&q=src'), 200);
+  assert.equal(await status(editFloor, '/api/thread/file?worker=w2&path=README.md'), 200);
+  assert.equal(await status(editFloor, '/api/thread/file?worker=w3&path=README.md'), 404);
+  assert.equal(await status(editFloor, '/api/term/file?worker=w1&path=README.md'), 200);
+  assert.equal(await status(editFloor, '/api/term/paths?worker=w1', 'POST'), 200, 'resolving paths is not audited as a change');
   assert.equal(await status(editFloor, '/api/agents/droid/models'), 200);
   assert.equal(await status(editFloor, '/api/agents/droid/commands?worker=w1'), 200);
   assert.equal(await status(editFloor, '/api/agents/droid/commands?floor=floor-a'), 200);
@@ -274,18 +283,26 @@ test('each preset reaches only in-scope floors, workers and Mission Control, and
   assert.equal(entries.at(-1)?.detail, 'Picture for a prompt: shot.png');
 });
 
-test('Whiteboard card frames load by capability, held to scope when a token comes with them', async (t) => {
+test('Whiteboard card frames load by capability only on floors an active link shows, held to scope when a token comes with them', async (t) => {
   const { http, make, links } = unitRig(t);
   const base = await listen(t, http.guestRequest, ORIGIN);
   const capA = `k${'a'.repeat(30)}`;
   const capB = `k${'b'.repeat(30)}`;
   const frame = (cap: string, token?: string) => call(base, `/whiteboard/c/${cap}/page.html${token ? `?g=${token}` : ''}`, { headers: { host: HOST } });
-  assert.equal((await frame(capB)).body, 'floor-b:page.html');
+  assert.equal((await frame(capA)).status, 404, 'sharing on with no link opens no card');
+  const worker = make('view-worker', { floorId: 'floor-a', workerId: 'w1' }).token;
+  assert.equal((await frame(capA)).status, 404, 'a single-worker link opens no card');
   const floor = make('view-floor', { floorId: 'floor-a' }).token;
+  assert.equal((await frame(capA)).body, 'floor-a:page.html');
+  assert.equal((await frame(capB)).status, 404, 'a link for another floor does not open this one');
   assert.equal((await frame(capA, floor)).body, 'floor-a:page.html');
   assert.equal((await frame(capB, floor)).status, 404);
-  assert.equal((await frame(capA, make('view-worker', { floorId: 'floor-a', workerId: 'w1' }).token)).status, 404);
+  assert.equal((await frame(capA, worker)).status, 404);
   assert.equal((await frame(capA, 'Z'.repeat(43))).status, 401);
+  const office = make('view-office');
+  assert.equal((await frame(capB)).body, 'floor-b:page.html', 'an office link shows every floor');
+  links.revoke(office.link.id);
+  assert.equal((await frame(capB)).status, 404, 'revoked links stop counting');
   links.setOn(false);
   assert.equal((await frame(capA)).status, 403);
 });
@@ -294,9 +311,10 @@ test('the owner API creates one-time URLs, revokes, toggles and pages the audit'
   const { http, links, audit, transport } = unitRig(t);
   const base = await listen(t, async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
-    await http.ownerRequest(req, res, url.pathname, url);
+    await http.ownerRequest(req, res, url.pathname, url, 'full');
   });
   const state = (await call(base, '/api/guest-links')).json() as GuestLinksState;
+  assert.equal(state.manage, 'full');
   assert.equal(state.on, true);
   assert.equal(state.max, 32);
   assert.deepEqual(state.transport, { status: 'serving', origin: ORIGIN });
@@ -354,6 +372,41 @@ test('the owner API creates one-time URLs, revokes, toggles and pages the audit'
   assert.equal((await call(base, '/api/guest-links/audit', { method: 'DELETE' })).status, 405);
 });
 
+test('a limited owner request reads, revokes and turns sharing off, but never creates or turns it on', async (t) => {
+  const { http, links, make, transport } = unitRig(t);
+  const base = await listen(t, async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://x');
+    await http.ownerRequest(req, res, url.pathname, url, 'limited');
+  });
+  const live = make('view-office');
+  const state = (await call(base, '/api/guest-links')).json() as GuestLinksState;
+  assert.equal(state.manage, 'limited');
+  assert.equal(state.links[0].label, 'view-office link');
+  assert.equal((await call(base, '/api/guest-links/audit')).status, 200);
+  const create = await call(base, '/api/guest-links', { method: 'POST', body: JSON.stringify({ label: 'Sam', preset: 'view-office' }) });
+  assert.equal(create.status, 403);
+  assert.match(create.json().error, /only from the office itself/);
+  assert.equal(links.list().length, 1);
+  const revoked = (await call(base, `/api/guest-links/${live.link.id}`, { method: 'DELETE' })).json() as GuestLinksState;
+  assert.equal(revoked.links[0].status, 'revoked');
+  assert.equal(revoked.manage, 'limited');
+  const off = (await call(base, '/api/guest-links', { method: 'PUT', body: '{"on":false}' })).json() as GuestLinksState;
+  assert.equal(off.on, false);
+  assert.equal((await call(base, '/api/guest-links', { method: 'PUT', body: '{"on":true}' })).status, 403);
+  assert.equal(links.on, false);
+  assert.deepEqual(transport.sets, [false]);
+});
+
+test('the menu bar counts only the owner’s connections, never a guest’s', () => {
+  const client = (extra: Record<string, unknown>) => ({ ws: {}, dashboard: true, ...extra }) as never;
+  assert.deepEqual(ownerDevices([client({}), client({ phoneSizes: {} }), client({ guest: { linkId: 'x' } })]), [
+    { device: undefined, phone: false },
+    { device: undefined, phone: true },
+  ]);
+  assert.equal(isGuestClient(client({ guest: { linkId: 'x' } })), true);
+  assert.equal(isGuestClient(client({})), false);
+});
+
 test('in a running office, guest tokens work only on the guest backend and management only on the owner’s own page', async (t) => {
   const home = mkdtempSync(path.join(os.tmpdir(), 'guest-office-'));
   const cfg = loadConfig(['--home', home, '--projects', home, home, '--trust-proxy', '--weather', 'clear']);
@@ -377,9 +430,18 @@ test('in a running office, guest tokens work only on the guest backend and manag
   assert.equal((await call(local, '/api/guest-links', { headers: { origin: 'https://evil.test' } })).status, 403);
   const pair = await call(local, '/api/mobile/pair', { method: 'POST', body: '{"device":"Pixel 10 Pro XL"}' });
   const device = pair.json().token as string;
-  assert.equal((await call(local, '/api/guest-links', { headers: { ...own, authorization: `Bearer ${device}` } })).status, 403, 'a paired phone cannot manage links');
+  assert.equal(initial.manage, 'full', 'the office’s own page manages everything');
+  const phone = { ...own, authorization: `Bearer ${device}` };
+  const phoneState = await call(local, '/api/guest-links', { headers: phone });
+  assert.equal(phoneState.status, 200);
+  assert.equal((phoneState.json() as GuestLinksState).manage, 'limited', 'a paired phone may look');
+  assert.equal((await call(local, '/api/guest-links', { method: 'POST', headers: phone, body: '{"label":"x","preset":"view-office"}' })).status, 403, 'but never create a link');
+  assert.equal((await call(local, '/api/guest-links', { method: 'PUT', headers: phone, body: '{"on":true}' })).status, 403);
+  assert.equal((await call(local, '/api/guest-links', { method: 'PUT', headers: phone, body: '{"on":false}' })).status, 200, 'it may always turn sharing off');
   const proxy = await tailnetProxy(t, office.server);
-  assert.equal((await proxy.fetch(`${proxy.base}/api/guest-links?t=${office.lanToken}`, { headers: { origin: proxy.origin, 'sec-fetch-site': 'same-origin' } })).status, 403, 'nor can a tailnet browser');
+  const tailnet = await proxy.fetch(`${proxy.base}/api/guest-links?t=${office.lanToken}`, { headers: { origin: proxy.origin, 'sec-fetch-site': 'same-origin' } });
+  assert.equal(tailnet.status, 200);
+  assert.equal(((await tailnet.json()) as GuestLinksState).manage, 'limited', 'so is a tailnet browser');
 
   const { links, audit, request: guestRequest } = office.guests;
   links.setOn(true);

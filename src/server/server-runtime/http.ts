@@ -25,7 +25,7 @@ import { resolveSoundCloudStation } from '../soundcloud.js';
 import type { ImageProxy } from '../decor.js';
 import { CARD_ROUTE } from '../whiteboard.js';
 import type { Client } from './client.js';
-import type { createAccess } from './access.js';
+import { ownerDevices, type createAccess } from './access.js';
 import type { createAutomation } from './automation.js';
 import type { createWhiteboardRuntime } from './whiteboard.js';
 import type { createStaticFiles } from './static-files.js';
@@ -60,7 +60,7 @@ interface HttpContext extends ReturnType<typeof createAccess>, ReturnType<typeof
   images: ImageProxy;
   serveCard: ReturnType<typeof createWhiteboardRuntime>['serveCard'];
   floorRequest: ReturnType<typeof createFloorHttp>;
-  /** Share-link management (`/api/guest-links*`), answered only for the office's own page. */
+  /** Share-link management (`/api/guest-links*`): everything for the office's own page; read, revoke and off for other owner requests. */
   guestOwnerRequest: ReturnType<typeof createGuestHttp>['ownerRequest'];
 }
 
@@ -248,10 +248,12 @@ export function createHttpHandler(ctx: HttpContext) {
         }
         return send(res, 405, { error: 'Method not allowed' });
       }
-      // Share links for external guests: their labels, the toggle and the audit log, so only the office's own page.
+      // Share links for external guests. The office's own page manages everything; any other owner request
+      // (a paired device, the LAN token, the tailnet listener) may only look, revoke and turn sharing off.
       if (p === '/api/guest-links' || p.startsWith('/api/guest-links/')) {
-        if (gate.device || !ownPage(req)) return send(res, 403, { error: 'Share links are managed from the office itself, on its own machine' });
-        return await guestOwnerRequest(req, res, p, url);
+        const manage = !gate.device && ownPage(req) ? 'full' : 'limited';
+        if (manage === 'limited' && req.method !== 'GET' && !ownRequest()) return send(res, 403, { error: 'Forbidden' });
+        return await guestOwnerRequest(req, res, p, url, manage);
       }
       // External workers' MCP on the tailnet. Its state holds every bot's credential, so only the office's own page.
       if (p === '/api/remote-mcp') {
@@ -315,7 +317,7 @@ export function createHttpHandler(ctx: HttpContext) {
           200,
           officeStatus(
             [...floors.values()].map((f) => ({ id: f.id, name: f.def.name, workers: f.everyone() })),
-            [...clients.values()].map((c) => ({ device: c.device, phone: !!c.phoneSizes })),
+            ownerDevices(clients.values()),
             orchestratorNeedsOwner(missionState()) ? [orchestrator.info!] : [],
           ),
         );

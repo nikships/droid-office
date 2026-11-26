@@ -2,13 +2,14 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { request } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import { GUEST_FUNNEL_FILE, GuestFunnel } from '../src/server/guest-funnel.js';
 import { TailnetHttps } from '../src/server/tailnet-https.js';
-import { FUNNEL_PORTS, planFunnel, planServe, TailscaleCli, type ServeRoute } from '../src/server/tailscale.js';
+import { FUNNEL_PORTS, planFunnel, planServe, TailscaleCli, tailscaleSelf, useTailscaleBinary, type ServeRoute } from '../src/server/tailscale.js';
+import { loadConfig } from '../src/server/config.js';
 import { isGuestRequest, isLocalRequest, lanAllowed } from '../src/server/lan.js';
 
 const DNS = 'office-mac.tail08b849.ts.net';
@@ -220,4 +221,77 @@ test('turning sharing off closes open guest WebSockets immediately, even while t
   release();
   await off;
   assert.deepEqual(cli.mappings, []);
+});
+
+test('a mapping left by an unclean exit is reclaimed or removed at the next start, only by the office that made it', async (t) => {
+  const cli = new FunnelCli();
+  const { make, file, dataDir } = rig(t, cli);
+  const office = realpathSync(dataDir);
+  const leftover = (owner: string) => {
+    writeFileSync(file, JSON.stringify({ office: owner, backendPort: 45678, httpsPort: 10000, published: true }));
+    cli.mappings = [{ port: 10000, proxy: 'http://127.0.0.1:45678', funnel: true }];
+    cli.calls = [];
+  };
+
+  leftover(office);
+  const off = make();
+  t.after(() => off.stop());
+  assert.equal((await off.start(false)).status, 'off');
+  assert.deepEqual(cli.calls, ['funnel-off:10000'], 'sharing off removes its own leftover mapping');
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).published, false);
+  await off.stop();
+
+  leftover(office);
+  const on = make();
+  t.after(() => on.stop());
+  const back = await on.start(true);
+  assert.equal(back.origin, `https://${DNS}:10000`, 'sharing on keeps its URL');
+  const { backendPort } = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(cli.mappings, [{ port: 10000, proxy: `http://127.0.0.1:${backendPort}`, funnel: true }], 'the mapping points at the live backend');
+  await on.stop();
+  assert.deepEqual(cli.mappings, []);
+
+  // A copy of another office's file (a clone, a test run) is never its own mapping.
+  leftover('/Users/owner/droid-office/.droid-office');
+  const copy = make();
+  t.after(() => copy.stop());
+  await copy.start(false);
+  assert.deepEqual(cli.calls, []);
+  assert.equal((await copy.start(true)).origin, `https://${DNS}:8443`, 'it takes a free port instead');
+  await copy.stop();
+  assert.deepEqual(cli.mappings, [{ port: 10000, proxy: 'http://127.0.0.1:45678', funnel: true }], 'the other office’s mapping is untouched');
+
+  // Locked never runs the CLI; it tells the owner how to remove its own leftover.
+  leftover(office);
+  const warn = t.mock.method(console, 'warn', () => undefined);
+  const locked = new GuestFunnel({ dataDir, cli, request: (_q, s) => s.end(), upgrade: (_q, s) => s.destroy(), locked: 'External sharing is disabled by DROID_OFFICE_GUEST_SHARING=off.' });
+  assert.deepEqual(await locked.start(true), { status: 'unavailable', locked: 'External sharing is disabled by DROID_OFFICE_GUEST_SHARING=off.' });
+  await locked.stop();
+  assert.deepEqual(cli.calls, []);
+  assert.equal(cli.mappings.length, 1, 'the leftover stays for the owner to remove');
+  assert.match(String(warn.mock.calls.at(-1)?.arguments[0]), /tailscale funnel --https=10000 off/);
+});
+
+test('DROID_OFFICE_TAILSCALE_BIN pins every call to one executable, with no fallback to an installed CLI', { skip: process.platform === 'win32' }, async (t) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tailscale-bin-'));
+  t.after(() => {
+    useTailscaleBinary(undefined);
+    rmSync(dir, { recursive: true, force: true });
+  });
+  // Trimmed from a real `tailscale status --json` (remote-mcp.test.ts).
+  const status = { BackendState: 'Running', Self: { DNSName: `${DNS}.`, TailscaleIPs: ['100.101.102.103'], UserID: 1 }, User: { '1': { LoginName: 'owner@example.com' } }, CurrentTailnet: { MagicDNSEnabled: true } };
+  const stub = path.join(dir, 'tailscale');
+  writeFileSync(stub, `#!/bin/sh\n[ "$1" = status ] && printf '%s\\n' '${JSON.stringify(status)}'\n`, { mode: 0o755 });
+  const prev = process.env.DROID_OFFICE_TAILSCALE_BIN;
+  process.env.DROID_OFFICE_TAILSCALE_BIN = stub;
+  t.after(() => (prev === undefined ? delete process.env.DROID_OFFICE_TAILSCALE_BIN : (process.env.DROID_OFFICE_TAILSCALE_BIN = prev)));
+  const cfg = loadConfig(['--home', dir, '--projects', dir]);
+  assert.equal(cfg.tailscaleBin, stub);
+  useTailscaleBinary(cfg.tailscaleBin);
+  assert.equal((await tailscaleSelf())?.dnsName, DNS);
+  assert.equal((await new TailscaleCli().self())?.login, 'owner@example.com');
+  // A stub that is gone answers nothing; the installed Tailscale is never tried instead.
+  useTailscaleBinary(path.join(dir, 'missing'));
+  assert.equal(await tailscaleSelf(), undefined);
+  assert.equal(await new TailscaleCli().self(), undefined);
 });

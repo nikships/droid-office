@@ -4,7 +4,7 @@
 // token. It is separate from the main listener and from the tailnet Serve backend (tailnet-https.ts),
 // which keeps refusing Funnel traffic, and it maps only Funnel ports nothing else uses.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type RequestListener } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
@@ -16,8 +16,12 @@ import type { GuestTransportState } from '../shared/guest-links.js';
 export const GUEST_FUNNEL_FILE = 'guest-funnel.json';
 
 interface Saved {
+  /** The office that wrote the file (its data folder's real path). A copy in another office is not its own. */
+  office?: string;
   backendPort?: number;
   httpsPort?: number;
+  /** Set before `tailscale funnel` runs and cleared once the mapping is gone, so an unclean exit is noticed. */
+  published?: boolean;
 }
 
 export interface GuestFunnelOptions {
@@ -83,18 +87,46 @@ export class GuestFunnel {
   private closed = false;
   private readonly cli: TailscaleCli;
   private readonly file: string;
+  private readonly office: string;
 
   constructor(private readonly opts: GuestFunnelOptions) {
     this.file = path.join(opts.dataDir, GUEST_FUNNEL_FILE);
     this.cli = opts.cli ?? new TailscaleCli();
+    let office = path.resolve(opts.dataDir);
+    try {
+      office = realpathSync(office);
+    } catch {
+      // Not created yet; the resolved path is what it will be.
+    }
+    this.office = office;
     try {
       const raw = JSON.parse(readFileSync(this.file, 'utf8')) as Saved;
-      const port = (p?: number) => (p !== undefined && Number.isInteger(p) && p > 0 && p < 65536 ? p : undefined);
-      const https = port(raw.httpsPort);
-      this.saved = { backendPort: port(raw.backendPort), httpsPort: https && FUNNEL_PORTS.includes(https) ? https : undefined };
+      // A file copied from another office (a clone, a test run) describes that office's mapping: never
+      // reuse, replace or remove it from here.
+      if (raw.office === this.office) {
+        const port = (p?: number) => (p !== undefined && Number.isInteger(p) && p > 0 && p < 65536 ? p : undefined);
+        const https = port(raw.httpsPort);
+        this.saved = { office, backendPort: port(raw.backendPort), httpsPort: https && FUNNEL_PORTS.includes(https) ? https : undefined, published: raw.published === true };
+      }
     } catch {
       // Never published yet.
     }
+  }
+
+  /**
+   * Startup. Sharing on publishes again, reusing this office's own mapping (`funnel --bg` outlives the
+   * process) or pointing it at the new backend port. Sharing off removes a mapping an unclean exit left
+   * behind. Locked never runs the CLI, so it can only say how to remove a leftover mapping.
+   */
+  start(on: boolean): Promise<GuestTransportState> {
+    const leftover = this.saved.published ? this.saved.httpsPort : undefined;
+    if (this.opts.locked) {
+      if (leftover) console.warn(`  🔗  ${this.opts.locked} This office may have left its Funnel mapping on port ${leftover} published after an unclean exit; remove it with: tailscale funnel --https=${leftover} off`);
+      if (on) this.on = true;
+      return Promise.resolve(this.state());
+    }
+    if (on) return this.set(true);
+    return leftover ? this.queue(() => this.unpublish()) : Promise.resolve(this.state());
   }
 
   state(): GuestTransportState {
@@ -190,7 +222,7 @@ export class GuestFunnel {
       const plan = planFunnel(routes, target, this.saved.httpsPort, previous);
       if (!plan) throw new Error('No free Tailscale Funnel port. Funnel can only use ports 443, 8443 and 10000; free one of them and retry.');
       // Remember ownership before the CLI runs, so turning sharing off also cleans up an interrupted enable.
-      this.save({ backendPort, httpsPort: plan.port });
+      this.save({ backendPort, httpsPort: plan.port, published: true });
       if (!plan.existing) {
         const done = await this.cli.funnel(plan.port, target);
         if (!done.ok) {
@@ -208,13 +240,16 @@ export class GuestFunnel {
 
   /** Removes the Funnel mapping on the saved port, only while it still points at this office's backend. */
   private async unpublish() {
-    if (this.opts.locked || this.saved.backendPort === undefined || this.saved.httpsPort === undefined) return;
+    const { backendPort, httpsPort } = this.saved;
+    if (this.opts.locked || backendPort === undefined || httpsPort === undefined) return;
     const self = await this.cli.self();
     if (!self?.dnsName) return;
-    const target = `http://127.0.0.1:${this.saved.backendPort}`;
-    for (const r of (await this.cli.routes(self.dnsName)) ?? []) {
-      if (r.port === this.saved.httpsPort && r.proxy === target) await this.cli.unfunnel(r.port);
-    }
+    const routes = await this.cli.routes(self.dnsName);
+    if (!routes) return;
+    const target = `http://127.0.0.1:${backendPort}`;
+    const ours = routes.find((r) => r.port === httpsPort && r.proxy === target);
+    // Gone, or now someone else's: either way nothing of this office's is published there.
+    if (!ours || (await this.cli.unfunnel(httpsPort))) this.save({ backendPort, httpsPort, published: false });
   }
 
   private disconnect() {
@@ -225,9 +260,9 @@ export class GuestFunnel {
     this.listener = undefined;
   }
 
-  private save(next: Saved) {
-    this.saved = next;
+  private save(next: Omit<Saved, 'office'>) {
+    this.saved = { office: this.office, ...next };
     // Fail closed if ownership cannot be persisted; never create an untracked public mapping.
-    writeFileSync(this.file, `${JSON.stringify(next)}\n`, { mode: 0o600 });
+    writeFileSync(this.file, `${JSON.stringify(this.saved)}\n`, { mode: 0o600 });
   }
 }

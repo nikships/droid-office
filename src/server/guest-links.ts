@@ -120,7 +120,11 @@ export function guestTokenOf(req: IncomingMessage, url?: URL, query = false): st
   return undefined;
 }
 
-/** Where failed attempts are counted from: the first X-Forwarded-For hop Funnel reports, else one shared bucket. */
+/**
+ * Where failed attempts are counted from. tailscaled's Funnel proxy replaces X-Forwarded-For with the client
+ * address the Funnel ingress reports (ipn/ipnlocal/serve.go, addProxyForwardedHeaders), so a value the client
+ * sent never arrives; only a process on this machine can send another. Without one, one shared bucket.
+ */
 function sourceOf(req: IncomingMessage): string {
   const xff = req.headers['x-forwarded-for'];
   const first = (Array.isArray(xff) ? xff[0] : xff)?.split(',')[0]?.trim();
@@ -180,25 +184,25 @@ export class GuestLinks {
   }
 
   /**
-   * verify() for a request or upgrade on the guest backend, with wrong tokens rate-limited per source:
-   * a source past GUEST_FAILS_PER_SOURCE wrong tokens in a window is refused before its token is checked.
+   * verify() for a request or upgrade on the guest backend. A valid token always passes; the limit is only
+   * on answers to wrong tokens, so nobody can lock real guests out by spending a source's budget. Past
+   * GUEST_FAILS_PER_SOURCE wrong tokens from one source in a window, a wrong token gets a Retry-After.
    * A request without a token is refused but not counted (the bootstrap page and card assets carry none).
    */
   authenticate(req: IncomingMessage, url?: URL, query = false): GuestVerify {
     if (!this.sharing) return { ok: false, reason: 'disabled' };
     const token = guestTokenOf(req, url, query);
     if (!token) return { ok: false, reason: 'unavailable' };
+    const result = this.verify(token);
+    if (result.ok || result.reason !== 'unavailable') return result;
     const source = sourceOf(req);
     const now = this.now();
     const bucket = this.fails.get(source);
-    const fresh = bucket !== undefined && now - bucket.since < GUEST_FAIL_WINDOW_MS;
-    if (fresh && bucket.count >= GUEST_FAILS_PER_SOURCE) return { ok: false, reason: 'unavailable', retryAfterMs: Math.max(1000, GUEST_FAIL_WINDOW_MS - (now - bucket.since)) };
-    const result = this.verify(token);
-    if (!result.ok && result.reason === 'unavailable') {
-      if (fresh) bucket.count++;
-      else this.fails.set(source, { count: 1, since: now });
-      if (this.fails.size > GUEST_FAIL_SOURCES_MAX) for (const [k, b] of this.fails) if (now - b.since >= GUEST_FAIL_WINDOW_MS || this.fails.size > GUEST_FAIL_SOURCES_MAX) this.fails.delete(k);
-    }
+    if (bucket && now - bucket.since < GUEST_FAIL_WINDOW_MS) {
+      if (bucket.count >= GUEST_FAILS_PER_SOURCE) return { ...result, retryAfterMs: Math.max(1000, GUEST_FAIL_WINDOW_MS - (now - bucket.since)) };
+      bucket.count++;
+    } else this.fails.set(source, { count: 1, since: now });
+    if (this.fails.size > GUEST_FAIL_SOURCES_MAX) for (const [k, b] of this.fails) if (now - b.since >= GUEST_FAIL_WINDOW_MS || this.fails.size > GUEST_FAIL_SOURCES_MAX) this.fails.delete(k);
     return result;
   }
 

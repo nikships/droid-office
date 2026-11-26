@@ -238,20 +238,25 @@ test('a mangled file keeps sharing off and drops malformed records', (t) => {
   );
 });
 
-test('wrong tokens are rate limited per source; missing tokens are not counted', (t) => {
+test('wrong tokens are rate limited per source, a valid token always passes, and missing tokens are not counted', (t) => {
   const { links, clock } = rig(t);
   links.setOn(true);
   const made = created(links);
   const wrong = req({ authorization: `Bearer ${'B'.repeat(43)}`, 'x-forwarded-for': '203.0.113.7' });
   for (let i = 0; i < 50; i++) assert.deepEqual(links.authenticate(req({ 'x-forwarded-for': '203.0.113.7' })), { ok: false, reason: 'unavailable' });
   for (let i = 0; i < GUEST_FAILS_PER_SOURCE; i++) assert.deepEqual(links.authenticate(wrong), { ok: false, reason: 'unavailable' });
-  const limited = links.authenticate(req({ authorization: `Bearer ${made.token}`, 'x-forwarded-for': '203.0.113.7' }));
+  const limited = links.authenticate(wrong);
   assert.ok(!limited.ok);
   assert.equal(limited.reason, 'unavailable');
   assert.ok(limited.retryAfterMs! > 0 && limited.retryAfterMs! <= GUEST_FAIL_WINDOW_MS);
-  assert.ok(links.authenticate(req({ authorization: `Bearer ${made.token}`, 'x-forwarded-for': '198.51.100.2' })).ok, 'other sources are unaffected');
+  assert.ok(links.authenticate(req({ authorization: `Bearer ${made.token}`, 'x-forwarded-for': '203.0.113.7' })).ok, 'a real guest behind a full bucket still gets in');
+  // The shared bucket for requests without a forwarded address (only local processes) locks nobody out either.
+  for (let i = 0; i <= GUEST_FAILS_PER_SOURCE; i++) links.authenticate(req({ authorization: `Bearer ${'B'.repeat(43)}` }));
+  assert.ok(links.authenticate(req({ authorization: `Bearer ${'B'.repeat(43)}` })).retryAfterMs! > 0);
+  assert.ok(links.authenticate(req({ authorization: `Bearer ${made.token}` })).ok);
+  assert.equal(links.authenticate(req({ authorization: `Bearer ${'B'.repeat(43)}`, 'x-forwarded-for': '198.51.100.2' })).retryAfterMs, undefined, 'other sources are unaffected');
   clock.now += GUEST_FAIL_WINDOW_MS;
-  assert.ok(links.authenticate(req({ authorization: `Bearer ${made.token}`, 'x-forwarded-for': '203.0.113.7' })).ok, 'the window resets');
+  assert.equal(links.authenticate(wrong).retryAfterMs, undefined, 'the window resets');
   links.setOn(false);
   assert.deepEqual(links.authenticate(req({ authorization: `Bearer ${made.token}` })), { ok: false, reason: 'disabled' });
 });
