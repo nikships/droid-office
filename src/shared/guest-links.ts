@@ -172,6 +172,13 @@ export interface GuestTransportState {
   locked?: string;
 }
 
+/** An open floor a new link can be scoped to, with the workers on it right now. */
+export interface GuestTargetFloor {
+  id: string;
+  name: string;
+  workers: { id: string; name: string }[];
+}
+
 /** What `GET /api/guest-links` answers. Ended links stay listed for GUEST_ENDED_KEEP_MS. */
 export interface GuestLinksState {
   /** The global external-sharing toggle (kill switch). Off by default. */
@@ -181,6 +188,8 @@ export interface GuestLinksState {
   /** Every open guest connection across links. */
   guests: number;
   max: number;
+  /** The floor and worker choices for the create form, in building order. */
+  targets: GuestTargetFloor[];
 }
 
 /** How long expired and revoked links stay in the Share list before the office forgets them. */

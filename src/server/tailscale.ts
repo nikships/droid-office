@@ -78,11 +78,23 @@ export function withServeLock<T>(task: () => Promise<T>): Promise<T> {
  * it still points at the office's previous backend, else the first port nothing else uses.
  */
 export function planServe(routes: readonly ServeRoute[], target: string, preferred?: number, previousTarget?: string): { port: number; existing: boolean } | undefined {
+  return planPort(routes, target, SERVE_PORTS, preferred, previousTarget, () => true);
+}
+
+/** The only public ports Funnel listens on (https://tailscale.com/kb/1223/funnel), least commonly used first. */
+export const FUNNEL_PORTS = [10000, 8443, 443];
+
+/** planServe for the guest backend's Funnel mapping: only Funnel's ports, and an existing mapping counts only when it is public. */
+export function planFunnel(routes: readonly ServeRoute[], target: string, preferred?: number, previousTarget?: string): { port: number; existing: boolean } | undefined {
+  return planPort(routes, target, FUNNEL_PORTS, preferred && FUNNEL_PORTS.includes(preferred) ? preferred : undefined, previousTarget, (r) => r.funnel);
+}
+
+function planPort(routes: readonly ServeRoute[], target: string, ports: readonly number[], preferred: number | undefined, previousTarget: string | undefined, complete: (r: ServeRoute) => boolean) {
   const ours = routes.find((r) => r.proxy === target);
-  if (ours) return { port: ours.port, existing: true };
+  if (ours) return { port: ours.port, existing: complete(ours) };
   const taken = new Map(routes.map((r) => [r.port, r]));
   if (preferred !== undefined && previousTarget && taken.get(preferred)?.proxy === previousTarget) return { port: preferred, existing: false };
-  const port = [preferred, ...SERVE_PORTS].find((p) => p !== undefined && !taken.has(p));
+  const port = [preferred, ...ports].find((p) => p !== undefined && !taken.has(p));
   return port === undefined ? undefined : { port, existing: false };
 }
 
@@ -153,6 +165,23 @@ export class TailscaleCli {
   async unserve(port: number): Promise<boolean> {
     if (!this.bin) return false;
     return (await this.run(this.bin, ['serve', '--yes', `--https=${port}`, 'off'], 10_000)).ok;
+  }
+
+  /**
+   * Publishes `target` at https://<this machine>:<port> on the internet (`tailscale funnel`, kept across
+   * restarts by tailscaled). Port must be one of FUNNEL_PORTS. The first use on a tailnet prints an admin
+   * link to approve Funnel and waits for it, hence the timeout.
+   */
+  async funnel(port: number, target: string): Promise<{ ok: true } | { ok: false; message: string; fixUrl?: string }> {
+    if (!this.bin) return { ok: false, message: 'Tailscale isn’t running on this computer.' };
+    const r = await this.run(this.bin, ['funnel', '--bg', '--yes', `--https=${port}`, target], 20_000);
+    return r.ok ? { ok: true } : { ok: false, ...serveFailure(`${r.stdout}\n${r.stderr}`) };
+  }
+
+  /** Removes the Funnel (and its proxy) on one port. */
+  async unfunnel(port: number): Promise<boolean> {
+    if (!this.bin) return false;
+    return (await this.run(this.bin, ['funnel', '--yes', `--https=${port}`, 'off'], 10_000)).ok;
   }
 }
 

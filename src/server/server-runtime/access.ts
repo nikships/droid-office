@@ -1,7 +1,7 @@
 import type http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Config } from '../config.js';
-import { bearerToken, isLocalRequest, lanAllowed } from '../lan.js';
+import { bearerToken, isGuestRequest, isLocalRequest, lanAllowed } from '../lan.js';
 import type { TailnetHttps } from '../tailnet-https.js';
 import { machineName, pairingAddresses, type DevicesStore } from '../devices.js';
 import type { TailscaleWatch } from '../tailscale.js';
@@ -30,6 +30,8 @@ export function createAccess({ cfg, lanToken, devices, tailscale, companion, tai
    * outright, even on loopback, so a forgotten phone always hears that it was forgotten.
    */
   const access = (req: http.IncomingMessage, url: URL): { ok: boolean; device?: PairedDevice; header?: boolean; unpaired?: boolean } => {
+    // The guest backend authenticates only share links (guest-http.ts); no office credential works there.
+    if (isGuestRequest(req)) return { ok: false };
     const header = bearerToken(req);
     const token = header ?? url.searchParams.get('d');
     if (token) {
@@ -74,12 +76,15 @@ export function createAccess({ cfg, lanToken, devices, tailscale, companion, tai
       devices: devices.list(),
     };
   };
-  /** Turns the web companion on or off. Off closes every companion socket; paired browsers stay paired. */
+  /**
+   * Turns the web companion on or off. Off closes every companion socket; paired browsers stay paired.
+   * Guests on share links are governed only by external sharing's own toggle.
+   */
   const setCompanion = (on: boolean) => {
     if (companion.on === on) return;
     companion.set(on, 'owner');
     console.log(`  🌐  The web companion is ${on ? 'on' : 'off'}`);
-    if (!on) for (const c of clients.values()) if (c.dashboard) c.ws.close(4403, 'The web companion was turned off');
+    if (!on) for (const c of clients.values()) if (c.dashboard && !(c as Client & { guest?: unknown }).guest) c.ws.close(4403, 'The web companion was turned off');
   };
   /** Unpairs a phone: its token stops working, and its open connections are closed. */
   const forgetDevice = (id: string): boolean => {

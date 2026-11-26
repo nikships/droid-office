@@ -35,10 +35,10 @@ import {
 
 export const GUEST_LINKS_FILE = 'guest-links.json';
 
-/** Failed token checks allowed per source per window, and across every source. */
+/** Wrong tokens allowed per source per window, and how many sources are remembered at most. */
 export const GUEST_FAILS_PER_SOURCE = 20;
-export const GUEST_FAILS_GLOBAL = 300;
 export const GUEST_FAIL_WINDOW_MS = 60_000;
+const GUEST_FAIL_SOURCES_MAX = 4096;
 
 /** The longest a timer may wait (setTimeout overflows past 2^31 - 1 ms). */
 const MAX_TIMER_MS = 2 ** 31 - 1;
@@ -138,7 +138,6 @@ export class GuestLinks {
   private readonly expired = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private readonly fails = new Map<string, { count: number; since: number }>();
-  private globalFails = { count: 0, since: 0 };
   private timer?: NodeJS.Timeout;
   private readonly timers: boolean;
   private stopped = false;
@@ -181,27 +180,24 @@ export class GuestLinks {
   }
 
   /**
-   * verify() for a request or upgrade on the guest backend, with failed attempts rate-limited per
-   * source and overall. A source over its budget is refused before its token is checked.
+   * verify() for a request or upgrade on the guest backend, with wrong tokens rate-limited per source:
+   * a source past GUEST_FAILS_PER_SOURCE wrong tokens in a window is refused before its token is checked.
+   * A request without a token is refused but not counted (the bootstrap page and card assets carry none).
    */
   authenticate(req: IncomingMessage, url?: URL, query = false): GuestVerify {
     if (!this.sharing) return { ok: false, reason: 'disabled' };
+    const token = guestTokenOf(req, url, query);
+    if (!token) return { ok: false, reason: 'unavailable' };
     const source = sourceOf(req);
     const now = this.now();
     const bucket = this.fails.get(source);
-    const fresh = (b: { since: number } | undefined) => !!b && now - b.since < GUEST_FAIL_WINDOW_MS;
-    const limited = (fresh(bucket) && bucket!.count >= GUEST_FAILS_PER_SOURCE) || (fresh(this.globalFails) && this.globalFails.count >= GUEST_FAILS_GLOBAL);
-    if (limited) {
-      const since = Math.min(fresh(bucket) ? bucket!.since : now, fresh(this.globalFails) ? this.globalFails.since : now);
-      return { ok: false, reason: 'unavailable', retryAfterMs: Math.max(1000, GUEST_FAIL_WINDOW_MS - (now - since)) };
-    }
-    const result = this.verify(guestTokenOf(req, url, query));
+    const fresh = bucket !== undefined && now - bucket.since < GUEST_FAIL_WINDOW_MS;
+    if (fresh && bucket.count >= GUEST_FAILS_PER_SOURCE) return { ok: false, reason: 'unavailable', retryAfterMs: Math.max(1000, GUEST_FAIL_WINDOW_MS - (now - bucket.since)) };
+    const result = this.verify(token);
     if (!result.ok && result.reason === 'unavailable') {
-      if (!fresh(bucket)) this.fails.set(source, { count: 1, since: now });
-      else bucket!.count++;
-      if (!fresh(this.globalFails)) this.globalFails = { count: 1, since: now };
-      else this.globalFails.count++;
-      if (this.fails.size > 4096) for (const [k, b] of this.fails) if (!fresh(b)) this.fails.delete(k);
+      if (fresh) bucket.count++;
+      else this.fails.set(source, { count: 1, since: now });
+      if (this.fails.size > GUEST_FAIL_SOURCES_MAX) for (const [k, b] of this.fails) if (now - b.since >= GUEST_FAIL_WINDOW_MS || this.fails.size > GUEST_FAIL_SOURCES_MAX) this.fails.delete(k);
     }
     return result;
   }
