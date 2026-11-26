@@ -17,6 +17,7 @@ import kotlin.random.Random
 internal val KyotoFirefly = Artwork(
     id = "kyoto-firefly", name = "Kyoto Firefly", blurb = "A mossy temple garden lit by drifting fireflies.",
     image = R.drawable.art_kyoto_firefly, preview = R.drawable.preview_kyoto_firefly,
+    portrait = PortraitArt(R.drawable.art_kyoto_firefly_portrait, focalX = .35f, focalY = .28f),
     x = .5f, y = .5f,
     bg = Color(0xFF04100C), tint = Color(0xFF061510), text = Color(0xFFEEF6EF), muted = Color(0xFFA1B8AA),
     accent = Color(0xFFF3C45A), accent2 = Color(0xFF4FD1A1), line = Color(0xFFD7F0E0), glass = .72f,
