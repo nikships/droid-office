@@ -2394,6 +2394,30 @@ test('opening a finished terminal acknowledges its wait; answering a question ta
   );
 });
 
+test('a share link guest streams a terminal or thread without opening or acknowledging it for the owner', async (t) => {
+  const f = carryOnFixture(t);
+  const updates: WorkerInfo[] = [];
+  const workers = manager(f, updates);
+  t.after(() => workers.shutdown());
+  const done = await hireInState(f, workers, 'desk-1', 'finished-session', 'done');
+  const before = updates.length;
+  assert.ok(workers.attach(done.id, 'guest', false), 'the guest still gets the terminal');
+  assert.equal(workers.open(done.id, 'guest-thread', false), true);
+  assert.deepEqual([workers.get(done.id)?.open, workers.get(done.id)?.acked], [false, false], 'still unseen');
+  assert.equal(updates.length, before, 'nothing about the worker changed');
+  // The owner opening it alongside still acknowledges it.
+  workers.attach(done.id, 'owner');
+  assert.deepEqual([workers.get(done.id)?.open, workers.get(done.id)?.acked], [true, true]);
+  // The guests leaving never closes it under the owner.
+  const n = updates.length;
+  workers.detach(done.id, 'guest');
+  workers.detach(done.id, 'guest-thread');
+  assert.equal(workers.get(done.id)?.open, true);
+  assert.equal(updates.length, n);
+  workers.detach(done.id, 'owner');
+  assert.equal(workers.get(done.id)?.open, false);
+});
+
 test('a worker restored from before subscriptions keeps its names, maps its last input time, and starts unopened', async (t) => {
   const f = carryOnFixture(t);
   writeFileSync(

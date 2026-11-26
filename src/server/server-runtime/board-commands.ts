@@ -13,9 +13,13 @@ interface BoardCommandsContext {
   toastFloor(floor: Floor | undefined, text: string, level?: ToastLevel): void;
 }
 
-/** Forge board and pipeline commands, preserving their asynchronous reply/toast ordering. */
+/**
+ * Forge board and pipeline commands, preserving their asynchronous reply/toast ordering. `settle` hears
+ * each change's outcome once the forge has answered (an error, or none when it happened), and nothing
+ * for a command that never reached the forge.
+ */
 export function createBoardCommands({ floorOf, sendTo, toastFloor }: BoardCommandsContext) {
-  return (c: Client, msg: BoardCommand, here: () => Floor | undefined) => {
+  return (c: Client, msg: BoardCommand, here: () => Floor | undefined, settle: (error?: string) => void = () => {}) => {
     const who = c.peer.name;
     switch (msg.t) {
       case 'gh.refresh':
@@ -28,6 +32,7 @@ export function createBoardCommands({ floorOf, sendTo, toastFloor }: BoardComman
         if (!floor || !Number.isSafeInteger(n) || n <= 0 || !method) break;
         void floor.board.merge(n, method, msg.deleteBranch === true, msg.auto === true).then((error) => {
           sendTo(c, { t: 'gh.merged', number: n, error });
+          settle(error);
           if (error) return;
           const w = forgeWords(floor.board.forge);
           toastFloor(floor, msg.auto ? `${who} set ${w.pr} ${w.ref(n)} to merge once its checks pass` : `🎉 ${who} merged ${w.pr} ${w.ref(n)}`);
@@ -50,6 +55,7 @@ export function createBoardCommands({ floorOf, sendTo, toastFloor }: BoardComman
         }
         void floor.board.comment(kind, n, body).then((r) => {
           sendTo(c, { t: 'gh.commented', kind, number: n, ...r });
+          settle(r.comment ? undefined : (r.error ?? 'Not commented'));
           const w = forgeWords(floor.board.forge);
           if (r.comment) toastFloor(floor, `💬 ${who} commented on ${kind === 'pull' ? `${w.pr} ${w.ref(n)}` : `issue #${n}`}`);
         });
@@ -63,6 +69,7 @@ export function createBoardCommands({ floorOf, sendTo, toastFloor }: BoardComman
         const reason = msg.reason === 'not planned' ? 'not planned' : 'completed';
         void floor.board.close(kind, n, { comment: str(msg.comment, 20000).trim() || undefined, reason, deleteBranch: msg.deleteBranch === true }).then((error) => {
           sendTo(c, { t: 'gh.closed', kind, number: n, error });
+          settle(error);
           if (error) return;
           const w = forgeWords(floor.board.forge);
           if (kind === 'pull') return toastFloor(floor, `${who} closed ${w.pr} ${w.ref(n)} without merging`);
@@ -84,6 +91,7 @@ export function createBoardCommands({ floorOf, sendTo, toastFloor }: BoardComman
         }
         void floor.board.setLabels(kind, n, add, remove).then((r) => {
           sendTo(c, { t: 'gh.labeled', kind, number: n, ...r });
+          settle(r.labels ? undefined : (r.error ?? 'No labels changed'));
           const w = forgeWords(floor.board.forge);
           if (r.labels) toastFloor(floor, `${who} labeled ${kind === 'pull' ? `${w.pr} ${w.ref(n)}` : `issue #${n}`}: ${[...add.map((l) => `+${l}`), ...remove.map((l) => `−${l}`)].join(' ')}`);
         });
@@ -112,6 +120,7 @@ export function createBoardCommands({ floorOf, sendTo, toastFloor }: BoardComman
         const failed = msg.t === 'pipelines.rerun' && 'failed' in msg && msg.failed === true;
         void (action === 'rerun' ? floor.pipelines.rerun(id, failed) : floor.pipelines.cancel(id)).then((error) => {
           sendTo(c, { t: 'pipelines.done', action, id, error });
+          settle(error);
           if (error || !run) return;
           const what = `${run.workflow} #${run.number}`;
           toastFloor(floor, action === 'cancel' ? `⏹️ ${who} cancelled ${what} on ${run.branch}` : `🔁 ${who} re-ran ${failed ? `the failed jobs of ${what}` : what} on ${run.branch}`);
@@ -129,6 +138,7 @@ export function createBoardCommands({ floorOf, sendTo, toastFloor }: BoardComman
         }
         void floor.pipelines.run(workflow, ref, inputs).then((error) => {
           sendTo(c, { t: 'pipelines.done', action: 'run', error });
+          settle(error);
           if (error) return;
           const name = floor.pipelines.state.workflows.find((w) => w.id === workflow)?.name ?? workflow;
           toastFloor(floor, `🚀 ${who} started ${name} on ${ref.trim() || floor.pipelines.state.defaultBranch}`);
