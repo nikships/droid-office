@@ -10,6 +10,7 @@ import {
   type GuestLinkItem,
   type GuestLinksState,
   type GuestPreset,
+  type GuestTargetFloor,
   type GuestTransportState,
   guestScope,
 } from '../../shared/guest-links';
@@ -17,15 +18,8 @@ import {
 // The Share window's words and rules, kept free of the DOM so tests can load them. The window itself
 // is guest-links.ts.
 
-/** An open floor a new link can be scoped to, with the workers on it right now. */
-export interface GuestTargetFloor {
-  id: string;
-  name: string;
-  workers: { id: string; name: string }[];
-}
-
-/** What `GET /api/guest-links` answers, with the create form's floor and worker choices. */
-export type ShareState = GuestLinksState & { targets?: GuestTargetFloor[] };
+/** What `GET /api/guest-links` answers. */
+export type ShareState = GuestLinksState;
 
 export type Tone = 'info' | 'good' | 'warn' | 'bad';
 

@@ -125,7 +125,7 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
   const blocked = h('p.note.warn.hidden', { role: 'status' });
   const createError = h('p.note.bad.hidden', { role: 'alert' });
   const createBtn = h('button.btn.accent', { type: 'submit' }, icon('link', 14), 'Create share link') as HTMLButtonElement;
-  const form = h('form.share-form.stack', { 'aria-label': 'Create a share link', novalidate: true }, labelField, presetField, targetRow, expiryField, blocked, createError, h('div.row.share-form-actions', {}, createBtn));
+  const form = h('form.share-form.stack', { 'aria-label': 'Create a share link', novalidate: true }, blocked, labelField, presetField, targetRow, expiryField, createError, h('div.row.share-form-actions', {}, createBtn));
 
   // ---- The secret link, shown once -------------------------------------------------------------
   const created = h('section.share-created.hidden', { 'aria-label': 'New share link', tabindex: '-1' });
@@ -151,6 +151,7 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
   const el = h('div.modal.lg.share', { role: 'dialog', 'aria-label': 'Share' }, windowHeader('🔗 Share', 'Secret links that open the web companion for people outside your tailnet'), body, footer);
 
   let last: ShareState | undefined;
+  let floorPicked = false;
   let disposed = false;
   let stopped = false;
   let busy = false;
@@ -193,6 +194,11 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
     const keepFloor = floorSelect.value;
     floorSelect.replaceChildren(...(targets.length ? targets.map((f) => h('option', { value: f.id, title: f.name }, f.name)) : [h('option', { value: '' }, 'No open floors')]));
     if (targets.some((f) => f.id === keepFloor)) floorSelect.value = keepFloor;
+    // One worker needs a floor that has some: until the owner picks a floor, start on the first that does.
+    if (scope === 'worker' && !floorPicked && !targets.find((f) => f.id === floorSelect.value)?.workers.length) {
+      const staffed = targets.find((f) => f.workers.length);
+      if (staffed) floorSelect.value = staffed.id;
+    }
     floorSelect.disabled = !targets.length;
     const floor = targets.find((f) => f.id === floorSelect.value);
     const keepWorker = workerSelect.value;
@@ -205,7 +211,10 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
     workerField.classList.toggle('hidden', scope !== 'worker');
     targetRow.classList.toggle('hidden', scope === 'office');
   };
-  floorSelect.addEventListener('change', paintTargets);
+  floorSelect.addEventListener('change', () => {
+    floorPicked = true;
+    paintTargets();
+  });
 
   const clearErrors = () => {
     for (const e of [labelError, floorError, workerError, createError]) {
@@ -472,7 +481,7 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
     const why = createBlocked(last);
     if (why) return showError(createError, why);
     const draft: ShareDraft = { label: labelInput.value, preset: preset(), floorId: floorSelect.value, workerId: workerSelect.value, expiry: expirySelect.value as GuestExpiry };
-    const check = checkDraft(draft, last.targets ?? []);
+    const check = checkDraft(draft, last.targets);
     if (!check.ok) {
       if (check.field === 'label') {
         showError(labelError, check.error);

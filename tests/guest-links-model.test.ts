@@ -1,22 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  auditActionText,
-  auditTargetText,
-  checkDraft,
-  countdown,
-  createBlocked,
-  expiryView,
-  guestCountText,
-  linkEnded,
-  appendAudit,
-  refreshAudit,
-  scopeText,
-  tickDelay,
-  transportView,
-  type GuestTargetFloor,
-} from '../src/client/ui/guest-links-model.js';
-import { GUEST_LABEL_MAX, type GuestAuditEntry, type GuestLinkItem } from '../src/shared/guest-links.js';
+import { auditActionText, auditTargetText, checkDraft, countdown, createBlocked, expiryView, guestCountText, linkEnded, appendAudit, refreshAudit, scopeText, tickDelay, transportView } from '../src/client/ui/guest-links-model.js';
+import { GUEST_LABEL_MAX, type GuestAuditEntry, type GuestLinkItem, type GuestTargetFloor } from '../src/shared/guest-links.js';
 
 const NOW = Date.parse('2026-11-25T12:00:00.000Z');
 const at = (ms: number) => new Date(NOW + ms).toISOString();
