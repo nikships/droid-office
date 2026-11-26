@@ -1,5 +1,6 @@
 package ai.factory.droidoffice.ui.theme.artwork
 
+import android.content.res.Configuration
 import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
@@ -30,6 +31,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 
@@ -56,8 +58,14 @@ private fun artworkMotionEnabled(): Boolean {
 @Composable
 fun ArtworkBackdrop(theme: Artwork) {
     val full = Modifier.fillMaxSize()
+    val config = LocalConfiguration.current
+    val portrait = theme.phoneArt(config.orientation == Configuration.ORIENTATION_PORTRAIT, config.smallestScreenWidthDp)
     Box(full.background(theme.bg)) {
-        Image(painterResource(theme.image), null, full, BiasAbsoluteAlignment(theme.x * 2 - 1, theme.y * 2 - 1), ContentScale.Crop)
+        Image(
+            painterResource(portrait?.image ?: theme.image), null, full,
+            BiasAbsoluteAlignment((portrait?.focalX ?: theme.x) * 2 - 1, (portrait?.focalY ?: theme.y) * 2 - 1),
+            ContentScale.Crop,
+        )
         // Do not create a clock when motion is reduced; show the same frame on pause and cold start.
         val time = if (artworkMotionEnabled()) rememberInfiniteTransition(label = "artwork").animateFloat(
             0f, 600f, infiniteRepeatable(tween(600_000, easing = LinearEasing)), label = "seconds",

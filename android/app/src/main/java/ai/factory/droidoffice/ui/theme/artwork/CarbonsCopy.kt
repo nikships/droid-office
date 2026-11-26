@@ -12,6 +12,7 @@ import kotlin.random.Random
 val CarbonsCopy = Artwork(
     id = "carbons-copy", name = "Carbon’s Copy", blurb = "Woven carbon, a forge-orange edge and sparks in the dark.",
     image = R.drawable.art_carbons_copy, preview = R.drawable.preview_carbons_copy,
+    portrait = PortraitArt(R.drawable.art_carbons_copy_portrait, focalX = .5f, focalY = .5f),
     x = .30f, y = .50f,
     bg = Color(0xFF07070A), tint = Color(0xFF0A0A0E), text = Color(0xFFF2F0ED), muted = Color(0xFFAAA6A1),
     accent = Color(0xFFFF6A1F), accent2 = Color(0xFF7484FF), line = Color.White, glass = .74f,

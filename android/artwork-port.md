@@ -35,3 +35,28 @@ The native app is the Kotlin/Compose Material 3 `android/:app` module (min SDK 2
    Each port owns its slot, two WebPs, test and screenshot. Update the shared picker screenshot once after integrating gallery changes.
 
 At repository root, the normal gates are `npm ci`, `npm run lint`, `npm run typecheck`, `npm run test:coverage` in that order. `npm test` also exercises Android WebView JavaScript. `assembleRelease` above is a **local R8 check**, not a publication; do not bump a version, tag, push or run a release workflow to port artwork.
+
+## Add a portrait phone wallpaper
+
+Use one newly composed **9:20** wallpaper per theme, not a crop or extension of the desktop JPG. Portrait phones (smallest width below 600 dp) use this resource; tablets, landscape windows and themes without a portrait keep their existing image and crop. The preview, scrims, overlay and reduced-motion still frame are unchanged.
+
+1. Use the `gpt-image` skill's **edit** helper with `src/client/public/themes/<id>.jpg` as reference image 1. Set `model: gpt-image-2.6-sunburst`, `size: 1152x2560` (9:20), `output_format: png`. Substitute the theme's actual motifs and palette in this prompt:
+
+   > Reference 1 is the visual identity, not the layout. Paint a new full-bleed 9:20 portrait phone wallpaper. Preserve [motifs, palette, lighting and mood]. Compose interest from top to bottom, with recognizable detail at mid-height. Keep the middle and lower-middle calm and low contrast for lists, not empty black. Keep essential forms inside the central 80% of height and 90% of width for 9:16 to 9:21 cover crops. No text, glyphs, logos, watermarks, people, UI, frames or distracting highlights. Do not stretch, crop or extend the landscape reference.
+
+2. Inspect the actual output dimensions and composition: the generator can return a different size. Only resize a genuinely portrait, near-9:20 result; do not reshape an unsuitable composition. From the repository root encode the approved portrait at **1080×2400**, opaque WebP, target below **250 KB**:
+
+   ```bash
+   id=carbons-copy
+   name=${id//-/_}
+   cwebp -quiet -m 6 -q 80 -resize 1080 2400 generated.png \
+     -o "android/app/src/main/res/drawable-nodpi/art_${name}_portrait.webp"
+   ```
+
+3. Add **one line** to the `Artwork(...)` in the theme's own Kotlin file. Use `.5f` for a centered crop; adjust only if the composition needs it. Fractions place the crop within the excess image (`0` left/top, `1` right/bottom); at exactly 9:20 there is no excess.
+
+   ```kotlin
+   portrait = PortraitArt(R.drawable.art_carbons_copy_portrait, focalX = .5f, focalY = .5f),
+   ```
+
+   Check the Office tab, Workers list and worker detail on a tall phone. Rotate and check a portrait tablet to confirm they still show the existing image. With Android animations off the new wallpaper and its overlay should remain still.

@@ -6,6 +6,9 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 
 data class TerminalInk(val foreground: String, val cursor: String, val background: String, val selection: String)
 
+/** Cover alignment as fractions: 0 is left/top, .5 is centered, 1 is right/bottom. */
+data class PortraitArt(@DrawableRes val image: Int, val focalX: Float, val focalY: Float)
+
 /** The stage gets theme-scaled seconds. Draw over the image, beneath the dim and elliptical veil. */
 data class Artwork(
     val id: String,
@@ -22,7 +25,11 @@ data class Artwork(
     val shade: Float = 0f,
     val veilStart: Float = .55f,
     val veil: Color = Color.Black.copy(alpha = .55f),
-)
+    val portrait: PortraitArt? = null,
+) {
+    internal fun phoneArt(isPortrait: Boolean, smallestWidthDp: Int) =
+        portrait?.takeIf { isPortrait && smallestWidthDp in 1 until 600 }
+}
 
 object Artworks {
     // Slots follow the source gallery order. Each port owns its own file, never this list.

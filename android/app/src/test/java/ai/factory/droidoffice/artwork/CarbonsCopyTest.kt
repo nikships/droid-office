@@ -1,13 +1,26 @@
 package ai.factory.droidoffice.artwork
 
 import ai.factory.droidoffice.core.TermPage
+import ai.factory.droidoffice.R
 import ai.factory.droidoffice.ui.theme.artwork.Artworks
+import ai.factory.droidoffice.ui.theme.artwork.PortraitArt
 import ai.factory.droidoffice.ui.theme.artwork.TerminalInk
 import androidx.compose.ui.graphics.Color
 import org.junit.Assert.*
 import org.junit.Test
 
 class CarbonsCopyTest {
+    @Test fun portraitAssetIsForPortraitPhonesOnly() {
+        val theme = requireNotNull(Artworks.find("carbons-copy"))
+        val portrait = PortraitArt(R.drawable.art_carbons_copy_portrait, .5f, .5f)
+        assertEquals(portrait, theme.phoneArt(true, 393))
+        assertEquals(portrait, theme.phoneArt(true, 599))
+        assertNull(theme.phoneArt(false, 393))
+        assertNull(theme.phoneArt(true, 600))
+        assertNull(theme.phoneArt(false, 800))
+        assertNull(theme.copy(portrait = null).phoneArt(true, 393))
+    }
+
     @Test fun matchesWebPaletteCropAndTerminal() {
         val theme = requireNotNull(Artworks.find("carbons-copy"))
         assertEquals("Carbon’s Copy", theme.name)
