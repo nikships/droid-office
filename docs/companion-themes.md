@@ -2,20 +2,20 @@
 
 **Settings → Appearance** styles `/dashboard` in a browser or the Mac companion. Android has its own native look; the 3D office is not themed by this registry.
 
-## Wallpaper inventory
+## Signature themes
 
 The eight `family: 'artwork'` entries in [`companion-themes.ts`](../src/shared/companion-themes.ts) are the wallpaper signatures. Each owns its full-size JPEG and crop, gradient fallback, veil, animated overlay, two accents, text, lines, glass tint and opacity, and terminal foreground, cursor, background and selection. The stage also owns its colors, blend, speed and opacity.
 
-| Theme (registry ID) | Artwork and overlay | Glass, accents and veil |
+| Theme (registry ID) | Artwork and signature surfaces | Running companion: comparison and detail |
 | --- | --- | --- |
-| Carbon’s Copy (`carbons-copy`) | Woven carbon, embers | Graphite glass, forge orange / periwinkle, dark vignette. Also uses the immersive treatments below. |
-| Nightly Orbit (`nightly-orbit`) | Planetary dawn, starfield | Midnight violet, purple / orange, dark vignette |
-| Neo Tokyo (`neo-tokyo`) | Neon river, rain | Blue-black, pink / cyan, dark vignette |
-| Kyoto Firefly (`kyoto-firefly`) | Temple garden, additive fireflies | Moss, gold / mint, dark vignette |
-| Orbital Foundry (`orbital-foundry`) | Ring forge, embers | Warm black, vermilion / amber, dark vignette |
-| Abyssal (`abyssal-biolume`) | Deep trench, caustics | Deep blue, turquoise / violet, dark vignette |
-| Astral Cathedral (`astral-cathedral`) | Floating monoliths, nebula | Plum, lavender / gold, dark vignette |
-| Sakura Mist (`sakura-mist`) | Cherry blossoms, drifting petals | Rose, pink / blush, softer plum vignette and denser glass |
+| Carbon’s Copy (`carbons-copy`) | Woven carbon and embers; machined graphite controls and a copper maker’s mark | [Before](assets/companion-themes/carbon-before.webp) · [After](assets/companion-themes/carbon-after.webp) · [Field guide](assets/companion-themes/capability-sheet.webp) |
+| Nightly Orbit (`nightly-orbit`) | Planetary dawn and stars; orbital charts and a night-pass station plate | [Before](assets/companion-themes/nightly-orbit/before.webp) · [After](assets/companion-themes/nightly-orbit/after.webp) · [Station](assets/companion-themes/nightly-orbit/station.webp) · [Layout](assets/companion-themes/nightly-orbit/layout.webp) |
+| Neo Tokyo (`neo-tokyo`) | Neon river and rain; pink and cyan reflections on Shibaura glass | [Before](assets/companion-themes/neo-tokyo/before.webp) · [After](assets/companion-themes/neo-tokyo/after.webp) · [Nameplate](assets/companion-themes/neo-tokyo/nameplate.webp) · [Directory](assets/companion-themes/neo-tokyo/directory.webp) |
+| Kyoto Firefly (`kyoto-firefly`) | Garden fireflies; backlit shoji, pond lacquer and lantern-gold edges | [Before](assets/companion-themes/kyoto-firefly/before.webp) · [After](assets/companion-themes/kyoto-firefly/after.webp) · [Card](assets/companion-themes/kyoto-firefly/card.webp) · [Layout](assets/companion-themes/kyoto-firefly/sheet.webp) |
+| Orbital Foundry (`orbital-foundry`) | Ring forge and embers; heat-blued plates and a stamped mill die | [Before](assets/companion-themes/orbital-foundry/before.webp) · [After](assets/companion-themes/orbital-foundry/after.webp) · [Ring mill](assets/companion-themes/orbital-foundry/ring-mill.png) · [Layout](assets/companion-themes/orbital-foundry/layout-sheet.png) |
+| Abyssal (`abyssal-biolume`) | Trench caustics; depth soundings and a luminous survey plate | [Before](assets/companion-themes/abyssal-biolume/before.webp) · [After](assets/companion-themes/abyssal-biolume/after.webp) · [Focus](assets/companion-themes/abyssal-biolume/focus.webp) · [Layout](assets/companion-themes/abyssal-biolume/layout.webp) |
+| Astral Cathedral (`astral-cathedral`) | Floating monoliths and nebula; vaulted chapel arches in plum and gold | [Before](assets/companion-themes/astral-cathedral/before.webp) · [After](assets/companion-themes/astral-cathedral/after.webp) · [Card](assets/companion-themes/astral-cathedral/detail.webp) · [Directory](assets/companion-themes/astral-cathedral/directory.webp) |
+| Sakura Mist (`sakura-mist`) | Drifting petals; blossom sprigs, silk panels and a Hanami nameplate | [Before](assets/companion-themes/sakura-mist/before.webp) · [After](assets/companion-themes/sakura-mist/after.webp) · [Card](assets/companion-themes/sakura-mist/blossom-card.webp) · [Layout](assets/companion-themes/sakura-mist/layout-sheet.webp) |
 
 The remaining themes have no bundled wallpaper. **Aurora, Blueprint, Outrun, Solar Silk and Deep Field** use full-screen aurora, grid, synthwave, silk and nebula shaders respectively. **Velvet, Glacier, Dune, Phosphor and Graphite** use static gradients; Phosphor adds scanlines. **OG** is the default and paints no theme overrides.
 
