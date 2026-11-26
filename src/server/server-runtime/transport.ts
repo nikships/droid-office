@@ -3,7 +3,7 @@ import type { Floor } from '../floor.js';
 import type { DevicesStore } from '../devices.js';
 import type { WorkerManager } from '../workers.js';
 import type { ServerMsg } from '../../shared/protocol.js';
-import { guestOutbound, guestSeesWorker, type GuestSendContext } from '../../shared/guest-policy.js';
+import { guestOutbound, guestSeesWorker, type GuestNamed, type GuestSendContext } from '../../shared/guest-policy.js';
 import type { Client } from './client.js';
 import { guestWorld } from './guest-gate.js';
 
@@ -46,8 +46,8 @@ export function createClientTransport({ clients, floors }: TransportContext) {
     }
     return dropped;
   };
-  /** To everyone on one floor. */
-  const toFloor = (floor: Floor, msg: ServerMsg, droppable = false): boolean => {
+  /** To everyone on one floor. `about`: workers the message names besides its own subject, for guests' scope. */
+  const toFloor = (floor: Floor, msg: ServerMsg, droppable = false, about?: readonly GuestNamed[]): boolean => {
     let json: string | undefined;
     const shared = () => (json ??= JSON.stringify(msg));
     let dropped = false;
@@ -57,7 +57,7 @@ export function createClientTransport({ clients, floors }: TransportContext) {
         dropped = true;
         continue;
       }
-      const frame = frameFor(c, msg, { via: 'floor', floor: floor.id }, shared);
+      const frame = frameFor(c, msg, { via: 'floor', floor: floor.id, ...(about ? { about } : {}) }, shared);
       if (frame) c.ws.send(frame);
     }
     return dropped;

@@ -15,8 +15,8 @@ import { WebSocket } from 'ws';
 import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 import { GUEST_CLOSE_DISABLED, GUEST_CLOSE_ENDED, GUEST_WS_PROTOCOL, type GuestAuditPage, type GuestLinkCreated, type GuestLinksState, type GuestPreset } from '../src/shared/guest-links.js';
-import { GUEST_REFUSED } from '../src/shared/guest-policy.js';
-import type { ClientMsg, ServerMsg } from '../src/shared/protocol.js';
+import { GUEST_ORCHESTRATOR_BLOCKED, GUEST_REFUSED } from '../src/shared/guest-policy.js';
+import { SUBAGENT_DEFAULTS, type ClientMsg, type ServerMsg } from '../src/shared/protocol.js';
 
 const DNS = 'office.guest-test.ts.net';
 const GUEST_ORIGIN = `https://${DNS}:10000`;
@@ -348,6 +348,18 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   assert.deepEqual(eow.floors.map((f) => f.id).sort(), [alphaId, betaId].sort());
   assert.deepEqual(eow.missionControl?.bots, []);
   assert.ok(eow.missionControl?.orchestrator);
+  // Blocked by the owner's setup: the owner reads why and where to fix it, a guest one fixed line, and its prompt the same.
+  owner.send({ t: 'subagents.set', settings: { ...SUBAGENT_DEFAULTS, officeMcp: false } });
+  const ownerBlocked = await owner.wait('missionControl', (m) => !!m.state.orchestrator.blocked);
+  assert.match(ownerBlocked.state.orchestrator.blocked!, /Office MCP/);
+  assert.equal(ownerBlocked.state.orchestrator.blockedPane, 'subagents');
+  const guestBlocked = await eo.wait('missionControl', (m) => !!m.state.orchestrator.blocked);
+  assert.deepEqual([guestBlocked.state.orchestrator.blocked, 'blockedPane' in guestBlocked.state.orchestrator], [GUEST_ORCHESTRATOR_BLOCKED, false]);
+  const refused = await eo.act({ t: 'orchestrator.prompt', prompt: 'hi' });
+  assert.deepEqual([refused.ok, refused.error], [false, GUEST_ORCHESTRATOR_BLOCKED]);
+  assert.ok(!eo.messages.some((m) => m.t === 'toast' && /Office MCP/.test(m.text)), 'the owner’s reason never reaches the guest');
+  owner.send({ t: 'subagents.set', settings: SUBAGENT_DEFAULTS });
+  await eo.wait('missionControl', (m) => !m.state.orchestrator.blocked);
   for (const key of OWNER_ONLY_WELCOME) assert.equal(key in eow, false, `welcome carries no ${key}`);
   const ownerOnly: ClientMsg[] = [
     { t: 'profile', name: 'x', color: '#000000', look: {} as never },

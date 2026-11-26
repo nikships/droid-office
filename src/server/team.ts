@@ -10,6 +10,7 @@ import path from 'node:path';
 import { PROMPT_IMAGE_ID, PROMPT_IMAGES_MAX } from '../shared/drops.js';
 import { DESK_BY_ID, nearestFreeSeat, type DeskDef } from '../shared/layout.js';
 import { AGENT_EFFORTS, isAgentEffort, type AgentChoice, type AgentEffort, type GhPull, type SubagentModel, type SubagentSettings, type WorkerInfo, type WorkerStatus, type WorkerTask } from '../shared/protocol.js';
+import type { GuestNamed } from '../shared/guest-policy.js';
 import type { PipelinesState } from '../shared/pipelines.js';
 import { isAsleep } from '../shared/status.js';
 import type { DroidModelCatalogue, DroidModelOption } from './droid-models.js';
@@ -111,7 +112,8 @@ export interface TeamOptions {
   factory?: () => FactoryState;
   recheckFactoryLimits?: () => Promise<void>;
   prompts?: PromptSource;
-  toast(text: string, level: 'info' | 'warn', workerId?: string): void;
+  /** `about`: workers the text names besides `workerId`. */
+  toast(text: string, level: 'info' | 'warn', workerId?: string, about?: readonly GuestNamed[]): void;
   /** How long news waits before a lead at rest is told, so a report and the turn ending with it go as one. */
   nudgeDelayMs?: number;
   now?: () => number;
@@ -1732,7 +1734,7 @@ export class Team {
     if (title) this.workers.setTask(info.id, { name: title, summary: clip(task, 120) });
     this.known.set(info.id, { name: info.name, lead: still.id, status: info.status });
     this.rememberSubagent(this.workers.get(info.id) ?? info);
-    this.opts.toast(`🧭 ${still.name} hired ${info.name} at ${seat.label}${title ? `: ${title}` : ''}`, 'info', info.id);
+    this.opts.toast(`🧭 ${still.name} hired ${info.name} at ${seat.label}${title ? `: ${title}` : ''}`, 'info', info.id, [still]);
     return ok({ worker: this.member(this.workers.get(info.id) ?? info), worktree: info.worktree ? path.resolve(this.opts.dir, info.worktree.path) : this.opts.dir, branch: info.worktree?.branch ?? null, ...(handoff ? { handoff } : {}) });
   }
 
@@ -2024,7 +2026,7 @@ export class Team {
     const { note, error } = result;
     if (error) return no(409, `${w.name}: ${error}`);
     this.persist();
-    this.opts.toast(`👋 ${lead.name} sent ${w.name} home${note ? `. ${note}` : ''}`, 'info');
+    this.opts.toast(`👋 ${lead.name} sent ${w.name} home${note ? `. ${note}` : ''}`, 'info', undefined, [lead, w]);
     return ok({ name: w.name, ...(note ? { note } : {}) });
   }
 
@@ -2107,7 +2109,7 @@ export class Team {
     if (!question) this.reported.add(w.id);
     this.spoke.add(w.id);
     const verdict = packet ? await this.gateEvent(event, packet) : undefined;
-    this.opts.toast(`${question ? `❓ ${w.name} asked ${lead.name}` : progress ? `⏳ ${w.name} reported progress to ${lead.name}` : `📨 ${w.name} reported to ${lead.name}`}: “${clip(text, 90)}”`, 'info', w.id);
+    this.opts.toast(`${question ? `❓ ${w.name} asked ${lead.name}` : progress ? `⏳ ${w.name} reported progress to ${lead.name}` : `📨 ${w.name} reported to ${lead.name}`}: “${clip(text, 90)}”`, 'info', w.id, [lead]);
     return ok({ lead: lead.name, ...provenance, ...(progress ? { progress: true } : {}), result: cloneWorkerResult(result), ...(verdict && verdict.source !== 'bypass' ? { traffic: verdict.traffic } : {}) });
   }
 
@@ -2130,7 +2132,7 @@ export class Team {
     this.persist();
     if (w) this.emit({ type: 'worker', worker: w });
     const icon = verdict === 'approve' ? '✅' : verdict === 'request_changes' ? '🔁' : '💬';
-    this.opts.toast(`${icon} ${lead.name} reviewed ${record.name} (${verdict}): “${clip(notes, 90)}”`, 'info', record.id);
+    this.opts.toast(`${icon} ${lead.name} reviewed ${record.name} (${verdict}): “${clip(notes, 90)}”`, 'info', record.id, [lead]);
     const shouldNotify = typeof b.notify === 'boolean' ? b.notify : verdict === 'request_changes';
     let notified = false;
     let notifyNote: string | undefined;

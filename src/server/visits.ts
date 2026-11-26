@@ -17,6 +17,7 @@
 import { randomBytes } from 'node:crypto';
 import { DESK_BY_ID } from '../shared/layout.js';
 import type { ServerMsg, WorkerInfo } from '../shared/protocol.js';
+import type { GuestNamed } from '../shared/guest-policy.js';
 import type { DroidScreen } from './droid-screen.js';
 import { isAsleep, isBusy } from '../shared/status.js';
 import { type Visit, type VisitKind, type VisitPhase, VISIT_KINDS, visitRoute, visitWalkMs } from '../shared/visits.js';
@@ -43,7 +44,8 @@ export interface VisitOptions {
   /** ⚙️ Settings → Subagents & visits → Visits. */
   on(): boolean;
   emit(msg: Extract<ServerMsg, { t: 'visits' } | { t: 'visit_say' }>): void;
-  toast?(text: string, level: 'info' | 'warn', workerId?: string): void;
+  /** `about`: workers the text names besides `workerId`. */
+  toast?(text: string, level: 'info' | 'warn', workerId?: string, about?: readonly GuestNamed[]): void;
   prompts?: PromptSource;
   now?: () => number;
 }
@@ -222,6 +224,12 @@ export class Visits {
   /** Every visit on the floor, as the browser shows them. */
   list(): Visit[] {
     return [...this.runs.values()].filter((r) => r.after === undefined).map((r) => ({ ...r.visit }));
+  }
+
+  /** The two workers of a visit still on its way, at a desk, with a question open, or just over. */
+  participants(id: string): { visitor: string; host: string } | undefined {
+    const visit = (this.runs.get(id) ?? this.questions.get(id) ?? this.ended.get(id)?.run)?.visit;
+    return visit && { visitor: visit.visitor, host: visit.host };
   }
 
   /** Why `w` can't visit anyone, if it can't. */
@@ -419,7 +427,7 @@ export class Visits {
     if (error && !notes.includes(note)) return no(409, `Couldn't deliver your answer to ${run.visitorName}: ${error}. Retry visit_reply when its session is available`);
     if (!this.runs.has(id)) this.ended.set(id, { run, at: now });
     this.opts.emit({ t: 'visit_say', visit: id, worker: caller.id, text });
-    this.opts.toast?.(`💬 ${caller.name} answered ${run.visitorName}: “${clip(text, 90)}”`, 'info', caller.id);
+    this.opts.toast?.(`💬 ${caller.name} answered ${run.visitorName}: “${clip(text, 90)}”`, 'info', caller.id, [{ id: run.visit.visitor }]);
     return ok({ visit: id, to: run.visitorName, ...(notes.includes(note) ? { queued: true } : { delivered: true }) });
   }
 
@@ -428,7 +436,7 @@ export class Visits {
     if (run.questionError) return;
     run.answeredAt = undefined;
     this.questions.set(run.visit.id, run);
-    this.opts.toast?.(`Couldn't get ${note.fromName}'s answer to ${run.visitorName}: ${error}. The question is open again.`, 'warn', note.from);
+    this.opts.toast?.(`Couldn't get ${note.fromName}'s answer to ${run.visitorName}: ${error}. The question is open again.`, 'warn', note.from, [{ id: run.visit.visitor }]);
   }
 
   private closeQuestion(run: Run, error: string, now: number) {
@@ -542,7 +550,7 @@ export class Visits {
     else notes.push(note);
     this.inbox.set(visit.host, notes);
     const { icon, verb } = SAYING[visit.kind];
-    this.opts.toast?.(`${icon} ${run.visitorName} ${verb} ${run.hostName}${run.urgent ? ' (urgent)' : ''}: “${clip(run.text, 90)}”`, 'info', visit.visitor);
+    this.opts.toast?.(`${icon} ${run.visitorName} ${verb} ${run.hostName}${run.urgent ? ' (urgent)' : ''}: “${clip(run.text, 90)}”`, 'info', visit.visitor, [{ id: visit.host }]);
     this.deliver(visit.host, now);
   }
 

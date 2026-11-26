@@ -31,6 +31,7 @@ import type { WakeGate, WakeLeadView, WakeTeammate } from './wake-filter.js';
 import { Visits } from './visits.js';
 import type { DroidModelCatalogue } from './droid-models.js';
 import type { SubagentSettings } from '../shared/protocol.js';
+import type { GuestNamed } from '../shared/guest-policy.js';
 import type { ModelAvailability, ModelUsage } from '../shared/subscriptions.js';
 import type { BenchmarkModel } from '../shared/benchmarks.js';
 import type { FactoryState } from '../shared/factory.js';
@@ -76,8 +77,8 @@ export interface FloorContext {
   prompts: PromptSource;
   /** To everyone on this floor. */
   emit(floor: Floor, msg: ServerMsg, droppable?: boolean): unknown;
-  /** To everyone on this floor; `workerId` names the worker it is about, when one is. */
-  toast(floor: Floor, text: string, level?: ToastLevel, workerId?: string): void;
+  /** To everyone on this floor; `workerId` names the worker it is about, when one is, and `about` any other workers its text names. */
+  toast(floor: Floor, text: string, level?: ToastLevel, workerId?: string, about?: readonly GuestNamed[]): void;
   /** A worker's terminal output, for whoever has that terminal open. */
   termData(workerId: string, data: string, connectionIds: string[]): void;
   /** What a worker changed, for whoever has its Changes window open. */
@@ -329,7 +330,7 @@ export class Floor {
           if (this.workers.get(workerId)?.status === 'needs_input') ctx.offFloorScreen?.(this, workerId);
           return dropped;
         },
-        toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
+        toast: (text, level, workerId, about) => ctx.toast(this, text, level, workerId, about),
         checkout: (branch) => {
           this.project.branch = branch;
           this.branchInfo = { baseBranch: this.workers.baseBranch, selectedBranch: this.workers.selectedBranch };
@@ -471,7 +472,7 @@ export class Floor {
         ...(ctx.factory ? { factory: ctx.factory.bind(ctx) } : {}),
         ...(ctx.recheckFactoryLimits ? { recheckFactoryLimits: ctx.recheckFactoryLimits.bind(ctx) } : {}),
         prompts: ctx.prompts,
-        toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
+        toast: (text, level, workerId, about) => ctx.toast(this, text, level, workerId, about),
         ...(ctx.wakeFilter ? { wakeFilter: ctx.wakeFilter } : {}),
         leadView: (lead) => ctx.leadView?.(lead),
         teammatesElsewhere: (lead, rich) => ctx.teammatesElsewhere?.(this, lead, rich) ?? [],
@@ -497,7 +498,7 @@ export class Floor {
         on: () => ctx.subagents().visits,
         emit: (msg) => ctx.emit(this, msg),
         prompts: ctx.prompts,
-        toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
+        toast: (text, level, workerId, about) => ctx.toast(this, text, level, workerId, about),
       },
     );
     this.visits.start();
@@ -539,7 +540,7 @@ export class Floor {
       (branch) => openPull(this, branch),
       {
         state: (state, ids) => ctx.changes(state, ids),
-        toast: (text, level) => ctx.toast(this, text, level),
+        toast: (text, level, workerId) => ctx.toast(this, text, level, workerId),
         refreshGitHub: () => void this.board.refresh(),
       },
       this.board,
@@ -690,10 +691,11 @@ export class Floor {
 
   private goHome(worker: WorkerInfo, why: string, head?: string, heads?: Record<string, string | undefined>) {
     const done = this.workers.kill(worker.id, undefined, head, heads);
-    this.ctx.toast(this, `🏠 ${worker.name} went home: ${why}`);
+    // It has left by the time these go out: `about` keeps the floors it worked in.
+    this.ctx.toast(this, `🏠 ${worker.name} went home: ${why}`, 'info', undefined, [worker]);
     void done.then(({ note, error }) => {
-      if (note) this.ctx.toast(this, note);
-      if (error) this.ctx.toast(this, error, 'warn');
+      if (note) this.ctx.toast(this, note, 'info', undefined, [worker]);
+      if (error) this.ctx.toast(this, error, 'warn', undefined, [worker]);
     });
   }
 

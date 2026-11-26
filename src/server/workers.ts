@@ -7,6 +7,7 @@ import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
 import type { AgentChoice, AgentEffort, GhPull, TeamBadge, TerminalHit, WorkerAsk, WorkerInfo, WorkerKind, WorkerRepo, WorkerStatus, WorkerTask } from '../shared/protocol.js';
+import type { GuestNamed } from '../shared/guest-policy.js';
 import type { ToolRefresh } from './hook-refresh.js';
 import { leadBadge, memberBadge } from '../shared/team.js';
 import { OFFICE_SHELL_ID } from '../shared/office-shell.js';
@@ -170,8 +171,8 @@ export interface WorkerEvents {
   remove(workerId: string, shot?: boolean): void;
   data(workerId: string, data: string, connectionIds: string[]): void;
   screen(workerId: string, frame: ScreenFrame): unknown;
-  /** `workerId` names the worker it is about, when one is (a shot worker's dismissal). */
-  toast(text: string, level: 'info' | 'warn' | 'error', workerId?: string): void;
+  /** `workerId` names the worker it is about, when one is (a shot worker's dismissal), and `about` workers its text names that may have left. */
+  toast(text: string, level: 'info' | 'warn' | 'error', workerId?: string, about?: readonly GuestNamed[]): void;
   /** The office moved the project's checkout onto `branch` (see Worktrees.freshen). */
   checkout?(branch: string): void;
   /** A worker's tool call finished that may have changed what the office shows (see hook-refresh.ts). */
@@ -677,7 +678,7 @@ export class WorkerManager {
       if (typeof made === 'string') return made;
       if ('repos' in made) {
         ({ worktree: wt, repos: others } = made);
-        for (const note of made.notes) this.events.toast(`🌿 ${name}'s worktree of ${note}`, 'info');
+        for (const note of made.notes) this.events.toast(`🌿 ${name}'s worktree of ${note}`, 'info', undefined, [{ id, repos: others }]);
       } else {
         const { note, ...ref } = made;
         wt = ref;
@@ -1238,10 +1239,10 @@ export class WorkerManager {
     if (!superShot) return undefined;
     void this.kill(id, undefined, undefined, undefined, true).then(
       ({ note, error }) => {
-        if (note) this.events.toast(note, 'info', id);
-        if (error) this.events.toast(error, 'warn', id);
+        if (note) this.events.toast(note, 'info', id, [w.info]);
+        if (error) this.events.toast(error, 'warn', id, [w.info]);
       },
-      (err: Error) => this.events.toast(`Couldn't dismiss ${w.info.name}: ${err.message}`, 'warn', id),
+      (err: Error) => this.events.toast(`Couldn't dismiss ${w.info.name}: ${err.message}`, 'warn', id, [w.info]),
     );
     return undefined;
   }

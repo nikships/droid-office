@@ -26,6 +26,13 @@ export function guestWorld(floors: Map<string, Floor>): GuestWorld {
       }
       return undefined;
     },
+    visitOf(visitId) {
+      for (const f of floors.values()) {
+        const v = f.visits.participants(visitId);
+        if (v) return v;
+      }
+      return undefined;
+    },
   };
 }
 

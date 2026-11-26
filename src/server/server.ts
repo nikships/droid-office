@@ -92,6 +92,7 @@ import { createHttpHandler } from './server-runtime/http.js';
 import { createFloorHttp } from './server-runtime/floor-http.js';
 import { createGuestHttp } from './server-runtime/guest-http.js';
 import { createGuestGate, guestName } from './server-runtime/guest-gate.js';
+import { GUEST_ORCHESTRATOR_BLOCKED, type GuestNamed } from '../shared/guest-policy.js';
 import type { Client, ToastLevel } from './server-runtime/client.js';
 import { readBody, send, sameOrigin, refuseUpgrade } from './server-runtime/http-utils.js';
 import { str, num, repoOf, imageIds } from './server-runtime/validation.js';
@@ -242,10 +243,11 @@ export async function startServer(cfg: Config) {
     for (const f of floors.values()) if (f.workers.get(workerId)) return f;
     return undefined;
   };
-  const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info', workerId?: string) => {
+  /** `workerId`: the worker it is about; `about`: other workers its text names (one that left keeps its repos), so guests see it only when they see them all. */
+  const toastFloor = (floor: Floor | undefined, text: string, level: ToastLevel = 'info', workerId?: string, about?: readonly GuestNamed[]) => {
     if (!floor) return;
     acting.getStore()?.(text);
-    toFloor(floor, workerId === undefined ? { t: 'toast', text, level } : { t: 'toast', text, level, workerId });
+    toFloor(floor, workerId === undefined ? { t: 'toast', text, level } : { t: 'toast', text, level, workerId }, false, about);
   };
   const floorInfos = (): FloorInfo[] =>
     [...floors.values()].map((f) => {
@@ -1320,7 +1322,7 @@ export async function startServer(cfg: Config) {
   const takeLinear = (c: Client, floor: Floor, ref: string, w: { id: string; name: string }, auto: boolean) => {
     void floor.linear.take(ref, w, { auto }).then(({ ticket, error }) => {
       if (error) return warn(c, `Couldn't hand ${ref} to ${w.name} in Linear: ${error}`);
-      if (ticket) toastFloor(floor, `◆ ${w.name} took ${ticket.identifier} in Linear: ${ticket.title}`);
+      if (ticket) toastFloor(floor, `◆ ${w.name} took ${ticket.identifier} in Linear: ${ticket.title}`, 'info', w.id);
     });
   };
 
@@ -1463,7 +1465,10 @@ export async function startServer(cfg: Config) {
     const promptOrchestrator = (m: { prompt: string; images?: string[]; queue?: boolean }) => {
       const images = imageIds(m.images);
       const at = floorOf(c);
-      const err = orchestrator.prompt(str(m.prompt, 20000), images, m.queue === true, at && { name: at.def.name, dir: at.dir });
+      const blocked = c.guest ? orchestrator.blocked()?.why : undefined;
+      const said = orchestrator.prompt(str(m.prompt, 20000), images, m.queue === true, at && { name: at.def.name, dir: at.dir });
+      // What blocks it is the owner's setup (their sign-in, their model's subscription): a guest gets one fixed line.
+      const err = blocked !== undefined && said === blocked ? GUEST_ORCHESTRATOR_BLOCKED : said;
       orchestrator.workers.unstage(images);
       warn(c, err);
       done(err, ORCHESTRATOR_ID);
@@ -1859,7 +1864,12 @@ export async function startServer(cfg: Config) {
           const across = repos.length ? ` across ${[floor.def.name, ...repos.map((x) => x.name)].join(' + ')}` : '';
           if (typeof r === 'string') refuse(r);
           else
-            toastFloor(floor, kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : ticket ? ` for ${ticket}` : r.prompt ? ' with a task' : ''}${kind === 'agent' ? across : ''}`);
+            toastFloor(
+              floor,
+              kind === 'shell' ? `${who} opened a shell at a desk` : `${who} hired ${r.name}${issue ? ` for issue #${issue}` : ticket ? ` for ${ticket}` : r.prompt ? ' with a task' : ''}${kind === 'agent' ? across : ''}`,
+              'info',
+              r.id,
+            );
           if (typeof r !== 'string') done(undefined, r.id);
           if (typeof r !== 'string' && issue) takeIssue(c, floor, issue);
           if (typeof r !== 'string' && ticket) takeLinear(c, floor, ticket, r, who === AUTOPILOT_NAME);
@@ -1888,7 +1898,7 @@ export async function startServer(cfg: Config) {
         void w.floor.workers.fork(w.wid, who, str(msg.prompt, 20000) || undefined).then(
           (result) => {
             if (typeof result === 'string') return refuse(result);
-            toastFloor(w.floor, `${who} forked ${w.info.name} into ${result.name}`);
+            toastFloor(w.floor, `${who} forked ${w.info.name} into ${result.name}`, 'info', result.id, [w.info]);
             done(undefined, result.id);
           },
           (error: unknown) => refuse(error instanceof Error ? error.message : 'The office could not confirm the fork. Check the floor before trying again.'),
@@ -1918,12 +1928,13 @@ export async function startServer(cfg: Config) {
         const { floor, info } = w;
         // The worker leaves right away; its worktree is dealt with after that, and the outcome follows.
         const cleanup = floor.team.sendingHome(info.id, 'owner', () => floor.workers.kill(info.id, CLEANUPS.has(String(msg.cleanup)) ? msg.cleanup : undefined));
-        toastFloor(floor, `${who} sent ${info.name} home`);
+        // It leaves right away: `about` keeps the floors it worked in for guests' scope.
+        toastFloor(floor, `${who} sent ${info.name} home`, 'info', undefined, [info]);
         defer();
         void cleanup.then(
           ({ note, error }) => {
-            if (note) toastFloor(floor, note);
-            if (error) toastFloor(floor, error, 'warn');
+            if (note) toastFloor(floor, note, 'info', undefined, [info]);
+            if (error) toastFloor(floor, error, 'warn', undefined, [info]);
             done(error, info.id);
           },
           (error: unknown) => refuse(error instanceof Error ? error.message : 'The office could not confirm sending the worker home.'),
@@ -1955,6 +1966,7 @@ export async function startServer(cfg: Config) {
         const settle = auditOutcome();
         void (async () => {
           const names: string[] = [];
+          const rebuilt: GuestNamed[] = [];
           const notes: string[] = [];
           for (const id of ids) {
             const info = floor.workers.get(id);
@@ -1965,13 +1977,14 @@ export async function startServer(cfg: Config) {
             else if (!r.rebuilt) sendTo(c, { t: 'toast', text: r.note ?? `${info.name}'s worktree is already there`, level: 'info' });
             else {
               names.push(info.name);
+              rebuilt.push(info);
               if (r.note) notes.push(r.note);
             }
           }
           settle(names.length ? undefined : 'Nothing was rebuilt');
           if (!names.length) return;
           const whose = names.length === 1 ? `${names[0]}'s worktree` : `the worktrees of ${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-          toastFloor(floor, `🌿 ${who} rebuilt ${whose}${notes.length ? ` — ${notes.join('; ')}` : ''}`);
+          toastFloor(floor, `🌿 ${who} rebuilt ${whose}${notes.length ? ` — ${notes.join('; ')}` : ''}`, 'info', undefined, rebuilt);
         })();
         break;
       }
@@ -2031,7 +2044,7 @@ export async function startServer(cfg: Config) {
           done(err, target?.wid ?? w?.wid);
           const issue = target?.info.kind === 'agent' ? issueNumber(msg.issue) : undefined;
           if (target && !err && issue) {
-            toastFloor(target.floor, `${who} handed issue #${issue} to ${target.info.name}`);
+            toastFloor(target.floor, `${who} handed issue #${issue} to ${target.info.name}`, 'info', target.info.id);
             takeIssue(c, target.floor, issue);
           }
           const ticket = target?.info.kind === 'agent' ? linearIssueRef(msg.linear) : undefined;
@@ -2098,10 +2111,10 @@ export async function startServer(cfg: Config) {
             const name = info?.name ?? 'the worker';
             const words = forgeWords(floor.board.forge);
             const [one] = r.prs;
-            if (r.prs.length === 1 && one && !one.repo) toastFloor(floor, one.existed ? `${name}'s branch already has ${words.pr} ${words.ref(one.number)}` : `${who} opened ${words.pr} ${words.ref(one.number)} for ${name}`);
+            if (r.prs.length === 1 && one && !one.repo) toastFloor(floor, one.existed ? `${name}'s branch already has ${words.pr} ${words.ref(one.number)}` : `${who} opened ${words.pr} ${words.ref(one.number)} for ${name}`, 'info', wid);
             else {
               const list = r.prs.map((p) => `${p.repo} ${words.ref(p.number)}`).join(', ');
-              toastFloor(floor, r.prs.every((p) => p.existed) ? `${name}'s ${words.pull}s are already open: ${list}` : `${who} opened ${name}'s ${words.pull}s: ${list}`);
+              toastFloor(floor, r.prs.every((p) => p.existed) ? `${name}'s ${words.pull}s are already open: ${list}` : `${who} opened ${name}'s ${words.pull}s: ${list}`, 'info', wid);
             }
             const dirty = r.prs.filter((p) => p.dirty);
             if (dirty.length)

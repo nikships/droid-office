@@ -29,6 +29,8 @@ export interface GuestWorld {
   isOpen(floorId: string): boolean;
   /** The other floors a worker works in too (its `repos`), when it has any. */
   reposOf(workerId: string): readonly string[] | undefined;
+  /** The visiting worker and the one it visits, for a visit still on its way, at a desk or just over. */
+  visitOf(visitId: string): { visitor: string; host: string } | undefined;
 }
 
 /** The other floors a worker's `repos` name. */
@@ -36,6 +38,9 @@ export const repoFloors = (w: Pick<WorkerInfo, 'repos'>): string[] | undefined =
 
 /** The text every refused guest request gets, whatever the reason: it never says whether a target exists. */
 export const GUEST_REFUSED = 'This share link doesn’t allow that.';
+
+/** Why the Orchestrator can't start, to a guest: what blocks it is the owner's setup, never shown to guests. */
+export const GUEST_ORCHESTRATOR_BLOCKED = 'Not available right now';
 
 const officeWide = (g: GuestScopeGrant) => GUEST_PRESET_INFO[g.preset].scope === 'office';
 const canWrite = (g: GuestScopeGrant) => GUEST_PRESET_INFO[g.preset].write;
@@ -61,6 +66,11 @@ export function guestWorkerInfo(w: WorkerInfo, g: GuestScopeGrant): WorkerInfo {
   const { repos, ...rest } = w;
   const kept = repos.filter((r) => r.floor === g.floorId);
   return kept.length ? { ...rest, repos: kept } : rest;
+}
+
+/** Whether a worker a message is about is in scope: where it sits now (else `floorId`), and every floor it works in. */
+function seesNamed(g: GuestScopeGrant, world: GuestWorld, w: GuestNamed, floorId: string | undefined): boolean {
+  return guestSeesWorker(g, w.id, world.floorOf(w.id) ?? floorId, [...(repoFloors(w) ?? []), ...(world.reposOf(w.id) ?? [])]);
 }
 
 /** The worker a message carries, as guest `g` may receive it, or undefined when it is out of scope. */
@@ -310,7 +320,15 @@ export interface GuestSendContext {
   floor?: string;
   /** The floor this guest is on. */
   here: string | null;
+  /**
+   * Workers a message names that it doesn't carry as its own subject (a toast's text): each must be in
+   * scope too. `repos` keeps the floors one worked in after it has left.
+   */
+  about?: readonly GuestNamed[];
 }
+
+/** A worker a message names, with its repositories when it may have left already. */
+export type GuestNamed = Pick<WorkerInfo, 'id'> & Partial<Pick<WorkerInfo, 'repos'>>;
 
 interface GuestView {
   grant: GuestScopeGrant;
@@ -385,7 +403,17 @@ export function guestBuilding(roster: readonly FloorRoster[], g: GuestScopeGrant
 
 /** Mission Control for office-wide links: the Orchestrator, without its saved settings beyond whether it's on, and without external bots. */
 export function guestMission(state: MissionControlState, g: GuestScopeGrant): MissionControlState | undefined {
-  return officeWide(g) ? { orchestrator: { ...state.orchestrator, settings: { on: state.orchestrator.settings.on } }, bots: [] } : undefined;
+  if (!officeWide(g)) return undefined;
+  // What blocks it (Droid signed out, its model's subscription) is the owner's setup: guests get one fixed line and no Settings pane.
+  const { blocked, blockedPane: _pane, settings, ...rest } = state.orchestrator;
+  return { orchestrator: { ...rest, settings: { on: settings.on }, ...(blocked ? { blocked: GUEST_ORCHESTRATOR_BLOCKED } : {}) }, bots: [] };
+}
+
+/** A floor's visits as a guest sees them: on a floor whose content it sees, between two workers it sees. */
+function seesVisit(g: GuestScopeGrant, world: GuestWorld, ctx: GuestSendContext, v: { visitor: string; host: string } | undefined): boolean {
+  const floor = ctx.floor ?? ctx.here ?? undefined;
+  if (!v || !floor || !world.isOpen(floor) || !guestSeesFloor(g, floor)) return false;
+  return seesNamed(g, world, { id: v.visitor }, floor) && seesNamed(g, world, { id: v.host }, floor);
 }
 
 const arrivalFor = (arrival: WelcomeMsg['arrival'], view: FloorView): WelcomeMsg['arrival'] => (arrival.floor === view.floor ? arrival : { floor: null, via: 'lobby' });
@@ -454,7 +482,8 @@ export const GUEST_OUTBOUND: { readonly [K in ServerMsg['t']]: GuestOutbound<Out
   'gh.labeled': FLOOR_CONTENT,
   // About a worker: when it is in scope. Otherwise a reply to this guest, or news of its own floor; never office-wide news.
   toast: redact((m, { grant, world, ctx }) => {
-    if (m.workerId !== undefined) return guestSeesWorker(grant, m.workerId, world.floorOf(m.workerId) ?? ctx.floor, world.reposOf(m.workerId)) ? m : undefined;
+    if (ctx.about?.some((w) => !seesNamed(grant, world, w, ctx.floor))) return undefined;
+    if (m.workerId !== undefined) return seesNamed(grant, world, { id: m.workerId }, ctx.floor) ? m : undefined;
     if (ctx.via === 'direct') return m;
     return ctx.via === 'floor' && guestSeesFloor(grant, ctx.floor) ? m : undefined;
   }),
@@ -487,8 +516,12 @@ export const GUEST_OUTBOUND: { readonly [K in ServerMsg['t']]: GuestOutbound<Out
   bundledSkills: DROP,
   'models.hidden': DROP,
   workerLabels: DROP,
-  visits: FLOOR_CONTENT,
-  visit_say: FLOOR_CONTENT,
+  visits: redact((m, { grant, world, ctx }) => {
+    const floor = ctx.floor ?? ctx.here ?? undefined;
+    if (!floor || !world.isOpen(floor) || !guestSeesFloor(grant, floor)) return undefined;
+    return { ...m, visits: m.visits.filter((v) => seesVisit(grant, world, ctx, v)) };
+  }),
+  visit_say: redact((m, { grant, world, ctx }) => (seesVisit(grant, world, ctx, world.visitOf(m.visit)) ? m : undefined)),
   whiteboard: ON_FLOOR,
   'whiteboard.rendered': ON_FLOOR,
   'whiteboard.renderer': FLOOR_CONTENT,
