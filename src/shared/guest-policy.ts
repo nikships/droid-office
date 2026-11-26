@@ -182,9 +182,10 @@ export const GUEST_INBOUND: { readonly [K in ClientMsg['t']]: GuestInbound<Msg<K
   'subscriptions.provider': NEVER,
   'subscriptions.models': NEVER,
   'subscriptions.refresh': NEVER,
-  'changes.watch': read(WORKER),
-  'changes.unwatch': read(WORKER),
-  'changes.diff': read(WORKER),
+  // A worker's changed files and their text (untracked files whole) are file reads: write links only, and not audited.
+  'changes.watch': write(WORKER, null),
+  'changes.unwatch': write(WORKER, null),
+  'changes.diff': write(WORKER, null),
   'changes.commit': write(WORKER, 'git'),
   'changes.discard': write(WORKER, 'git'),
   'changes.pr': write(WORKER, 'git'),
@@ -322,8 +323,8 @@ export type GuestOutbound<M> =
   | { pass: 'drop' }
   /** Reaches every guest it is sent to (replies with no office data). */
   | { pass: 'always' }
-  /** About one worker (or the Orchestrator): reaches guests whose scope holds it. `floor` names its floor when the message says. */
-  | { pass: 'worker'; worker: (m: M) => string; floor?: (m: M) => string }
+  /** About one worker (or the Orchestrator): reaches guests whose scope holds it (`write`: write links only). `floor` names its floor when the message says. */
+  | { pass: 'worker'; worker: (m: M) => string; floor?: (m: M) => string; write?: true }
   /** About a floor's own content: reaches guests whose scope holds that floor's content (never single-worker links). */
   | { pass: 'floor'; floor?: (m: M) => string }
   /** Rewritten for the guest's scope, or dropped (undefined). */
@@ -494,8 +495,8 @@ export const GUEST_OUTBOUND: { readonly [K in ServerMsg['t']]: GuestOutbound<Out
   'whiteboard.pinged': { pass: 'worker', worker: (m) => m.worker },
   prompts: DROP,
   worktreeSetup: DROP,
-  changes: { pass: 'worker', worker: (m) => m.state.workerId },
-  'changes.diff': ABOUT_WORKER,
+  changes: { pass: 'worker', worker: (m) => m.state.workerId, write: true },
+  'changes.diff': { pass: 'worker', worker: (m) => m.workerId, write: true },
   'automation.run': DROP,
   pong: ALWAYS,
 };
@@ -511,7 +512,7 @@ export function guestOutbound(g: GuestScopeGrant, msg: ServerMsg, ctx: GuestSend
       return msg as GuestServerMsg;
     case 'worker': {
       const id = rule.worker(msg);
-      if (typeof id !== 'string') return undefined;
+      if (typeof id !== 'string' || (rule.write && !canWrite(g))) return undefined;
       const floor = rule.floor?.(msg) ?? world.floorOf(id) ?? ctx.floor;
       return guestSeesWorker(g, id, floor, world.reposOf(id)) ? (msg as GuestServerMsg) : undefined;
     }

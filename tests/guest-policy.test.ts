@@ -125,6 +125,20 @@ test('worker targets: in scope, other floors, closed floors, missing workers, th
   assert.equal(guestSeesWorker(GRANTS['view-worker'], 'a1', 'B', undefined), false);
 });
 
+test('a worker’s changed files and diffs are for write links only, unaudited', () => {
+  for (const t of ['changes.watch', 'changes.unwatch', 'changes.diff'] as const) {
+    assert.deepEqual(GUEST_INBOUND[t], { access: 'write', target: GUEST_INBOUND['changes.commit'].target, audit: null }, t);
+    for (const preset of GUEST_PRESETS) {
+      const got = guestAdmit(GRANTS[preset], { t, workerId: 'a1', path: 'secret.txt' }, 'A', world);
+      assert.equal(!!got, WRITES.has(preset), `${preset} ${t}`);
+      if (got) assert.equal(got.audit, null);
+    }
+  }
+  const state = { t: 'changes', state: { workerId: 'a1', dir: '', base: 'HEAD', ahead: 0, files: [{ path: '.env', status: '?' }], more: 0, at: 1 } };
+  const diff = { t: 'changes.diff', workerId: 'a1', path: '.env', diff: 'TOKEN=x', truncated: false };
+  for (const preset of GUEST_PRESETS) for (const msg of [state, diff]) for (const via of ['direct', 'floor', 'all'] as const) assert.equal(!!out(preset, msg, ctx({ via, floor: 'A' })), WRITES.has(preset), `${preset} ${msg.t} ${via}`);
+});
+
 test('a guest never hands a Linear ticket to a worker: that would move it on the owner’s Linear account', () => {
   for (const preset of ['edit-floor', 'edit-office'] as const) {
     const g = GRANTS[preset];
