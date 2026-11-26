@@ -13,6 +13,9 @@ import { DevicesStore } from './devices.js';
 import { TailscaleWatch } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
 import { TailnetHttps } from './tailnet-https.js';
+import { GuestLinks } from './guest-links.js';
+import { GuestAudit } from './guest-audit.js';
+import { GuestFunnel } from './guest-funnel.js';
 import type { PairedDevice } from '../shared/devices.js';
 import { MAX_REPOS, childEnv, resolveAgent, syncDroidProfile, type RepoSource } from './workers.js';
 import { DROID_MODEL_MAX } from './agents.js';
@@ -86,6 +89,7 @@ import { createOwnerOffice } from './server-runtime/owner.js';
 import { createAccess } from './server-runtime/access.js';
 import { createHttpHandler } from './server-runtime/http.js';
 import { createFloorHttp } from './server-runtime/floor-http.js';
+import { createGuestHttp } from './server-runtime/guest-http.js';
 import type { Client, ToastLevel } from './server-runtime/client.js';
 import { readBody, send, sameOrigin, refuseUpgrade } from './server-runtime/http-utils.js';
 import { str, num, repoOf, imageIds } from './server-runtime/validation.js';
@@ -155,6 +159,29 @@ export async function startServer(cfg: Config) {
   let closed = false;
   const transport = createClientTransport({ clients, floors });
   const { sendTo, broadcast, toFloor, termData, clearOffFloorThrottle, broadcastOffFloorScreen } = transport;
+  // Share links for external guests (see guest-links.ts): token hashes only, sharing off until the owner turns it on.
+  const guestLinks = new GuestLinks({
+    dataDir: cfg.dataDir,
+    names: ({ floorId, workerId }) => {
+      const floor = floorId ? floors.get(floorId) : undefined;
+      const worker = workerId ? floor?.everyone().find((w) => w.id === workerId) : undefined;
+      return { ...(floor ? { floorName: floor.def.name } : {}), ...(worker ? { workerName: worker.name } : {}) };
+    },
+  });
+  // Owner pages re-read /api/guest-links on this signal; guests never receive it (see guest-policy.ts).
+  let guestLinksTimer: NodeJS.Timeout | undefined;
+  let guestAuditChanged = false;
+  const guestLinksChanged = (audit = false) => {
+    guestAuditChanged ||= audit;
+    guestLinksTimer ??= setTimeout(() => {
+      const withAudit = guestAuditChanged;
+      guestLinksTimer = undefined;
+      guestAuditChanged = false;
+      broadcast({ t: 'guestLinks.changed', ...(withAudit ? { audit: true } : {}) });
+    }, 250).unref();
+  };
+  guestLinks.onChange(() => guestLinksChanged());
+  const guestAudit = new GuestAudit({ dataDir: cfg.dataDir, onAppend: () => guestLinksChanged(true) });
   const workerThreads = new WorkerThreadReader();
   let threadWatches: ThreadWatchHub | undefined;
   const threadLive = new ThreadLiveTracker();
@@ -963,6 +990,7 @@ export async function startServer(cfg: Config) {
   const { serveCard, whiteboardRequest, sendBoard, applyBoard, pingWorker } = createWhiteboardRuntime({ floors, prompts, sendTo, warn });
 
   const floorRequest = createFloorHttp({ floors, orchestrator, workerFloor, workerThreads, factory, setup, whiteboardRequest });
+  const guestHttp = createGuestHttp({ guestLinks, guestAudit, guestFunnel: () => guestFunnel, floors, orchestrator, workersOf, availableDroidModels, droidCommands, floorRequest, ...staticFiles });
   const handler = createHttpHandler({
     cfg,
     lanToken,
@@ -986,6 +1014,7 @@ export async function startServer(cfg: Config) {
     images,
     serveCard,
     floorRequest,
+    guestOwnerRequest: guestHttp.ownerRequest,
     remoteMcp: () => remoteMcp,
     tailnetHttps: () => httpsGateway,
     ...accessRuntime,
@@ -1023,6 +1052,13 @@ export async function startServer(cfg: Config) {
     upgrade: (req, socket, head) => server.emit('upgrade', req, socket, head),
   });
   tailnetHttps = httpsGateway;
+  // The guest backend, published through Funnel only while external sharing is on (see guest-funnel.ts).
+  const guestFunnel = new GuestFunnel({
+    dataDir: cfg.dataDir,
+    request: guestHttp.guestRequest,
+    upgrade: (req, socket, head) => server.emit('upgrade', req, socket, head),
+    onState: () => guestLinksChanged(),
+  });
 
   const onConnection = (ws: WebSocket, url: URL, device?: PairedDevice) => {
     const id = randomBytes(5).toString('hex');
@@ -2633,6 +2669,7 @@ export async function startServer(cfg: Config) {
   await hotReload.start();
   workerLabels.start();
   const httpsReady = cfg.tailnetHttps ? httpsGateway.start() : Promise.resolve(httpsGateway.state());
+  if (guestLinks.on) void guestFunnel.set(true);
 
   /** With `keep` (a restart), workers' terminals keep running for the next office to pick up. */
   const shutdown = (keep = false) => {
@@ -2664,7 +2701,12 @@ export async function startServer(cfg: Config) {
     remoteOffice.stop();
     remoteMcp?.stop();
     httpsGateway.stop();
-    return labelsStopped;
+    clearTimeout(guestLinksTimer);
+    guestLinks.stop();
+    guestAudit.stop();
+    // Nothing public stays mapped while the office is closed; the port is remembered for a stable URL.
+    const guestStopped = guestFunnel.stop();
+    return Promise.all([labelsStopped, guestStopped]).then(() => undefined);
   };
 
   return {
