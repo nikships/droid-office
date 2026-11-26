@@ -1390,8 +1390,15 @@ export async function startServer(cfg: Config) {
     let finished = false;
     // An awaited action calls done() from a later callback. Do not complete the receipt at the end of this turn.
     let pending = false;
+    // A handler that learns its outcome later (a forge call, a Whiteboard commit) takes the guest's audit:
+    // done() and unanswered() then leave it to that handler's settle.
+    let auditHeld = false;
+    const auditOutcome = (): ((error?: string) => void) => {
+      auditHeld = true;
+      return (error) => settleGuest?.(error);
+    };
     const done = (error?: string, workerId?: string, note?: string) => {
-      settleGuest?.(error);
+      if (!auditHeld) settleGuest?.(error);
       if (!requestId || finished) return;
       finished = true;
       sendTo(c, { t: 'action.result', requestId, ok: !error, ...(error ? { error } : {}), ...(workerId ? { workerId } : {}), ...(note ? { note } : {}) });
@@ -1411,7 +1418,7 @@ export async function startServer(cfg: Config) {
     /** A request id is a receipt request. Sync handlers that did not answer, and actions the companion does not await, still close the receipt so the client does not wait out its timeout. */
     const unanswered = () => {
       if (pending || finished) return;
-      settleGuest?.(c.lastWarning);
+      if (!auditHeld) settleGuest?.(c.lastWarning);
       // A handler that neither answered nor warned may have done nothing at all (an unknown id it ignores).
       if (c.owner && !c.owner.refused) c.owner.unconfirmed = true;
       done(c.owner ? c.owner.refused : 'This action was not confirmed. Check the office before trying again; it was not replayed.');
@@ -1945,6 +1952,7 @@ export async function startServer(cfg: Config) {
                 .map((x) => x.id)
             : []),
         ];
+        const settle = auditOutcome();
         void (async () => {
           const names: string[] = [];
           const notes: string[] = [];
@@ -1960,6 +1968,7 @@ export async function startServer(cfg: Config) {
               if (r.note) notes.push(r.note);
             }
           }
+          settle(names.length ? undefined : 'Nothing was rebuilt');
           if (!names.length) return;
           const whose = names.length === 1 ? `${names[0]}'s worktree` : `the worktrees of ${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
           toastFloor(floor, `🌿 ${who} rebuilt ${whose}${notes.length ? ` — ${notes.join('; ')}` : ''}`);
@@ -2225,7 +2234,7 @@ export async function startServer(cfg: Config) {
       case 'pipelines.rerun':
       case 'pipelines.cancel':
       case 'pipelines.run':
-        handleBoardCommand(c, msg, here);
+        handleBoardCommand(c, msg, here, auditOutcome());
         break;
       case 'gong': {
         const floor = floorOf(c);
@@ -2331,7 +2340,7 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'whiteboard.apply':
-        applyBoard(c, str(msg.floor, 64), msg.envelope);
+        applyBoard(c, str(msg.floor, 64), msg.envelope, auditOutcome());
         break;
       case 'whiteboard.sync': {
         const floor = floors.get(str(msg.floor, 64));
@@ -2340,7 +2349,7 @@ export async function startServer(cfg: Config) {
         break;
       }
       case 'whiteboard.ping':
-        pingWorker(c, str(msg.worker, 32));
+        pingWorker(c, str(msg.worker, 32), auditOutcome());
         break;
       case 'prompts.set': {
         if (!isPromptId(msg.id) || (msg.text !== null && typeof msg.text !== 'string')) return;
