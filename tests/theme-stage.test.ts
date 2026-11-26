@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { COMPANION_THEMES, THEME_SHADERS, type ThemeStageSpec } from '../src/shared/companion-themes.js';
 import { THEME_FRAGMENT_SHADERS, THEME_VERTEX_SHADER } from '../src/client/ui/theme-shaders.js';
-import { STILL_TIMES, colorCount, colorUniforms, createThemeStage, fragmentSource, observedSize, stageSize } from '../src/client/ui/theme-stage.js';
+import { STILL_TIMES, colorCount, colorUniforms, createThemeStage, observedSize, stageSize } from '../src/client/ui/theme-stage.js';
 
 const close = (actual: ArrayLike<number>, expected: number[]) => {
   assert.equal(actual.length, expected.length);
@@ -39,13 +39,10 @@ test('every shader has a GLSL ES 3.00 source with the stage contract', () => {
   assert.deepEqual(Object.keys(THEME_FRAGMENT_SHADERS).sort(), [...THEME_SHADERS].sort());
   assert.match(THEME_VERTEX_SHADER, /^#version 300 es\n/);
   for (const name of THEME_SHADERS) {
-    for (const layer of ['scene', 'overlay'] as const) {
-      const src = fragmentSource(name, layer);
-      assert.match(src, /^#version 300 es\n/, name);
-      assert.equal(src.includes('#define OVERLAY 1'), layer === 'overlay', `${name} ${layer}`);
-      for (const decl of ['precision highp float;', 'uniform vec2 uRes;', 'uniform float uTime;', 'uniform vec3 uColors[4];', 'uniform int uColorCount;', 'out vec4 outColor;', 'void main()']) {
-        assert.ok(src.includes(decl), `${name} lacks ${decl}`);
-      }
+    const src = THEME_FRAGMENT_SHADERS[name];
+    assert.match(src, /^#version 300 es\n/, name);
+    for (const decl of ['precision highp float;', 'uniform vec2 uRes;', 'uniform float uTime;', 'uniform vec3 uColors[4];', 'uniform int uColorCount;', 'out vec4 outColor;', 'void main()']) {
+      assert.ok(src.includes(decl), `${name} lacks ${decl}`);
     }
     assert.ok(Number.isFinite(STILL_TIMES[name]) && STILL_TIMES[name] > 0, name);
   }
@@ -193,8 +190,8 @@ function rig(t: { after(fn: () => void): void }, { webgl = true } = {}): Rig {
   return r;
 }
 
-const AURORA: ThemeStageSpec = { shader: 'aurora', layer: 'scene', colors: ['#47f0b0', '#2fb8ff'], speed: 0.5, opacity: 1, blend: 'normal' };
-const EMBERS: ThemeStageSpec = { shader: 'embers', layer: 'overlay', colors: ['#ff7a2b'], speed: 2, opacity: 0.7, blend: 'screen' };
+const NEBULA: ThemeStageSpec = { shader: 'nebula', colors: ['#47f0b0', '#2fb8ff'], speed: 0.5, opacity: 1, blend: 'normal' };
+const EMBERS: ThemeStageSpec = { shader: 'embers', colors: ['#ff7a2b'], speed: 2, opacity: 0.7, blend: 'screen' };
 
 test('createThemeStage is null without WebGL2', (t) => {
   const r = rig(t, { webgl: false });
@@ -207,21 +204,21 @@ test('a moving stage advances by real time times speed and keeps its clock acros
   assert.ok(stage);
   r.resize(2880, 1800);
   assert.deepEqual([r.canvas.width, r.canvas.height], [2880, 1800]);
-  stage.show(AURORA, true);
+  stage.show(NEBULA, true);
   assert.equal(r.frames.size, 1);
   r.tick(1000);
   r.tick(1080);
   const at = r.draws.at(-1)!;
-  assert.ok(Math.abs(at.time - (STILL_TIMES.aurora + 0.04)) < 1e-9, String(at.time));
+  assert.ok(Math.abs(at.time - (STILL_TIMES.nebula + 0.04)) < 1e-9, String(at.time));
   assert.equal(at.count, 2);
-  close(at.colors, [...colorUniforms(AURORA.colors)]);
-  stage.show({ ...AURORA }, true);
-  stage.show({ ...AURORA }, true);
+  close(at.colors, [...colorUniforms(NEBULA.colors)]);
+  stage.show({ ...NEBULA }, true);
+  stage.show({ ...NEBULA }, true);
   assert.equal(r.frames.size, 1, 'repeated shows keep one loop');
   r.tick(1100);
-  assert.ok(Math.abs(r.draws.at(-1)!.time - (STILL_TIMES.aurora + 0.05)) < 1e-9, 'the clock did not restart');
+  assert.ok(Math.abs(r.draws.at(-1)!.time - (STILL_TIMES.nebula + 0.05)) < 1e-9, 'the clock did not restart');
   r.tick(4100);
-  assert.ok(Math.abs(r.draws.at(-1)!.time - (STILL_TIMES.aurora + 0.1)) < 1e-9, 'a stalled frame advances at most 0.1 s');
+  assert.ok(Math.abs(r.draws.at(-1)!.time - (STILL_TIMES.nebula + 0.1)) < 1e-9, 'a stalled frame advances at most 0.1 s');
   assert.equal(r.compiled.length, 1);
   stage.destroy();
 });
@@ -248,14 +245,14 @@ test('a still stage draws one frame at its composed moment and stops', (t) => {
   const r = rig(t);
   const stage = createThemeStage(r.canvas)!;
   r.resize(100, 100);
-  stage.show(AURORA, true);
+  stage.show(NEBULA, true);
   r.tick(0);
   r.tick(5000);
   const drawn = r.draws.length;
-  stage.show(AURORA, false);
+  stage.show(NEBULA, false);
   assert.equal(r.frames.size, 0);
   assert.equal(r.draws.length, drawn + 1);
-  assert.equal(r.draws.at(-1)!.time, STILL_TIMES.aurora);
+  assert.equal(r.draws.at(-1)!.time, STILL_TIMES.nebula);
   r.resize(200, 100);
   assert.equal(r.draws.length, drawn + 2, 'a resized still stage redraws');
   stage.destroy();
@@ -265,16 +262,16 @@ test('switching shaders swaps cached programs, and null clears to transparent', 
   const r = rig(t);
   const stage = createThemeStage(r.canvas)!;
   r.resize(100, 100);
-  stage.show(AURORA, false);
+  stage.show(NEBULA, false);
   stage.show(EMBERS, false);
-  stage.show(AURORA, false);
+  stage.show(NEBULA, false);
   assert.deepEqual(
     r.draws.map((d) => d.program),
     ['p1', 'p2', 'p1'],
   );
   assert.equal(r.compiled.length, 2);
-  assert.ok(r.compiled[1].includes('#define OVERLAY 1'));
-  assert.equal(r.draws.at(-1)!.time, STILL_TIMES.aurora);
+  assert.equal(r.compiled[1], THEME_FRAGMENT_SHADERS.embers);
+  assert.equal(r.draws.at(-1)!.time, STILL_TIMES.nebula);
   const clears = r.clears;
   stage.show(null, false);
   assert.equal(r.clears, clears + 1);
@@ -286,7 +283,7 @@ test('a lost context stops drawing until it is restored, then rebuilds', (t) => 
   const r = rig(t);
   const stage = createThemeStage(r.canvas)!;
   r.resize(100, 100);
-  stage.show(AURORA, true);
+  stage.show(NEBULA, true);
   r.tick(0);
   const lost = new Event('webglcontextlost', { cancelable: true });
   r.lost = true;

@@ -25,7 +25,7 @@ import {
   rgba,
   themePreview,
 } from '../src/shared/companion-themes.js';
-import { APPEARANCE_DEFAULTS, backdropPicture, backdropStage, normalizeAppearancePrefs } from '../src/client/ui/companion-theme.js';
+import { APPEARANCE_DEFAULTS, backdropPicture, normalizeAppearancePrefs } from '../src/client/ui/companion-theme.js';
 import { TERM_THEME, onTermTheme, setTermThemeColors, termTheme, termThemeTransparent } from '../src/client/term-theme.js';
 
 const PUBLIC = new URL('../src/client/public/', import.meta.url);
@@ -66,7 +66,7 @@ function jpegSize(buf: Buffer) {
 
 test('the registry: OG first, unchanged and the default, every id unique', () => {
   assert.equal(new Set(COMPANION_THEME_IDS).size, COMPANION_THEMES.length);
-  assert.ok(COMPANION_THEMES.length >= 15, 'an extensive set');
+  assert.deepEqual(COMPANION_THEME_IDS, ['og', 'carbons-copy', 'nightly-orbit', 'neo-tokyo', 'kyoto-firefly', 'orbital-foundry', 'abyssal-biolume', 'astral-cathedral', 'sakura-mist']);
   assert.equal(COMPANION_THEMES[0].id, OG_THEME_ID);
   const og = companionTheme(OG_THEME_ID);
   assert.equal(og.name, 'OG');
@@ -80,11 +80,8 @@ test('the registry: OG first, unchanged and the default, every id unique', () =>
   assert.ok(lum(carbon.bg) < 0.01, 'a dark theme');
   assert.equal(companionTheme('no-such-theme').id, DEFAULT_THEME_ID);
   assert.equal(companionTheme(undefined).id, DEFAULT_THEME_ID);
-  for (const family of ['artwork', 'shader', 'gradient'])
-    assert.ok(
-      themed.some((t) => t.family === family),
-      family,
-    );
+  assert.equal(og.family, 'classic');
+  assert.ok(themed.every((t) => t.family === 'artwork'));
 });
 
 test('every theme reads: AAA text, AA secondary text, a readable accent button and terminal', () => {
@@ -208,11 +205,8 @@ test('brightGray reads the bright tenth of a picture', () => {
 });
 
 test('artwork ships at full resolution with a lossless gallery preview', () => {
-  const art = themed.filter((t) => t.backdrop.image);
-  assert.ok(art.length >= 8);
-  assert.ok(companionTheme('carbons-copy').backdrop.image, 'Carbon’s Copy has artwork');
-  for (const t of art) {
-    const image = t.backdrop.image!;
+  for (const t of themed) {
+    const image = t.backdrop.image;
     assert.match(image, /^\/themes\/[a-z-]+\.jpg$/);
     assert.deepEqual(jpegSize(readFileSync(new URL(`.${image}`, PUBLIC))), { width: 5504, height: 3072 }, t.id);
     const preview = themePreview(t)!;
@@ -221,35 +215,38 @@ test('artwork ships at full resolution with a lossless gallery preview', () => {
     assert.equal(webp.toString('ascii', 0, 4), 'RIFF');
     assert.equal(webp.toString('ascii', 8, 16), 'WEBPVP8L', `${t.id} preview is lossless`);
   }
-  assert.equal(themePreview(companionTheme('aurora')), undefined);
+  assert.equal(themePreview(companionTheme('og')), undefined);
 });
 
 test('every shader is used, and every stage is well formed', () => {
   const used = new Set<string>();
   for (const t of themed) {
     const stage = t.backdrop.stage;
-    if (!stage) continue;
     used.add(stage.shader);
     assert.ok(THEME_SHADERS.includes(stage.shader));
     assert.ok(stage.colors.length >= 1 && stage.colors.length <= 4 && stage.colors.every((c) => HEX.test(c)), t.id);
     assert.ok(stage.opacity > 0 && stage.opacity <= 1 && stage.speed > 0, t.id);
-    if (stage.layer === 'overlay') assert.ok(t.backdrop.image, `${t.id}: an overlay draws over artwork`);
+    assert.ok(t.backdrop.image, `${t.id}: an overlay draws over artwork`);
   }
   assert.deepEqual([...used].sort(), [...THEME_SHADERS].sort());
+});
+
+test('retired saved theme IDs fall back to OG without resetting other appearance preferences', () => {
+  for (const id of ['aurora', 'blueprint', 'outrun', 'solar-silk', 'deep-field', 'velvet', 'glacier', 'dune', 'phosphor', 'graphite']) {
+    const saved = { ...APPEARANCE_DEFAULTS, theme: id, motion: 'still', glass: 'clear' };
+    assert.deepEqual(normalizeAppearancePrefs(saved), { ...saved, theme: 'og' });
+    assert.equal(companionTheme(id).id, 'og');
+  }
 });
 
 test('appearance prefs and the backdrop they pick', () => {
   assert.equal(APPEARANCE_DEFAULTS.theme, OG_THEME_ID);
   assert.deepEqual(normalizeAppearancePrefs({ theme: 'bogus', glass: 'clear', motion: 'warp', dim: 'high' }), { ...APPEARANCE_DEFAULTS, glass: 'clear', dim: 'high' });
   const carbon = companionTheme('carbons-copy');
-  const aurora = companionTheme('aurora');
   assert.equal(backdropPicture({ wallpaper: 'theme' }, carbon, 'blob:x'), carbon.backdrop.image);
   assert.equal(backdropPicture({ wallpaper: 'custom' }, carbon, 'blob:x'), 'blob:x');
   assert.equal(backdropPicture({ wallpaper: 'custom' }, carbon, null), carbon.backdrop.image, 'no picture kept yet: the theme’s');
   assert.equal(backdropPicture({ wallpaper: 'none' }, carbon, 'blob:x'), null);
-  assert.equal(backdropStage({ wallpaper: 'custom' }, carbon, 'blob:x'), carbon.backdrop.stage, 'an overlay still plays over your picture');
-  assert.equal(backdropStage({ wallpaper: 'custom' }, aurora, 'blob:x'), null, 'a scene would hide your picture');
-  assert.equal(backdropStage({ wallpaper: 'theme' }, aurora, null), aurora.backdrop.stage);
 });
 
 test('terminals keep TERM_THEME until a theme retints them over a transparent ground', () => {

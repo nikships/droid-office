@@ -1,6 +1,5 @@
 // The moving layer of a companion theme's backdrop: one full-window WebGL2 canvas running the
-// theme's shader (aurora, nebula, embers…). A `scene` paints the whole backdrop; an `overlay` paints
-// light on transparency over the artwork. Drawn at the display's full pixel ratio and frame rate;
+// theme's ambient light shader over the artwork. Drawn at the display's full pixel ratio and frame rate;
 // it stops only while the page is hidden, or when motion is off (then it holds one still frame).
 
 import { parseHex, type ThemeShader, type ThemeStageSpec } from '../../shared/companion-themes';
@@ -48,11 +47,7 @@ export function observedSize(device: { inlineSize: number; blockSize: number } |
 
 /** The moment (shader seconds) a still stage holds, and where a moving one starts: each shader's best-composed frame. */
 export const STILL_TIMES: Record<ThemeShader, number> = {
-  aurora: 14,
   nebula: 20,
-  silk: 9,
-  grid: 6,
-  synthwave: 4,
   starfield: 11,
   fireflies: 18,
   embers: 16,
@@ -60,14 +55,6 @@ export const STILL_TIMES: Record<ThemeShader, number> = {
   petals: 13,
   rain: 5,
 };
-
-/** The fragment source `shader` compiles from on `layer` (overlays get `#define OVERLAY`, so a shader can serve both). */
-export function fragmentSource(shader: ThemeShader, layer: ThemeStageSpec['layer']): string {
-  const src = THEME_FRAGMENT_SHADERS[shader];
-  if (layer !== 'overlay') return src;
-  const end = src.indexOf('\n');
-  return `${src.slice(0, end + 1)}#define OVERLAY 1\n${src.slice(end + 1)}`;
-}
 
 /** The longest gap one frame advances the clock by, so a stalled tab never jumps the picture. */
 const MAX_STEP = 0.1;
@@ -97,8 +84,8 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
 
   let vao: WebGLVertexArrayObject | null = null;
   let vertex: WebGLShader | null = null;
-  /** Linked programs by shader and layer; null marks one that failed to build, so it isn't retried every frame. */
-  const programs = new Map<string, Program | null>();
+  /** Linked programs by shader; null marks one that failed to build, so it isn't retried every frame. */
+  const programs = new Map<ThemeShader, Program | null>();
   let spec: ThemeStageSpec | null = null;
   let specKey = '';
   let colors: Float32Array = new Float32Array(12);
@@ -128,11 +115,10 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
     vertex = compile(gl.VERTEX_SHADER, THEME_VERTEX_SHADER, 'vertex shader');
   }
 
-  function programFor(s: ThemeStageSpec): Program | null {
-    const key = `${s.shader}|${s.layer}`;
-    if (programs.has(key)) return programs.get(key) ?? null;
+  function programFor(shader: ThemeShader): Program | null {
+    if (programs.has(shader)) return programs.get(shader) ?? null;
     let built: Program | null = null;
-    const frag = vertex && compile(gl.FRAGMENT_SHADER, fragmentSource(s.shader, s.layer), `${s.shader} (${s.layer})`);
+    const frag = vertex && compile(gl.FRAGMENT_SHADER, THEME_FRAGMENT_SHADERS[shader], shader);
     const program = frag && gl.createProgram();
     if (vertex && frag && program) {
       gl.attachShader(program, vertex);
@@ -149,12 +135,12 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
           uColorCount: gl.getUniformLocation(program, 'uColorCount'),
         };
       } else {
-        if (!gl.isContextLost()) console.error(`theme-stage: ${s.shader} (${s.layer}) failed to link\n${gl.getProgramInfoLog(program) ?? ''}`);
+        if (!gl.isContextLost()) console.error(`theme-stage: ${shader} failed to link\n${gl.getProgramInfoLog(program) ?? ''}`);
         gl.deleteProgram(program);
       }
     }
     if (frag) gl.deleteShader(frag);
-    programs.set(key, built);
+    programs.set(shader, built);
     return built;
   }
 
@@ -166,7 +152,7 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
 
   function draw() {
     if (lost || destroyed) return;
-    const p = spec && programFor(spec);
+    const p = spec && programFor(spec.shader);
     if (!p) {
       clear();
       return;
@@ -260,7 +246,7 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
   return {
     show(next, nextAnimate) {
       if (destroyed) return;
-      const key = next ? `${next.shader}|${next.layer}|${next.colors.join(',')}|${next.speed}` : '';
+      const key = next ? `${next.shader}|${next.colors.join(',')}|${next.speed}` : '';
       if (key === specKey && nextAnimate === animate) {
         if (!running() && !raf) draw();
         return;

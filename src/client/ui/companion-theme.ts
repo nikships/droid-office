@@ -15,7 +15,6 @@ import {
   type CompanionTheme,
   type CompanionThemeId,
   type GlassLevel,
-  type ThemeStageSpec,
   immersiveEntries,
   pictureShade,
 } from '../../shared/companion-themes';
@@ -72,13 +71,6 @@ export function backdropPicture(p: Pick<AppearancePrefs, 'wallpaper'>, theme: Pi
   if (p.wallpaper === 'none') return null;
   if (p.wallpaper === 'custom' && custom) return custom;
   return theme.backdrop.image ?? null;
-}
-
-/** The shader a look runs: none over the owner's own picture when the shader would paint over it. */
-export function backdropStage(p: Pick<AppearancePrefs, 'wallpaper'>, theme: Pick<CompanionTheme, 'backdrop'>, custom: string | null): ThemeStageSpec | null {
-  const spec = theme.backdrop.stage;
-  if (!spec) return null;
-  return spec.layer === 'scene' && p.wallpaper === 'custom' && custom ? null : spec;
 }
 
 interface Backdrop {
@@ -140,7 +132,7 @@ function makeBackdrop(): Backdrop {
   canvas.className = 'theme-backdrop-stage';
   const dim = layer('dim');
   const veil = layer('veil');
-  root.append(base, canvas, art, dim, veil);
+  root.append(base, art, canvas, dim, veil);
   document.body.prepend(root);
   return { root, base, art, canvas, dim, veil, stage: createThemeStage(canvas) };
 }
@@ -201,10 +193,9 @@ function paint(p: AppearancePrefs) {
   const dim = Math.max(DIM_ALPHA[p.dim], picture ? pictureShade(theme, p.glass, pictureGrays.get(picture) ?? 255) : 0);
   b.dim.style.background = dim ? `rgba(0, 0, 0, ${dim})` : 'transparent';
   b.veil.style.background = theme.backdrop.veil ?? 'none';
-  const spec = b.stage ? backdropStage(p, theme, wallSrc) : null;
+  const spec = b.stage ? (theme.backdrop.stage ?? null) : null;
   b.canvas.hidden = !spec;
   if (spec) {
-    b.canvas.dataset.layer = spec.layer;
     b.canvas.style.opacity = String(spec.opacity);
     b.canvas.style.mixBlendMode = spec.blend;
   }

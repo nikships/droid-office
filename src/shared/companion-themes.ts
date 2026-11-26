@@ -3,17 +3,13 @@
 // shader. OG is the companion as it always looked and changes nothing; every other theme is turned
 // into CSS custom properties by companionThemeVars.
 
-/** The WebGL scenes a backdrop can run (theme-stage.ts in the client draws them). */
-export const THEME_SHADERS = ['aurora', 'nebula', 'silk', 'grid', 'synthwave', 'starfield', 'fireflies', 'embers', 'caustics', 'petals', 'rain'] as const;
+/** The WebGL overlays a backdrop can run (theme-stage.ts in the client draws them). */
+export const THEME_SHADERS = ['nebula', 'starfield', 'fireflies', 'embers', 'caustics', 'petals', 'rain'] as const;
 export type ThemeShader = (typeof THEME_SHADERS)[number];
 
-/**
- * A backdrop's moving layer. A `scene` paints the whole backdrop; an `overlay` paints light (stars,
- * sparks, rain) on transparency over the artwork, mixed in with `blend`.
- */
+/** The layer of moving light over the artwork, mixed in with `blend`. */
 export interface ThemeStageSpec {
   shader: ThemeShader;
-  layer: 'scene' | 'overlay';
   /** One to four #rrggbb colors the shader paints with, most prominent first. */
   colors: readonly string[];
   /** 1 is the shader's natural pace. */
@@ -52,7 +48,7 @@ export interface CompanionTheme {
   name: string;
   /** One line for the gallery. */
   blurb: string;
-  family: 'classic' | 'artwork' | 'shader' | 'gradient';
+  family: 'classic' | 'artwork';
   /** The opaque base: the page, modals, menus and popovers. */
   bg: string;
   /** What the glass of the header, the side and the panes is tinted with. */
@@ -72,19 +68,9 @@ export interface CompanionTheme {
   immersive?: ImmersiveTheme;
 }
 
-const scene = (shader: ThemeShader, colors: readonly string[], opts: Partial<Omit<ThemeStageSpec, 'shader' | 'colors'>> = {}): ThemeStageSpec => ({
-  shader,
-  colors,
-  layer: 'scene',
-  speed: 1,
-  opacity: 1,
-  blend: 'normal',
-  ...opts,
-});
 const overlay = (shader: ThemeShader, colors: readonly string[], opts: Partial<Omit<ThemeStageSpec, 'shader' | 'colors'>> = {}): ThemeStageSpec => ({
   shader,
   colors,
-  layer: 'overlay',
   speed: 1,
   opacity: 0.85,
   blend: 'screen',
@@ -354,203 +340,6 @@ export const COMPANION_THEMES = [
       'badge-ink': '#ffebdc',
       imprint: '"HANAMI   /   花見" / ""',
     },
-  },
-  {
-    id: 'aurora',
-    name: 'Aurora',
-    blurb: 'Northern lights rippling over a polar night.',
-    family: 'shader',
-    bg: '#030a10',
-    tint: '#050f17',
-    text: '#ecfaf5',
-    muted: '#9bb9b0',
-    accent: '#47f0b0',
-    accent2: '#8a6bff',
-    line: '#cffbea',
-    glass: 0.7,
-    backdrop: {
-      gradient: 'radial-gradient(80% 50% at 50% 0%, rgba(71, 240, 176, .3), transparent 70%), radial-gradient(60% 50% at 80% 20%, rgba(138, 107, 255, .25), transparent 70%), linear-gradient(180deg, #04121c, #010407)',
-      stage: scene('aurora', ['#47f0b0', '#2fb8ff', '#8a6bff', '#020812'], { speed: 0.6 }),
-      veil: VIGNETTE,
-    },
-    terminal: { foreground: '#ecfaf5', cursor: '#47f0b0', background: '#020a0f', selection: '#14423a' },
-  },
-  {
-    id: 'blueprint',
-    name: 'Blueprint',
-    blurb: 'A drafting table at midnight: grid lines and cyan ink.',
-    family: 'shader',
-    bg: '#041226',
-    tint: '#06172e',
-    text: '#eaf4ff',
-    muted: '#9db5d3',
-    accent: '#4cc3ff',
-    accent2: '#8fd8ff',
-    line: '#cfe8ff',
-    glass: 0.72,
-    backdrop: {
-      gradient: 'radial-gradient(80% 70% at 50% 20%, rgba(76, 195, 255, .2), transparent 70%), linear-gradient(180deg, #082044, #030c1a)',
-      stage: scene('grid', ['#4cc3ff', '#8fd8ff', '#0a2a55', '#041226'], { speed: 0.5 }),
-      veil: VIGNETTE,
-    },
-    terminal: { foreground: '#eaf4ff', cursor: '#4cc3ff', background: '#030e1e', selection: '#143a66' },
-  },
-  {
-    id: 'outrun',
-    name: 'Outrun',
-    blurb: 'A neon horizon racing toward a chrome sun.',
-    family: 'shader',
-    bg: '#0b0418',
-    tint: '#10061f',
-    text: '#fbefff',
-    muted: '#c3a8d6',
-    accent: '#ff4fd8',
-    accent2: '#2de2ff',
-    line: '#f4d6ff',
-    glass: 0.72,
-    backdrop: {
-      gradient: 'radial-gradient(60% 40% at 50% 60%, rgba(255, 79, 216, .35), transparent 70%), linear-gradient(180deg, #12052a 0%, #2a0838 55%, #07020f 100%)',
-      stage: scene('synthwave', ['#ff4fd8', '#2de2ff', '#ffb347', '#0b0418'], { speed: 0.8 }),
-      veil: VIGNETTE,
-    },
-    terminal: { foreground: '#fbefff', cursor: '#ff4fd8', background: '#090312', selection: '#4a1450' },
-  },
-  {
-    id: 'solar-silk',
-    name: 'Solar Silk',
-    blurb: 'Molten silk in Factory orange and magenta.',
-    family: 'shader',
-    bg: '#0c0507',
-    tint: '#12070a',
-    text: '#fff1ec',
-    muted: '#c9a69c',
-    accent: '#ff7a2f',
-    accent2: '#ff3d7f',
-    line: '#ffdccf',
-    glass: 0.72,
-    backdrop: {
-      gradient: 'radial-gradient(70% 70% at 20% 80%, rgba(255, 122, 47, .4), transparent 70%), radial-gradient(60% 60% at 85% 20%, rgba(255, 61, 127, .3), transparent 70%), linear-gradient(160deg, #1a0709, #060203)',
-      stage: scene('silk', ['#ff7a2f', '#ff3d7f', '#6a1fff', '#0c0507'], { speed: 0.5 }),
-      veil: VIGNETTE,
-    },
-    terminal: { foreground: '#fff1ec', cursor: '#ff7a2f', background: '#0a0405', selection: '#4a1c18' },
-  },
-  {
-    id: 'deep-field',
-    name: 'Deep Field',
-    blurb: 'Drifting nebulae and a thousand distant suns.',
-    family: 'shader',
-    bg: '#05040c',
-    tint: '#080712',
-    text: '#eef0ff',
-    muted: '#a4a8c8',
-    accent: '#7aa2ff',
-    accent2: '#ff7ad9',
-    line: '#d6deff',
-    glass: 0.7,
-    backdrop: {
-      gradient: 'radial-gradient(60% 60% at 30% 40%, rgba(122, 162, 255, .25), transparent 70%), radial-gradient(50% 50% at 75% 65%, rgba(255, 122, 217, .2), transparent 70%), linear-gradient(180deg, #080818, #020205)',
-      stage: scene('nebula', ['#7aa2ff', '#ff7ad9', '#ffd59a', '#05040c'], { speed: 0.4 }),
-      veil: VIGNETTE,
-    },
-    terminal: { foreground: '#eef0ff', cursor: '#7aa2ff', background: '#04030a', selection: '#262c5a' },
-  },
-  {
-    id: 'velvet',
-    name: 'Velvet',
-    blurb: 'A still mesh of plum and indigo. No motion, easy on the battery.',
-    family: 'gradient',
-    bg: '#0b0714',
-    tint: '#110b1d',
-    text: '#f6f0ff',
-    muted: '#b4a8c9',
-    accent: '#b98cff',
-    accent2: '#ff7ab6',
-    line: '#e8dcff',
-    glass: 0.7,
-    backdrop: {
-      gradient:
-        'radial-gradient(55% 65% at 15% 20%, rgba(185, 140, 255, .45), transparent 70%), radial-gradient(50% 60% at 85% 30%, rgba(255, 122, 182, .3), transparent 70%), radial-gradient(70% 60% at 60% 100%, rgba(90, 80, 255, .35), transparent 70%), linear-gradient(160deg, #150c26, #07040d)',
-      veil: VIGNETTE,
-    },
-    terminal: { foreground: '#f6f0ff', cursor: '#b98cff', background: '#090611', selection: '#3a2a5c' },
-  },
-  {
-    id: 'glacier',
-    name: 'Glacier',
-    blurb: 'Cold blue light through polar ice.',
-    family: 'gradient',
-    bg: '#04101a',
-    tint: '#061522',
-    text: '#eef8ff',
-    muted: '#a0b8c8',
-    accent: '#7fd4ff',
-    accent2: '#c6f0ff',
-    line: '#d6f1ff',
-    glass: 0.7,
-    backdrop: {
-      gradient:
-        'radial-gradient(60% 50% at 70% 0%, rgba(198, 240, 255, .35), transparent 70%), radial-gradient(60% 60% at 10% 80%, rgba(60, 140, 220, .35), transparent 70%), conic-gradient(from 200deg at 60% 40%, rgba(127, 212, 255, .12), transparent 30%, rgba(127, 212, 255, .08) 60%, transparent), linear-gradient(180deg, #0b2236, #020910)',
-      veil: VIGNETTE,
-    },
-    terminal: { foreground: '#eef8ff', cursor: '#7fd4ff', background: '#030c14', selection: '#173d55' },
-  },
-  {
-    id: 'dune',
-    name: 'Dune',
-    blurb: 'Warm sand under a low copper sun.',
-    family: 'gradient',
-    bg: '#120c07',
-    tint: '#18100a',
-    text: '#fbf3ea',
-    muted: '#c9b49d',
-    accent: '#f0a35e',
-    accent2: '#e86a3a',
-    line: '#ffe8cf',
-    glass: 0.74,
-    backdrop: {
-      gradient: 'radial-gradient(45% 45% at 75% 35%, rgba(240, 163, 94, .55), transparent 70%), radial-gradient(90% 50% at 30% 100%, rgba(232, 106, 58, .35), transparent 70%), linear-gradient(180deg, #2a1709 0%, #160c06 60%, #0a0604 100%)',
-      veil: VIGNETTE,
-    },
-    terminal: { foreground: '#fbf3ea', cursor: '#f0a35e', background: '#0e0905', selection: '#4a3018' },
-  },
-  {
-    id: 'phosphor',
-    name: 'Phosphor',
-    blurb: 'A green CRT glow with faint scanlines.',
-    family: 'gradient',
-    bg: '#020a04',
-    tint: '#030e06',
-    text: '#d9ffe4',
-    muted: '#8fbf9c',
-    accent: '#39ff88',
-    accent2: '#b6ff5c',
-    line: '#c8ffd8',
-    glass: 0.78,
-    backdrop: {
-      gradient: 'radial-gradient(80% 70% at 50% 50%, rgba(57, 255, 136, .16), transparent 75%), linear-gradient(180deg, #041a0a, #010502)',
-      veil: 'repeating-linear-gradient(180deg, rgba(0, 0, 0, .22) 0 1px, transparent 1px 3px), radial-gradient(120% 90% at 50% 45%, transparent 55%, rgba(0, 0, 0, .7) 100%)',
-    },
-    terminal: { foreground: '#c8ffd8', cursor: '#39ff88', background: '#010703', selection: '#164a26' },
-  },
-  {
-    id: 'graphite',
-    name: 'Graphite',
-    blurb: 'Monochrome glass with nothing but white for an accent.',
-    family: 'gradient',
-    bg: '#09090a',
-    tint: '#0e0e10',
-    text: '#f2f2f2',
-    muted: '#a6a6a8',
-    accent: '#e9e9ea',
-    accent2: '#8a8a90',
-    line: '#ffffff',
-    glass: 0.72,
-    backdrop: {
-      gradient: 'radial-gradient(60% 60% at 80% 10%, rgba(255, 255, 255, .1), transparent 70%), radial-gradient(70% 60% at 10% 100%, rgba(255, 255, 255, .06), transparent 70%), linear-gradient(160deg, #18181b, #050506)',
-      veil: VIGNETTE,
-    },
-    terminal: { foreground: '#eeeeee', cursor: '#e9e9ea', background: '#060607', selection: '#3a3a3e' },
   },
 ] as const satisfies readonly CompanionTheme[];
 

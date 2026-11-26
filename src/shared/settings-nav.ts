@@ -124,7 +124,7 @@ export const SETTINGS_CARDS = [
   { pane: 'graphics', title: 'Frame rate limit', keywords: 'fps frame rate limit 40 60 120 performance graphics', on: OFFICE },
   { pane: 'graphics', title: 'Performance overlay', keywords: 'fps gpu frame pacing stats overlay diagnostics performance', on: OFFICE },
   { pane: 'graphics', title: 'Overhead lights', keywords: 'lights brightness ceiling lamps lighting dark', on: OFFICE },
-  { pane: 'appearance', title: 'Theme', keywords: 'theme themes color colour palette look skin dark gradient artwork og carbon nightly aurora appearance', on: COMPANIONS },
+  { pane: 'appearance', title: 'Theme', keywords: 'theme themes color colour palette look skin dark artwork og carbon nightly appearance', on: COMPANIONS },
   { pane: 'appearance', title: 'Wallpaper', keywords: 'wallpaper background picture image photo upload custom link url dim blur appearance', on: COMPANIONS },
   { pane: 'appearance', title: 'Glass', keywords: 'glass transparency translucent frosted clear solid opacity blur panels appearance', on: COMPANIONS },
   { pane: 'appearance', title: 'Motion', keywords: 'motion animation animated shader webgl live still moving background appearance', on: COMPANIONS },

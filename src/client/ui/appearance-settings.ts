@@ -20,15 +20,13 @@ export interface ThemeFamilyGroup<T extends Pick<CompanionTheme, 'family'> = Com
   themes: T[];
 }
 
-/** Display order and copy for the four theme families in the gallery. */
+/** Display order and copy for the theme families in the gallery. */
 export const THEME_FAMILY_META: readonly { family: CompanionTheme['family']; label: string; note: string }[] = [
   { family: 'classic', label: 'Classic', note: 'Original flat black and Factory orange' },
   { family: 'artwork', label: 'Artwork', note: '4K scenes with moving ambient light' },
-  { family: 'shader', label: 'Live', note: 'Animated WebGL backdrops' },
-  { family: 'gradient', label: 'Still', note: 'Mesh gradients with no motion' },
 ];
 
-/** Groups themes in gallery family order (Classic, Artwork, Live, Still), omitting empty families. */
+/** Groups themes in gallery family order (Classic, Artwork), omitting empty families. */
 export function groupThemesByFamily<T extends Pick<CompanionTheme, 'family'>>(themes: readonly T[] = COMPANION_THEMES as unknown as readonly T[]): ThemeFamilyGroup<T>[] {
   const groups: ThemeFamilyGroup<T>[] = [];
   for (const meta of THEME_FAMILY_META) {
@@ -111,7 +109,7 @@ export function wallpaperDescription(theme: CompanionTheme, wallpaper: Appearanc
   if (wallpaper === 'custom') {
     return hasCustom ? 'Your picture, kept exactly as you chose it. Bright areas get just enough shade to keep text readable.' : 'Drop a picture or paste a link. Until then the theme’s own backdrop shows.';
   }
-  return theme.backdrop.image ? 'The theme’s full-resolution artwork.' : 'This theme has no artwork. Choose Your picture to show one behind the glass.';
+  return 'The theme’s full-resolution artwork.';
 }
 
 export function glassDescription(theme: CompanionTheme, glass: GlassLevel): string {
@@ -123,7 +121,6 @@ export function glassDescription(theme: CompanionTheme, glass: GlassLevel): stri
 
 export function motionDescription(theme: CompanionTheme, motion: AppearancePrefs['motion'], systemReducedMotion = false): string {
   if (theme.id === OG_THEME_ID) return 'OG has no backdrop to animate.';
-  if (!theme.backdrop.stage) return 'This theme’s backdrop doesn’t move.';
   if (systemReducedMotion) return 'Held still because your system’s Reduce motion setting is on.';
   if (motion === 'still') return 'The backdrop holds one still frame.';
   return 'The backdrop moves at your display’s full frame rate.';
@@ -227,7 +224,6 @@ function applyTileVars(el: HTMLElement, theme: CompanionTheme, glass: GlassLevel
 function buildThemeTile(theme: CompanionTheme, onPick: () => void): HTMLButtonElement {
   const previewSrc = themePreview(theme);
   const og = theme.id === OG_THEME_ID;
-  const sceneShader = theme.backdrop.stage?.layer === 'scene' ? theme.backdrop.stage.shader : undefined;
 
   const art = previewSrc
     ? h('img.theme-preview-art', {
@@ -238,8 +234,6 @@ function buildThemeTile(theme: CompanionTheme, onPick: () => void): HTMLButtonEl
         draggable: 'false',
       })
     : null;
-
-  const fx = sceneShader ? h('span.theme-preview-fx', { 'aria-hidden': 'true', 'data-shader': sceneShader }) : null;
 
   const mock = h(
     'span.theme-mock',
@@ -264,7 +258,7 @@ function buildThemeTile(theme: CompanionTheme, onPick: () => void): HTMLButtonEl
     ),
   );
 
-  const preview = h('span.theme-preview', { 'aria-hidden': 'true' }, h('span.theme-preview-bg'), art, fx, h('span.theme-preview-veil'), mock);
+  const preview = h('span.theme-preview', { 'aria-hidden': 'true' }, h('span.theme-preview-bg'), art, h('span.theme-preview-veil'), mock);
 
   const isDefault = theme.id === DEFAULT_THEME_ID;
   const check = h('span.theme-check', { 'aria-hidden': 'true' }, checkGlyph());
