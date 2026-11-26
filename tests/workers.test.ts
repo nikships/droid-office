@@ -1165,8 +1165,8 @@ test('session switches cannot resurrect the original hire preview after restart'
 });
 
 /** Types `text` into a worker's terminal, which echoes it back (the fake agent's tty is in cooked mode), and waits to see it. */
-async function show(workers: WorkerManager, id: string, text: string) {
-  const occurrences = () => (workers.tail(id, 2000) ?? '').split(text).length;
+async function show(workers: WorkerManager, id: string, text: string, lastRow = text) {
+  const occurrences = () => (workers.tail(id, 2000) ?? '').split(lastRow).length;
   const before = occurrences();
   workers.write(id, `${text}\r`);
   for (let i = 0; i < 200 && occurrences() <= before; i++) await new Promise((resolve) => setTimeout(resolve, 20));
@@ -1174,7 +1174,8 @@ async function show(workers: WorkerManager, id: string, text: string) {
 }
 
 async function showIdle(workers: WorkerManager, id: string) {
-  for (const row of [
+  // Echo a whole frame in one write, so a pending Ctrl+Enter can't land inside the input box.
+  const rows = [
     '    ↳ done',
     '⛬  Done.',
     ' Auto (Off) · all actions require approval        Sonnet 5.5 (High)',
@@ -1183,8 +1184,8 @@ async function showIdle(workers: WorkerManager, id: string) {
     '╰──────────────────────────────────────────────────────────────╯',
     '[⏱ 6s, context: 4%] ? for help                     MCP ✓ | IDE ◌',
     '/private/tmp/proj | master',
-  ])
-    await show(workers, id, row);
+  ];
+  await show(workers, id, rows.join('\r'), rows.at(-1)!);
 }
 
 /** Droid has actually returned to its input box, and remains quiet through the settle interval. */

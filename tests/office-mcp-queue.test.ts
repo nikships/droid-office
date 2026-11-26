@@ -598,7 +598,7 @@ test('MCP worker_queue promote: real 3-space review footer, failed promote keeps
           process.stdout.write('\\x1b[2J\\x1b[H╭──────────────────────────╮\\r\\n│ DROID STATUS             │\\r\\n╰──────────────────────────╯\\r\\n');
           return;
         }
-        const lines = ['\\x1b[2J\\x1b[H  ● Running command...'];
+        const lines = [started ? '\\x1b[2J\\x1b[H  ● Running command...' : '\\x1b[2J\\x1b[H  Ready for launch'];
         if (steering.length) {
           lines.push('   Steering messages:');
           for (const s of steering) lines.push('   ' + s);
@@ -630,9 +630,9 @@ test('MCP worker_queue promote: real 3-space review footer, failed promote keeps
         process.stdout.write(lines.join('\\r\\n') + '\\r\\n');
       }
 
-      render();
       let draft = '';
       if (process.stdin.isTTY) process.stdin.setRawMode(true);
+      render();
       process.stdin.setEncoding('utf8');
       process.stdin.on('data', (chunk) => {
         buf += chunk;
@@ -801,18 +801,25 @@ test('MCP worker_queue promote: real 3-space review footer, failed promote keeps
   });
   const subId = (hired.structuredContent!.worker as { id: string }).id;
   const subToken = (wm as unknown as { workers: Map<string, { hookToken: string }> }).workers.get(subId)!.hookToken;
+  const waitForScreen = async (description: string, matches: (rows: string[]) => boolean) => {
+    const deadline = Date.now() + 5000;
+    while (!matches(wm.threadLive(subId)?.screen ?? [])) {
+      assert.ok(Date.now() < deadline, `fake Droid did not render ${description}`);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+  const waitForQueue = (count: number) => waitForScreen(`${count} pending items`, (rows) => readDroidPending(rows)?.items.length === count);
+  await waitForScreen('the raw input prompt', (rows) => rows.some((row) => row.includes('Ready for launch')));
   wm.hookReply(subId, subToken, 'SessionStart', { hook_event_name: 'SessionStart', session_id: 's1' }, HOOK_VERSION);
+  await waitForScreen('the submitted launch prompt', (rows) => rows.some((row) => row.includes('Running command...')));
   wm.hookReply(subId, subToken, 'UserPromptSubmit', { hook_event_name: 'UserPromptSubmit', session_id: 's1', prompt: 'Run task' }, HOOK_VERSION);
-
-  // Wait for initial launch prompt paste + 120ms Enter timer to complete.
-  await new Promise((r) => setTimeout(r, 220));
 
   // 1. Queue a message via Ctrl+Enter (`queue: true`) and wait for it to render on the fake Droid TUI.
   await botClient.callTool({
     name: 'team_message',
     arguments: { worker: subId, text: 'Switch to PR 1 first', queue: true },
   });
-  await new Promise((r) => setTimeout(r, 220));
+  await waitForQueue(1);
 
   const listBefore = await botClient.callTool({ name: 'worker_queue', arguments: { worker: subId, action: 'list' } });
   assert.equal(listBefore.structuredContent?.count, 1);
@@ -833,7 +840,7 @@ test('MCP worker_queue promote: real 3-space review footer, failed promote keeps
     name: 'team_message',
     arguments: { worker: subId, text: 'Keep me visible on failed promote', queue: true },
   });
-  await new Promise((r) => setTimeout(r, 220));
+  await waitForQueue(2);
 
   const seenList = await botClient.callTool({ name: 'worker_queue', arguments: { worker: subId, action: 'list' } });
   assert.equal(seenList.structuredContent?.count, 2);
@@ -857,7 +864,7 @@ test('MCP worker_queue promote: real 3-space review footer, failed promote keeps
     name: 'team_message',
     arguments: { worker: subId, text: 'Delivered right as turn ended', queue: true },
   });
-  await new Promise((r) => setTimeout(r, 220));
+  await waitForQueue(1);
   writeFileSync(stateFile, 'drain_on_review');
 
   const drainedPromote = await botClient.callTool({ name: 'worker_queue', arguments: { worker: subId, action: 'promote' } });
