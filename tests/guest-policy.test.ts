@@ -32,7 +32,8 @@ const REPOS: Record<string, string[]> = { ab: ['B'] };
 const isOpen = (id: string) => id === 'A' || id === 'B';
 // As guestWorld: only open floors seat anyone.
 // Visits under way on A: a1 tells a2, ab tells a1, a2 asks ab.
-const VISITS: Record<string, { visitor: string; host: string }> = { v1: { visitor: 'a1', host: 'a2' }, v2: { visitor: 'ab', host: 'a1' }, v3: { visitor: 'a2', host: 'ab' } };
+// v4: a1 still visiting a host that has been sent home (off the roster).
+const VISITS: Record<string, { visitor: string; host: string }> = { v1: { visitor: 'a1', host: 'a2' }, v2: { visitor: 'ab', host: 'a1' }, v3: { visitor: 'a2', host: 'ab' }, v4: { visitor: 'a1', host: 'left' } };
 const world: GuestWorld = { floorOf: (id) => (isOpen(SEATS[id] ?? '') ? SEATS[id] : undefined), isOpen, reposOf: (id) => REPOS[id], visitOf: (id) => VISITS[id] };
 
 const GRANTS: Record<GuestPreset, GuestScopeGrant> = {
@@ -440,6 +441,23 @@ test('visits and what visitors say reach a guest only between two workers it see
     assert.equal(guestOutbound(pick, say('v1') as ServerMsg, c, world), undefined);
   }
   assert.equal(out('view-floor', visits, ctx({ via: 'floor', floor: 'B' })), undefined, 'another floor’s visits');
+});
+
+test('a visit whose host was sent home mid-visit reaches only office links', () => {
+  // Off the roster, the host's floors went with it: a floor link can't tell it was ever one of its workers.
+  const returning = { id: 'v4', visitor: 'a1', host: 'left', kind: 'tell', phase: 'returning', slot: 0, since: 1 };
+  const visits = { t: 'visits', visits: [{ ...returning, id: 'v1', host: 'a2', phase: 'talking' }, returning] };
+  const say = { t: 'visit_say', visit: 'v4', worker: 'a1', text: 'see you' };
+  const ids = (m: unknown) => (m as { visits?: { id: string }[] } | undefined)?.visits?.map((v) => v.id);
+  const c = ctx({ via: 'floor', floor: 'A' });
+  for (const preset of ['view-floor', 'edit-floor'] as const) {
+    assert.deepEqual(ids(out(preset, visits, c)), ['v1'], preset);
+    assert.equal(out(preset, say, c), undefined, preset);
+  }
+  for (const preset of ['view-office', 'edit-office'] as const) {
+    assert.deepEqual(ids(out(preset, visits, c)), ['v1', 'v4'], preset);
+    assert.ok(out(preset, say, c), preset);
+  }
 });
 
 test('removal news reaches every guest whose scope held the worker, after it left every map', () => {

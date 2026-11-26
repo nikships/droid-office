@@ -409,11 +409,15 @@ export function guestMission(state: MissionControlState, g: GuestScopeGrant): Mi
   return { orchestrator: { ...rest, settings: { on: settings.on }, ...(blocked ? { blocked: GUEST_ORCHESTRATOR_BLOCKED } : {}) }, bots: [] };
 }
 
-/** A floor's visits as a guest sees them: on a floor whose content it sees, between two workers it sees. */
+/**
+ * A floor's visits as a guest sees them: on a floor whose content it sees, between two workers it sees.
+ * A floor link needs both still on the roster: one sent home mid-visit took the floors it worked in with it.
+ */
 function seesVisit(g: GuestScopeGrant, world: GuestWorld, ctx: GuestSendContext, v: { visitor: string; host: string } | undefined): boolean {
   const floor = ctx.floor ?? ctx.here ?? undefined;
   if (!v || !floor || !world.isOpen(floor) || !guestSeesFloor(g, floor)) return false;
-  return seesNamed(g, world, { id: v.visitor }, floor) && seesNamed(g, world, { id: v.host }, floor);
+  const sees = (id: string) => (officeWide(g) || world.floorOf(id) !== undefined) && seesNamed(g, world, { id }, floor);
+  return sees(v.visitor) && sees(v.host);
 }
 
 const arrivalFor = (arrival: WelcomeMsg['arrival'], view: FloorView): WelcomeMsg['arrival'] => (arrival.floor === view.floor ? arrival : { floor: null, via: 'lobby' });
