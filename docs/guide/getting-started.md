@@ -93,11 +93,17 @@ In Chrome or Edge, open an already-running office and choose **Install** in the 
 
 There are no office passwords, accounts, sessions or login pages. Localhost HTTP serves the Mac app and local browsers. It never listens on a network interface, including with old `--host` flags. Every remote device, including Android, connects through **Tailscale HTTPS only**, even on the same Wi-Fi.
 
-Sign the host and other devices in to Tailscale. The office uses **Tailscale Serve**, never public Funnel, to create a trusted HTTPS address automatically. If HTTPS needs administrator approval, **Settings → Phone & web → Web companion** shows the Tailscale approval link. Copy the HTTPS pairing link for a browser, or scan **Pair a phone** for Android. Pair again if you previously used an HTTP or LAN address. Chrome can install the HTTPS companion as **Droid Office Companion**.
+Sign the host and other devices in to Tailscale. The office uses **Tailscale Serve**, never public Funnel, to create a trusted HTTPS address automatically (Funnel is used only for [share links](#share-links-for-people-outside-your-tailnet), while you have external sharing on). If HTTPS needs administrator approval, **Settings → Phone & web → Web companion** shows the Tailscale approval link. Copy the HTTPS pairing link for a browser, or scan **Pair a phone** for Android. Pair again if you previously used an HTTP or LAN address. Chrome can install the HTTPS companion as **Droid Office Companion**.
 
 Each start mints a random pairing token (historically called the LAN token), kept in memory and never written to disk. Initial remote pairing needs it as `?t=<token>`; local requests need no token. Paired browsers and phones keep a device token instead. The terminal prints the HTTPS companion link and Android pairing QR code once HTTPS is ready. No Tailscale means local-only operation, not an HTTP fallback. Turn off **Tailscale HTTPS** in the Web companion window, or start with `DROID_OFFICE_TAILNET_HTTPS=off`, to disable remote access. Remote MCP has its own independent setting.
 
 A paired phone (see [Droid Office for Android](android.md)) carries a **device token** instead. It opens the office the way the LAN token does, for every page, API and the WebSocket, but it keeps working across restarts until you forget the phone. The phone sends it as `Authorization: Bearer <token>` (or `?d=<token>`). The office keeps only its SHA-256, in its own `.droid-office/devices.json`. A device token that was forgotten is refused everywhere, even on loopback, so the phone knows to pair again.
+
+#### Share links for people outside your tailnet
+
+**Settings → Phone & web → Share links** makes a secret link that opens the web companion for someone who is not on your tailnet, with one of five presets: view the whole office, one floor or one worker, work on one floor, or work across the whole office (Mission Control included). Settings, pairing and sharing itself always stay yours. A link can expire after 1 hour, 24 hours or 7 days, or last until you revoke it. Its URL is shown once, when you create it. The Share list shows how many people have each link open, and an audit log of every change guests make.
+
+External sharing is off until you turn it on. While it is on, the office publishes a separate guest-only address through **Tailscale Funnel** (public internet), which needs Funnel enabled for this machine in the tailnet policy; the Share list shows the admin link when it is not. Turning sharing off disconnects every guest at once and removes the public address. Your own tailnet access is unaffected either way. A paired phone or browser can see the links, revoke them and turn sharing off, but only the office on its own computer can create links or turn sharing on. Start the office with `DROID_OFFICE_GUEST_SHARING=off` to lock sharing off entirely. See [guest-sharing.md](../guest-sharing.md) for the details.
 
 An office that ran before this had a shared password and per-person accounts. Those are gone: the old `accounts.json` is left unread on disk (in the office's `.droid-office/`, next to `config.json`), and so is the old `chat.jsonl`. Delete them yourself if you want them gone; the office never reads, writes or serves them.
 
@@ -118,6 +124,8 @@ droid-office [dir] [options]
       --max-workers <n>   Run at most n workers at once, across every floor (env DROID_OFFICE_MAX_WORKERS)
       --city <name>       Put the office in a real city: its sun and live weather (open-meteo.com)
       --weather <kind>    Pin the weather: clear, cloudy, rain, storm, snow or fog
+      --tailscale-bin <file>  Run only this tailscale executable, never an installed one; for testing
+                          with a stub (env DROID_OFFICE_TAILSCALE_BIN)
 
 droid-office setup [--projects <dir>] [--project <dir>]... [--home <dir>]
 
