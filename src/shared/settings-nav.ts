@@ -20,6 +20,8 @@ export interface PaneDef {
   blurb: string;
   /** The blurb in a companion, where the pane holds less. */
   companionBlurb?: string;
+  /** The blurb in a browser's companion (not the Mac app's), where it holds less again. */
+  browserBlurb?: string;
 }
 
 export const SETTINGS_PANES: PaneDef[] = [
@@ -79,7 +81,15 @@ export const SETTINGS_PANES: PaneDef[] = [
     blurb: 'Where the elevator finds projects, the sky outside, updates and developer tools.',
     companionBlurb: 'Where the elevator finds projects, and updates to the Mac app.',
   },
-  { id: 'phone', icon: '📱', label: 'Phone & web', section: 'Office', scope: 'Your devices', blurb: 'Droid Office for Android, the web companion, and bots on your Tailscale devices.' },
+  {
+    id: 'phone',
+    icon: '📱',
+    label: 'Phone & web',
+    section: 'Office',
+    scope: 'Your devices',
+    blurb: 'Droid Office for Android, the web companion, share links for people outside your tailnet, and bots on your Tailscale devices.',
+    browserBlurb: 'Share links for people outside your tailnet: who has one, what it reaches, and what guests changed.',
+  },
 ];
 
 /** Pane ids Settings used before a reorganization, and where those settings live now. Old links and callers keep working. */
@@ -190,6 +200,7 @@ export const SETTINGS_CARDS = [
   { pane: 'office', title: 'Source hot reload', keywords: 'source hot reload development build reload local vite developer', on: OFFICE },
   { pane: 'phone', title: 'Droid Office for Android', keywords: 'android phone pair pairing qr app mobile', on: OWN_COMPUTER },
   { pane: 'phone', title: 'Web companion', keywords: 'web companion dashboard browser pair desktop link', on: OWN_COMPUTER },
+  { pane: 'phone', title: 'Share links', keywords: 'share sharing link guest external collaborator invite funnel revoke audit activity' },
   { pane: 'phone', title: 'Tailscale MCP', keywords: 'tailscale mcp external remote bot openclaw grok grokbot agent serve url key connection', on: OWN_COMPUTER },
 ] as const satisfies readonly CardDef[];
 
@@ -205,7 +216,10 @@ export function settingsCards(surface: SettingsSurface = 'office'): (typeof SETT
 /** The categories a surface shows: those with at least one of its settings, with the blurb that fits it. */
 export function settingsPanes(surface: SettingsSurface = 'office'): PaneDef[] {
   const cards = settingsCards(surface);
-  return SETTINGS_PANES.filter((p) => cards.some((c) => c.pane === p.id)).map((p) => (surface !== 'office' && p.companionBlurb ? { ...p, blurb: p.companionBlurb } : p));
+  return SETTINGS_PANES.filter((p) => cards.some((c) => c.pane === p.id)).map((p) => {
+    if (surface === 'companion' && p.browserBlurb) return { ...p, blurb: p.browserBlurb };
+    return surface !== 'office' && p.companionBlurb ? { ...p, blurb: p.companionBlurb } : p;
+  });
 }
 
 /** One search hit: the setting, and the pane a click should open. */

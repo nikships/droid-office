@@ -27,6 +27,8 @@ import { openHostUpdate } from './host-update';
 import { appearanceSettings } from './appearance-settings';
 import { openPhone, pairedPhones } from './phone';
 import { companionState, openCompanion } from './companion';
+import { openShare, shareState, shareSummary } from './guest-links';
+import type { ShareState } from './guest-links-model';
 import { remoteMcpSettings } from './remote-mcp';
 import type { PairingState } from '../../shared/devices';
 import type { PairedDevice } from '../../shared/devices';
@@ -927,10 +929,23 @@ function officeRows(net: Net, office: OfficeSettings) {
 }
 
 /**
- * Phone & web: pairing Android, the web companion's links and paired browsers, and bots on Tailscale.
- * `companion` is Settings in the Mac app's companion, which turning the web companion off disconnects too.
+ * Phone & web: pairing Android, the web companion's links and paired browsers, share links for guests
+ * outside the tailnet, and bots on Tailscale. A browser's companion has only the share links (see
+ * SETTINGS_CARDS); in the Mac app's companion, turning the web companion off disconnects Settings too.
  */
-function phoneRows(companion: boolean): Node[] {
+function phoneRows(net: Net, surface: SettingsSurface): Node[] {
+  // Share links: secret, scoped links to the web companion for people outside the tailnet, in their own window.
+  const shareOpen = h('button.btn.primary', { type: 'button' }, 'Share links…');
+  const shareStatus = h('span.setting-meta', {}, 'Checking share links…');
+  const paintShare = (s: ShareState | string) => (shareStatus.textContent = shareSummary(s));
+  void shareState().then(paintShare);
+  shareOpen.addEventListener('click', () => openShare(net, paintShare));
+  const share = card('Share links', {
+    desc: h('span.stack.tight', {}, desc('Let someone outside your tailnet watch or work in the office through a secret link to the web companion, scoped to what you choose.'), shareStatus),
+    control: shareOpen,
+  });
+  if (surface === 'companion') return [group(null, share)];
+
   // Droid Office for Android: the pairing QR code is its own window, over this one.
   const phoneOpen = h('button.btn.primary', { type: 'button' }, 'Pair a phone…');
   const phoneStatus = h('span.setting-meta', {}, 'Checking for paired phones…');
@@ -953,7 +968,7 @@ function phoneRows(companion: boolean): Node[] {
     }
   };
   void companionState().then(paintWeb);
-  webOpen.addEventListener('click', () => openCompanion(paintWeb, { companion }));
+  webOpen.addEventListener('click', () => openCompanion(paintWeb, { companion: surface === 'mac-companion' }));
 
   // External bots on the owner's Tailscale devices, as workers with their own desks.
   const remoteMcp = remoteMcpSettings();
@@ -963,6 +978,7 @@ function phoneRows(companion: boolean): Node[] {
       null,
       card('Droid Office for Android', { desc: h('span.stack.tight', {}, desc('Hire, watch and prompt workers from your phone. A paired phone keeps working after restarts.'), phoneStatus), control: phoneOpen }),
       card('Web companion', { desc: h('span.stack.tight', {}, desc('Your workers, their terminals and the Whiteboard in any desktop browser, at /dashboard.'), webStatus), control: webOpen }),
+      share,
       card('Tailscale MCP', {
         desc: h('span.stack.tight', {}, desc('Bots on your own Tailscale devices, such as an OpenClaw agent, join as workers with their own desks through this MCP server.'), remoteMcp.meta),
         control: remoteMcp.control,
@@ -1564,7 +1580,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
         ...(only ? [only.hotReload] : []),
       ),
     ],
-    ...(shown.some((p) => p.id === 'phone') ? { phone: phoneRows(surface === 'mac-companion') } : {}),
+    ...(shown.some((p) => p.id === 'phone') ? { phone: phoneRows(net, surface) } : {}),
   };
 
   // The categories down the side, grouped under Personal / Workers / Office, the one picked on the right.

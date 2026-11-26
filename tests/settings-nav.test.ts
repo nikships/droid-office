@@ -102,6 +102,7 @@ test('every setting is in a category', () => {
     ['Source hot reload', 'office'],
     ['Droid Office for Android', 'phone'],
     ['Web companion', 'phone'],
+    ['Share links', 'phone'],
     ['Tailscale MCP', 'phone'],
   ];
   assert.equal(byTitle.size, expect.length);
@@ -205,14 +206,14 @@ test('arrow keys move between categories and wrap, Home and End jump', () => {
   assert.equal(settingsPaneAfter('models', 'a'), null);
 });
 
-test('the companions leave out what only the 3D office has, and only the Mac app’s has Phone & web', () => {
+test('the companions leave out what only the 3D office has, and a browser’s Phone & web holds only share links', () => {
   assert.deepEqual(
     settingsPanes('office').map((p) => p.id),
     SETTINGS_PANES.map((p) => p.id).filter((id) => id !== 'appearance'),
   );
   assert.deepEqual(
     settingsPanes('companion').map((p) => p.label),
-    ['Appearance', 'Thread', 'Terminal', 'Workers', 'Models', 'Subagents & visits', 'Orchestrator', 'Connections', 'Office & floors'],
+    ['Appearance', 'Thread', 'Terminal', 'Workers', 'Models', 'Subagents & visits', 'Orchestrator', 'Connections', 'Office & floors', 'Phone & web'],
   );
   assert.deepEqual(
     settingsPanes('mac-companion').map((p) => p.label),
@@ -277,6 +278,13 @@ test('the companions leave out what only the 3D office has, and only the Mac app
     'Default worker',
   ])
     assert.ok(titles('companion').includes(kept), kept);
+  assert.deepEqual(
+    settingsCards('companion')
+      .filter((c) => c.pane === 'phone')
+      .map((c) => c.title),
+    ['Share links'],
+  );
+  for (const surface of ['office', 'mac-companion'] as const) assert.ok(titles(surface).includes('Share links'), surface);
 });
 
 test('a companion’s blurbs only promise what it shows', () => {
@@ -286,6 +294,10 @@ test('a companion’s blurbs only promise what it shows', () => {
     assert.doesNotMatch(blurb.get('office') ?? '', /sky|developer/i);
     assert.equal(blurb.get('workers'), SETTINGS_PANES.find((p) => p.id === 'workers')?.blurb);
   }
+  const phone = (surface: 'office' | 'companion' | 'mac-companion') => settingsPanes(surface).find((p) => p.id === 'phone')?.blurb ?? '';
+  assert.doesNotMatch(phone('companion'), /android|tailscale devices|bots/i);
+  assert.match(phone('companion'), /share links/i);
+  assert.match(phone('mac-companion'), /Android/);
   assert.match(settingsPanes('office').find((p) => p.id === 'connections')?.blurb ?? '', /Jira/);
 });
 
@@ -300,6 +312,8 @@ test('a companion’s search and arrow keys stay among its own settings', () => 
   ]);
   assert.deepEqual(searchSettings('host update', 'companion'), [{ pane: 'office', title: 'Host desktop app' }]);
   assert.deepEqual(searchSettings('openclaw', 'companion'), []);
+  assert.deepEqual(searchSettings('guest link', 'companion'), [{ pane: 'phone', title: 'Share links' }]);
+  assert.deepEqual(searchSettings('revoke share'), [{ pane: 'phone', title: 'Share links' }]);
   assert.deepEqual(searchSettings('wallpaper', 'companion'), [
     { pane: 'appearance', title: 'Wallpaper' },
     { pane: 'appearance', title: 'Restore Appearance defaults' },
@@ -311,15 +325,16 @@ test('a companion’s search and arrow keys stay among its own settings', () => 
 
   assert.equal(settingsPaneAfter('workers', 'ArrowUp', 'companion'), 'terminal');
   assert.equal(settingsPaneAfter('thread', 'ArrowUp', 'companion'), 'appearance');
-  assert.equal(settingsPaneAfter('appearance', 'ArrowUp', 'companion'), 'office');
-  assert.equal(settingsPaneAfter('office', 'ArrowDown', 'companion'), 'appearance');
+  assert.equal(settingsPaneAfter('appearance', 'ArrowUp', 'companion'), 'phone');
+  assert.equal(settingsPaneAfter('office', 'ArrowDown', 'companion'), 'phone');
+  assert.equal(settingsPaneAfter('phone', 'ArrowDown', 'companion'), 'appearance');
   assert.equal(settingsPaneAfter('office', 'ArrowDown', 'mac-companion'), 'phone');
   assert.equal(settingsPaneAfter('phone', 'ArrowDown', 'mac-companion'), 'appearance');
   assert.equal(settingsPaneAfter('models', 'Home', 'companion'), 'appearance');
-  assert.equal(settingsPaneAfter('models', 'End', 'companion'), 'office');
+  assert.equal(settingsPaneAfter('models', 'End', 'companion'), 'phone');
   assert.equal(settingsPaneAfter('models', 'End', 'mac-companion'), 'phone');
   assert.equal(settingsPaneAfter('you', 'ArrowDown', 'companion'), null, 'a pane the surface lacks moves nowhere');
-  assert.equal(settingsPaneAfter('phone', 'ArrowUp', 'companion'), null);
+  assert.equal(settingsPaneAfter('you', 'ArrowUp', 'companion'), null);
 });
 
 test('initialSettingsPane selects focusCard’s registered pane before first or remembered panes, respecting surface', () => {
