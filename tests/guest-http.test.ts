@@ -62,19 +62,22 @@ async function listen(t: TestContext, handler: RequestListener, origin?: string)
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
-/** Floors shaped like Floor where guest-http reads them: two floors, three workers, one Whiteboard card each. */
+/**
+ * Floors shaped like Floor where guest-http reads them: two floors, one Whiteboard card each, and four
+ * workers. w4 sits on floor-a and works in floor-b's repository too.
+ */
 function fakeFloors() {
-  const floor = (id: string, name: string, workers: string[], cap: string) => ({
+  const floor = (id: string, name: string, workers: (string | { id: string; repos: string[] })[], cap: string) => ({
     id,
     dir: `/projects/${id}`,
     def: { name },
-    everyone: () => workers.map((w) => ({ id: w, name: `Worker ${w}` })),
+    everyone: () => workers.map((w) => (typeof w === 'string' ? { id: w, name: `Worker ${w}` } : { id: w.id, name: `Worker ${w.id}`, repos: w.repos.map((r) => ({ floor: r })) })),
     whiteboard: {
       serve: (c: string, rel: string) => (c === cap ? { status: 200, headers: { 'content-type': 'text/html' }, body: Buffer.from(`${id}:${rel || 'index'}`) } : undefined),
     },
   });
   return new Map([
-    ['floor-a', floor('floor-a', 'Droid Office', ['w1', 'w2'], `k${'a'.repeat(30)}`)],
+    ['floor-a', floor('floor-a', 'Droid Office', ['w1', 'w2', { id: 'w4', repos: ['floor-b'] }], `k${'a'.repeat(30)}`)],
     ['floor-b', floor('floor-b', 'Website', ['w3'], `k${'b'.repeat(30)}`)],
   ]);
 }
@@ -283,6 +286,31 @@ test('each preset reaches only in-scope floors, workers and Mission Control, and
   assert.equal(entries.at(-1)?.detail, 'Picture for a prompt: shot.png');
 });
 
+test('a worker across repositories is outside floor links, and a single-worker link never reaches its other floor', async (t) => {
+  const { http, make } = unitRig(t);
+  const base = await listen(t, http.guestRequest, ORIGIN);
+  const status = (token: string, p: string, method = 'GET', body?: Buffer) => call(base, p, { method, headers: auth(token, { origin: ORIGIN }), ...(body ? { body } : {}) }).then((r) => r.status);
+  const picture = '/api/changes/file?worker=w4&path=a.png&side=new';
+
+  for (const preset of ['view-floor', 'edit-floor'] as const) {
+    const token = make(preset, { floorId: 'floor-a' }).token;
+    assert.equal(await status(token, picture), 404, preset);
+    assert.equal(await status(token, `${picture}&repo=floor-b`), 404, preset);
+    assert.equal(await status(token, '/api/thread/image?worker=w4&image=x'), 404, preset);
+    assert.equal(await status(token, '/api/thread/image?worker=w1&image=x'), 200, preset);
+  }
+  const editFloor = make('edit-floor', { floorId: 'floor-a' }).token;
+  assert.equal(await status(editFloor, '/api/thread/file?worker=w4&path=README.md'), 404);
+  assert.equal(await status(editFloor, '/api/term/drop?worker=w4&name=x', 'POST', PNG), 404);
+
+  const picked = make('view-worker', { floorId: 'floor-a', workerId: 'w4' }).token;
+  assert.equal(await status(picked, picture), 200, 'the worker the owner picked is shared');
+  assert.equal(await status(picked, `${picture}&repo=floor-b`), 404, 'but not its repository on another floor');
+
+  const office = make('view-office').token;
+  assert.equal(await status(office, `${picture}&repo=floor-b`), 200);
+});
+
 test('Whiteboard card frames load by capability only on floors an active link shows, held to scope when a token comes with them', async (t) => {
   const { http, make, links } = unitRig(t);
   const base = await listen(t, http.guestRequest, ORIGIN);
@@ -325,6 +353,7 @@ test('the owner API creates one-time URLs, revokes, toggles and pages the audit'
       workers: [
         { id: 'w1', name: 'Worker w1' },
         { id: 'w2', name: 'Worker w2' },
+        { id: 'w4', name: 'Worker w4' },
       ],
     },
     { id: 'floor-b', name: 'Website', workers: [{ id: 'w3', name: 'Worker w3' }] },

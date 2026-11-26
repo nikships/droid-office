@@ -23,11 +23,12 @@ import { ROOF } from '../src/shared/rooftop.js';
 import { readMenu } from '../src/shared/asks.js';
 import type { ClientMsg, FloorInfo, FloorView, ServerMsg, WorkerInfo } from '../src/shared/protocol.js';
 
-// Floors A and B are open, C was closed; a1/a2 sit on A, b1 on B, c1 on the closed C.
-const SEATS: Record<string, string> = { a1: 'A', a2: 'A', b1: 'B', c1: 'C' };
+// Floors A and B are open, C was closed; a1/a2 sit on A, b1 on B, c1 on the closed C. ab sits on A and works in B's repository too.
+const SEATS: Record<string, string> = { a1: 'A', a2: 'A', b1: 'B', c1: 'C', ab: 'A' };
+const REPOS: Record<string, string[]> = { ab: ['B'] };
 const isOpen = (id: string) => id === 'A' || id === 'B';
 // As guestWorld: only open floors seat anyone.
-const world: GuestWorld = { floorOf: (id) => (isOpen(SEATS[id] ?? '') ? SEATS[id] : undefined), isOpen };
+const world: GuestWorld = { floorOf: (id) => (isOpen(SEATS[id] ?? '') ? SEATS[id] : undefined), isOpen, reposOf: (id) => REPOS[id] };
 
 const GRANTS: Record<GuestPreset, GuestScopeGrant> = {
   'view-office': { preset: 'view-office' },
@@ -117,11 +118,11 @@ test('worker targets: in scope, other floors, closed floors, missing workers, th
     assert.deepEqual(guestAdmit(g, about('worker.attach', ORCHESTRATOR_ID), 'A', world)?.target, OFFICE.has(preset) ? { kind: 'missionControl' } : undefined);
     assert.equal(!!guestAdmit(g, about('worker.prompt', ORCHESTRATOR_ID), 'A', world), preset === 'edit-office');
     assert.equal(!!guestAdmit(g, { t: 'orchestrator.reset' }, 'A', world), preset === 'edit-office');
-    assert.equal(guestSeesWorker(g, 'a1', ROOF), false);
+    assert.equal(guestSeesWorker(g, 'a1', ROOF, undefined), false);
   }
   assert.deepEqual(guestAdmit(GRANTS['edit-floor'], about('worker.prompt', 'a2'), 'A', world), { write: true, audit: 'prompt', target: { kind: 'worker', workerId: 'a2', floorId: 'A' } });
   // A single-worker link's worker moved to another floor is out of scope.
-  assert.equal(guestSeesWorker(GRANTS['view-worker'], 'a1', 'B'), false);
+  assert.equal(guestSeesWorker(GRANTS['view-worker'], 'a1', 'B', undefined), false);
 });
 
 test('floors: scoped links only ever return to their own floor, office links move between open floors', () => {
@@ -271,8 +272,55 @@ test('a guest’s welcome, floor list and roster hold only its scope, without pa
     [['A', '', 2]],
   );
   assert.deepEqual(guestFloorView({ ...VIEW, floor: 'C' }, GRANTS['view-office'], world).floor, null);
-  assert.deepEqual(guestBuilding([{ floor: ROOF, workers: [], pulls: [] } as never], GRANTS['view-office']), []);
+  assert.deepEqual(guestBuilding([{ floor: ROOF, workers: [], pulls: [] } as never], GRANTS['view-office'], world), []);
   assert.equal(guestMission({ orchestrator: {}, bots: [] } as never, GRANTS['edit-floor']), undefined);
+});
+
+test('a worker across repositories is outside floor links, and a single-worker link gets it without its other floor', () => {
+  const repo = { floor: 'B', name: 'beta', dir: '/Users/owner/beta', path: 'ws/beta', branch: 'office/ab', base: 'abc' };
+  const ab = { ...worker('ab'), repos: [repo] } as WorkerInfo;
+  const view = { ...VIEW, workers: [worker('a1'), ab] } as FloorView;
+  const roster = [{ floor: 'A', workers: [worker('a1'), ab], pulls: [] }];
+  for (const preset of ['view-floor', 'edit-floor'] as const) {
+    const g = GRANTS[preset];
+    for (const t of ['worker.attach', 'thread.read', 'term.input', 'worker.prompt', 'worker.pr', 'changes.commit', 'changes.discard', 'changes.pr']) assert.equal(guestAdmit(g, about(t, 'ab'), 'A', world), undefined, `${preset} ${t}`);
+    for (const msg of [
+      { t: 'term.data', workerId: 'ab', data: 'x' },
+      { t: 'worker.update', worker: ab },
+      // Its card without repos: the office still knows where it works.
+      { t: 'worker.update', worker: worker('ab') },
+      { t: 'building.worker', floor: 'A', worker: ab },
+      { t: 'toast', text: 'hi', workerId: 'ab' },
+    ])
+      assert.equal(out(preset, msg), undefined, `${preset} ${msg.t}`);
+    assert.deepEqual(
+      guestFloorView(view, g, world).workers.map((w) => w.id),
+      ['a1'],
+    );
+    assert.deepEqual(
+      guestBuilding(roster, g, world)[0]!.workers.map((w) => w.id),
+      ['a1'],
+    );
+    assert.ok(guestAdmit(g, about('worker.attach', 'a1'), 'A', world), 'its floor-mates stay in scope');
+  }
+
+  const pick: GuestScopeGrant = { preset: 'view-worker', floorId: 'A', workerId: 'ab' };
+  assert.ok(guestAdmit(pick, about('worker.attach', 'ab'), 'A', world));
+  assert.ok(guestOutbound(pick, { t: 'term.data', workerId: 'ab', data: 'x' }, ctx(), world));
+  const update = guestOutbound(pick, { t: 'worker.update', worker: ab }, ctx(), world) as Extract<ServerMsg, { t: 'worker.update' }>;
+  assert.equal('repos' in update.worker, false, 'its repository on another floor is left out');
+  assert.equal(ab.repos?.length, 1, 'the owner’s card is untouched');
+  const building = guestOutbound(pick, { t: 'building.worker', floor: 'A', worker: ab }, ctx(), world) as Extract<ServerMsg, { t: 'building.worker' }>;
+  assert.equal('repos' in building.worker, false);
+  assert.deepEqual(guestFloorView(view, pick, world).workers, [worker('ab')]);
+  assert.deepEqual(guestBuilding(roster, pick, world)[0]!.workers, [worker('ab')]);
+
+  // Office links reach every open floor: unchanged.
+  for (const preset of ['view-office', 'edit-office'] as const) {
+    assert.deepEqual(out(preset, { t: 'worker.update', worker: ab }), { t: 'worker.update', worker: ab });
+    assert.ok(guestAdmit(GRANTS[preset], about('worker.attach', 'ab'), 'A', world));
+    assert.deepEqual(guestFloorView(view, GRANTS[preset], world).workers, [worker('a1'), ab]);
+  }
 });
 
 test('removal news reaches every guest whose scope held the worker, after it left every map', () => {

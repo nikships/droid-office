@@ -4,7 +4,7 @@
 // classified fails typecheck here. Default deny: anything outside the link's scope is never sent, and
 // anything a guest sends outside its scope or permission is refused without saying whether it exists.
 
-import type { ClientMsg, FloorInfo, FloorRoster, FloorView, GhIssue, GhPull, GhState, ServerMsg } from './protocol.js';
+import type { ClientMsg, FloorInfo, FloorRoster, FloorView, GhIssue, GhPull, GhState, ServerMsg, WorkerInfo } from './protocol.js';
 import { GUEST_PRESET_INFO, type GuestAuditAction, type GuestPreset } from './guest-links.js';
 import { ORCHESTRATOR_ID, type MissionControlState } from './mission-control.js';
 import { OFFICE_SHELL_ID } from './office-shell.js';
@@ -27,7 +27,12 @@ export interface GuestWorld {
   floorOf(workerId: string): string | undefined;
   /** Whether a floor is open in the building. */
   isOpen(floorId: string): boolean;
+  /** The other floors a worker works in too (its `repos`), when it has any. */
+  reposOf(workerId: string): readonly string[] | undefined;
 }
+
+/** The other floors a worker's `repos` name. */
+export const repoFloors = (w: Pick<WorkerInfo, 'repos'>): string[] | undefined => w.repos?.map((r) => r.floor);
 
 /** The text every refused guest request gets, whatever the reason: it never says whether a target exists. */
 export const GUEST_REFUSED = 'This share link doesn’t allow that.';
@@ -35,14 +40,33 @@ export const GUEST_REFUSED = 'This share link doesn’t allow that.';
 const officeWide = (g: GuestScopeGrant) => GUEST_PRESET_INFO[g.preset].scope === 'office';
 const canWrite = (g: GuestScopeGrant) => GUEST_PRESET_INFO[g.preset].write;
 
-/** Whether a worker (or the Orchestrator) is inside a grant's scope. `floorId` is the floor it sits on, when known. */
-export function guestSeesWorker(g: GuestScopeGrant, workerId: string, floorId: string | undefined): boolean {
+/**
+ * Whether a worker (or the Orchestrator) is inside a grant's scope. `floorId` is the floor it sits on, when
+ * known, and `repos` the other floors it works in. A worker across repositories reaches every one of them
+ * (their changes, pull requests and its terminal's workspace), so a floor link leaves out a worker that
+ * works in any other floor. A single-worker link keeps the worker the owner picked, without those floors.
+ */
+export function guestSeesWorker(g: GuestScopeGrant, workerId: string, floorId: string | undefined, repos: readonly string[] | undefined): boolean {
   if (!workerId || workerId === OFFICE_SHELL_ID) return false;
   if (workerId === ORCHESTRATOR_ID) return officeWide(g);
   const scope = GUEST_PRESET_INFO[g.preset].scope;
   if (scope === 'worker') return workerId === g.workerId && (floorId === undefined || floorId === g.floorId);
   if (floorId === undefined || floorId === ROOF) return false;
-  return scope === 'office' || floorId === g.floorId;
+  return scope === 'office' || (floorId === g.floorId && !repos?.some((r) => r !== g.floorId));
+}
+
+/** A worker's card as a guest receives it: without its repositories on floors the link doesn't reach. */
+export function guestWorkerInfo(w: WorkerInfo, g: GuestScopeGrant): WorkerInfo {
+  if (!w.repos || officeWide(g)) return w;
+  const { repos, ...rest } = w;
+  const kept = repos.filter((r) => r.floor === g.floorId);
+  return kept.length ? { ...rest, repos: kept } : rest;
+}
+
+/** The worker a message carries, as guest `g` may receive it, or undefined when it is out of scope. */
+function scopedWorker(w: WorkerInfo, g: GuestScopeGrant, floorId: string | undefined, world: GuestWorld): WorkerInfo | undefined {
+  const repos = [...(repoFloors(w) ?? []), ...(world.reposOf(w.id) ?? [])];
+  return guestSeesWorker(g, w.id, floorId, repos) ? guestWorkerInfo(w, g) : undefined;
 }
 
 /** Whether a floor's own content (boards, pipelines, Whiteboard, visits) is in scope. A single-worker link sees none. */
@@ -243,7 +267,7 @@ export function guestAdmit(g: GuestScopeGrant, msg: unknown, here: string | null
       if (!id) return undefined;
       if (id === ORCHESTRATOR_ID) return officeWide(g) ? ok({ kind: 'missionControl' }) : undefined;
       const floorId = world.floorOf(id);
-      if (!floorId || !world.isOpen(floorId) || !guestSeesWorker(g, id, floorId)) return undefined;
+      if (!floorId || !world.isOpen(floorId) || !guestSeesWorker(g, id, floorId, world.reposOf(id))) return undefined;
       return ok({ kind: 'worker', workerId: id, floorId });
     }
     case 'floor': {
@@ -335,7 +359,7 @@ export function guestFloorView(view: FloorView, g: GuestScopeGrant, world: Guest
     ...empty,
     floor: id,
     project: p && { name: p.name, forge: p.forge, ...(p.branch ? { branch: p.branch } : {}), dir: '', agentCmd: '' },
-    workers: view.workers.filter((w) => guestSeesWorker(g, w.id, id)),
+    workers: view.workers.flatMap((w) => scopedWorker(w, g, id, world) ?? []),
     ...(content ? { issues: view.issues, pulls: view.pulls, pipelines: view.pipelines } : {}),
   };
 }
@@ -352,8 +376,8 @@ export function guestFloors(floors: readonly FloorInfo[], g: GuestScopeGrant): F
 }
 
 /** The building roster a guest sees. */
-export function guestBuilding(roster: readonly FloorRoster[], g: GuestScopeGrant): FloorRoster[] {
-  return roster.filter((r) => guestListsFloor(g, r.floor)).map((r) => (guestSeesFloor(g, r.floor) ? r : { floor: r.floor, workers: r.workers.filter((w) => guestSeesWorker(g, w.id, r.floor)), pulls: [] }));
+export function guestBuilding(roster: readonly FloorRoster[], g: GuestScopeGrant, world: GuestWorld): FloorRoster[] {
+  return roster.filter((r) => guestListsFloor(g, r.floor)).map((r) => ({ floor: r.floor, workers: r.workers.flatMap((w) => scopedWorker(w, g, r.floor, world) ?? []), pulls: guestSeesFloor(g, r.floor) ? r.pulls : [] }));
 }
 
 /** Mission Control for office-wide links: the Orchestrator, without external bots. */
@@ -381,7 +405,7 @@ export const GUEST_OUTBOUND: { readonly [K in ServerMsg['t']]: GuestOutbound<Out
       ...(m.workerAnswerMultiSelect !== undefined ? { workerAnswerMultiSelect: m.workerAnswerMultiSelect } : {}),
       ...(m.threadActions !== undefined ? { threadActions: m.threadActions } : {}),
       ...(mission ? { missionControl: mission } : {}),
-      ...(m.building ? { building: guestBuilding(m.building, grant) } : {}),
+      ...(m.building ? { building: guestBuilding(m.building, grant, world) } : {}),
       ...(m.guest ? { guest: m.guest } : {}),
       ...view,
     };
@@ -397,7 +421,10 @@ export const GUEST_OUTBOUND: { readonly [K in ServerMsg['t']]: GuestOutbound<Out
     return state && { t: 'missionControl', state };
   }),
   'guestLinks.changed': DROP,
-  'building.worker': { pass: 'worker', worker: (m) => m.worker.id, floor: (m) => m.floor },
+  'building.worker': redact((m, { grant, world }) => {
+    const worker = scopedWorker(m.worker, grant, m.floor, world);
+    return worker && { ...m, worker };
+  }),
   'building.remove': { pass: 'worker', worker: (m) => m.workerId, floor: (m) => m.floor },
   'building.pulls': ON_FLOOR,
   'floor.branches': DROP,
@@ -405,7 +432,10 @@ export const GUEST_OUTBOUND: { readonly [K in ServerMsg['t']]: GuestOutbound<Out
   'floor.folders': DROP,
   'floor.added': DROP,
   projectsDir: DROP,
-  'worker.update': { pass: 'worker', worker: (m) => m.worker.id },
+  'worker.update': redact((m, { grant, world, ctx }) => {
+    const worker = scopedWorker(m.worker, grant, world.floorOf(m.worker.id) ?? ctx.floor, world);
+    return worker && { ...m, worker };
+  }),
   'worker.remove': ABOUT_WORKER,
   'worker.open': ABOUT_WORKER,
   'worker.worktree': ABOUT_WORKER,
@@ -421,7 +451,7 @@ export const GUEST_OUTBOUND: { readonly [K in ServerMsg['t']]: GuestOutbound<Out
   'gh.labeled': FLOOR_CONTENT,
   // About a worker: when it is in scope. Otherwise a reply to this guest, or news of its own floor; never office-wide news.
   toast: redact((m, { grant, world, ctx }) => {
-    if (m.workerId !== undefined) return guestSeesWorker(grant, m.workerId, world.floorOf(m.workerId) ?? ctx.floor) ? m : undefined;
+    if (m.workerId !== undefined) return guestSeesWorker(grant, m.workerId, world.floorOf(m.workerId) ?? ctx.floor, world.reposOf(m.workerId)) ? m : undefined;
     if (ctx.via === 'direct') return m;
     return ctx.via === 'floor' && guestSeesFloor(grant, ctx.floor) ? m : undefined;
   }),
@@ -481,7 +511,7 @@ export function guestOutbound(g: GuestScopeGrant, msg: ServerMsg, ctx: GuestSend
       const id = rule.worker(msg);
       if (typeof id !== 'string') return undefined;
       const floor = rule.floor?.(msg) ?? world.floorOf(id) ?? ctx.floor;
-      return guestSeesWorker(g, id, floor) ? (msg as GuestServerMsg) : undefined;
+      return guestSeesWorker(g, id, floor, world.reposOf(id)) ? (msg as GuestServerMsg) : undefined;
     }
     case 'floor': {
       const floor = rule.floor?.(msg) ?? ctx.floor ?? ctx.here ?? undefined;

@@ -32,6 +32,7 @@ import {
   type GuestTargetFloor,
   type GuestUnavailableReason,
 } from '../../shared/guest-links.js';
+import { guestSeesWorker, repoFloors } from '../../shared/guest-policy.js';
 import type { createFloorHttp } from './floor-http.js';
 import type { createStaticFiles } from './static-files.js';
 import { readBody, send } from './http-utils.js';
@@ -104,10 +105,8 @@ export function createGuestHttp(ctx: GuestHttpContext) {
     if (!workerId) return false;
     if (workerId === ORCHESTRATOR_ID) return grant.session.missionControl;
     const floor = floorOfWorker(workerId);
-    if (!floor) return false;
-    if (grant.session.scope === 'office') return true;
-    if (floor.id !== grant.floorId) return false;
-    return grant.session.scope === 'floor' || workerId === grant.workerId;
+    const worker = floor?.everyone().find((w) => w.id === workerId);
+    return !!floor && !!worker && guestSeesWorker(grant, workerId, floor.id, repoFloors(worker));
   };
   const auditTarget = (workerId: string, floorId: string | undefined): GuestAuditTarget => {
     if (workerId === ORCHESTRATOR_ID) return { kind: 'missionControl' };
@@ -243,6 +242,9 @@ export function createGuestHttp(ctx: GuestHttpContext) {
       if (route.worker === 'optional' && url.searchParams.has('worker') && !workerInScope(grant, workerId)) return send(res, 404, { error: 'No such worker' });
       if (route.worker === 'none' && grant.session.scope === 'worker') return send(res, 404, { error: 'Not found' });
       if (floorId !== null && !floorInScope(grant, floorId)) return send(res, 404, { error: 'No such floor' });
+      // Another floor's repository of a worker across repositories (?repo= names that floor).
+      const repo = url.searchParams.get('repo');
+      if (repo && !floorInScope(grant, repo)) return send(res, 404, { error: 'No such worker' });
       // A worker route without ?floor= resolves the worker's own floor; one with it must name that floor.
       if (route.worker !== 'none' && !mission && workerId && floorId !== null && floorOfWorker(workerId)?.id !== floorId) return send(res, 404, { error: 'No such worker' });
       if ((route.worker === 'none' || (route.worker === 'optional' && !mission)) && floorId === null) return send(res, 404, { error: 'No such floor' });

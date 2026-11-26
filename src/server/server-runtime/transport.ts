@@ -70,7 +70,7 @@ export function createClientTransport({ clients, floors }: TransportContext) {
       if (!c || c.ws.readyState !== WebSocket.OPEN) continue;
       if (c.guest) {
         if (floorId === null) floorId = world.floorOf(workerId);
-        if (!guestSeesWorker(c.guest, workerId, floorId)) continue;
+        if (!guestSeesWorker(c.guest, workerId, floorId, world.reposOf(workerId))) continue;
       }
       // A connection on a slow link skips output and gets a fresh snapshot once it catches up,
       // instead of queueing unbounded data in server memory.

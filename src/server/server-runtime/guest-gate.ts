@@ -7,7 +7,7 @@ import type { GuestAudit } from '../guest-audit.js';
 import type { GuestGrant, GuestLinks } from '../guest-links.js';
 import type { Floor } from '../floor.js';
 import { GUEST_CLOSE_DISABLED, GUEST_CLOSE_ENDED, type GuestAuditAction, type GuestAuditTarget } from '../../shared/guest-links.js';
-import { GUEST_REFUSED, guestAdmit, type GuestAdmitted, type GuestWorld } from '../../shared/guest-policy.js';
+import { GUEST_REFUSED, guestAdmit, repoFloors, type GuestAdmitted, type GuestWorld } from '../../shared/guest-policy.js';
 import type { ClientMsg, WorkerInfo } from '../../shared/protocol.js';
 import type { Client, SendTo } from './client.js';
 
@@ -19,6 +19,13 @@ export function guestWorld(floors: Map<string, Floor>): GuestWorld {
       return undefined;
     },
     isOpen: (floorId) => floors.has(floorId),
+    reposOf(workerId) {
+      for (const f of floors.values()) {
+        const w = f.workers.get(workerId) ?? f.cloud.get(workerId);
+        if (w) return repoFloors(w);
+      }
+      return undefined;
+    },
   };
 }
 
