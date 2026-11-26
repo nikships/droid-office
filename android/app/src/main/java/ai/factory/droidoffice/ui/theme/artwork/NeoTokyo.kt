@@ -13,6 +13,7 @@ import kotlin.random.Random
 internal val NeoTokyo = Artwork(
     id = "neo-tokyo", name = "Neo Tokyo", blurb = "Rain on the glass, neon on the river.",
     image = R.drawable.art_neo_tokyo, preview = R.drawable.preview_neo_tokyo,
+    portrait = PortraitArt(R.drawable.art_neo_tokyo_portrait, focalX = .73f, focalY = .34f),
     x = .60f, y = .50f,
     bg = Color(0xFF06060D), tint = Color(0xFF090914), text = Color(0xFFF4F1FF), muted = Color(0xFFAAA5C2),
     accent = Color(0xFFFF3F8E), accent2 = Color(0xFF2FE0FF), line = Color(0xFFE2DCFF), glass = .72f,
