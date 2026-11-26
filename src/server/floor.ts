@@ -90,6 +90,8 @@ export interface FloorContext {
   screenChanged?(workerId: string): void;
   /** How many owner connections are on this floor right now. */
   connections(floor: Floor): number;
+  /** Whether a connection is the owner looking (a share link's guest is not); default yes. */
+  watches?(clientId: string): boolean;
   /** ⚙️ Settings: a worker whose pull request merged goes home by itself. */
   leaveOnMerge(): boolean;
   /** ⚙️ Settings: a fresh worker starts from the latest of the default branch (see WorkerManager.freshMain). */
@@ -369,6 +371,7 @@ export class Floor {
         },
         // Not droppable: unlike a PTY's, this screen is only sent again once its transcript moves.
         screen: (workerId, frame) => ctx.emit(this, { t: 'screen', workerId, ...frame, full: true }),
+        watches: (clientId) => ctx.watches?.(clientId) ?? true,
       },
     );
     this.workers.holds = {

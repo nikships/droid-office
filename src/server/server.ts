@@ -818,6 +818,7 @@ export async function startServer(cfg: Config) {
       for (const c of clients.values()) if (c.floor === floor.id && !c.guest) n++;
       return n;
     },
+    watches: (clientId) => !clients.get(clientId)?.guest,
     leaveOnMerge: () => leaveOnMerge.on,
     freshMain: () => freshMain.on,
     subagents: () => subagents.settings,
@@ -1352,7 +1353,8 @@ export async function startServer(cfg: Config) {
   };
 
   /** Opens a worker's terminal for `c`. */
-  const attachTerminal = (wid: string, c: Client) => workersOf(wid)?.attach(wid, c.id);
+  /** A share link's guest streams a terminal without being the owner looking (workers.ts attach). */
+  const attachTerminal = (wid: string, c: Client) => workersOf(wid)?.attach(wid, c.id, !c.guest);
 
   const handleBoardCommand = createBoardCommands({ floorOf, sendTo, toastFloor });
 
@@ -1573,12 +1575,12 @@ export async function startServer(cfg: Config) {
       switch (msg.t) {
         case 'worker.attach': {
           if (msg.stream === false) {
-            if (!orch.open(ORCHESTRATOR_ID, c.id)) return done('The Orchestrator has no terminal yet. Send it a prompt first.');
+            if (!orch.open(ORCHESTRATOR_ID, c.id, !c.guest)) return done('The Orchestrator has no terminal yet. Send it a prompt first.');
             c.attached.add(ORCHESTRATOR_ID);
             c.stale.delete(ORCHESTRATOR_ID);
             return done();
           }
-          const snap = orch.attach(ORCHESTRATOR_ID, c.id);
+          const snap = orch.attach(ORCHESTRATOR_ID, c.id, !c.guest);
           if (!snap) return done('The Orchestrator has no terminal yet. Send it a prompt first.');
           c.attached.add(ORCHESTRATOR_ID);
           sendTo(c, { t: 'term.snapshot', workerId: ORCHESTRATOR_ID, ...snap });
@@ -1964,7 +1966,7 @@ export async function startServer(cfg: Config) {
       case 'worker.attach': {
         const wid = str(msg.workerId, 32);
         if (msg.stream === false) {
-          if (workersOf(wid)?.open(wid, c.id)) {
+          if (workersOf(wid)?.open(wid, c.id, !c.guest)) {
             c.attached.add(wid);
             c.stale.delete(wid);
           }

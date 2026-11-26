@@ -159,7 +159,7 @@ async function rig(t: TestContext) {
     return { id: r.body.link.id, token: new URL(r.body.url).hash.slice('#g='.length) };
   };
   const guest = (token: string, query = 'client=dashboard') => watch(t, new WebSocket(`ws://127.0.0.1:${backend}/ws?${query}`, [GUEST_WS_PROTOCOL, token], { headers: { host: `${DNS}:10000`, origin: GUEST_ORIGIN } }));
-  return { office, base, api, owner, alphaId, betaId, a1, a2, a3, b1, link, guest };
+  return { office, base, api, owner, alphaId, betaId, alphaDir: alpha, a1, a2, a3, b1, link, guest };
 }
 
 const OWNER_ONLY_WELCOME = [
@@ -218,6 +218,26 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   assert.equal(missing.error, GUEST_REFUSED);
   vf.send({ t: 'worker.attach', workerId: a1 });
   await vf.wait('term.snapshot', (m) => m.workerId === a1);
+  vf.send({ t: 'worker.attach', workerId: a2, stream: false });
+  await delay(300);
+  // A guest looking is not the owner looking: nothing it opens counts as open or seen.
+  assert.equal(
+    owner.messages.some((m) => m.t === 'worker.update' && (m.worker.id === a1 || m.worker.id === a2) && m.worker.open),
+    false,
+    'a guest’s open terminal or thread never marks a worker open for the owner',
+  );
+  // The owner opening it alongside still does, and the guest leaving never closes it under them.
+  owner.send({ t: 'worker.attach', workerId: a2, stream: false });
+  await owner.wait('worker.update', (m) => m.worker.id === a2 && m.worker.open === true);
+  const opened = owner.messages.length;
+  vf.send({ t: 'worker.detach', workerId: a2 });
+  await delay(300);
+  assert.equal(
+    owner.messages.slice(opened).some((m) => m.t === 'worker.update' && m.worker.id === a2 && !m.worker.open),
+    false,
+  );
+  owner.send({ t: 'worker.detach', workerId: a2 });
+  await owner.wait('worker.update', (m) => m.worker.id === a2 && m.worker.open === false);
   vf.send({ t: 'term.input', workerId: a1, data: 'echo VIEW_ONLY_TYPED\r' });
   vf.send({ t: 'term.resize', workerId: a1, cols: 33, rows: 11 });
   assert.equal((await vf.act({ t: 'floor.go', floor: betaId })).error, GUEST_REFUSED);
@@ -257,6 +277,12 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   assert.equal(hired.ok, true, hired.error);
   await owner.wait('toast', (m) => m.text.includes('Alex - PR review (guest)'));
   assert.equal((await ef.act({ t: 'worker.spawn', deskId: 'auto', kind: 'shell', repos: [betaId] })).error, GUEST_REFUSED);
+  // Refused by the office's own checks: no audit entry, since nothing happened.
+  const badAnswer = await ef.act({ t: 'worker.answer', workerId: a1 } as ClientMsg);
+  assert.equal(badAnswer.ok, false);
+  assert.notEqual(badAnswer.error, GUEST_REFUSED);
+  const badQueue = await ef.act({ t: 'worker.queue', workerId: a1, action: 'nope' } as unknown as ClientMsg);
+  assert.equal(badQueue.ok, false, 'an invalid queue action is refused');
   for (const msg of [{ t: 'shell.attach' }, { t: 'floor.remove', floor: alphaId }, { t: 'setup.check' }, { t: 'machine.limit', limit: 1 }] as ClientMsg[]) assert.equal((await ef.act(msg)).error, GUEST_REFUSED, msg.t);
 
   // --- Complete access overall ------------------------------------------------------------------
@@ -292,6 +318,13 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
     { t: 'automation.result', id: 'x', ok: true },
   ];
   for (const msg of ownerOnly) assert.equal((await eo.act(msg)).error, GUEST_REFUSED, msg.t);
+  const lastVisit = (id: string) =>
+    owner.messages
+      .flatMap((m) => (m.t === 'floors' ? m.floors : m.t === 'welcome' ? m.floors : []))
+      .filter((x) => x.id === id)
+      .at(-1)?.lastVisitedAt;
+  await delay(400);
+  const betaVisit = lastVisit(betaId);
   eo.send({ t: 'floor.go', floor: betaId });
   const entered = await eo.wait('floor.enter', (m) => m.floor === betaId);
   assert.deepEqual(
@@ -299,6 +332,8 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
     [b1],
   );
   assert.equal((await eo.act({ t: 'worker.prompt', workerId: b1, prompt: 'echo OFFICE_WIDE' })).ok, true);
+  await delay(400);
+  assert.equal(lastVisit(betaId), betaVisit, 'a guest arriving is not the owner visiting');
   assert.equal((await eo.act({ t: 'orchestrator.reset' })).ok, true);
 
   // --- View only (entire office) ----------------------------------------------------------------
@@ -365,7 +400,15 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   await owner.wait('floor.enter', (m) => m.floor === alphaId && m.workers.some((w) => w.id === a3));
   const killed = await owner.act({ t: 'worker.kill', workerId: a3 });
   assert.equal(killed.ok, true, killed.error);
+  // Gone from every map by now: the floor it left still routes the news to everyone whose scope held it.
   await vwk.wait('worker.remove', (m) => m.workerId === a3);
+  await ef.wait('worker.remove', (m) => m.workerId === a3);
+  await vo.wait('worker.remove', (m) => m.workerId === a3);
+  await eo.wait('building.remove', (m) => m.workerId === a3 && m.floor === alphaId);
+  // A write guest sending its own hire home.
+  assert.equal((await ef.act({ t: 'worker.kill', workerId: hired.workerId! })).ok, true);
+  await owner.wait('worker.remove', (m) => m.workerId === hired.workerId);
+  await ef.wait('worker.remove', (m) => m.workerId === hired.workerId);
 
   // --- Audit ------------------------------------------------------------------------------------
   const audit = (await r.api<GuestAuditPage>('GET', '/api/guest-links/audit?limit=100')).body.entries;
@@ -388,6 +431,29 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
     audit.some((e) => e.detail?.includes('CROSS_FLOOR')),
     false,
   );
+  assert.ok(audit.find((e) => e.action === 'dismiss' && e.linkLabel === 'Alex - PR review' && e.target.workerId === hired.workerId));
+  assert.equal(
+    audit.some((e) => e.linkLabel === 'Alex - PR review' && (e.action === 'answer' || e.action.startsWith('permission') || e.target.workerId === a1) && e.action !== 'tty'),
+    false,
+    'an action the office refused leaves no audit entry',
+  );
+
+  // --- A scoped floor closes and opens again ---------------------------------------------------------
+  const viewBeta = await r.link('Viewer - beta', 'view-floor', { floorId: betaId });
+  const vb = r.guest(viewBeta.token);
+  assert.equal((await vb.wait('welcome')).floor, betaId);
+  assert.equal((await vb.act({ t: 'floor.go', floor: alphaId })).error, GUEST_REFUSED);
+  const removed = await owner.act({ t: 'floor.remove', floor: betaId });
+  assert.equal(removed.ok, true, removed.error);
+  await vb.wait('floor.enter', (m) => m.floor === null && m.arrival.via === 'lobby');
+  await vb.wait('toast', (m) => m.text === 'This floor is no longer shared.');
+  assert.equal((await vb.act({ t: 'floor.go', floor: betaId })).error, GUEST_REFUSED, 'a closed floor is nowhere to go');
+  const readded = await owner.act({ t: 'floor.add', dir: path.join(path.dirname(r.alphaDir), 'beta') });
+  assert.equal(readded.ok, true, readded.error);
+  assert.equal((await owner.wait('floor.added', (m) => !!m.floor && m.floor !== alphaId)).floor, betaId, 'the same checkout opens as the same floor');
+  const back = await vb.wait('floor.enter', (m) => m.floor === betaId);
+  assert.equal(back.arrival.floor, betaId);
+  assert.equal(JSON.stringify(vb.messages).includes(alphaId), false, 'a floor guest in the lobby hears nothing of other floors');
 
   // --- The main listener never takes a guest token ------------------------------------------------
   const wsBase = r.base.replace('http:', 'ws:');
@@ -408,7 +474,7 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   assert.equal(owner.ws.readyState, WebSocket.OPEN);
 
   assert.equal((await r.api('PUT', '/api/guest-links', { on: false })).status, 200);
-  for (const sock of [vwk, ef, eo, vo]) assert.deepEqual(await sock.until(() => sock.closed(), 'guests to disconnect'), { code: GUEST_CLOSE_DISABLED, reason: 'disabled' });
+  for (const sock of [vwk, ef, eo, vo, vb]) assert.deepEqual(await sock.until(() => sock.closed(), 'guests to disconnect'), { code: GUEST_CLOSE_DISABLED, reason: 'disabled' });
   assert.equal(owner.ws.readyState, WebSocket.OPEN, 'the owner stays connected');
   owner.send({ t: 'ping', at: 1 });
   await owner.wait('pong');
