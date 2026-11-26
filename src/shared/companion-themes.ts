@@ -243,7 +243,8 @@ export const COMPANION_THEMES = [
     terminal: { foreground: '#fbefea', cursor: '#ff5a36', background: '#080303', selection: '#4a1d14' },
     immersive: {
       'chrome-finish':
-        'url("/themes/orbital-foundry-plate.svg"), radial-gradient(ellipse at 100% 110%, #804326a8 0, #422e2d88 10%, #22283466 35%, transparent 55%), linear-gradient(165deg, #39414cc2, #202730ba 26%, #131821c2 67%, #2d3035ba)',
+        'url("/themes/orbital-foundry-plate.svg"), linear-gradient(100deg, transparent 0 50%, #d9b26a12 58%, #b9773f1c 66%, #6a3f8a24 76%, #2f5a9e2e 88%, #4f86c038 100%), radial-gradient(ellipse at 100% 110%, #804326a8 0, #422e2d88 10%, #22283466 35%, transparent 55%), linear-gradient(165deg, #39414cc2, #202730ba 26%, #131821c2 67%, #2d3035ba)',
+      'panel-edge': 'linear-gradient(90deg, #6b5a3a, #d9b26a 10%, #b9773f 24%, #8b4a52 38%, #6a3f8a 52%, #2f5a9e 68%, #4f86c0 84%, #7d8c99)',
       imprint: '"ORBITAL FOUNDRY" / ""',
     },
   },
