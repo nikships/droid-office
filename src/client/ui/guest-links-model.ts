@@ -18,22 +18,18 @@ import {
 // The Share window's words and rules, kept free of the DOM so tests can load them. The window itself
 // is guest-links.ts.
 
-/**
- * What `GET /api/guest-links` answers. `manage` is how much this page may do: `full` on the office's own
- * page on its own machine, `limited` on the owner's other pages (read, revoke, turn sharing off). Absent
- * means `full`.
- */
-export type ShareState = GuestLinksState & { manage?: 'full' | 'limited' };
+/** What `GET /api/guest-links` answers; `manage` says whether this page may create links and turn sharing on. */
+export type ShareState = GuestLinksState;
 
 /** Why a limited page shows no create form and can't turn sharing on. */
 export const LIMITED_TEXT = 'Create share links and turn sharing on from the office on its own computer. Here you can watch, revoke links and turn sharing off.';
 
 export const limitedPage = (state: Pick<ShareState, 'manage'>): boolean => state.manage === 'limited';
 
-/** Whether the sharing switch can move: never while locked, and on a limited page only from on to off. */
+/** Whether the sharing switch can move. Turning sharing off always can; turning it on needs a full page and no lock. */
 export function switchEnabled(state: Pick<ShareState, 'on' | 'transport' | 'manage'>): boolean {
-  if (state.transport.locked) return false;
-  return !limitedPage(state) || state.on;
+  if (state.on) return true;
+  return !state.transport.locked && !limitedPage(state);
 }
 
 export type Tone = 'info' | 'good' | 'warn' | 'bad';

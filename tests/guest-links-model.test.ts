@@ -59,14 +59,23 @@ test('creation is blocked with a reason unless sharing is on, serving and under 
 });
 
 test('a limited page can watch, revoke and turn sharing off, but not create or turn it on', () => {
-  const base = { on: true, transport: serving, links: [] as GuestLinkItem[], max: 32 };
+  const base = { on: true, transport: serving, links: [] as GuestLinkItem[], max: 32, manage: 'full' as const };
   assert.equal(createBlocked({ ...base, manage: 'limited' }, NOW), LIMITED_TEXT);
   assert.equal(createBlocked({ ...base, manage: 'full' }, NOW), undefined);
-  assert.equal(createBlocked(base, NOW), undefined, 'no manage field means full');
   assert.equal(switchEnabled({ ...base, manage: 'limited' }), true, 'on: it can turn sharing off');
   assert.equal(switchEnabled({ ...base, on: false, manage: 'limited' }), false, 'off: it cannot turn sharing on');
-  assert.equal(switchEnabled({ ...base, on: false }), true);
-  assert.equal(switchEnabled({ ...base, transport: { status: 'off', locked: 'locked' } }), false);
+  assert.equal(switchEnabled({ ...base, on: false, manage: 'full' }), true);
+});
+
+test('a lock stops every page from turning sharing on, but never from turning it off', () => {
+  const locked = { status: 'off' as const, locked: 'External sharing is disabled by DROID_OFFICE_GUEST_SHARING=off.' };
+  const base = { on: false, transport: locked, links: [] as GuestLinkItem[], max: 32 };
+  for (const manage of ['full', 'limited'] as const) {
+    assert.equal(switchEnabled({ ...base, manage }), false, manage);
+    assert.equal(switchEnabled({ ...base, on: true, manage }), true, `${manage}: on can still go off`);
+  }
+  assert.equal(transportView(false, locked).text, locked.locked);
+  assert.equal(createBlocked({ ...base, manage: 'full' }, NOW), 'External sharing is locked for this office.');
 });
 
 test('countdown shows the two largest units', () => {

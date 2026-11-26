@@ -40,9 +40,11 @@ import {
 } from './guest-links-model';
 
 // The 🔗 Share window: the external-sharing switch, new share links, the links with their live guests,
-// and what guests changed. Only the office's own page on its own machine may read or change any of it
-// (/api/guest-links answers `ownPage` alone), so a page anywhere else gets a plain explanation.
-// The secret link lives in this window's DOM only while it shows it: never in storage or logs.
+// and what guests changed. Any owner page may read it; `GuestLinksState.manage` says how much it may
+// change. `full` (the office's own page on its own machine) does everything; `limited` (the owner's
+// other pages) may revoke links and turn sharing off, but not create links or turn sharing on, so the
+// window hides those there. The secret link lives in this window's DOM only while it shows it: never
+// in storage or logs.
 
 const AUDIT_PAGE = 25;
 
@@ -63,8 +65,7 @@ export function shareSummary(state: ShareState | string): string {
 export async function shareState(): Promise<ShareState | string> {
   try {
     const res = await fetch(withToken('/api/guest-links'), { credentials: 'same-origin', cache: 'no-store' });
-    if (res.status === 403) return 'Share links are managed from the office on its own computer.';
-    if (!res.ok) return 'Could not read the share links.';
+    if (!res.ok) return ((await res.json().catch(() => ({}))) as { error?: string }).error || 'Could not read the share links.';
     return (await res.json()) as ShareState;
   } catch {
     return 'Could not reach the office.';
@@ -192,12 +193,8 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
       clearTimeout(poll);
     }
   };
-  const finalFail = (r: Fail, reading = false): boolean => {
-    if (r.status === 403 && reading) {
-      fail('Manage share links from the office on its own computer (this page is another device).', true);
-      onChange?.('Share links are managed from the office on its own computer.');
-      return true;
-    }
+  /** Only a lost session ends the window; anything else (a 403 included) shows the office's own words. */
+  const finalFail = (r: Fail): boolean => {
     if (r.status === 401) {
       fail('The office restarted: reopen it from the join link in its terminal.', true);
       return true;
@@ -265,7 +262,7 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
     const view = transportView(state.on, state.transport);
     sw.input.checked = state.on;
     sw.input.disabled = busy || !switchEnabled(state);
-    sw.title = !switchEnabled(state) && limitedPage(state) && !state.transport.locked ? LIMITED_TEXT : '';
+    sw.title = switchEnabled(state) ? '' : (state.transport.locked ?? (limitedPage(state) ? LIMITED_TEXT : ''));
     pill.className = `pill share-pill ${view.tone}`;
     pill.textContent = view.pill;
     heroText.textContent = view.text;
@@ -377,7 +374,7 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
     const r = await call<ShareState>('GET', '/api/guest-links');
     if (disposed) return;
     if (!r.ok) {
-      if (!finalFail(r, true)) {
+      if (!finalFail(r)) {
         fail(r.error);
         clearTimeout(poll);
         poll = setTimeout(() => void load(), 3000);
@@ -398,6 +395,8 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
     if (!r.ok) {
       if (!finalFail(r)) fail(r.error);
       if (last) paint(last);
+      // A refusal can mean this page's rights changed: read them again.
+      void load();
       return;
     }
     toast(on ? '🔗 External sharing on' : '🔗 External sharing off: every guest was disconnected', 'info');
@@ -440,7 +439,7 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
     auditMore.disabled = false;
     if (disposed) return;
     if (!r.ok) {
-      if (!finalFail(r, true)) {
+      if (!finalFail(r)) {
         auditNote.textContent = `Could not read guest activity: ${r.error}`;
         auditNote.classList.remove('hidden');
       }
