@@ -68,7 +68,7 @@ export type GuestTarget<M> = { kind: 'worker'; id: (m: M) => unknown } | { kind:
 export type GuestInbound<M> =
   /** Owner-only for every preset. */
   | { access: 'never' }
-  /** Any preset, in scope. `move` (floor.go) is for office-wide presets only. */
+  /** Any preset, in scope. `move` (floor.go): office-wide presets go to any open floor, the rest only back to their own. */
   | { access: 'read'; target: GuestTarget<M>; move?: true }
   /** Write presets only, in scope, and audited as `audit` (null: changes nothing worth an entry, like a terminal's size). */
   | { access: 'write'; target: GuestTarget<M>; audit: GuestAuditAction | null };
@@ -249,7 +249,8 @@ export function guestAdmit(g: GuestScopeGrant, msg: unknown, here: string | null
     case 'floor': {
       const id = idOf(target.id(m));
       if (!id || id === ROOF || !world.isOpen(id)) return undefined;
-      if (rule.access === 'read' && rule.move ? !officeWide(g) : !guestSeesFloor(g, id)) return undefined;
+      const allowed = rule.access === 'read' && rule.move ? officeWide(g) || id === g.floorId : guestSeesFloor(g, id);
+      if (!allowed) return undefined;
       return ok({ kind: 'floor', floorId: id });
     }
     case 'here': {
@@ -346,7 +347,7 @@ export function guestFloors(floors: readonly FloorInfo[], g: GuestScopeGrant): F
     .filter((f) => guestListsFloor(g, f.id))
     .map((f) => {
       const { lastVisitedAt: _visited, lastWorkerAt: _worked, hires: _hires, ...rest } = f;
-      return single ? { ...rest, dir: '', workers: 0, busy: 0, waiting: 0 } : { ...f, dir: '' };
+      return single ? { ...rest, dir: '', workers: 0, busy: 0, waiting: 0 } : { ...rest, dir: '' };
     });
 }
 

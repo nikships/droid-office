@@ -90,6 +90,8 @@ export interface FloorContext {
   screenChanged?(workerId: string): void;
   /** How many owner connections are on this floor right now. */
   connections(floor: Floor): number;
+  /** Whether a connection is the owner looking (a share link's guest is not); default yes. */
+  watches?(clientId: string): boolean;
   /** ⚙️ Settings: a worker whose pull request merged goes home by itself. */
   leaveOnMerge(): boolean;
   /** ⚙️ Settings: a fresh worker starts from the latest of the default branch (see WorkerManager.freshMain). */
@@ -369,6 +371,7 @@ export class Floor {
         },
         // Not droppable: unlike a PTY's, this screen is only sent again once its transcript moves.
         screen: (workerId, frame) => ctx.emit(this, { t: 'screen', workerId, ...frame, full: true }),
+        watches: (clientId) => ctx.watches?.(clientId) ?? true,
       },
     );
     this.workers.holds = {
@@ -699,11 +702,14 @@ export class Floor {
     return [...this.workers.list(), ...this.cloud.list()];
   }
 
-  /** Someone just walked in: boards that haven't been looked at in a while get fetched again. */
-  arrived() {
+  /**
+   * Someone just walked in: boards that haven't been looked at in a while get fetched again. A share
+   * link's guest (not `owner`) sees no Jira or Linear, and a Linear refresh can hand out autopilot work.
+   */
+  arrived(owner = true) {
     if (Date.now() - Math.max(this.board.issues.fetchedAt, this.board.pulls.fetchedAt) > REFRESH_MS) void this.board.refresh();
-    if (Date.now() - this.jira.fetchedAt > REFRESH_MS) void this.jira.refresh();
-    if (Date.now() - this.linear.fetchedAt > REFRESH_MS) void this.linear.refresh();
+    if (owner && Date.now() - this.jira.fetchedAt > REFRESH_MS) void this.jira.refresh();
+    if (owner && Date.now() - this.linear.fetchedAt > REFRESH_MS) void this.linear.refresh();
     if (Date.now() - this.pipelines.state.fetchedAt > PIPELINES_STALE_MS) void this.pipelines.refresh();
   }
 

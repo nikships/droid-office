@@ -1552,18 +1552,25 @@ export class WorkerManager {
     this.resume(w.info.id);
   }
 
-  /** Marks one connection as viewing a worker without streaming its raw terminal (Thread view). */
-  open(id: string, clientId: string): boolean {
+  /**
+   * Marks one connection as viewing a worker without streaming its raw terminal (Thread view). Without
+   * `watch` (a share link's guest) it is not the owner looking: the worker is neither open nor seen.
+   */
+  open(id: string, clientId: string, watch = true): boolean {
     const w = this.workers.get(id);
     if (!w) return false;
     this.unsubscribeStream(id, clientId);
+    if (!watch) return true;
     this.addViewer(id, clientId);
     this.acknowledgeOpen(w);
     return true;
   }
 
-  /** Subscribes one connection to a worker's terminal; opening it acknowledges its wait for attention. */
-  attach(id: string, clientId: string): { data: string; cols: number; rows: number; shared: boolean } | undefined {
+  /**
+   * Subscribes one connection to a worker's terminal; opening it acknowledges its wait for attention.
+   * Without `watch` (a share link's guest) it only streams: the worker is neither open nor seen.
+   */
+  attach(id: string, clientId: string, watch = true): { data: string; cols: number; rows: number; shared: boolean } | undefined {
     const w = this.workers.get(id);
     if (!w) return undefined;
     let subs = this.subscribers.get(id);
@@ -1573,8 +1580,10 @@ export class WorkerManager {
     }
     const shared = [...subs].some((cid) => cid !== clientId);
     subs.add(clientId);
-    this.addViewer(id, clientId);
-    this.acknowledgeOpen(w);
+    if (watch) {
+      this.addViewer(id, clientId);
+      this.acknowledgeOpen(w);
+    }
     const data = w.snapshot ? w.snapshot() : offlineBanner(w.info);
     return { data, cols: w.info.cols, rows: w.info.rows, shared };
   }

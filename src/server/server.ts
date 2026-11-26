@@ -10,7 +10,7 @@ import type { Config } from './config.js';
 import type { AddressInfo } from 'node:net';
 import { isGuestRequest, lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
 import { DevicesStore } from './devices.js';
-import { TailscaleWatch } from './tailscale.js';
+import { TailscaleWatch, useTailscaleBinary } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
 import { TailnetHttps } from './tailnet-https.js';
 import { GuestLinks, type GuestGrant } from './guest-links.js';
@@ -142,6 +142,8 @@ export function leaveFloorTerminals(c: Pick<Client, 'attached' | 'stale'>) {
 }
 
 export async function startServer(cfg: Config) {
+  // Before anything asks Tailscale: an office pinned to a stub must never reach the real CLI.
+  useTailscaleBinary(cfg.tailscaleBin);
   const publicDir = findPublicDir();
   const appDir = sourceAppDir();
   const hotReload = new HotReload({ appDir, dataDir: cfg.dataDir, publicDir });
@@ -272,7 +274,9 @@ export async function startServer(cfg: Config) {
   };
   /** Tells just this person why their request didn't happen; nothing when there's no error. */
   const warn = (c: Client, error: string | undefined) => {
-    if (error) sendTo(c, { t: 'toast', text: error, level: 'warn' });
+    if (!error) return;
+    c.lastWarning = error;
+    sendTo(c, { t: 'toast', text: error, level: 'warn' });
   };
   const answers = new Answers();
 
@@ -812,9 +816,11 @@ export async function startServer(cfg: Config) {
     screenChanged: (workerId) => threadWatches?.screenChanged(workerId),
     connections: (floor) => {
       let n = 0;
-      for (const c of clients.values()) if (c.floor === floor.id) n++;
+      // The owner looking keeps a floor's boards fresh; a share link's guest does not.
+      for (const c of clients.values()) if (c.floor === floor.id && !c.guest) n++;
       return n;
     },
+    watches: (clientId) => !clients.get(clientId)?.guest,
     leaveOnMerge: () => leaveOnMerge.on,
     freshMain: () => freshMain.on,
     subagents: () => subagents.settings,
@@ -901,6 +907,8 @@ export async function startServer(cfg: Config) {
         if (worker.status === 'needs_input') broadcastOffFloorScreen(floor, worker.id);
       }
       if (floor.board.pulls.items.length) broadcast({ t: 'building.pulls', floor: floor.id, pulls: floor.board.pulls.items });
+      // A floor or single-worker link waiting in the lobby for its floor is back on it.
+      for (const c of clients.values()) if (c.guest && c.guest.session.scope !== 'office' && c.floor === null && c.guest.floorId === floor.id) goToFloor(c, floor);
       return floor;
     } catch (err) {
       console.error(`droid-office: couldn't open the ${def.name} floor: ${(err as Error).message}`);
@@ -1079,6 +1087,7 @@ export async function startServer(cfg: Config) {
     request: guestHttp.guestRequest,
     upgrade: (req, socket, head) => server.emit('upgrade', req, socket, head),
     onState: () => guestLinksChanged(),
+    ...(cfg.guestSharing ? {} : { locked: 'External sharing is disabled by DROID_OFFICE_GUEST_SHARING=off.' }),
   });
 
   /**
@@ -1167,7 +1176,7 @@ export async function startServer(cfg: Config) {
     if (floor) sendTo(client, { t: 'visits', visits: floor.visits.list() });
     floorsChanged();
     if (floor) {
-      floor.arrived();
+      floor.arrived(!guest);
       // Anyone whose process ended since (exited, or failed to resume) gets up as you walk in. A guest wakes nobody.
       if (!guest) floor.workers.wakeAll();
     }
@@ -1219,7 +1228,7 @@ export async function startServer(cfg: Config) {
     screensOf(c, floor);
     sendBoard(c, floor);
     sendTo(c, { t: 'visits', visits: floor.visits.list() });
-    floor.arrived();
+    floor.arrived(!c.guest);
     if (!c.guest) floor.workers.wakeAll();
     officeVibes.syncViewers(true);
     floorsChanged();
@@ -1347,7 +1356,8 @@ export async function startServer(cfg: Config) {
   };
 
   /** Opens a worker's terminal for `c`. */
-  const attachTerminal = (wid: string, c: Client) => workersOf(wid)?.attach(wid, c.id);
+  /** A share link's guest streams a terminal without being the owner looking (workers.ts attach). */
+  const attachTerminal = (wid: string, c: Client) => workersOf(wid)?.attach(wid, c.id, !c.guest);
 
   const handleBoardCommand = createBoardCommands({ floorOf, sendTo, toastFloor });
 
@@ -1361,11 +1371,19 @@ export async function startServer(cfg: Config) {
 
   const handleMessage = (c: Client, msg: ClientMsg) => {
     // A share link's guest: default deny before anything else reads the message (shared/guest-policy.ts).
+    let settleGuest: ((error: string | undefined) => void) | undefined;
     if (c.guest) {
       const guest = c as Client & { guest: GuestGrant };
       const admitted = guestGate.admit(guest, msg);
       if (!admitted) return;
-      guestGate.record(guest, msg, admitted);
+      // An audit entry means the office acted: written once the handler settles without refusing, never before.
+      let settled = false;
+      c.lastWarning = undefined;
+      settleGuest = (error) => {
+        if (settled) return;
+        settled = true;
+        if (!error) guestGate.record(guest, msg, admitted);
+      };
     }
     const who = c.peer.name;
     const requestId = str(msg.requestId, 64);
@@ -1373,6 +1391,7 @@ export async function startServer(cfg: Config) {
     // An awaited action calls done() from a later callback. Do not complete the receipt at the end of this turn.
     let pending = false;
     const done = (error?: string, workerId?: string, note?: string) => {
+      settleGuest?.(error);
       if (!requestId || finished) return;
       finished = true;
       sendTo(c, { t: 'action.result', requestId, ok: !error, ...(error ? { error } : {}), ...(workerId ? { workerId } : {}), ...(note ? { note } : {}) });
@@ -1392,6 +1411,7 @@ export async function startServer(cfg: Config) {
     /** A request id is a receipt request. Sync handlers that did not answer, and actions the companion does not await, still close the receipt so the client does not wait out its timeout. */
     const unanswered = () => {
       if (pending || finished) return;
+      settleGuest?.(c.lastWarning);
       // A handler that neither answered nor warned may have done nothing at all (an unknown id it ignores).
       if (c.owner && !c.owner.refused) c.owner.unconfirmed = true;
       done(c.owner ? c.owner.refused : 'This action was not confirmed. Check the office before trying again; it was not replayed.');
@@ -1558,12 +1578,12 @@ export async function startServer(cfg: Config) {
       switch (msg.t) {
         case 'worker.attach': {
           if (msg.stream === false) {
-            if (!orch.open(ORCHESTRATOR_ID, c.id)) return done('The Orchestrator has no terminal yet. Send it a prompt first.');
+            if (!orch.open(ORCHESTRATOR_ID, c.id, !c.guest)) return done('The Orchestrator has no terminal yet. Send it a prompt first.');
             c.attached.add(ORCHESTRATOR_ID);
             c.stale.delete(ORCHESTRATOR_ID);
             return done();
           }
-          const snap = orch.attach(ORCHESTRATOR_ID, c.id);
+          const snap = orch.attach(ORCHESTRATOR_ID, c.id, !c.guest);
           if (!snap) return done('The Orchestrator has no terminal yet. Send it a prompt first.');
           c.attached.add(ORCHESTRATOR_ID);
           sendTo(c, { t: 'term.snapshot', workerId: ORCHESTRATOR_ID, ...snap });
@@ -1949,7 +1969,7 @@ export async function startServer(cfg: Config) {
       case 'worker.attach': {
         const wid = str(msg.workerId, 32);
         if (msg.stream === false) {
-          if (workersOf(wid)?.open(wid, c.id)) {
+          if (workersOf(wid)?.open(wid, c.id, !c.guest)) {
             c.attached.add(wid);
             c.stale.delete(wid);
           }
@@ -2728,7 +2748,7 @@ export async function startServer(cfg: Config) {
   await hotReload.start();
   workerLabels.start();
   const httpsReady = cfg.tailnetHttps ? httpsGateway.start() : Promise.resolve(httpsGateway.state());
-  if (guestLinks.on) void guestFunnel.set(true);
+  void guestFunnel.start(guestLinks.on);
 
   /** With `keep` (a restart), workers' terminals keep running for the next office to pick up. */
   const shutdown = (keep = false) => {
@@ -2782,5 +2802,7 @@ export async function startServer(cfg: Config) {
     owner: ownerOffice,
     projectsDir: () => building.projectsDir,
     resolvedAgent: agentPath,
+    /** Share links, their audit, and the guest backend's request handler (tests drive it without Funnel). */
+    guests: { links: guestLinks, audit: guestAudit, request: guestHttp.guestRequest },
   };
 }

@@ -34,6 +34,8 @@ export interface CloudEvents {
   remove(workerId: string): void;
   /** Its laptop screen changed (see cloud-screen.ts). */
   screen?(workerId: string, frame: CloudScreenFrame): void;
+  /** Whether a connection opening a window is the owner looking (a share link's guest is not); default yes. */
+  watches?(clientId: string): boolean;
 }
 
 interface Cloudie {
@@ -233,10 +235,12 @@ export class CloudWorkers {
     return w.info;
   }
 
-  /** Someone opened a worker's window: a finished turn counts as seen. */
-  attach(id: string, clientId: string): boolean {
+  /** Someone opened a worker's window: a finished turn counts as seen. Without `watch` nothing is marked open or seen. */
+  attach(id: string, clientId: string, watch = this.events.watches?.(clientId) ?? true): boolean {
     const w = this.workers.get(id);
     if (!w) return false;
+    // Subscribers only decide `open`: one that isn't looking never joins, so its detach can't flip it.
+    if (!watch) return true;
     let subs = this.subscribers.get(id);
     if (!subs) this.subscribers.set(id, (subs = new Set()));
     subs.add(clientId);

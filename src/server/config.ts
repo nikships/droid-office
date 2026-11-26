@@ -23,6 +23,16 @@ export interface Config {
   /** Start the Tailscale HTTPS gateway. Set by the CLI, unset in tests to avoid changing Serve. */
   tailnetHttps?: boolean;
   /**
+   * Let external sharing publish the guest backend through Tailscale Funnel while the owner has it on
+   * (the CLI sets it unless DROID_OFFICE_GUEST_SHARING=off; unset in tests, so they never touch Funnel).
+   */
+  guestSharing?: boolean;
+  /**
+   * --tailscale-bin / DROID_OFFICE_TAILSCALE_BIN: the only `tailscale` executable the office runs, an
+   * absolute path (a stub in tests and clones). Unset searches PATH and the usual install locations.
+   */
+  tailscaleBin?: string;
+  /**
    * Render Whiteboard cards with the headless Chromium, downloading it on the first render when it's
    * missing (the CLI sets it; unset in tests, so they never start a browser or a download).
    */
@@ -107,6 +117,10 @@ Options:
                           (it is always night). Without it the weather is made up
       --weather <kind>    Pin the weather: clear, cloudy, rain, storm, snow or
                           fog (env DROID_OFFICE_WEATHER)
+      --tailscale-bin <file>
+                          Run only this tailscale executable (an absolute path),
+                          never one on PATH or an installed Tailscale. For
+                          testing against a stub CLI (env DROID_OFFICE_TAILSCALE_BIN)
   -h, --help              Show this help
 `;
 
@@ -214,6 +228,7 @@ export function loadConfig(argv: string[]): Config {
   let maxWorkers = process.env.DROID_OFFICE_MAX_WORKERS || '';
   let city = process.env.DROID_OFFICE_CITY || '';
   let weather = process.env.DROID_OFFICE_WEATHER || '';
+  let tailscaleBin = process.env.DROID_OFFICE_TAILSCALE_BIN || '';
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -266,6 +281,9 @@ export function loadConfig(argv: string[]): Config {
       case '--weather':
         weather = takeValue(argv, i++, a);
         break;
+      case '--tailscale-bin':
+        tailscaleBin = takeValue(argv, i++, a);
+        break;
       default:
         if (a.startsWith('-')) {
           console.error(`droid-office: unknown option ${a}\n`);
@@ -298,6 +316,11 @@ export function loadConfig(argv: string[]): Config {
   weather = weather.trim().toLowerCase();
   if (weather && !(WEATHERS as readonly string[]).includes(weather)) {
     console.error(`droid-office: --weather is one of ${WEATHERS.join(', ')}`);
+    process.exit(2);
+  }
+  // Fails closed: a stub that is missing must never fall back to the installed Tailscale.
+  if (tailscaleBin && (!path.isAbsolute(tailscaleBin) || !existsSync(tailscaleBin) || !statSync(tailscaleBin).isFile())) {
+    console.error(`droid-office: --tailscale-bin needs the absolute path of an executable file, not ${JSON.stringify(tailscaleBin)}`);
     process.exit(2);
   }
 
@@ -336,6 +359,7 @@ export function loadConfig(argv: string[]): Config {
     maxWorkers: workerLimit,
     city: city.trim() || undefined,
     weather: (weather as Weather) || undefined,
+    tailscaleBin: tailscaleBin || undefined,
   };
 }
 

@@ -5,19 +5,31 @@
 //
 // HTTP API
 // ========
-// Owner routes answer only the office's own page on its own machine (the `/api/mobile/pairing` gate:
-// loopback, same origin, no device or guest token). Anything else gets 403 `{ error }`. Bodies are JSON.
+// Owner routes answer authenticated owner requests on the main and tailnet listeners, never guests. What a
+// request may do is GuestLinksState.manage: `full` for the office's own page on its own machine (the
+// `/api/mobile/pairing` gate: loopback, same origin, no device token), `limited` for any other owner
+// request (a paired device token, or this start's LAN token through the main or tailnet listener).
+// Limited may read, revoke and turn sharing off; creating a link and turning sharing on answer 403
+// `{ error }`. Bodies are JSON.
 //
-//   GET    /api/guest-links                  -> 200 GuestLinksState
-//   PUT    /api/guest-links                  { on: boolean } -> 200 GuestLinksState
+//   GET    /api/guest-links                  -> 200 GuestLinksState                          (full, limited)
+//   PUT    /api/guest-links                  { on: false } -> 200 GuestLinksState            (full, limited)
 //                                            Off disconnects every guest at once and removes the Funnel mapping.
-//   POST   /api/guest-links                  GuestLinkCreate -> 200 GuestLinkCreated (the URL is returned this once)
+//                                            { on: true } -> 200 GuestLinksState             (full only)
+//                                            403 { error } limited, or sharing locked by DROID_OFFICE_GUEST_SHARING=off
+//   POST   /api/guest-links                  GuestLinkCreate -> 200 GuestLinkCreated         (full only)
+//                                            The URL is returned this once.
 //                                            400 { error } bad label/preset/target/expiry
+//                                            403 { error } limited
 //                                            409 { error } sharing off, Funnel not serving, or GUEST_LINKS_MAX active links
-//   DELETE /api/guest-links/<id>             -> 200 GuestLinksState (revoked: permanent, its guests disconnect at once)
+//   DELETE /api/guest-links/<id>             -> 200 GuestLinksState                          (full, limited)
+//                                            Revoked is permanent; its guests disconnect at once.
 //                                            404 { error } no such link
 //   GET    /api/guest-links/audit?before=<cursor>&limit=<1..GUEST_AUDIT_PAGE_MAX>
 //                                            -> 200 GuestAuditPage, newest first; pass `next` as `before` for older entries
+//
+// Every owner WebSocket connection receives `guestLinks.changed` (no data; `audit: true` when the audit
+// log grew) and re-reads these routes. Guests never receive it.
 //
 // Guest routes exist only on the guest backend (the Funnel origin). Every request there is a guest:
 // loopback trust, LAN tokens (`?t=`) and device tokens are refused, and guest tokens are refused on
@@ -31,9 +43,11 @@
 //
 // The same refusal shapes and status codes answer any other guest request whose token fails. Routes
 // outside the guest allowlist answer 404 `{ error: 'Not found' }` whether or not they exist elsewhere.
-// Read routes the companion needs (thread pictures and files, Whiteboard files and renders, changed
-// pictures, docs) work for in-scope floors and workers; write routes (prompt pictures, terminal drops)
-// only for write presets, in scope.
+// Read routes the companion needs (Thread pictures by id, changed pictures, Whiteboard files and renders,
+// pull requests and issues) work for in-scope floors and workers. Routes that read a file by a path the
+// guest chooses (Thread files, terminal file links) and write routes (prompt pictures, terminal drops,
+// Whiteboard uploads) work only for write presets, in scope. Whiteboard card frames, which cannot carry a
+// token, resolve by capability only on floors an active office or floor link shows.
 //
 // Token presentation
 // ==================
@@ -179,8 +193,17 @@ export interface GuestTargetFloor {
   workers: { id: string; name: string }[];
 }
 
+/**
+ * What the requester may do with share links. `full`: the office's own page on its own machine, which may
+ * do everything. `limited`: any other owner request (a paired device, this start's LAN token, the tailnet
+ * listener), which may list links and the audit, revoke, and turn sharing off, but never create a link or
+ * turn sharing on: a device must not mint a credential that outlives its own pairing.
+ */
+export type GuestManage = 'full' | 'limited';
+
 /** What `GET /api/guest-links` answers. Ended links stay listed for GUEST_ENDED_KEEP_MS. */
 export interface GuestLinksState {
+  manage: GuestManage;
   /** The global external-sharing toggle (kill switch). Off by default. */
   on: boolean;
   transport: GuestTransportState;

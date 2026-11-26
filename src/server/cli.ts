@@ -32,6 +32,7 @@ cfg.skillsDir = FACTORY_SKILLS_DIR;
 cfg.renders = true;
 cfg.remoteMcp = !/^(0|off|false|no)$/i.test(process.env.DROID_OFFICE_REMOTE_MCP?.trim() ?? '');
 cfg.tailnetHttps = !/^(0|off|false|no)$/i.test(process.env.DROID_OFFICE_TAILNET_HTTPS?.trim() ?? '');
+cfg.guestSharing = !/^(0|off|false|no)$/i.test(process.env.DROID_OFFICE_GUEST_SHARING?.trim() ?? '');
 await ensureSelfSigned(cfg);
 // A new office started in a terminal: where projects go, GitHub or GitLab, and the first floor, before it opens.
 if (!cfg.project) {

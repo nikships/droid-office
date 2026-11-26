@@ -989,3 +989,35 @@ test('a hire dialog’s pick becomes the cloud of a worker.spawn', () => {
   // On an Environment the office starts the computer: the pick has no computer id of its own.
   assert.deepEqual(cloudHire({ computerId: '', environmentId: 'env-1', cwd: '' }), { environmentId: 'env-1' });
 });
+
+test('a share link guest opening a cloud worker never opens or acknowledges it for the owner', async (t) => {
+  const f = factory({ 'POST /sessions': () => json(201, { sessionId: 's1' }) });
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'office-cloud-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const updates: WorkerInfo[] = [];
+  const cloud = new CloudWorkers(dir, { deskTaken: () => false, names: () => [], pool: { names: ['Ada'], colors: ['#fff'] } }, { update: (w) => updates.push(w), remove: () => {}, watches: (client) => client !== 'guest' });
+  const floor: CloudFloor = { id: 'f1', name: 'proj', cloud, unstage: (ids) => cloud.drops.unstage(ids) };
+  let feature: CloudFeature | undefined;
+  const registry = {
+    register: (make: (host: FeatureHost) => CloudFeature) => (feature = make({ changed: () => {}, pollSoon: () => {}, api: () => f.api, toast: () => {} })),
+    feature: (key: string) => (key === 'sessions' ? { forget: () => {} } : { state: () => computersState() }),
+  } as unknown as FactoryRegistry;
+  const mounted = mountCloud(registry, { floors: () => [floor], agentArgs: [], toast: () => {} });
+  assert.equal(mounted.feature, feature);
+  const w = await mounted.feature.hire(f.api, hireBody({ prompt: '' }), 'Nik');
+  const as = (client: string, t: 'worker.attach' | 'worker.detach') => mounted.message({ t, workerId: w.id } as Extract<ClientMsg, { workerId: string }>, { who: client, client, warn: () => {}, takeIssue: () => {} });
+
+  const before = updates.length;
+  assert.equal(as('guest', 'worker.attach'), true);
+  assert.equal(cloud.get(w.id)!.open, false);
+  assert.equal(updates.length, before);
+  assert.equal(as('owner', 'worker.attach'), true);
+  assert.deepEqual([cloud.get(w.id)!.open, cloud.get(w.id)!.acked], [true, true]);
+  as('guest', 'worker.detach');
+  assert.equal(cloud.get(w.id)!.open, true, 'a guest leaving never closes it under the owner');
+  as('owner', 'worker.detach');
+  assert.equal(cloud.get(w.id)!.open, false);
+  // Called directly without watch: the same.
+  assert.equal(cloud.attach(w.id, 'someone', false), true);
+  assert.equal(cloud.get(w.id)!.open, false);
+});
