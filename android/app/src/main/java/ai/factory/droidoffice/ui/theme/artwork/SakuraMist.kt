@@ -16,6 +16,7 @@ import kotlin.random.Random
 internal val SakuraMist = Artwork(
     id = "sakura-mist", name = "Sakura Mist", blurb = "A pastel dawn with cherry blossoms on the wind.",
     image = R.drawable.art_sakura_mist, preview = R.drawable.preview_sakura_mist,
+    portrait = PortraitArt(R.drawable.art_sakura_mist_portrait, focalX = .25f, focalY = .41f),
     x = .5f, y = .5f,
     bg = Color(0xFF1A1117), tint = Color(0xFF22161E), text = Color(0xFFFFF4F8), muted = Color(0xFFD2B6C3),
     accent = Color(0xFFFF8FB8), accent2 = Color(0xFFFFD1E0), line = Color(0xFFFFE0EC), glass = .84f,
