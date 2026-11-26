@@ -6,6 +6,7 @@ import {
   COMPANION_THEME_IDS,
   DEFAULT_THEME_ID,
   GLASS_LEVELS,
+  GLASS_SPECS,
   IMMERSIVE_KEYS,
   MAX_PICTURE_SHADE,
   OG_THEME_ID,
@@ -95,20 +96,37 @@ test('every theme reads: AAA text, AA secondary text, a readable accent button a
   }
 });
 
-test('glass levels: Solid is opaque and sharp, Clear shows more than Frosted, the chrome is the thinnest glass', () => {
+test('glass levels: monotonic opacity from Crystal to Solid, Crystal and Solid have no blur, chrome stays thinner than panes', () => {
+  assert.deepEqual(GLASS_LEVELS, ['crystal', 'clear', 'tinted', 'frosted', 'smoked', 'solid']);
   for (const t of themed) {
     assert.equal(glassAlpha(t, 'solid'), 1);
     assert.equal(chromeAlpha(t, 'solid'), 1);
-    assert.ok(glassAlpha(t, 'clear') < glassAlpha(t, 'frosted'));
+    assert.equal(glassAlpha(t, 'frosted'), t.glass, `${t.id} frosted keeps the theme’s base glass`);
+    for (let i = 1; i < GLASS_LEVELS.length; i++) {
+      const prev = GLASS_LEVELS[i - 1];
+      const curr = GLASS_LEVELS[i];
+      assert.ok(glassAlpha(t, prev) < glassAlpha(t, curr), `${t.id} pane: ${prev} < ${curr}`);
+      assert.ok(chromeAlpha(t, prev) < chromeAlpha(t, curr), `${t.id} chrome: ${prev} < ${curr}`);
+    }
+    assert.ok(glassAlpha(t, 'crystal') <= 0.3, `${t.id} crystal is genuinely clear`);
+    assert.ok(glassAlpha(t, 'clear') <= 0.44, `${t.id} clear is noticeably clearer than frosted`);
     for (const level of GLASS_LEVELS) {
-      assert.ok(chromeAlpha(t, level) <= glassAlpha(t, level) && chromeAlpha(t, level) >= 0.3);
+      assert.ok(chromeAlpha(t, level) <= glassAlpha(t, level) && chromeAlpha(t, level) >= 0.1);
       const vars = companionThemeVars(t, level);
-      for (const key of ['--bg', '--text', '--accent', '--border', '--th-chrome', '--th-side', '--th-pane', '--th-term', '--th-pop', '--th-blur', '--th-accent-ink', '--th-focus']) assert.ok(vars[key], `${t.id} ${level} ${key}`);
+      for (const key of ['--bg', '--text', '--accent', '--border', '--th-chrome', '--th-side', '--th-pane', '--th-term', '--th-pop', '--th-blur', '--th-saturate', '--th-pane-saturate', '--th-tile-blur', '--th-accent-ink', '--th-focus'])
+        assert.ok(vars[key], `${t.id} ${level} ${key}`);
       for (const value of Object.values(vars)) assert.doesNotMatch(value, /NaN|undefined/);
       assert.equal(vars['--th-pane'], rgba(t.tint, glassAlpha(t, level)));
       assert.equal(vars['--th-term'], rgba(t.terminal.background, glassAlpha(t, level)), 'one layer of glass under a terminal');
+      assert.equal(vars['--th-pop'], rgba(t.bg, level === 'solid' ? 1 : 0.94));
+      assert.equal(vars['--th-blur'], `${GLASS_SPECS[level].blur}px`);
+      assert.equal(vars['--th-saturate'], String(GLASS_SPECS[level].chromeSaturate));
+      assert.equal(vars['--th-pane-saturate'], String(GLASS_SPECS[level].paneSaturate));
+      assert.equal(vars['--th-tile-blur'], `${GLASS_SPECS[level].tileBlur}px`);
     }
+    assert.equal(companionThemeVars(t, 'crystal')['--th-blur'], '0px');
     assert.equal(companionThemeVars(t, 'solid')['--th-blur'], '0px');
+    assert.ok(GLASS_SPECS.clear.blur < GLASS_SPECS.tinted.blur && GLASS_SPECS.tinted.blur < GLASS_SPECS.frosted.blur && GLASS_SPECS.frosted.blur < GLASS_SPECS.smoked.blur);
   }
   assert.deepEqual(companionTerminalColors(companionTheme('carbons-copy')), { foreground: '#f2f0ed', cursor: '#ff6a1f', cursorAccent: '#050507', selectionBackground: '#3a2418' });
 });

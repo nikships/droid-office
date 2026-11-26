@@ -354,9 +354,38 @@ export function companionTheme(id: string | undefined): CompanionTheme {
   return COMPANION_THEMES.find((t) => t.id === id) ?? COMPANION_THEMES.find((t) => t.id === DEFAULT_THEME_ID)!;
 }
 
-/** How see-through the glass is: Clear shows more backdrop, Solid none (and blurs nothing). */
-export const GLASS_LEVELS = ['clear', 'frosted', 'solid'] as const;
+/** How see-through the glass is: Crystal shows the sharp backdrop through a whisper of tint; Solid is opaque with no blur. */
+export const GLASS_LEVELS = ['crystal', 'clear', 'tinted', 'frosted', 'smoked', 'solid'] as const;
 export type GlassLevel = (typeof GLASS_LEVELS)[number];
+
+export interface GlassSpec {
+  /** Backdrop blur radius in CSS pixels (`0` disables blur). */
+  blur: number;
+  /** Header and sidebar backdrop saturation multiplier. */
+  chromeSaturate: number;
+  /** Workspace pane backdrop saturation multiplier. */
+  paneSaturate: number;
+  /** Miniature preview blur radius in CSS pixels. */
+  tileBlur: number;
+}
+
+export const GLASS_SPECS: Readonly<Record<GlassLevel, GlassSpec>> = {
+  crystal: { blur: 0, chromeSaturate: 1.06, paneSaturate: 1.06, tileBlur: 0 },
+  clear: { blur: 5, chromeSaturate: 1.2, paneSaturate: 1.18, tileBlur: 2 },
+  tinted: { blur: 12, chromeSaturate: 1.38, paneSaturate: 1.32, tileBlur: 5 },
+  frosted: { blur: 22, chromeSaturate: 1.6, paneSaturate: 1.5, tileBlur: 8 },
+  smoked: { blur: 36, chromeSaturate: 1.3, paneSaturate: 1.25, tileBlur: 13 },
+  solid: { blur: 0, chromeSaturate: 1, paneSaturate: 1, tileBlur: 0 },
+};
+
+const GLASS_ALPHA_SPEC: Record<GlassLevel, { delta: number; min: number; max: number; chromeGap: number; chromeMin: number }> = {
+  crystal: { delta: -0.54, min: 0.16, max: 0.34, chromeGap: 0.06, chromeMin: 0.1 },
+  clear: { delta: -0.4, min: 0.28, max: 0.48, chromeGap: 0.08, chromeMin: 0.2 },
+  tinted: { delta: -0.22, min: 0.44, max: 0.66, chromeGap: 0.1, chromeMin: 0.34 },
+  frosted: { delta: 0, min: 0.3, max: 1, chromeGap: 0.1, chromeMin: 0.3 },
+  smoked: { delta: 0.14, min: 0.82, max: 0.94, chromeGap: 0.06, chromeMin: 0.76 },
+  solid: { delta: 1, min: 1, max: 1, chromeGap: 0, chromeMin: 1 },
+};
 
 // ---- Colors ----------------------------------------------------------------------------------------
 
@@ -428,12 +457,15 @@ export function immersiveEntries(theme: CompanionTheme) {
 /** Pane opacity at each glass level, from the theme's own. */
 export function glassAlpha(theme: Pick<CompanionTheme, 'glass'>, level: GlassLevel): number {
   if (level === 'solid') return 1;
-  return round3(Math.min(1, Math.max(0.3, level === 'clear' ? theme.glass - 0.16 : theme.glass)));
+  const spec = GLASS_ALPHA_SPEC[level];
+  return round3(Math.min(spec.max, Math.max(spec.min, theme.glass + spec.delta)));
 }
 
 /** The header's and the side's opacity: a step clearer than the panes, and the thinnest glass on the page. */
 export function chromeAlpha(theme: Pick<CompanionTheme, 'glass'>, level: GlassLevel): number {
-  return level === 'solid' ? 1 : round3(Math.max(0.3, glassAlpha(theme, level) - 0.1));
+  if (level === 'solid') return 1;
+  const spec = GLASS_ALPHA_SPEC[level];
+  return round3(Math.max(spec.chromeMin, glassAlpha(theme, level) - spec.chromeGap));
 }
 
 /** The strongest shade a picture needs: enough to keep text readable over a white one. */
@@ -489,6 +521,7 @@ export function brightGray(pixels: ArrayLike<number>, quantile = 0.9): number {
 export function companionThemeVars(theme: CompanionTheme, level: GlassLevel = 'frosted'): Record<string, string> {
   const pane = glassAlpha(theme, level);
   const chrome = chromeAlpha(theme, level);
+  const spec = GLASS_SPECS[level];
   const ink = accentInk(theme);
   return {
     ...Object.fromEntries(immersiveEntries(theme).map(([key, value]) => [`--th-${key}`, value])),
@@ -520,7 +553,10 @@ export function companionThemeVars(theme: CompanionTheme, level: GlassLevel = 'f
     '--th-pop': rgba(theme.bg, level === 'solid' ? 1 : 0.94),
     '--th-hover': rgba(theme.text, 0.06),
     '--th-active': rgba(theme.text, 0.09),
-    '--th-blur': level === 'solid' ? '0px' : level === 'clear' ? '14px' : '22px',
+    '--th-blur': `${spec.blur}px`,
+    '--th-saturate': String(spec.chromeSaturate),
+    '--th-pane-saturate': String(spec.paneSaturate),
+    '--th-tile-blur': `${spec.tileBlur}px`,
   };
 }
 

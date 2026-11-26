@@ -3,7 +3,7 @@
 // (companion-theme.ts + wallpaper-store.ts) and applied live to the whole page.
 
 import { COMPANION_THEMES, DEFAULT_THEME_ID, OG_THEME_ID, companionTheme, companionThemeVars, themePreview, type CompanionTheme, type GlassLevel } from '../../shared/companion-themes';
-import { appearancePrefs, customWallpaperSrc, isDefaultAppearancePrefs, onAppearancePrefs, onCustomWallpaperSrc, resetAppearancePrefs, setAppearancePrefs, type AppearancePrefs } from './companion-theme';
+import { appearancePrefs, backdropPicture, customWallpaperSrc, isDefaultAppearancePrefs, onAppearancePrefs, onCustomWallpaperSrc, resetAppearancePrefs, setAppearancePrefs, type AppearancePrefs } from './companion-theme';
 import { h } from './dom';
 import { clearWallpaper, loadWallpaper, onWallpaper, saveWallpaperFile, saveWallpaperUrl, wallpaperUrlError, type CustomWallpaper } from './wallpaper-store';
 
@@ -114,7 +114,10 @@ export function wallpaperDescription(theme: CompanionTheme, wallpaper: Appearanc
 
 export function glassDescription(theme: CompanionTheme, glass: GlassLevel): string {
   if (theme.id === OG_THEME_ID) return 'OG’s panels are always opaque.';
-  if (glass === 'clear') return 'Shows more of the backdrop through the header, sidebar and panes.';
+  if (glass === 'crystal') return 'Ultra-clear glass with no blur. Shows the sharp backdrop right through the header, sidebar and panes.';
+  if (glass === 'clear') return 'Light, airy glass with a soft hint of frost so the backdrop stays clearly visible.';
+  if (glass === 'tinted') return 'Balanced translucent tint with gentle blur over the backdrop.';
+  if (glass === 'smoked') return 'Deep, heavily diffused glass that turns bright backdrops into a quiet glow.';
   if (glass === 'solid') return 'Opaque panels, no blur.';
   return 'Blurred, tinted glass over the backdrop.';
 }
@@ -145,10 +148,13 @@ const BLUR_LABELS: readonly (readonly [AppearancePrefs['blur'], string])[] = [
   ['strong', 'Strong'],
 ];
 
-const GLASS_LABELS: readonly (readonly [GlassLevel, string])[] = [
-  ['clear', 'Clear'],
-  ['frosted', 'Frosted'],
-  ['solid', 'Solid'],
+export const GLASS_PRESETS: readonly { level: GlassLevel; label: string; hint: string }[] = [
+  { level: 'crystal', label: 'Crystal', hint: 'No blur' },
+  { level: 'clear', label: 'Clear', hint: 'Light frost' },
+  { level: 'tinted', label: 'Tinted', hint: 'Balanced' },
+  { level: 'frosted', label: 'Frosted', hint: 'Classic' },
+  { level: 'smoked', label: 'Smoked', hint: 'Deep frost' },
+  { level: 'solid', label: 'Solid', hint: 'Opaque' },
 ];
 
 const MOTION_LABELS: readonly (readonly [AppearancePrefs['motion'], string])[] = [
@@ -282,6 +288,28 @@ function buildThemeTile(theme: CompanionTheme, onPick: () => void): HTMLButtonEl
   );
 }
 
+/** Builds one glass preset card with a live split preview of raw backdrop next to the preset's glass pane. */
+function buildGlassCard(preset: (typeof GLASS_PRESETS)[number], onPick: () => void) {
+  const art = h('img.theme-glass-art', { alt: '', loading: 'lazy', decoding: 'async', draggable: 'false' }) as HTMLImageElement;
+  const pane = h('span.theme-glass-pane', {}, h('span.theme-glass-lines', {}, h('span.theme-glass-line'), h('span.theme-glass-line.short')));
+  const swatch = h('span.theme-glass-swatch', { 'aria-hidden': 'true' }, h('span.theme-glass-bg'), art, h('span.theme-glass-veil'), pane);
+  const meta = h('span.theme-glass-meta', {}, h('span.theme-glass-head', {}, h('span.theme-glass-name', {}, preset.label), h('span.theme-check', { 'aria-hidden': 'true' }, checkGlyph())), h('span.theme-glass-hint', {}, preset.hint));
+  const button = h(
+    'button.theme-glass-card',
+    {
+      type: 'button',
+      role: 'radio',
+      'aria-checked': 'false',
+      'aria-label': `${preset.label}: ${preset.hint}`,
+      'data-glass-level': preset.level,
+      onclick: onPick,
+    },
+    swatch,
+    meta,
+  ) as HTMLButtonElement;
+  return { button, swatch, art };
+}
+
 /** Counts columns currently laid out in a `.theme-grid` element for vertical arrow navigation. */
 function measuredColumns(grid: HTMLElement | undefined): number {
   if (!grid || typeof getComputedStyle !== 'function') return 3;
@@ -373,12 +401,48 @@ export function appearanceSettings(): {
     tiles[next]?.focus();
   });
 
-  // ---- Wallpaper controls -------------------------------------------------------------------------
+  // ---- Wallpaper & glass controls -----------------------------------------------------------------
   const wallpaper = seg('wallpaper', 'Wallpaper', WALLPAPER_LABELS);
   const dim = seg('dim', 'Dim', DIM_LABELS);
   const blur = seg('blur', 'Blur', BLUR_LABELS);
-  const glass = seg('glass', 'Glass', GLASS_LABELS);
   const motion = seg('motion', 'Motion', MOTION_LABELS);
+
+  let glassRoving = Math.max(
+    0,
+    GLASS_PRESETS.findIndex((p) => p.level === appearancePrefs().glass),
+  );
+  const setGlassRoving = (next: number) => {
+    glassRoving = next;
+    glassCards.forEach((c, i) => {
+      c.button.tabIndex = i === glassRoving ? 0 : -1;
+    });
+  };
+  const selectGlass = (index: number) => {
+    const picked = GLASS_PRESETS[index];
+    if (!picked) return;
+    setGlassRoving(index);
+    if (appearancePrefs().glass !== picked.level) setAppearancePrefs({ glass: picked.level });
+  };
+  const glassCards = GLASS_PRESETS.map((preset, index) => buildGlassCard(preset, () => selectGlass(index)));
+  const glassGrid = h('div.theme-glass-grid', { role: 'radiogroup', 'aria-label': 'Glass' }, ...glassCards.map((c) => c.button));
+  glassGrid.addEventListener('keydown', (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      const focused = glassCards.findIndex((c) => c.button === e.target);
+      if (focused >= 0) {
+        e.preventDefault();
+        selectGlass(focused);
+      }
+      return;
+    }
+    const active = glassCards.findIndex((c) => c.button === e.target);
+    const from = active >= 0 ? active : glassRoving;
+    const next = galleryNextIndex(from, e.key, [GLASS_PRESETS.length], measuredColumns(glassGrid));
+    if (next === null) return;
+    e.preventDefault();
+    selectGlass(next);
+    glassCards[next]?.button.focus();
+  });
 
   const fileInput = h('input', { type: 'file', accept: 'image/*', hidden: true, 'aria-hidden': 'true', tabindex: -1 }) as HTMLInputElement;
   const linkId = `appearance-wallpaper-url-${++fieldSeq}`;
@@ -612,6 +676,7 @@ export function appearanceSettings(): {
     const activeTheme = companionTheme(prefs.theme);
     const og = activeTheme.id === OG_THEME_ID;
     const focusInsideGallery = typeof document !== 'undefined' && gallery.contains(document.activeElement);
+    const focusInsideGlass = typeof document !== 'undefined' && glassGrid.contains(document.activeElement);
 
     orderedThemes.forEach((t, i) => {
       const tile = tiles[i];
@@ -623,7 +688,26 @@ export function appearanceSettings(): {
     });
     setRoving(rovingIndex);
 
-    for (const s of [wallpaper, dim, blur, glass, motion]) s.paint(prefs);
+    const swatchPic = og ? null : prefs.wallpaper === 'custom' && customWallpaperSrc() ? customWallpaperSrc() : backdropPicture(prefs, activeTheme, null) ? (themePreview(activeTheme) ?? activeTheme.backdrop.image ?? null) : null;
+    glassCards.forEach((card, i) => {
+      const preset = GLASS_PRESETS[i];
+      const on = preset.level === prefs.glass;
+      applyTileVars(card.button, activeTheme, preset.level);
+      card.button.classList.toggle('on', on);
+      card.button.setAttribute('aria-checked', String(on));
+      card.swatch.classList.toggle('flat', og);
+      if (swatchPic) {
+        card.art.hidden = false;
+        if (card.art.getAttribute('src') !== swatchPic) card.art.src = swatchPic;
+      } else {
+        card.art.hidden = true;
+        card.art.removeAttribute('src');
+      }
+      if (on && !focusInsideGlass) glassRoving = i;
+    });
+    setGlassRoving(glassRoving);
+
+    for (const s of [wallpaper, dim, blur, motion]) s.paint(prefs);
 
     customPanel.classList.toggle('hidden', prefs.wallpaper !== 'custom');
     const showTuning = prefs.wallpaper === 'custom' ? Boolean(storedWallpaper) : prefs.wallpaper === 'theme' && !og && Boolean(activeTheme.backdrop.image);
@@ -663,13 +747,14 @@ export function appearanceSettings(): {
     onWallpaper(() => void refreshStoredWallpaper()),
     onCustomWallpaperSrc(() => {
       if (storedWallpaper) paintWallSlot();
+      paint();
     }),
   ];
 
   return {
     theme: { desc: themeDesc, below: [gallery] },
     wallpaper: { desc: wallDesc, control: wallpaper.row, below: [customPanel, tuning] },
-    glass: { desc: glassDesc, control: glass.row },
+    glass: { desc: glassDesc, below: [glassGrid] },
     motion: { desc: motionDesc, control: motion.row },
     restore: { desc: h('small', {}, 'Put every Appearance setting back to how it came.'), control: restore },
     dispose: () => {

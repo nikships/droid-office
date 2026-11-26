@@ -126,7 +126,7 @@ export const SETTINGS_CARDS = [
   { pane: 'graphics', title: 'Overhead lights', keywords: 'lights brightness ceiling lamps lighting dark', on: OFFICE },
   { pane: 'appearance', title: 'Theme', keywords: 'theme themes color colour palette look skin dark artwork og carbon nightly appearance', on: COMPANIONS },
   { pane: 'appearance', title: 'Wallpaper', keywords: 'wallpaper background picture image photo upload custom link url dim blur appearance', on: COMPANIONS },
-  { pane: 'appearance', title: 'Glass', keywords: 'glass transparency translucent frosted clear solid opacity blur panels appearance', on: COMPANIONS },
+  { pane: 'appearance', title: 'Glass', keywords: 'glass transparency translucent crystal clear tinted frosted smoked solid opacity blur panels appearance', on: COMPANIONS },
   { pane: 'appearance', title: 'Motion', keywords: 'motion animation animated shader webgl live still moving background appearance', on: COMPANIONS },
   { pane: 'appearance', title: 'Restore Appearance defaults', keywords: 'appearance reset restore defaults theme wallpaper glass motion', on: COMPANIONS },
   { pane: 'thread', title: 'Text size', keywords: 'thread text size font bigger smaller larger zoom scale small large conversation chat reading' },

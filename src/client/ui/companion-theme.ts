@@ -163,6 +163,8 @@ function paint(p: AppearancePrefs) {
   const theme = companionTheme(p.theme);
   const og = theme.id === OG_THEME_ID;
   body.dataset.theme = theme.id;
+  if (og) delete body.dataset.glass;
+  else body.dataset.glass = p.glass;
   body.classList.toggle('themed', !og);
   paintTreatments(theme);
   for (const key of applied) body.style.removeProperty(key);

@@ -19,7 +19,7 @@ The eight `family: 'artwork'` entries in [`companion-themes.ts`](../src/shared/c
 | Astral Cathedral (`astral-cathedral`) | Floating monoliths and nebula; vaulted chapel arches in plum and gold | [Before](assets/companion-themes/astral-cathedral/before.webp) · [After](assets/companion-themes/astral-cathedral/after.webp) · [Card](assets/companion-themes/astral-cathedral/detail.webp) · [Directory](assets/companion-themes/astral-cathedral/directory.webp) |
 | Sakura Mist (`sakura-mist`) | Drifting petals; blossom sprigs, silk panels and a Hanami nameplate | [Before](assets/companion-themes/sakura-mist/before.webp) · [After](assets/companion-themes/sakura-mist/after.webp) · [Card](assets/companion-themes/sakura-mist/blossom-card.webp) · [Layout](assets/companion-themes/sakura-mist/layout-sheet.webp) |
 
-**OG** is the Classic theme and the default for new or unrecognized saved theme IDs. It paints no overrides. For artwork themes, **Motion** controls whether ambient light moves (Live) or holds one frame (Still).
+**OG** is the Classic theme and the default for new or unrecognized saved theme IDs. It paints no overrides. For artwork themes, **Glass** offers six optical levels from sharpest to opaque (`Crystal`, `Clear`, `Tinted`, `Frosted`, `Smoked`, `Solid`; default `Frosted`) and **Motion** controls whether ambient light moves (Live) or holds one frame (Still).
 
 ## Restraint Budget
 

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { COMPANION_THEMES, DEFAULT_THEME_ID, OG_THEME_ID, companionTheme } from '../src/shared/companion-themes.js';
+import { COMPANION_THEMES, DEFAULT_THEME_ID, GLASS_LEVELS, OG_THEME_ID, companionTheme } from '../src/shared/companion-themes.js';
 import {
+  GLASS_PRESETS,
   THEME_FAMILY_META,
   describeCustomWallpaper,
   formatWallpaperBytes,
@@ -132,8 +133,15 @@ test('descriptions explain OG flat look, empty custom wallpaper guidance, glass 
   assert.match(wallpaperDescription(carbon, 'theme', false), /full-resolution artwork/);
   assert.match(wallpaperDescription(carbon, 'none', false), /No picture/);
 
-  assert.match(glassDescription(carbon, 'clear'), /more of the backdrop/i);
+  assert.deepEqual(
+    GLASS_PRESETS.map((p) => p.level),
+    [...GLASS_LEVELS],
+  );
+  assert.match(glassDescription(carbon, 'crystal'), /no blur/i);
+  assert.match(glassDescription(carbon, 'clear'), /clearly visible/i);
+  assert.match(glassDescription(carbon, 'tinted'), /translucent tint/i);
   assert.match(glassDescription(carbon, 'frosted'), /tinted glass/i);
+  assert.match(glassDescription(carbon, 'smoked'), /heavily diffused/i);
   assert.match(glassDescription(carbon, 'solid'), /Opaque panels/i);
 
   assert.match(motionDescription(carbon, 'live', true), /Reduce motion/);
