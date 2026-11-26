@@ -2518,7 +2518,7 @@ body.themed { background: transparent; }
 .dash-floor-chip[data-triage=done]:not(.on) { background: rgba(60, 207, 145, .035); color: var(--text); }
 .dash-floor-chip[data-triage=done]:not(.on)::before { background: var(--success); }
 .dash-floor-chip:disabled { cursor: default; opacity: .6; }
-.dash-floor-chip:focus-visible, .dash-quiet-bay:focus-visible, .dash-end-bay:focus-visible, .dash-quiet-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.dash-floor-chip:focus-visible, .dash-quiet-bay:focus-visible, .dash-end-bay:focus-visible, .dash-quiet-input:focus-visible, .dash-quiet-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .dash-floor-number { flex: none; font: 600 10px/1 var(--font-mono); color: var(--text-tertiary); font-variant-numeric: tabular-nums; transition: color var(--duration) var(--ease); }
 .dash-floor-chip.on .dash-floor-number { color: var(--accent); }
 .dash-floor-chip[data-triage=needs]:not(.on) .dash-floor-number { color: #ff8080; }
