@@ -56,8 +56,9 @@ test('standard scrollbar styling cannot override WebKit styling outside the fall
   assert.match(match[1], /scrollbar-width:\s*thin;/);
   assert.match(match[1], /scrollbar-color:\s*transparent\s+transparent;/);
   assert.match(match[2], /scrollbar-color:\s*var\(--accent\)\s+transparent;/);
-  const themed = /@supports not selector\(::-webkit-scrollbar\)\s*\{\s*\.themed\[data-immersive~="scrollbar-thumb"\][^{}]+\{\s*scrollbar-color:\s*var\(--th-scrollbar-thumb\) transparent;\s*\}\s*\}/;
+  const themed = /@supports not selector\(::-webkit-scrollbar\)\s*\{\s*\.themed\[data-immersive~="scrollbar-thumb"\][^{}]+\.user-scrolling\s*\{\s*scrollbar-color:\s*var\(--th-scrollbar-thumb\) transparent;\s*\}\s*\}/;
   assert.match(css, themed);
+  assert.match(css, /\.user-scrolling::-webkit-scrollbar-thumb\s*\{\s*background:\s*var\(--th-scrollbar-thumb\)/);
   const rest = css.replace(fallback, '').replace(themed, '');
   for (const declaration of rest.matchAll(/scrollbar-width:([^;]+);/g)) {
     assert.equal(declaration[1].trim(), 'none');

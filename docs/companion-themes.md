@@ -6,6 +6,8 @@
 
 The eight `family: 'artwork'` entries in [`companion-themes.ts`](../src/shared/companion-themes.ts) are the wallpaper signatures. Each owns its full-size JPEG and crop, gradient fallback, veil, animated overlay, two accents, text, lines, glass tint and opacity, and terminal foreground, cursor, background and selection. The stage also owns its colors, blend, speed and opacity.
 
+[![The same empty workspace card in each of the eight integrated themes, with Frosted glass and reduced motion.](assets/companion-themes/signature-cards.webp)](assets/companion-themes/signature-cards.webp)
+
 | Theme (registry ID) | Artwork and signature surfaces | Running companion: comparison and detail |
 | --- | --- | --- |
 | Carbon’s Copy (`carbons-copy`) | Woven carbon and embers; machined graphite controls and a copper maker’s mark | [Before](assets/companion-themes/carbon-before.webp) · [After](assets/companion-themes/carbon-after.webp) · [Field guide](assets/companion-themes/capability-sheet.webp) |
@@ -48,18 +50,18 @@ Add `immersive` to a registry entry, not a theme-ID selector. Its keys come from
 | --- | --- | --- |
 | `heading-font` | Floor, worker, pane, directory and empty-state titles, not body copy or terminal text | Standard sans |
 | `caption-font` | CSS font shorthand for roster, Mission Control, directory, menu and settings section captions | Existing caption type |
-| `panel-radius` | Workspace panes, single-pane empty card and its icon | Kit large radius |
+| `panel-radius` | Single-pane empty card and empty-state icon. Pane frames keep their normal corners so they do not clip controls or terminal cells. | Kit large radius |
 | `chrome-finish` | CSS image layers over the header, team shells, sidebar edges, floor header/footer and empty card | Original glass |
 | `panel-edge` | **One** CSS image drawn as a thin rule on pane, floor and directory headers and the empty card | No rule |
 | `badge-face`, `badge-ink` | Empty-state and Mission Control badge finish; ink on the empty-state icon only | Original badge and ink |
-| `imprint` | Decorative CSS `content` above the floor title and empty state; use a quoted string with `/ ""` for silent alternative text | No generated content or space |
+| `imprint` | Decorative CSS `content` above the floor title and single-pane empty state; use a quoted string with `/ ""` for silent alternative text | No generated content or space |
 | `control-finish`, `control-radius` | CSS image and corner radius for buttons, segments, pills, git context and directory filters; preserves semantic ink | Original control skin |
 | `focus-outline` | CSS outline on keyboard-focused buttons, form fields and focusable controls | Each control's focus indicator |
 | `selection` | Text highlight background in the sidebar, directory, Thread, non-terminal sheets and empty panes; uses theme text as ink | Native selection |
 | `row-hover`, `row-active` | CSS images for hovered roster rows and selected sidebar / pressed directory rows and filters | Component hover or active treatment |
 | `section-rule` | CSS image for separators in Mission Control, the sidebar footer and Settings navigation | No added ornament |
 | `sheet-finish` | CSS image on non-terminal modals and headers, Settings rail, layout/quiet popovers and worker menus | Modal glass or menu fill |
-| `scrollbar-thumb` | Thumb color on roster, directory and Settings scroll containers; excludes xterm | Original auto-hiding hairline |
+| `scrollbar-thumb` | Thumb color while scrolling the roster, directory or Settings; excludes xterm | Original auto-hiding hairline |
 | `control-motion` | Transition duration and easing for a 1 px hover lift and 2 px press on controls. The painter withholds the key for Still and system reduced motion. | Original interaction, no signature travel |
 
 Carbon uses woven graphite panels, instrument captions, asymmetric corners and a stamped orange nameplate. Controls have a machined bevel; double focus rings, indexed rows and striped dividers mark where work happens. The scrollbar, selection and menu use the same copper and graphite palette. Use `backdrop.stage` for ambient motion and `terminal` for terminal cursor and selection. Appearance doesn't control sound, ANSI colors or status colors.

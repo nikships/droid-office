@@ -99,7 +99,24 @@ test('all-workers directory filters, opens cross-floor workers, and keeps focus 
     'nikships/droid-office on droid-office and nikships/tools on Tools',
   );
   assert.deepEqual(await page.locator('.dash-building-role').allInnerTexts(), ['Subworker of Pixel']);
-  await page.getByRole('button', { name: 'Needs you, 1', exact: true }).click();
+  // A button that travels on hover/press must still accept a click on its original edge.
+  await page.evaluate(() => {
+    document.body.classList.add('themed');
+    document.body.dataset.immersive = 'control-motion';
+    document.body.style.setProperty('--th-control-motion', '0s linear');
+  });
+  const needsYou = page.getByRole('button', { name: 'Needs you, 1', exact: true });
+  const bounds = (await needsYou.boundingBox())!;
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 0.25);
+  await page.mouse.down();
+  assert.equal(await needsYou.evaluate((el) => getComputedStyle(el).translate), '0px 2px');
+  await page.mouse.up();
+  assert.equal(await needsYou.getAttribute('aria-pressed'), 'true', 'the stationary pointer released on the filter');
+  await page.evaluate(() => {
+    document.body.classList.remove('themed');
+    delete document.body.dataset.immersive;
+    document.body.style.removeProperty('--th-control-motion');
+  });
   assert.equal(await rows.count(), 1, 'external bot status is not an owner question');
   assert.equal(await rows.getAttribute('data-worker'), 'nibble');
   assert.equal(await rows.evaluate((el) => el.classList.contains('is-subworker')), false, 'a filtered-out lead leaves no orphan indent');

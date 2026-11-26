@@ -326,7 +326,8 @@ export const COMPANION_THEMES = [
       'heading-font': '"Avenir Next Condensed", "Arial Narrow", sans-serif',
       'caption-font': 'bold 13px/1.2 "DIN Condensed", "Arial Narrow", sans-serif',
       'panel-radius': '3px',
-      'chrome-finish': 'url("/themes/orbital-foundry-plate.svg"), radial-gradient(ellipse at 100% 110%, #804326 0, #422e2d 10%, #222834 35%, transparent 55%), linear-gradient(165deg, #39414c, #202730 26%, #131821 67%, #2d3035)',
+      'chrome-finish':
+        'url("/themes/orbital-foundry-plate.svg"), radial-gradient(ellipse at 100% 110%, #804326a8 0, #422e2d88 10%, #22283466 35%, transparent 55%), linear-gradient(165deg, #39414cc2, #202730ba 26%, #131821c2 67%, #2d3035ba)',
       'panel-edge': 'repeating-linear-gradient(90deg, #361e1c 0 3px, #aa522a 3px 6px, #ff913b 6px 13px, #ffe4a0 13px 27px, #f38c3d 27px 35px, #5a3327 35px 38px, #20232a 38px 48px)',
       'badge-face': 'radial-gradient(circle, #171d25 32%, #563c30 34% 40%, #ffbd6f 41% 43%, #a44d22 45% 51%, #20252d 53% 64%, #4d5158 65%, #171d25 70%)',
       'badge-ink': '#ffe6a7',
