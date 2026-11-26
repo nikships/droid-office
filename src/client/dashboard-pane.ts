@@ -24,6 +24,7 @@ import { workerTeams } from '../shared/team';
 import { missionAgent, ORCHESTRATOR_ID, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
 import type { SettingsPane } from '../shared/settings-nav';
 import { botLine, buildingAgent, missionLead, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_PITCH, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorSettingsPane, orchestratorStarted } from './mission';
+import { orchestratorBlockedFor } from './dashboard-guest';
 import { orchestratorAwake } from './mission-office';
 
 /** What a sidebar row carries when it's dragged onto a pane. */
@@ -403,7 +404,7 @@ export function createPane(host: PaneHost, index: number): Pane {
         ...(orchestrator
           ? {
               intro: () => (orchestratorStarted(host.mission()) ? undefined : (intro ??= orchestratorIntro())),
-              blocked: () => orchestratorBlocked(host.mission()),
+              blocked: () => orchestratorBlockedFor(orchestratorBlocked(host.mission()), owns),
               ...(owns ? { blockedAction: h('button.btn.sm', { type: 'button', onclick: () => host.settings(orchestratorSettingsPane(host.mission())) }, icon('settings', 13), 'Settings') } : {}),
               interrupt: true,
               promptWakes: true,
@@ -426,7 +427,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     term = terminal.openTerminal(host.net, wid, undefined, undefined, { mount: stage, focus: takeFocus, hideTeam: true, readOnly: !works });
   }
 
-  /** The Orchestrator's empty conversation: what it's for, and prompts that fill the composer. */
+  /** The Orchestrator's empty conversation: what it's for, and (for a page that can prompt it) prompts that fill the composer. */
   function orchestratorIntro() {
     const fill = (text: string) => {
       const input = thread?.element.querySelector<HTMLTextAreaElement>('textarea.wt-input');
@@ -457,22 +458,27 @@ export function createPane(host: PaneHost, index: number): Pane {
         h('div.orc-hero-head', {}, h('span.eyebrow', {}, h('span.no', {}, '01'), 'Mission Control'), h('span.orc-hero-status', {}, h('span.orc-hero-dot', { 'aria-hidden': 'true' }), 'Building-wide agent')),
         h('div.orc-hero-stage', { 'aria-hidden': 'true' }, h('div.orc-hero-emblem', {}, orchestratorIcon(28)), h('span.orc-hero-trunk'), heroBus),
       ),
-      h('h3', {}, 'Point it at the building.'),
+      h('h3', {}, works ? 'Point it at the building.' : 'Nothing dispatched yet.'),
       h('p.orc-intro-copy', {}, ORCHESTRATOR_PITCH),
-      h('span.eyebrow.orc-examples-eyebrow', {}, h('span.no', {}, '02'), 'Suggested dispatches'),
-      h(
-        'div.orc-examples',
-        { role: 'group', 'aria-label': 'Example prompts' },
-        ...ORCHESTRATOR_EXAMPLES.map(({ tag, prompt }, i) =>
-          h(
-            'button.orc-example',
-            { type: 'button', title: 'Put this in the message box', 'aria-label': `Use this prompt: ${prompt}`, onclick: () => fill(prompt) },
-            h('span.orc-example-head', {}, h('span.orc-example-tag', {}, h('span.no', {}, `0${i + 1}`), tag), icon('arrow', 13)),
-            h('span.orc-example-text', {}, prompt),
-          ),
-        ),
-      ),
-      h('p.orc-intro-foot', {}, 'Wakes only on your prompt or when its own crew reports back.'),
+      // Watch-only: the suggestions fill a composer this page doesn't have.
+      ...(works
+        ? [
+            h('span.eyebrow.orc-examples-eyebrow', {}, h('span.no', {}, '02'), 'Suggested dispatches'),
+            h(
+              'div.orc-examples',
+              { role: 'group', 'aria-label': 'Example prompts' },
+              ...ORCHESTRATOR_EXAMPLES.map(({ tag, prompt }, i) =>
+                h(
+                  'button.orc-example',
+                  { type: 'button', title: 'Put this in the message box', 'aria-label': `Use this prompt: ${prompt}`, onclick: () => fill(prompt) },
+                  h('span.orc-example-head', {}, h('span.orc-example-tag', {}, h('span.no', {}, `0${i + 1}`), tag), icon('arrow', 13)),
+                  h('span.orc-example-text', {}, prompt),
+                ),
+              ),
+            ),
+          ]
+        : []),
+      h('p.orc-intro-foot', {}, works ? 'Wakes only on your prompt or when its own crew reports back.' : 'It starts when the owner gives it a prompt. This view shows its work as it happens.'),
     );
   }
 

@@ -172,6 +172,12 @@ export const GUEST_WRITE_ONLY_PATHS: ReadonlySet<string> = new Set([
 
 export const guestMayFetch = (pathname: string, write: boolean): boolean => write || !GUEST_WRITE_ONLY_PATHS.has(pathname);
 
+/** What a guest reads where the owner sees why the Orchestrator can't start: fixing that is the owner's setup, in Settings. */
+export const GUEST_ORCHESTRATOR_BLOCKED = 'Not available right now';
+
+/** Why the Orchestrator can't start, as this page may show it. */
+export const orchestratorBlockedFor = (why: string | undefined, owner: boolean): string | undefined => (why && !owner ? GUEST_ORCHESTRATOR_BLOCKED : why);
+
 /** Where this tab keeps its link's token, so a refresh still opens it. Per tab (sessionStorage), never localStorage. */
 export const GUEST_TAB_KEY = 'droid-office.guest-link';
 

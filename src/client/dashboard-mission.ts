@@ -9,6 +9,7 @@ import { teamCounts } from '../shared/team';
 import { statusDot, statusIcon, workerDot, workerStatusIcon, WORKER_MIME } from './dashboard-pane';
 import { reconcileChildren, todoMeter } from './dashboard-roster';
 import { botLine, buildingAgent, orchestratorBlocked, orchestratorLine } from './mission';
+import { GUEST_ORCHESTRATOR_BLOCKED } from './dashboard-guest';
 import { h, STATUS_LABEL, timeAgo } from './ui/dom';
 import { grokBotLogo, icon, orchestratorIcon } from './ui/icons';
 import { modelBadgeLabel, modelBadgeNode } from './ui/models';
@@ -180,8 +181,7 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     const team = agent.team;
     const model = w.activeModel ?? w.model;
     const effort = w.activeEffort ?? w.effort;
-    // Why the Orchestrator can't run is the owner's setup to fix, in Settings a guest never sees.
-    const line = orchestrator ? (blocked && s.owner === false ? 'Not available right now' : orchestratorLine(s.mission)) : botLine(agent);
+    const line = orchestrator ? (blocked && s.owner === false ? GUEST_ORCHESTRATOR_BLOCKED : orchestratorLine(s.mission)) : botLine(agent);
     const status = blocked ? 'blocked' : (STATUS_LABEL[w.status] ?? w.status);
     const lastUsed = !orchestrator && agent.lastUsedAt ? `used ${timeAgo(agent.lastUsedAt)}` : '';
     const todos = orchestrator ? w.todos : undefined;
