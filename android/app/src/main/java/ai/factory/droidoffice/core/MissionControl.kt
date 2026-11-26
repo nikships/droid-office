@@ -193,16 +193,15 @@ object MissionControl {
     /** ORCHESTRATOR_MODEL_CHANGE: when a new model or reasoning level takes over. */
     const val MODEL_CHANGE = "A change takes over when its current turn ends, in the same conversation."
 
-    /** ORCHESTRATOR_EXAMPLES. */
-    val examples = listOf(
-        "Run a merge train and get all the open PRs merged across my floors, in order.",
-        "Fan out different models on multiple workers to search for creative new features or improvements to make to the codebase.",
-        "Get CI green on every floor, find the flakes, and fix them so it stays green.",
-        "Triage every open issue across my projects and put workers on the three that matter most.",
-    )
+    data class Example(val tag: String, val prompt: String)
 
-    /** ORCHESTRATOR_EXAMPLE_TAGS. */
-    val exampleTags = listOf("Merge train", "Model fan-out", "Green build", "Triage")
+    /** ORCHESTRATOR_EXAMPLES in src/client/mission.ts. */
+    val examples = listOf(
+        Example("Merge train", "Run a merge train and get all the open PRs merged across my floors, in order."),
+        Example("Model fan-out", "Fan out different models on multiple workers to search for creative new features or improvements to make to the codebase."),
+        Example("Green build", "Get CI green on every floor, find the flakes, and fix them so it stays green."),
+        Example("Triage", "Triage every open issue across my projects and put workers on the three that matter most."),
+    )
 
     const val READY = "Ready for a task anywhere in the building"
 

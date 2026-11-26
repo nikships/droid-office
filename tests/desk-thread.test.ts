@@ -102,5 +102,26 @@ test('the desk window switches Thread and Raw TTY without remounting either view
   await page.waitForFunction(() => document.querySelectorAll('.modal.term').length === 1 && !!(window as any).term?.element);
   assert.equal(await page.locator('.term-host').isVisible(), true, 'the per-worker Raw TTY choice is remembered');
   assert.equal(await page.locator('.term-thread-host').isVisible(), false);
+  await page.locator('.modal.term > header > button.close').click();
+  await page.evaluate(() => {
+    const w = window as any;
+    const { store, openTerminal } = w.TerminalUI;
+    const worker = { ...store.workers.get('pixel'), id: 'orchestrator', name: 'Orchestrator', deskId: '' };
+    w.mission = (status: string, blocked?: string) => {
+      store.apply({ t: 'missionControl', state: { orchestrator: { settings: { on: true }, agent: { worker: { ...worker, status }, team: [] }, team: [], blocked }, bots: [] } });
+    };
+    w.mission('idle');
+    openTerminal(w.net, worker.id);
+  });
+  const badge = page.locator('.modal.term > header .dash-mission-mark');
+  const arrow = badge.locator('.orc-mark-arrow');
+  const animation = () => arrow.evaluate((el) => getComputedStyle(el).animationName);
+  assert.equal(await animation(), 'orc-dispatch');
+  await page.evaluate(() => (window as any).mission('exited', 'Droid is signed out.'));
+  assert.equal(await animation(), 'none', 'an already-open terminal badge stops animating while blocked');
+  assert.equal(await badge.getAttribute('data-status'), 'blocked');
+  await page.evaluate(() => (window as any).mission('idle'));
+  assert.equal(await animation(), 'orc-dispatch', 'the same badge animates when ready again');
+  assert.equal(await badge.getAttribute('data-status'), 'idle');
   assert.deepEqual(errors, []);
 });

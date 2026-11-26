@@ -195,7 +195,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         // A building agent has no desk for a fork to sit at.
         const fork = info.kind === 'agent' && info.deskId ? h('button.btn', { type: 'button', onclick: () => openForkWorker(net, workerId) }, 'Fork') : null;
         const close = h('button.btn.icon.close', { title: 'Leave terminal (Shift+Esc or Ctrl+]) · Esc goes to the terminal', 'aria-label': 'Close', onclick: () => modal.close() }, '✕');
-        const mark = info.id === ORCHESTRATOR_ID ? h('span.dash-mission-mark.sm', { 'aria-hidden': 'true' }, orchestratorIcon(11, { animated: !orchestratorBlocked(store.missionControl) })) : colorDot(info.color);
+        const orchestratorMark = info.id === ORCHESTRATOR_ID ? orchestratorIcon(11) : undefined;
+        const mark = orchestratorMark ? h('span.dash-mission-mark.sm', { 'aria-hidden': 'true' }, orchestratorMark) : colorDot(info.color);
         const element = h('header', {}, mark, h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, viewSwitch, zoom, changes, fork), close);
         const zoomBy = (dir: 1 | -1) => {
           setTermFontSize(stepTermFont(term.options.fontSize ?? termFontSize(), dir));
@@ -205,6 +206,11 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         return {
           element,
           refresh(w: WorkerInfo) {
+            if (orchestratorMark) {
+              const blocked = !!orchestratorBlocked(store.missionControl);
+              mark.dataset.status = blocked ? 'blocked' : w.status;
+              orchestratorMark.classList.toggle('static', blocked);
+            }
             const engine = w.kind !== 'agent' ? null : 'Droid';
             title.textContent = [engine, w.name].filter(Boolean).join(' · ');
             title.title = title.textContent;

@@ -738,7 +738,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     const top = scroll.scrollTop;
     const delta = top - lastScrollTop;
     lastScrollTop = top;
-    if (viewportWidth === scroll.clientWidth && viewportHeight === scroll.clientHeight) {
+    if (!showingIntro() && viewportWidth === scroll.clientWidth && viewportHeight === scroll.clientHeight) {
       const distance = scroll.scrollHeight - top - scroll.clientHeight;
       if ((delta < -1 && distance > 1) || distance > 80) followingLayout = false;
       else if (distance <= 16 && !inspecting) followingLayout = true;
@@ -1216,6 +1216,8 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
     else empty.replaceChildren(h('span.wt-empty-mark', { 'aria-hidden': true }), h('b', {}, 'No messages yet. Start a conversation!'));
     if (enteringIntro) {
       motion.cancel();
+      inspecting = false;
+      followingLayout = true;
       scroll.scrollTop = 0;
     }
   };
@@ -1284,7 +1286,7 @@ export function mountWorkerThread(net: Net, opts: ThreadOptions): WorkerThread {
 
   const rowJson = new WeakMap<object, string>();
   const paintEntries = (older: boolean) => {
-    const stick = !received || (!older && !inspecting && atBottom());
+    const stick = !received || (!older && (showingIntro() || (!inspecting && atBottom())));
     const top = scroll.scrollTop;
     const height = scroll.scrollHeight;
     const want: HTMLElement[] = [];

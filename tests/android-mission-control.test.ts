@@ -27,8 +27,8 @@ test("the phone's Orchestrator identity is the office's", () => {
 
 test("the phone says what the Orchestrator is for in the web companion's words", () => {
   assert.equal(constant('PITCH'), ORCHESTRATOR_PITCH);
-  const examples = [...(/val examples = listOf\(([^)]*)\)/.exec(kotlin)?.[1] ?? '').matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
-  assert.deepEqual(examples, [...ORCHESTRATOR_EXAMPLES]);
+  const examples = [...kotlin.matchAll(/^\s+Example\("([^"]+)", "([^"]+)"\),$/gm)].map(([, tag, prompt]) => ({ tag, prompt }));
+  assert.deepEqual(examples, ORCHESTRATOR_EXAMPLES);
 });
 
 test("the phone says when a new Orchestrator model takes over in the office's words", () => {

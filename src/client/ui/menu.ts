@@ -1,12 +1,13 @@
 import { store, type HudPanel, type Settings, type Topic } from '../state';
 import { waitingOnSomeone } from '../notify';
-import { $, h, openModal, type Child, type Modal } from './dom';
+import { $, h, openModal, type Modal } from './dom';
 
 /** One thing the ☰ menu does. Any of them can be pinned to the top bar. */
 export interface HudAction {
   /** Pins are saved by it, so it never changes. */
   id: string;
-  icon: Child | (() => Child);
+  /** A node factory creates a separate icon for the dock, menu and palette. */
+  icon: string | (() => string | Node);
   label: string | (() => string);
   section: 'Open' | 'Together' | 'Office';
   /** Its keyboard shortcut, if it has one. */
@@ -53,7 +54,7 @@ export function actionLabel(a: HudAction): string {
   return typeof a.label === 'string' ? a.label : a.label();
 }
 
-function actionIcon(a: HudAction): Child {
+function actionIcon(a: HudAction): string | Node {
   return typeof a.icon === 'function' ? a.icon() : a.icon;
 }
 

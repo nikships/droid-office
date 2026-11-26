@@ -15,15 +15,12 @@ export const ORCHESTRATOR_PITCH = 'The building’s own agent. It plans work, hi
 export const ORCHESTRATOR_MODEL_CHANGE = 'A change takes over when its current turn ends, in the same conversation.';
 
 /** Prompts its empty state offers; a click puts one in the composer. Android offers the same four. */
-export const ORCHESTRATOR_EXAMPLES: readonly string[] = [
-  'Run a merge train and get all the open PRs merged across my floors, in order.',
-  'Fan out different models on multiple workers to search for creative new features or improvements to make to the codebase.',
-  'Get CI green on every floor, find the flakes, and fix them so it stays green.',
-  'Triage every open issue across my projects and put workers on the three that matter most.',
+export const ORCHESTRATOR_EXAMPLES: readonly { readonly tag: string; readonly prompt: string }[] = [
+  { tag: 'Merge train', prompt: 'Run a merge train and get all the open PRs merged across my floors, in order.' },
+  { tag: 'Model fan-out', prompt: 'Fan out different models on multiple workers to search for creative new features or improvements to make to the codebase.' },
+  { tag: 'Green build', prompt: 'Get CI green on every floor, find the flakes, and fix them so it stays green.' },
+  { tag: 'Triage', prompt: 'Triage every open issue across my projects and put workers on the three that matter most.' },
 ];
-
-/** Short category tags shown over each suggested dispatch prompt; Android shows the same. */
-export const ORCHESTRATOR_EXAMPLE_TAGS: readonly string[] = ['Merge train', 'Model fan-out', 'Green build', 'Triage'];
 
 /**
  * The Orchestrator as a worker: its session's, or before its first prompt (and after a new conversation)

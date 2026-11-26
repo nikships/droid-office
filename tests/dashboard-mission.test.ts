@@ -236,7 +236,7 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   assert.equal(await pane.locator('.dash-home').count(), 0, 'nothing to send home');
   assert.equal(await pane.locator('.dash-orc-reset').isDisabled(), true, 'no conversation to start over yet');
   assert.equal(await pane.locator('.dash-pane-task').innerText(), 'Ready for a task anywhere in the building');
-  const example = await page.evaluate(() => (window as any).MissionUI.ORCHESTRATOR_EXAMPLES[2]);
+  const example = await page.evaluate(() => (window as any).MissionUI.ORCHESTRATOR_EXAMPLES[2].prompt);
   await pane.locator('.orc-example').nth(2).click();
   assert.equal(await pane.locator('textarea.wt-input').inputValue(), example);
   await pane.locator('textarea.wt-input').press('Enter');

@@ -23,19 +23,7 @@ import type { PaneView } from './dashboard-workspace';
 import { workerTeams } from '../shared/team';
 import { missionAgent, ORCHESTRATOR_ID, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
 import type { SettingsPane } from '../shared/settings-nav';
-import {
-  botLine,
-  buildingAgent,
-  missionLead,
-  ORCHESTRATOR_EXAMPLES,
-  ORCHESTRATOR_EXAMPLE_TAGS,
-  ORCHESTRATOR_PITCH,
-  orchestratorBlocked,
-  orchestratorLine,
-  orchestratorMessage,
-  orchestratorSettingsPane,
-  orchestratorStarted,
-} from './mission';
+import { botLine, buildingAgent, missionLead, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_PITCH, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorSettingsPane, orchestratorStarted } from './mission';
 import { orchestratorAwake } from './mission-office';
 
 /** What a sidebar row carries when it's dragged onto a pane. */
@@ -465,12 +453,12 @@ export function createPane(host: PaneHost, index: number): Pane {
       h(
         'div.orc-examples',
         { role: 'group', 'aria-label': 'Example prompts' },
-        ...ORCHESTRATOR_EXAMPLES.map((text, i) =>
+        ...ORCHESTRATOR_EXAMPLES.map(({ tag, prompt }, i) =>
           h(
             'button.orc-example',
-            { type: 'button', title: 'Put this in the message box', 'aria-label': `Use this prompt: ${text}`, onclick: () => fill(text) },
-            h('span.orc-example-head', {}, h('span.orc-example-tag', {}, h('span.no', {}, `0${i + 1}`), ORCHESTRATOR_EXAMPLE_TAGS[i] ?? 'Dispatch'), icon('arrow', 13)),
-            h('span.orc-example-text', {}, text),
+            { type: 'button', title: 'Put this in the message box', 'aria-label': `Use this prompt: ${prompt}`, onclick: () => fill(prompt) },
+            h('span.orc-example-head', {}, h('span.orc-example-tag', {}, h('span.no', {}, `0${i + 1}`), tag), icon('arrow', 13)),
+            h('span.orc-example-text', {}, prompt),
           ),
         ),
       ),

@@ -336,13 +336,12 @@ private fun Intro(enabled: Boolean, onExample: (String) -> Unit) {
         }
         Spacer(Modifier.height(8.dp))
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            MissionControl.examples.forEachIndexed { i, example ->
-                val tag = MissionControl.exampleTags.getOrNull(i) ?: "Dispatch"
+            MissionControl.examples.forEachIndexed { i, (tag, prompt) ->
                 Column(
                     // An example only fills a composer that's there to take it.
                     Modifier.fillMaxWidth()
                         .panel(RoundedCornerShape(3.dp), Palette.Surface, Palette.BorderStrong)
-                        .clickable(enabled = enabled, onClickLabel = "Use this prompt") { onExample(example) }
+                        .clickable(enabled = enabled, onClickLabel = "Use this prompt") { onExample(prompt) }
                         .tagged(Tags.Orchestrator.example(i + 1))
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -353,7 +352,7 @@ private fun Intro(enabled: Boolean, onExample: (String) -> Unit) {
                         Eyebrow(tag, Modifier.weight(1f), color = Palette.TextSecondary)
                         Text("→", style = LocalOfficeType.current.monoBody.copy(color = if (enabled) Palette.TextTertiary else Palette.TextTertiary.copy(alpha = 0.5f)))
                     }
-                    Text(example, style = MaterialTheme.typography.bodyMedium, color = if (enabled) Palette.Text else Palette.TextSecondary)
+                    Text(prompt, style = MaterialTheme.typography.bodyMedium, color = if (enabled) Palette.Text else Palette.TextSecondary)
                 }
             }
         }
