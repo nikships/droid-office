@@ -18,8 +18,23 @@ import {
 // The Share window's words and rules, kept free of the DOM so tests can load them. The window itself
 // is guest-links.ts.
 
-/** What `GET /api/guest-links` answers. */
-export type ShareState = GuestLinksState;
+/**
+ * What `GET /api/guest-links` answers. `manage` is how much this page may do: `full` on the office's own
+ * page on its own machine, `limited` on the owner's other pages (read, revoke, turn sharing off). Absent
+ * means `full`.
+ */
+export type ShareState = GuestLinksState & { manage?: 'full' | 'limited' };
+
+/** Why a limited page shows no create form and can't turn sharing on. */
+export const LIMITED_TEXT = 'Create share links and turn sharing on from the office on its own computer. Here you can watch, revoke links and turn sharing off.';
+
+export const limitedPage = (state: Pick<ShareState, 'manage'>): boolean => state.manage === 'limited';
+
+/** Whether the sharing switch can move: never while locked, and on a limited page only from on to off. */
+export function switchEnabled(state: Pick<ShareState, 'on' | 'transport' | 'manage'>): boolean {
+  if (state.transport.locked) return false;
+  return !limitedPage(state) || state.on;
+}
 
 export type Tone = 'info' | 'good' | 'warn' | 'bad';
 
@@ -54,7 +69,8 @@ export function transportView(on: boolean, t: GuestTransportState): TransportVie
 }
 
 /** Why the create form can't make a link right now, or undefined when it can. */
-export function createBlocked(state: Pick<ShareState, 'on' | 'transport' | 'links' | 'max'>, now = Date.now()): string | undefined {
+export function createBlocked(state: Pick<ShareState, 'on' | 'transport' | 'links' | 'max' | 'manage'>, now = Date.now()): string | undefined {
+  if (limitedPage(state)) return LIMITED_TEXT;
   if (state.transport.locked) return 'External sharing is locked for this office.';
   if (!state.on) return 'Turn on external sharing to create a share link.';
   if (state.transport.status === 'starting') return 'Wait for the guest address to finish publishing.';

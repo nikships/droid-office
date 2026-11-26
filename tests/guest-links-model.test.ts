@@ -1,6 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { auditActionText, auditTargetText, checkDraft, countdown, createBlocked, expiryView, guestCountText, linkEnded, appendAudit, refreshAudit, scopeText, tickDelay, transportView } from '../src/client/ui/guest-links-model.js';
+import {
+  auditActionText,
+  auditTargetText,
+  checkDraft,
+  countdown,
+  createBlocked,
+  expiryView,
+  guestCountText,
+  linkEnded,
+  appendAudit,
+  refreshAudit,
+  scopeText,
+  switchEnabled,
+  tickDelay,
+  transportView,
+  LIMITED_TEXT,
+} from '../src/client/ui/guest-links-model.js';
 import { GUEST_LABEL_MAX, type GuestAuditEntry, type GuestLinkItem, type GuestTargetFloor } from '../src/shared/guest-links.js';
 
 const NOW = Date.parse('2026-11-25T12:00:00.000Z');
@@ -40,6 +56,17 @@ test('creation is blocked with a reason unless sharing is on, serving and under 
   // Ended links don't count toward the cap, including ones past expiry the server hasn't marked yet.
   assert.equal(createBlocked({ ...base, links: [link(), link({ id: 'l2', status: 'revoked' })] }, NOW), undefined);
   assert.equal(createBlocked({ ...base, links: [link(), link({ id: 'l3', expiresAt: at(-1) })] }, NOW), undefined);
+});
+
+test('a limited page can watch, revoke and turn sharing off, but not create or turn it on', () => {
+  const base = { on: true, transport: serving, links: [] as GuestLinkItem[], max: 32 };
+  assert.equal(createBlocked({ ...base, manage: 'limited' }, NOW), LIMITED_TEXT);
+  assert.equal(createBlocked({ ...base, manage: 'full' }, NOW), undefined);
+  assert.equal(createBlocked(base, NOW), undefined, 'no manage field means full');
+  assert.equal(switchEnabled({ ...base, manage: 'limited' }), true, 'on: it can turn sharing off');
+  assert.equal(switchEnabled({ ...base, on: false, manage: 'limited' }), false, 'off: it cannot turn sharing on');
+  assert.equal(switchEnabled({ ...base, on: false }), true);
+  assert.equal(switchEnabled({ ...base, transport: { status: 'off', locked: 'locked' } }), false);
 });
 
 test('countdown shows the two largest units', () => {

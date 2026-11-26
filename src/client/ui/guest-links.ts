@@ -19,7 +19,25 @@ import { h, openModal, timeAgo, toast } from './dom';
 import { icon } from './icons';
 import { choices, emptyState, field, toggle, windowHeader } from './kit';
 import { confirmDialog } from './prompt';
-import { appendAudit, auditActionText, auditTargetText, checkDraft, createBlocked, expiryView, guestCountText, linkEnded, refreshAudit, scopeText, tickDelay, transportView, type ShareDraft, type ShareState } from './guest-links-model';
+import {
+  LIMITED_TEXT,
+  limitedPage,
+  switchEnabled,
+  appendAudit,
+  auditActionText,
+  auditTargetText,
+  checkDraft,
+  createBlocked,
+  expiryView,
+  guestCountText,
+  linkEnded,
+  refreshAudit,
+  scopeText,
+  tickDelay,
+  transportView,
+  type ShareDraft,
+  type ShareState,
+} from './guest-links-model';
 
 // The 🔗 Share window: the external-sharing switch, new share links, the links with their live guests,
 // and what guests changed. Only the office's own page on its own machine may read or change any of it
@@ -129,6 +147,7 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
 
   // ---- The secret link, shown once -------------------------------------------------------------
   const created = h('section.share-created.hidden', { 'aria-label': 'New share link', tabindex: '-1' });
+  const limitedNote = h('p.note.info.hidden', {}, LIMITED_TEXT);
 
   // ---- Links -----------------------------------------------------------------------------------
   const linksCount = h('span.share-count');
@@ -142,7 +161,7 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
   const sections = h(
     'div.stack.loose.share-sections',
     {},
-    h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '01'), 'Create a share link'), created, form),
+    h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '01'), 'Create a share link'), limitedNote, created, form),
     h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '02'), 'Share links', linksCount), linksList),
     h('section.section', {}, h('div.eyebrow', {}, h('span.no', {}, '03'), 'Guest activity'), auditNote, auditList, h('div.row.share-more', {}, auditMore)),
   );
@@ -173,8 +192,8 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
       clearTimeout(poll);
     }
   };
-  const finalFail = (r: Fail): boolean => {
-    if (r.status === 403) {
+  const finalFail = (r: Fail, reading = false): boolean => {
+    if (r.status === 403 && reading) {
       fail('Manage share links from the office on its own computer (this page is another device).', true);
       onChange?.('Share links are managed from the office on its own computer.');
       return true;
@@ -229,6 +248,11 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
   };
 
   const paintCreate = (state: ShareState) => {
+    // A limited page gets one plain line instead of a form it could never submit.
+    const limited = limitedPage(state);
+    limitedNote.classList.toggle('hidden', !limited);
+    if (limited) hideCreated();
+    form.classList.toggle('hidden', limited || !created.classList.contains('hidden'));
     const why = createBlocked(state);
     blocked.textContent = why ?? '';
     blocked.classList.toggle('hidden', !why);
@@ -240,7 +264,8 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
   const paintHero = (state: ShareState) => {
     const view = transportView(state.on, state.transport);
     sw.input.checked = state.on;
-    sw.input.disabled = busy || !!state.transport.locked;
+    sw.input.disabled = busy || !switchEnabled(state);
+    sw.title = !switchEnabled(state) && limitedPage(state) && !state.transport.locked ? LIMITED_TEXT : '';
     pill.className = `pill share-pill ${view.tone}`;
     pill.textContent = view.pill;
     heroText.textContent = view.text;
@@ -272,7 +297,13 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
     linksCount.textContent = state.links.length ? `${active} active · ${guestCountText(state.guests).toLowerCase()}` : '';
     expiryCells.clear();
     if (!state.links.length) {
-      linksList.replaceChildren(h('li.share-empty', {}, emptyState('🔗', 'No share links yet', 'Create one above. Each link opens the web companion with only the access you choose.')));
+      linksList.replaceChildren(
+        h(
+          'li.share-empty',
+          {},
+          emptyState('🔗', 'No share links yet', limitedPage(state) ? 'Links created on the office’s own computer show up here.' : 'Create one above. Each link opens the web companion with only the access you choose.'),
+        ),
+      );
       return;
     }
     // Active links first, newest first; ended ones under them.
@@ -346,7 +377,7 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
     const r = await call<ShareState>('GET', '/api/guest-links');
     if (disposed) return;
     if (!r.ok) {
-      if (!finalFail(r)) {
+      if (!finalFail(r, true)) {
         fail(r.error);
         clearTimeout(poll);
         poll = setTimeout(() => void load(), 3000);
@@ -409,7 +440,7 @@ export function openShare(feed: ShareFeed, onChange?: (state: ShareState | strin
     auditMore.disabled = false;
     if (disposed) return;
     if (!r.ok) {
-      if (!finalFail(r)) {
+      if (!finalFail(r, true)) {
         auditNote.textContent = `Could not read guest activity: ${r.error}`;
         auditNote.classList.remove('hidden');
       }
