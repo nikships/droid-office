@@ -47,7 +47,10 @@ export interface TransportView {
 
 export function transportView(on: boolean, t: GuestTransportState): TransportView {
   if (t.locked) return { pill: 'Locked', tone: 'warn', text: t.locked };
-  if (!on || t.status === 'off') return { pill: 'Off', tone: 'info', text: 'External sharing is off. No share link opens, and nothing is published to the internet.' };
+  if (!on || t.status === 'off') {
+    if (t.reason) return { pill: 'Off', tone: 'warn', text: t.reason };
+    return { pill: 'Off', tone: 'info', text: 'External sharing is off. No share link opens, and nothing is published to the internet.' };
+  }
   if (t.status === 'starting') return { pill: 'Starting', tone: 'info', text: 'Publishing the guest address through Tailscale Funnel…' };
   if (t.status === 'serving')
     return {

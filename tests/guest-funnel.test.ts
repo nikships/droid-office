@@ -223,6 +223,45 @@ test('turning sharing off closes open guest WebSockets immediately, even while t
   assert.deepEqual(cli.mappings, []);
 });
 
+/** Resolves once `ok()` holds, polling the real timers the funnel's retry runs on. */
+async function until(ok: () => boolean, ms = 5_000) {
+  const end = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > end) throw new Error('Timed out waiting');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test('turning sharing off while Tailscale is unreachable says so and retries until the mapping is gone; turning it on cancels the retry', async (t) => {
+  const { cli, funnel, file } = rig(t, new FunnelCli(), { retryMs: 10 });
+  await funnel.set(true);
+  cli.up = false;
+  const off = await funnel.set(false);
+  assert.equal(off.status, 'off');
+  assert.match(off.reason!, /could not be removed yet/);
+  assert.match(off.reason!, /tailscale funnel --https=10000 off/);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).published, true);
+  cli.up = true;
+  await until(() => !cli.mappings.length && funnel.state().reason === undefined);
+  assert.deepEqual(funnel.state(), { status: 'off' });
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).published, false);
+
+  // A failed removal retries too, and sharing on again stops it from removing the new mapping.
+  await funnel.set(true);
+  const unfunnel = cli.unfunnel.bind(cli);
+  cli.unfunnel = async (port) => {
+    cli.calls.push(`funnel-off-failed:${port}`);
+    return false;
+  };
+  assert.match((await funnel.set(false)).reason!, /could not be removed yet/);
+  cli.unfunnel = unfunnel;
+  assert.equal((await funnel.set(true)).status, 'serving');
+  cli.calls = [];
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(cli.calls, [], 'no removal after sharing is back on');
+  assert.equal(cli.mappings.length, 1);
+});
+
 test('a mapping left by an unclean exit is reclaimed or removed at the next start, only by the office that made it', async (t) => {
   const cli = new FunnelCli();
   const { make, file, dataDir } = rig(t, cli);
