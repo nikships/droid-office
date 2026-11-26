@@ -16,7 +16,7 @@ A companion app for your phone. Pair it with your office once over Tailscale HTT
 
 ## What it does
 
-- **Appearance.** Open **Me → Appearance**, or **Appearance** on the welcome screen before pairing. Pick an artwork to use its wallpaper, moving overlay and colors on this device. **Original** restores the original Android look. The selection survives restarts and office switches; it does not change the web companion. See the [artwork port checklist](artwork-port.md).
+- **Appearance.** Open **Me → Appearance**, or **Appearance** on the welcome screen before pairing. Pick an artwork to use its wallpaper, moving overlay and colors on this device. When Android animations are off, the artwork holds its first frame. **Original** restores the original Android look. The selection survives restarts and office switches; it does not change the web companion. See the [artwork port checklist](artwork-port.md).
 
 One answer workspace walks a whole AskUser questionnaire: a step bar lists every question (done ones with their answer) and **Submit and continue** sends the current answer, then shows the worker's next question in the same dialog. If you haven't touched a question that gets answered in Raw TTY, the workspace moves on to the next one by itself; a started draft is kept and flagged as stale instead. Questionnaires on newer Droid CLIs end with **Review your answers**: check the summary, then tap **Submit answers** to finish, and the workspace closes. Editing remains available in Raw TTY. Changing an answer or disconnecting invalidates the old review; nothing submits automatically. Older CLIs without this extra step continue to work.
 
