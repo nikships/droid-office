@@ -3,7 +3,9 @@ import type { Floor } from '../floor.js';
 import type { DevicesStore } from '../devices.js';
 import type { WorkerManager } from '../workers.js';
 import type { ServerMsg } from '../../shared/protocol.js';
+import { guestOutbound, guestSeesWorker, type GuestSendContext } from '../../shared/guest-policy.js';
 import type { Client } from './client.js';
+import { guestWorld } from './guest-gate.js';
 
 const SLOW_CLIENT_BYTES = 8 * 1024 * 1024;
 
@@ -14,11 +16,24 @@ interface TransportContext {
 
 /** Outbound socket delivery, terminal backpressure, and off-floor screen coalescing. */
 export function createClientTransport({ clients, floors }: TransportContext) {
+  const world = guestWorld(floors);
+  /**
+   * The frame `c` gets for `msg`: the owner's shared JSON, or for a guest connection (a share link)
+   * only what its scope allows, redacted (see shared/guest-policy.ts). Undefined sends nothing.
+   */
+  const frameFor = (c: Client, msg: ServerMsg, ctx: Omit<GuestSendContext, 'here'>, shared: () => string): string | undefined => {
+    if (!c.guest) return shared();
+    const out = guestOutbound(c.guest, msg, { ...ctx, here: c.floor }, world);
+    return out && JSON.stringify(out);
+  };
   const sendTo = (c: Client, msg: ServerMsg) => {
-    if (c.ws.readyState === WebSocket.OPEN) c.ws.send(JSON.stringify(msg));
+    if (c.ws.readyState !== WebSocket.OPEN) return;
+    const json = frameFor(c, msg, { via: 'direct' }, () => JSON.stringify(msg));
+    if (json) c.ws.send(json);
   };
   const broadcast = (msg: ServerMsg, except?: string, droppable = false): boolean => {
     let json: string | undefined;
+    const shared = () => (json ??= JSON.stringify(msg));
     let dropped = false;
     for (const c of clients.values()) {
       if (c.id === except || c.ws.readyState !== WebSocket.OPEN) continue;
@@ -26,14 +41,15 @@ export function createClientTransport({ clients, floors }: TransportContext) {
         dropped = true;
         continue;
       }
-      json ??= JSON.stringify(msg);
-      c.ws.send(json);
+      const frame = frameFor(c, msg, { via: 'all' }, shared);
+      if (frame) c.ws.send(frame);
     }
     return dropped;
   };
   /** To everyone on one floor. */
   const toFloor = (floor: Floor, msg: ServerMsg, droppable = false): boolean => {
     let json: string | undefined;
+    const shared = () => (json ??= JSON.stringify(msg));
     let dropped = false;
     for (const c of clients.values()) {
       if (c.floor !== floor.id || c.ws.readyState !== WebSocket.OPEN) continue;
@@ -41,16 +57,21 @@ export function createClientTransport({ clients, floors }: TransportContext) {
         dropped = true;
         continue;
       }
-      json ??= JSON.stringify(msg);
-      c.ws.send(json);
+      const frame = frameFor(c, msg, { via: 'floor', floor: floor.id }, shared);
+      if (frame) c.ws.send(frame);
     }
     return dropped;
   };
   const termData = (workerId: string, data: string, connectionIds: string[]) => {
     const json = JSON.stringify({ t: 'term.data', workerId, data } satisfies ServerMsg);
+    let floorId: string | undefined | null = null;
     for (const id of connectionIds) {
       const c = clients.get(id);
       if (!c || c.ws.readyState !== WebSocket.OPEN) continue;
+      if (c.guest) {
+        if (floorId === null) floorId = world.floorOf(workerId);
+        if (!guestSeesWorker(c.guest, workerId, floorId)) continue;
+      }
       // A connection on a slow link skips output and gets a fresh snapshot once it catches up,
       // instead of queueing unbounded data in server memory.
       if (c.stale.has(workerId) || c.ws.bufferedAmount > SLOW_CLIENT_BYTES) c.stale.add(workerId);
@@ -68,11 +89,14 @@ export function createClientTransport({ clients, floors }: TransportContext) {
     if (floor.workers.get(workerId)?.status !== 'needs_input') return;
     const frame = floor.workers.fullScreen(workerId);
     if (!frame) return;
-    const json = JSON.stringify({ t: 'screen', workerId, ...frame, full: true } satisfies ServerMsg);
+    const msg = { t: 'screen', workerId, ...frame, full: true } satisfies ServerMsg;
+    let json: string | undefined;
+    const shared = () => (json ??= JSON.stringify(msg));
     for (const c of clients.values()) {
       if (c.floor === floor.id || c.ws.readyState !== WebSocket.OPEN) continue;
       if (c.ws.bufferedAmount > 4 * 1024 * 1024) continue;
-      c.ws.send(json);
+      const out = frameFor(c, msg, { via: 'floor', floor: floor.id }, shared);
+      if (out) c.ws.send(out);
     }
   };
   /** Sends a worker's full screen to connections not on `floor`, coalescing rapid TUI redraws. */

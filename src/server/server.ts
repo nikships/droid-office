@@ -8,12 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Config } from './config.js';
 import type { AddressInfo } from 'node:net';
-import { lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
+import { isGuestRequest, lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
 import { DevicesStore } from './devices.js';
 import { TailscaleWatch } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
 import { TailnetHttps } from './tailnet-https.js';
-import { GuestLinks } from './guest-links.js';
+import { GuestLinks, type GuestGrant } from './guest-links.js';
+import { GUEST_WS_PROTOCOL } from '../shared/guest-links.js';
 import { GuestAudit } from './guest-audit.js';
 import { GuestFunnel } from './guest-funnel.js';
 import type { PairedDevice } from '../shared/devices.js';
@@ -90,6 +91,7 @@ import { createAccess } from './server-runtime/access.js';
 import { createHttpHandler } from './server-runtime/http.js';
 import { createFloorHttp } from './server-runtime/floor-http.js';
 import { createGuestHttp } from './server-runtime/guest-http.js';
+import { createGuestGate, guestName } from './server-runtime/guest-gate.js';
 import type { Client, ToastLevel } from './server-runtime/client.js';
 import { readBody, send, sameOrigin, refuseUpgrade } from './server-runtime/http-utils.js';
 import { str, num, repoOf, imageIds } from './server-runtime/validation.js';
@@ -1024,7 +1026,17 @@ export async function startServer(cfg: Config) {
   const server = cfg.tls ? https.createServer({ cert: cfg.tls.cert, key: cfg.tls.key }, handler) : http.createServer(handler);
 
   // --- WebSocket -------------------------------------------------------------------------------
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 2 * 1024 * 1024 });
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: 2 * 1024 * 1024,
+    // A guest page offers [GUEST_WS_PROTOCOL, token]: answer with the protocol, never the token. Everyone else keeps ws's default (the first offered).
+    handleProtocols: (protocols, req) => (isGuestRequest(req) ? (protocols.has(GUEST_WS_PROTOCOL) ? GUEST_WS_PROTOCOL : false) : (protocols.values().next().value ?? false)),
+  });
+  /** Whether an upgrade offers the guest subprotocol, which only the guest backend answers. */
+  const offersGuestProtocol = (req: http.IncomingMessage) =>
+    String(req.headers['sec-websocket-protocol'] ?? '')
+      .split(',')
+      .some((p) => p.trim() === GUEST_WS_PROTOCOL);
   server.on('upgrade', (req, socket, head) => {
     socket.on('error', () => socket.destroy());
     let url: URL;
@@ -1039,6 +1051,15 @@ export async function startServer(cfg: Config) {
     // the Origin check: a browser can't set that header on a WebSocket, so no web page can send it.
     // `?d=` can come from a page, so it doesn't. One check per connection; nothing per message.
     if (url.pathname !== '/ws') return refuseUpgrade(socket);
+    // The guest backend (guest-funnel.ts) checked Host and Origin; a guest authenticates only with its share link's token.
+    if (isGuestRequest(req)) {
+      const verdict = guestLinks.authenticate(req, url);
+      if (!verdict.ok) return refuseUpgrade(socket);
+      wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, url, undefined, verdict.grant));
+      return;
+    }
+    // A share link's token opens nothing outside the guest backend.
+    if (offersGuestProtocol(req)) return refuseUpgrade(socket);
     const gate = access(req, url);
     if (!gate.ok || (!(gate.device && gate.header) && !sameOrigin(req, cfg))) return refuseUpgrade(socket);
     if (!companion.on && (gate.device?.kind === 'browser' || url.searchParams.get('client') === 'dashboard')) return refuseUpgrade(socket);
@@ -1060,12 +1081,21 @@ export async function startServer(cfg: Config) {
     onState: () => guestLinksChanged(),
   });
 
-  const onConnection = (ws: WebSocket, url: URL, device?: PairedDevice) => {
+  /**
+   * Where a guest arrives: a floor or single-worker link on its own floor (the lobby when that floor is
+   * closed), an office-wide link on the floor it asks for when that is open, else the first floor. Never the roof.
+   */
+  const guestLanding = (grant: GuestGrant, wanted: string | null): Floor | undefined => {
+    if (grant.session.scope !== 'office') return grant.floorId ? floors.get(grant.floorId) : undefined;
+    return (wanted ? floors.get(wanted) : undefined) ?? floors.values().next().value;
+  };
+
+  const onConnection = (ws: WebSocket, url: URL, device?: PairedDevice, guest?: GuestGrant) => {
     const id = randomBytes(5).toString('hex');
     // Back on the floor they were on before a reload, a restart or closing the tab, else the first floor.
     const wanted = url.searchParams.get('floor');
     // A floor that's gone since (taken off the building, or its checkout deleted) sends them up to the roof.
-    const landing = returnLanding(wanted, [...floors.keys()], ROOF);
+    const landing = guest ? { onRoof: false, floorId: guestLanding(guest, wanted)?.id, back: false, gone: false } : returnLanding(wanted, [...floors.keys()], ROOF);
     const onRoof = landing.onRoof;
     const floor = landing.floorId ? floors.get(landing.floorId) : undefined;
     // Back where they were standing on it too; anywhere else, they arrive by elevator.
@@ -1077,8 +1107,8 @@ export async function startServer(cfg: Config) {
       via: !onRoof && !floor ? 'lobby' : saved ? 'saved' : landing.gone ? 'roof' : 'elevator',
       ...(landing.gone ? { removed: true } : {}),
     };
-    // The connection names itself (?name=, or the `profile` message): display provenance only.
-    const name = str(url.searchParams.get('name'), 24).trim() || `Guest ${id.slice(0, 3)}`;
+    // The connection names itself (?name=, or the `profile` message): display provenance only. A guest is named by its link.
+    const name = guest ? guestName(guest) : str(url.searchParams.get('name'), 24).trim() || `Guest ${id.slice(0, 3)}`;
     const colorParam = url.searchParams.get('color') ?? '';
     const client: Client = {
       id,
@@ -1090,13 +1120,16 @@ export async function startServer(cfg: Config) {
       isAlive: true,
       peer: { name, color: COLOR_RE.test(colorParam) ? colorParam : '#4f86f7' },
       ...(device ? { device: device.id, ...(device.kind !== 'browser' ? { phoneSizes: new PhoneSizes() } : {}) } : {}),
-      dashboard: url.searchParams.get('client') === 'dashboard' || device?.kind === 'browser',
+      dashboard: !!guest || url.searchParams.get('client') === 'dashboard' || device?.kind === 'browser',
       requests: new Set(),
       boards: new Map(),
+      ...(guest ? { guest } : {}),
     };
     clients.set(id, client);
     ws.on('pong', () => (client.isAlive = true));
-    if (floor) floorActivity.visited(floor.id);
+    // Revoking the link, its expiry or turning sharing off closes this socket with the contract's code.
+    const unregisterGuest = guest ? guestLinks.register(guest, (code, reason) => ws.close(code, reason)) : undefined;
+    if (floor && !guest) floorActivity.visited(floor.id);
 
     sendTo(client, {
       t: 'welcome',
@@ -1126,6 +1159,7 @@ export async function startServer(cfg: Config) {
       subscriptions: subscriptions.state(),
       missionControl: missionState(),
       building: buildingRoster(),
+      ...(guest ? { guest: guest.session } : {}),
       ...(onRoof ? roofView() : floorView(floor)),
     });
     screensOf(client, floor);
@@ -1134,8 +1168,8 @@ export async function startServer(cfg: Config) {
     floorsChanged();
     if (floor) {
       floor.arrived();
-      // Anyone whose process ended since (exited, or failed to resume) gets up as you walk in.
-      floor.workers.wakeAll();
+      // Anyone whose process ended since (exited, or failed to resume) gets up as you walk in. A guest wakes nobody.
+      if (!guest) floor.workers.wakeAll();
     }
 
     ws.on('message', (raw) => {
@@ -1151,6 +1185,7 @@ export async function startServer(cfg: Config) {
     });
     ws.on('close', () => {
       clients.delete(id);
+      unregisterGuest?.();
       for (const r of client.phoneSizes?.restores((wid) => workersOf(wid)?.get(wid)) ?? []) workersOf(r.workerId)?.resize(r.workerId, r.size.cols, r.size.rows);
       orchestrator.workers.detachAll(id);
       automation.disconnect(id);
@@ -1185,7 +1220,7 @@ export async function startServer(cfg: Config) {
     sendBoard(c, floor);
     sendTo(c, { t: 'visits', visits: floor.visits.list() });
     floor.arrived();
-    floor.workers.wakeAll();
+    if (!c.guest) floor.workers.wakeAll();
     officeVibes.syncViewers(true);
     floorsChanged();
   };
@@ -1221,6 +1256,15 @@ export async function startServer(cfg: Config) {
     floorsSent = JSON.stringify(list);
     broadcast({ t: 'floors', floors: list });
     for (const c of clients.values()) {
+      // A floor or single-worker link reaches nothing else: its guests wait in the lobby, told nothing about other floors.
+      const scoped = !!c.guest && c.guest.session.scope !== 'office';
+      if (scoped) {
+        if (c.floor === floor.id) {
+          toLobby(c);
+          sendTo(c, { t: 'toast', text: 'This floor is no longer shared.', level: 'warn' });
+        }
+        continue;
+      }
       if (c.floor === floor.id || (!next && c.floor === ROOF)) {
         if (next) goToFloor(c, next);
         else toLobby(c);
@@ -1307,7 +1351,22 @@ export async function startServer(cfg: Config) {
 
   const handleBoardCommand = createBoardCommands({ floorOf, sendTo, toastFloor });
 
+  const guestGate = createGuestGate({
+    floors,
+    guestLinks,
+    guestAudit,
+    sendTo,
+    workerInfo: (workerId) => workersOf(workerId)?.get(workerId) ?? cloud.find(workerId)?.info,
+  });
+
   const handleMessage = (c: Client, msg: ClientMsg) => {
+    // A share link's guest: default deny before anything else reads the message (shared/guest-policy.ts).
+    if (c.guest) {
+      const guest = c as Client & { guest: GuestGrant };
+      const admitted = guestGate.admit(guest, msg);
+      if (!admitted) return;
+      guestGate.record(guest, msg, admitted);
+    }
     const who = c.peer.name;
     const requestId = str(msg.requestId, 64);
     let finished = false;
@@ -1615,7 +1674,7 @@ export async function startServer(cfg: Config) {
         const floor = floors.get(str(msg.floor, 64));
         if (!floor) warn(c, 'No such floor');
         else {
-          floorActivity.visited(floor.id);
+          if (!c.guest) floorActivity.visited(floor.id);
           goToFloor(c, floor, arrivalSpot(msg.at));
           floorsChanged();
         }

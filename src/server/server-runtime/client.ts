@@ -1,6 +1,7 @@
 import type { WebSocket } from 'ws';
 import type { ServerMsg } from '../../shared/protocol.js';
 import type { PhoneSizes } from '../phone-sizes.js';
+import type { GuestGrant } from '../guest-links.js';
 
 export type ToastLevel = Extract<ServerMsg, { t: 'toast' }>['level'];
 export interface Client {
@@ -12,7 +13,7 @@ export interface Client {
   /**
    * Display provenance only: the name (?name=, or the `profile` message) and color this
    * connection's toasts, createdBy and score names are written with. Nothing routes or filters
-   * by it; every connection is the owner.
+   * by it; every connection but a share link's guest is the owner.
    */
   peer: { name: string; color: string };
   attached: Set<string>;
@@ -30,6 +31,11 @@ export interface Client {
   requests: Set<string>;
   /** The Whiteboard epoch this connection numbers its batches in, per floor (see WhiteboardStore.issueEpoch). */
   boards: Map<string, string>;
+  /**
+   * A share link's guest (see guest-links.ts): what its link lets it see and do. Never a device and never
+   * the owner; every message it sends passes the guest gate and everything sent to it is scoped (guest-policy.ts).
+   */
+  guest?: GuestGrant;
   /** An external worker's owner action: `refused` is the first warning it was given, its outcome when nothing else says. */
   owner?: { refused?: string; unconfirmed?: boolean };
 }
