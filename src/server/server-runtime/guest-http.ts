@@ -357,5 +357,5 @@ export function createGuestHttp(ctx: GuestHttpContext) {
     return send(res, 405, { error: 'Use GET, PUT or POST' });
   };
 
-  return { guestRequest, ownerRequest, state, setSharing };
+  return { guestRequest, ownerRequest };
 }
