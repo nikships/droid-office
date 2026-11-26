@@ -47,9 +47,6 @@ export interface ThemeTerminal {
 export const IMMERSIVE_KEYS = ['heading-font', 'caption-font', 'chrome-finish', 'panel-edge', 'badge-face', 'badge-ink', 'imprint', 'selection', 'section-rule', 'scrollbar-thumb'] as const;
 export type ImmersiveTheme = Partial<Record<(typeof IMMERSIVE_KEYS)[number], string>>;
 
-/** Keys on the original signatures that no longer reach the stylesheet. */
-type LegacyFinish = 'panel-radius' | 'control-finish' | 'control-radius' | 'focus-outline' | 'row-hover' | 'row-active' | 'sheet-finish' | 'control-motion';
-
 export interface CompanionTheme {
   id: string;
   name: string;
@@ -555,7 +552,7 @@ export const COMPANION_THEMES = [
     },
     terminal: { foreground: '#eeeeee', cursor: '#e9e9ea', background: '#060607', selection: '#3a3a3e' },
   },
-] as const satisfies readonly (CompanionTheme & { immersive?: Partial<Record<LegacyFinish, string>> & ImmersiveTheme })[];
+] as const satisfies readonly CompanionTheme[];
 
 export type CompanionThemeId = (typeof COMPANION_THEMES)[number]['id'];
 
