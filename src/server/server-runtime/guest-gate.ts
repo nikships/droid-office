@@ -7,7 +7,7 @@ import type { GuestAudit } from '../guest-audit.js';
 import type { GuestGrant, GuestLinks } from '../guest-links.js';
 import type { Floor } from '../floor.js';
 import { GUEST_CLOSE_DISABLED, GUEST_CLOSE_ENDED, type GuestAuditAction, type GuestAuditTarget } from '../../shared/guest-links.js';
-import { GUEST_REFUSED, guestAdmit, repoFloors, type GuestAdmitted, type GuestWorld } from '../../shared/guest-policy.js';
+import { GUEST_REFUSED, guestAdmit, guestSeesWorker, repoFloors, type GuestAdmitted, type GuestWorld } from '../../shared/guest-policy.js';
 import type { ClientMsg, WorkerInfo } from '../../shared/protocol.js';
 import type { Client, SendTo } from './client.js';
 
@@ -145,6 +145,15 @@ export function createGuestGate({ floors, guestLinks, guestAudit, sendTo, worker
 
   return {
     world,
+    /**
+     * Whether `c` may have the office act on worker `workerId` beyond the one its message named: the owner
+     * always, a guest as admission decides (where the worker sits and every floor it works in).
+     */
+    sees(c: Client, workerId: string): boolean {
+      if (!c.guest) return true;
+      const floorId = world.floorOf(workerId);
+      return !!floorId && world.isOpen(floorId) && guestSeesWorker(c.guest, workerId, floorId, world.reposOf(workerId));
+    },
     /**
      * Whether guest connection `c` may send `msg`: its link still open, then the policy. A refused
      * message gets the generic error when it asked for a receipt, and nothing else.

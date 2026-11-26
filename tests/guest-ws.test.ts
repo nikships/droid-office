@@ -5,7 +5,7 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
@@ -16,7 +16,7 @@ import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 import { GUEST_CLOSE_DISABLED, GUEST_CLOSE_ENDED, GUEST_WS_PROTOCOL, type GuestAuditPage, type GuestLinkCreated, type GuestLinksState, type GuestPreset } from '../src/shared/guest-links.js';
 import { GUEST_ORCHESTRATOR_BLOCKED, GUEST_REFUSED } from '../src/shared/guest-policy.js';
-import { SUBAGENT_DEFAULTS, type ClientMsg, type ServerMsg } from '../src/shared/protocol.js';
+import { SUBAGENT_DEFAULTS, type ClientMsg, type ServerMsg, type WorkerInfo } from '../src/shared/protocol.js';
 
 const DNS = 'office.guest-test.ts.net';
 const GUEST_ORIGIN = `https://${DNS}:10000`;
@@ -241,7 +241,9 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   assert.equal(vw.project?.agentCmd, '');
   for (const key of OWNER_ONLY_WELCOME) assert.equal(key in vw, false, `welcome carries no ${key}`);
 
-  assert.deepEqual(await vf.act({ t: 'worker.prompt', workerId: a1, prompt: 'echo nope' }), { t: 'action.result', requestId: (vf.messages.at(-1) as { requestId: string }).requestId, ok: false, error: GUEST_REFUSED });
+  // Other frames may arrive after the refusal: check the receipt act() matched by its request id.
+  const viewOnly = await vf.act({ t: 'worker.prompt', workerId: a1, prompt: 'echo nope' });
+  assert.deepEqual(viewOnly, { t: 'action.result', requestId: viewOnly.requestId, ok: false, error: GUEST_REFUSED });
   // Out of scope and nonexistent look the same.
   const outOfScope = await vf.act({ t: 'worker.attach', workerId: b1 });
   const missing = await vf.act({ t: 'worker.attach', workerId: 'no-such-worker' });
@@ -268,7 +270,7 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
     false,
   );
   owner.send({ t: 'worker.detach', workerId: a2 });
-  await owner.wait('worker.update', (m) => m.worker.id === a2 && m.worker.open === false);
+  await owner.until(() => owner.messages.slice(opened).find((m) => m.t === 'worker.update' && m.worker.id === a2 && m.worker.open === false), 'a2 closed');
   vf.send({ t: 'term.input', workerId: a1, data: 'echo VIEW_ONLY_TYPED\r' });
   vf.send({ t: 'term.resize', workerId: a1, cols: 33, rows: 11 });
   assert.equal((await vf.act({ t: 'floor.go', floor: betaId })).error, GUEST_REFUSED);
@@ -366,8 +368,10 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   const refused = await eo.act({ t: 'orchestrator.prompt', prompt: 'hi' });
   assert.deepEqual([refused.ok, refused.error], [false, GUEST_ORCHESTRATOR_BLOCKED]);
   assert.ok(!eo.messages.some((m) => m.t === 'toast' && /Office MCP/.test(m.text)), 'the owner’s reason never reaches the guest');
+  // Only a Mission Control update after the block says it's lifted: earlier ones predate it.
+  const blockedAt = eo.messages.indexOf(guestBlocked);
   owner.send({ t: 'subagents.set', settings: SUBAGENT_DEFAULTS });
-  await eo.wait('missionControl', (m) => !m.state.orchestrator.blocked);
+  await eo.until(() => eo.messages.slice(blockedAt + 1).find((m) => m.t === 'missionControl' && !m.state.orchestrator.blocked), 'the Orchestrator unblocked');
   for (const key of OWNER_ONLY_WELCOME) assert.equal(key in eow, false, `welcome carries no ${key}`);
   const ownerOnly: ClientMsg[] = [
     { t: 'profile', name: 'x', color: '#000000', look: {} as never },
@@ -472,8 +476,9 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   );
 
   // The single worker going home reaches its guest, and nothing else does.
+  const goingBack = owner.messages.length;
   owner.send({ t: 'floor.go', floor: alphaId });
-  await owner.wait('floor.enter', (m) => m.floor === alphaId && m.workers.some((w) => w.id === a3));
+  await owner.until(() => owner.messages.slice(goingBack).find((m) => m.t === 'floor.enter' && m.floor === alphaId && m.workers.some((w) => w.id === a3)), 'the owner back on alpha');
   const killed = await owner.act({ t: 'worker.kill', workerId: a3 });
   assert.equal(killed.ok, true, killed.error);
   // Gone from every map by now: the floor it left still routes the news to everyone whose scope held it.
@@ -532,9 +537,11 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   await vb.wait('floor.enter', (m) => m.floor === null && m.arrival.via === 'lobby');
   await vb.wait('toast', (m) => m.text === 'This floor is no longer shared.');
   assert.equal((await vb.act({ t: 'floor.go', floor: betaId })).error, GUEST_REFUSED, 'a closed floor is nowhere to go');
+  const reopening = owner.messages.length;
   const readded = await owner.act({ t: 'floor.add', dir: path.join(path.dirname(r.alphaDir), 'beta') });
   assert.equal(readded.ok, true, readded.error);
-  assert.equal((await owner.wait('floor.added', (m) => !!m.floor && m.floor !== alphaId)).floor, betaId, 'the same checkout opens as the same floor');
+  const added = await owner.until(() => owner.messages.slice(reopening).find((m) => m.t === 'floor.added' && !!m.floor && m.floor !== alphaId), 'beta added again');
+  assert.equal(added.t === 'floor.added' && added.floor, betaId, 'the same checkout opens as the same floor');
   const back = await vb.wait('floor.enter', (m) => m.floor === betaId);
   assert.equal(back.arrival.floor, betaId);
   assert.equal(JSON.stringify(vb.messages).includes(alphaId), false, 'a floor guest in the lobby hears nothing of other floors');
@@ -595,6 +602,49 @@ test('a worker across repositories comes and goes without a frame to a floor lin
   await vf.wait('pong');
   assert.deepEqual(
     vf.messages.filter((m) => JSON.stringify(m).includes(id)),
+    [],
+    'no frame names it',
+  );
+});
+
+test('a floor guest rebuilding every lost worktree rebuilds only the workers its link sees', { timeout: 60_000 }, async (t) => {
+  const r = await rig(t, { commits: true });
+  const { owner, alphaId, betaId } = r;
+  const ef = r.guest((await r.link('Alex - alpha', 'edit-floor', { floorId: alphaId })).token);
+  await ef.wait('welcome');
+  const hire = async (repos?: string[]) => {
+    const res = await owner.act({ t: 'worker.spawn', deskId: 'auto', kind: 'agent', worktree: true, ...(repos ? { repos } : {}) });
+    assert.equal(res.ok, true, res.error);
+    return (await owner.wait('worker.update', (m) => m.worker.id === res.workerId && !!m.worker.worktree)).worker;
+  };
+  const mine = await hire();
+  const hidden = await hire([betaId]);
+  assert.ok(hidden.repos?.length, 'it works in beta too');
+  // Both worktrees deleted outside the office: each is marked lost at the next folder check (every 10 s).
+  // Across repositories, the worker's folder is the workspace holding a worktree of each.
+  const folder = (w: WorkerInfo) => path.join(r.alphaDir, w.repos?.length ? path.dirname(w.worktree!.path) : w.worktree!.path);
+  for (const w of [mine, hidden]) rmSync(folder(w), { recursive: true, force: true });
+  const update = (sock: Sock, from: number, id: string, lost: boolean) => sock.until(() => sock.messages.slice(from).find((m) => m.t === 'worker.update' && m.worker.id === id && !!m.worker.lost === lost), `${id} lost: ${lost}`, 25_000);
+  for (const w of [mine, hidden]) await update(owner, 0, w.id, true);
+  await update(ef, 0, mine.id, true);
+
+  const before = owner.messages.length;
+  ef.send({ t: 'worker.rebuild', workerId: mine.id, all: true });
+  await update(owner, before, mine.id, false);
+  const toast = await owner.wait('toast', (m) => m.text.includes('rebuilt'));
+  assert.match(toast.text, new RegExp(`rebuilt ${mine.name}'s worktree$`), 'only the worker the guest sees');
+  assert.equal(existsSync(folder(hidden)), false, 'the hidden worker’s workspace, its beta worktree included, stays gone');
+  assert.equal(existsSync(folder(mine)), true);
+  owner.send({ t: 'ping', at: 3 });
+  await owner.wait('pong');
+  assert.ok(
+    owner.messages.slice(before).every((m) => m.t !== 'worker.update' || m.worker.id !== hidden.id || !!m.worker.lost),
+    'it is still lost',
+  );
+  ef.send({ t: 'ping', at: 4 });
+  await ef.wait('pong');
+  assert.deepEqual(
+    ef.messages.filter((m) => JSON.stringify(m).includes(hidden.id) || JSON.stringify(m).includes(hidden.name)),
     [],
     'no frame names it',
   );

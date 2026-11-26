@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { actionOp as phoneActionOp, pingOf as phonePingOf, pinged as phonePinged, stateWith } from '../android/app/src/main/assets/whiteboard/marks.js';
 import { deliverPress, freshPresses, type PressWorkers } from '../src/server/whiteboard-buttons.js';
+import { GUEST_REFUSED } from '../src/shared/guest-policy.js';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import { actionOp, parseFrameMsg, parseHostMsg, wrap } from '../src/shared/whiteboard-bridge.js';
 import { buttonDelivery, buttonTarget } from '../src/shared/whiteboard-ping.js';
@@ -196,4 +197,21 @@ test("a press reaches the page's last editor as an office notice it can act on",
   assert.match((deliverPress(b, press, [], nobody.workers, 'Main') as { error: string }).error, /no longer on this floor/);
   assert.match((deliverPress(b, { ...press, card: 'gone' }, [worker({})], nobody.workers, 'Main') as { error: string }).error, /card is gone/);
   assert.equal(nobody.calls.length, 0);
+});
+
+test('a share link guest’s press reaches the page’s last editor only when its link sees that worker', () => {
+  const b = run(board(), [accept]);
+  const press = { card: 'c1', name: 'accept', ping: { text: 'Build it.', label: 'Accept and build' } };
+  const hidden = recorder();
+  assert.deepEqual(
+    deliverPress(b, press, [worker({})], hidden.workers, 'Main', undefined, () => false),
+    { ok: false, error: GUEST_REFUSED },
+  );
+  assert.equal(hidden.calls.length, 0, 'nothing is typed into a worker the link leaves out');
+  const seen = recorder();
+  assert.deepEqual(
+    deliverPress(b, press, [worker({})], seen.workers, 'Main', undefined, (id) => id === PIXEL.id),
+    { ok: true, to: 'Pixel', how: 'tell' },
+  );
+  assert.equal(seen.calls[0]?.id, PIXEL.id);
 });

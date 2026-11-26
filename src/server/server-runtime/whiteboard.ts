@@ -14,10 +14,12 @@ interface WhiteboardContext {
   prompts: OfficePrompts;
   sendTo: SendTo;
   warn(c: Client, error: string | undefined): void;
+  /** Whether `c` may have the office tell worker `workerId` something (a share link's guest: only workers its link sees). */
+  sees(c: Client, workerId: string): boolean;
 }
 
 /** HTTP capability/file/render routes and the window's committed Whiteboard batches. */
-export function createWhiteboardRuntime({ floors, prompts, sendTo, warn }: WhiteboardContext) {
+export function createWhiteboardRuntime({ floors, prompts, sendTo, warn, sees }: WhiteboardContext) {
   /** `/whiteboard/c/<cap>/<path>`: whichever floor's store the capability belongs to answers, or nobody does. */
   const serveCard = (req: http.IncomingMessage, res: http.ServerResponse, rest: string) => {
     const slash = rest.indexOf('/');
@@ -162,7 +164,7 @@ export function createWhiteboardRuntime({ floors, prompts, sendTo, warn }: White
     for (const press of presses) {
       const card = findCard(floor.whiteboard.board, press.card);
       if (!card || !pinged(card.state, press.name)) continue;
-      const out = deliverPress(floor.whiteboard.board, press, floor.everyone(), floor.workers, floor.def.name, prompts);
+      const out = deliverPress(floor.whiteboard.board, press, floor.everyone(), floor.workers, floor.def.name, prompts, (id) => sees(c, id));
       if (out.ok) continue;
       floor.whiteboard.applyOffice([{ op: 'state.del', card: press.card, path: [PINGED_KEY, press.name] }]);
       warn(c, `“${press.ping.label || press.name}” didn't reach a worker: ${out.error}`);

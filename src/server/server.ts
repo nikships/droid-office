@@ -999,7 +999,7 @@ export async function startServer(cfg: Config) {
   const automation = createAutomation(clients, sendTo);
   const automationRequest = automation.request;
 
-  const { serveCard, whiteboardRequest, sendBoard, applyBoard, pingWorker } = createWhiteboardRuntime({ floors, prompts, sendTo, warn });
+  const { serveCard, whiteboardRequest, sendBoard, applyBoard, pingWorker } = createWhiteboardRuntime({ floors, prompts, sendTo, warn, sees: (c, workerId) => guestGate.sees(c, workerId) });
 
   const floorRequest = createFloorHttp({ floors, orchestrator, workerFloor, workerThreads, factory, setup, whiteboardRequest });
   const guestHttp = createGuestHttp({ guestLinks, guestAudit, guestFunnel: () => guestFunnel, floors, orchestrator, workersOf, availableDroidModels, droidCommands, floorRequest, ...staticFiles });
@@ -1953,13 +1953,13 @@ export async function startServer(cfg: Config) {
         const w = worker(msg.workerId);
         if (!w) break;
         const { floor } = w;
-        // With `all`, every worker on the floor whose worktree was deleted, this one first.
+        // With `all`, every worker on the floor whose worktree was deleted, this one first; for a guest, only those its link sees.
         const ids = [
           w.wid,
           ...(msg.all === true
             ? floor.workers
                 .list()
-                .filter((x) => x.lost && x.id !== w.wid)
+                .filter((x) => x.lost && x.id !== w.wid && guestGate.sees(c, x.id))
                 .map((x) => x.id)
             : []),
         ];
