@@ -146,10 +146,84 @@ Everything is checked on the server and denied by default.
   - *Close codes.* 4410 when the link expired or was revoked (the close reason says which), 4411 when the
     owner turned sharing off. They do not collide with 4401 (device unpaired) or 4403 (web companion off).
 
+## What a guest sees
+
+A share link opens the web companion (`/dashboard`) with only what its preset covers.
+`src/client/dashboard-guest.ts` derives what the page shows and offers from the link's session. The office
+enforces every boundary itself; the page only avoids offering what the office would refuse.
+
+- **Shared-view badge.** The top bar shows **Shared view**, then **Can edit** or **View only**, then
+  **Until <time>** when the link expires. Its tooltip names the scope (one worker, one floor or the
+  office), whether the guest can work there, and when the link ends.
+- **Token per tab.** The page reads the token from `#g=`, removes it from the address bar and keeps it in
+  this tab's `sessionStorage` (`droid-office.guest-link`), never in `localStorage`. A refresh reopens the
+  link; another tab opened without the link does not. `src/client/token.ts` (`setGuestAuth`) replaces every
+  owner credential with the token, and `guestFetch` sends it as `Authorization: Bearer` to same-origin
+  `/api/` paths only.
+
+| Preset | Shows | Leaves out |
+| --- | --- | --- |
+| `view-office` | floor tabs for every open floor, All workers and the building pulse, each floor's workers and Whiteboard, Mission Control (watch only) | all work |
+| `view-floor` | one floor's workers and its Whiteboard | floor tabs, All workers, Mission Control, all work |
+| `view-worker` | one worker alone in one pane | the worker sidebar, layouts, floor tabs, All workers, Whiteboard, Mission Control, all work |
+| `edit-floor` | what `view-floor` shows, plus work on that floor | floor tabs, All workers, Mission Control |
+| `edit-office` | what `view-office` shows, plus work on every open floor and Mission Control's composer, Stop and New conversation | nothing beyond the owner-only list |
+
+- **Every guest.** The **Shell** button is hidden. Settings, usage, Orchestrator settings, pairing, setup,
+  update prompts and adding, reordering or removing floors never appear.
+- **Edit presets only.** Work means prompts, terminal input and resizing, answering questions and
+  permission prompts, hiring, interrupting, sending home, forking, resuming, rewinding, the queue, model
+  and effort, git and pull requests, and Whiteboard edits. The Changes window opens only on edit presets
+  (and not for cloud workers).
+- **View-only pages.** There is no Hire button, no composer, no terminal input and no answers to questions
+  or permission prompts. The worker menu offers only opening and copying. The Whiteboard is read-only:
+  cards, marks and comments stay live, and nothing on the board can change. File links in Threads and
+  terminals are inert, and the page never requests the routes the guest backend opens only to write
+  presets (`GUEST_WRITE_ONLY_PATHS`).
+
+### Status screens
+
+No status screen names the office's address, paths or anything else about it.
+
+| When | Title |
+| --- | --- |
+| The page is checking the link | **Opening the shared view…** |
+| The token is missing or unknown | **This link isn’t available** |
+| The link expired | **This link has expired** |
+| The owner revoked the link | **This link was turned off** |
+| The owner turned sharing off | **Sharing is turned off** (with **Try again**) |
+| The office does not answer, or too many wrong tokens came from this address | **The office is offline or restarting** (with **Try again**) |
+| A floor or single-worker link's floor is closed | **This floor isn’t open right now** |
+| A single-worker link's worker left before the page showed it | **This worker has left** |
+
+- **Opened without a link.** A page on the guest address with no token (opened directly, or refreshed
+  after its link ended) asks `GET /api/guest/hello` without one and shows the matching refusal screen,
+  never pairing. A tab mark (`droid-office.guest-origin` in `sessionStorage`) sends a refresh there first.
+- **Ending.** A refusal other than **Sharing is turned off** makes the tab forget its token. Close codes
+  4410 and 4411 show the screen at once; any other close asks hello again and reconnects. A wrong-token
+  limit (429) waits 5 to 60 seconds before asking again, and other failures keep retrying.
+- **While connected.** A dropped connection keeps the page with the banner "The office is offline or
+  restarting. What you see may be out of date. Reconnecting…". A single-worker link whose worker leaves
+  keeps the last of its work on screen under "<name> has left. This is the last of its work this link
+  showed."
+
 ## Owner management
 
-The Share modal is in **Settings → Phone & web → Share links**, in the 3D office, the Mac app's companion and
-the web companion. Android has no Share UI: guests use the web companion only.
+The **🔗 Share** window opens from **Settings → Phone & web → Share links** on every Settings surface: the
+3D office, the Mac app's companion and the web companion in a browser. In a browser, Phone & web holds only
+Share links. Android has no Share UI: guests use the web companion only.
+
+- **What it holds.** The **External sharing** switch with the Funnel state and guest address, a form to
+  create a link (label, preset, the floor or worker it needs, expiry), the links with their scope, expiry
+  countdown and live guest count, and what guests changed.
+- **The link is shown once.** After creation the window shows the full URL with **Copy link** and "Copy it
+  now: this link won’t be shown again." The page keeps it in the window only while it shows it, never in
+  storage or logs.
+- **Limited pages.** A `limited` page hides the create form and shows "Create share links and turn sharing
+  on from the office on its own computer. Here you can watch, revoke links and turn sharing off." It can
+  watch links and activity, revoke links and turn sharing off.
+- **Turning off.** Turning sharing off asks first, then disconnects every guest at once. Links that have
+  not expired or been revoked work again when sharing is turned back on.
 
 The API is documented at the top of `src/shared/guest-links.ts`. `GuestLinksState.manage` says what the
 requester may do:
@@ -165,13 +239,26 @@ grew), debounced to 250 ms. Owner pages then re-read the API, so open-guest coun
 
 ## Audit
 
-Every guest change the office accepts is appended to `guest-audit.jsonl` (mode 0600; rotated to
+Every guest change the office carries out is appended to `guest-audit.jsonl` (mode 0600; rotated to
 `guest-audit.1.jsonl` at 2 MB). Each entry has the link id and label (copied, so it survives revocation),
 the preset, the time, the target (floor, worker or Mission Control, with ids and names), an action and
 detail text of up to 200 characters. Terminal input is grouped into one entry per worker burst (ended by
 5 seconds of quiet, or after 60 seconds) with a short preview. The preview is what the guest typed, so it
-can contain secrets they typed; the file is readable only by the owner (mode 0600). Refused attempts are not
-logged. The owner pages through the log newest first.
+can contain secrets they typed; the file is readable only by the owner (mode 0600). The owner pages through
+the log newest first.
+
+An entry is written once the office knows the write happened, never before:
+
+- **Forge and pipeline writes** (merge, comment, close, labels, rerun, cancel, run) when the forge answers
+  that the change was made.
+- **Whiteboard changes** when the batch is committed. A retried batch the board already holds is not
+  recorded again.
+- **Whiteboard pings** when the line is delivered to the worker.
+- **Worktree rebuilds** only when at least one worktree was rebuilt.
+- **Uploads** (files into a terminal, pictures onto the Whiteboard) when the upload succeeds.
+- **Other writes** when their handler finishes without refusing them.
+
+Refused attempts, and writes the forge or the office turned down, are not logged.
 
 ## State and configuration
 
@@ -195,4 +282,18 @@ logged. The owner pages through the log newest first.
 - `tests/guest-http.test.ts`: the guest allowlist, scope per preset, card frames, the `full` and `limited`
   owner API, credential isolation between listeners, and the menu bar counts.
 - `tests/office-clone.test.ts`: clones leave out `guest-funnel.json` and keep sharing locked.
+- `tests/guest-ws.test.ts`: guests get only their scope on the WebSocket, and only write presets change
+  anything.
+- `tests/guest-policy.test.ts`: the inbound and outbound policy, identical refusals, worker and floor
+  targets, scoped welcome and roster, removal news, and audit wording.
+- `tests/guest-audit-outcome.test.ts`: forge and pipeline writes settle their audit only after the forge
+  answers, and only as a success when the change happened.
+- `tests/guest-links-model.test.ts`: the Share window's states, the `limited` page, the lock, expiry
+  countdowns, the create form and audit paging.
+- `tests/settings-nav.test.ts`: a browser's Phone & web holds only Share links, and companions list only
+  what they show.
+- `tests/dashboard-guest.test.ts`: what each preset shows, hello and close outcomes, status screens, the
+  per-tab token, the guest-origin screen, the badge, credential isolation and write-only routes.
+- `tests/dashboard-guest-pane.test.ts`: a view-only pane offers no work and a write link keeps it (runs
+  when Chromium is installed).
 - `tests/no-media.test.ts`: guests add no media, chat or presence.
