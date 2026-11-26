@@ -23,6 +23,11 @@ export interface Config {
   /** Start the Tailscale HTTPS gateway. Set by the CLI, unset in tests to avoid changing Serve. */
   tailnetHttps?: boolean;
   /**
+   * Let external sharing publish the guest backend through Tailscale Funnel while the owner has it on
+   * (the CLI sets it unless DROID_OFFICE_GUEST_SHARING=off; unset in tests, so they never touch Funnel).
+   */
+  guestSharing?: boolean;
+  /**
    * Render Whiteboard cards with the headless Chromium, downloading it on the first render when it's
    * missing (the CLI sets it; unset in tests, so they never start a browser or a download).
    */

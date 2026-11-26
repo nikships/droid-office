@@ -272,7 +272,7 @@ export function createGuestHttp(ctx: GuestHttpContext) {
   /** The owner's Share list. */
   const state = (): GuestLinksState => ({
     on: guestLinks.on,
-    transport: guestLinks.on ? ctx.guestFunnel().state() : { status: 'off' },
+    transport: ctx.guestFunnel().state(),
     links: guestLinks.list(),
     guests: guestLinks.liveCount(),
     max: GUEST_LINKS_MAX,
@@ -314,6 +314,8 @@ export function createGuestHttp(ctx: GuestHttpContext) {
     }
     if (method === 'PUT') {
       if (typeof body.on !== 'boolean') return send(res, 400, { error: 'Send JSON: {"on": true}' });
+      const locked = ctx.guestFunnel().state().locked;
+      if (body.on && locked) return send(res, 403, { error: locked });
       return send(res, 200, await setSharing(body.on));
     }
     if (method === 'POST') {
