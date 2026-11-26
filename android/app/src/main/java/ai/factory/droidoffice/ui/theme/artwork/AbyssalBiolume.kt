@@ -16,6 +16,7 @@ import kotlin.random.Random
 internal val AbyssalBiolume = Artwork(
     id = "abyssal-biolume", name = "Abyssal", blurb = "Bioluminescent currents deep in the trench.",
     image = R.drawable.art_abyssal_biolume, preview = R.drawable.preview_abyssal_biolume,
+    portrait = PortraitArt(R.drawable.art_abyssal_biolume_portrait, focalX = .55f, focalY = .37f),
     x = .50f, y = .40f,
     bg = Color(0xFF020B14), tint = Color(0xFF03101C), text = Color(0xFFEAF8FB), muted = Color(0xFF93B4BF),
     accent = Color(0xFF2EE6D6), accent2 = Color(0xFF7A6BFF), line = Color(0xFFC9F4FF), glass = .72f,
