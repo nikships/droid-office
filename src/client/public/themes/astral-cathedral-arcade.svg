@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="900" viewBox="0 0 96 900" fill="none">
+  <defs>
+    <linearGradient id="fade" x2="0" y2="1">
+      <stop offset=".35" stop-color="white"/>
+      <stop offset="1" stop-color="white" stop-opacity="0"/>
+    </linearGradient>
+    <mask id="light"><rect width="96" height="210" fill="url(#fade)"/></mask>
+  </defs>
+  <g mask="url(#light)">
+    <path d="M1 210V53a47 47 0 0 1 94 0v157Z" fill="#8460AC" fill-opacity=".12"/>
+    <g stroke="#E6BD84" stroke-opacity=".36" stroke-width=".8">
+      <path d="M1 210V53a47 47 0 0 1 94 0v157M6 210V53a42 42 0 0 1 84 0v157"/>
+      <path d="M10 210V77c0-25 18-32 38-51 20 19 38 26 38 51v133" stroke-opacity=".2"/>
+      <path d="M48 11v10m0 10v11"/>
+    </g>
+    <path d="m48 41 4 3v14l-4 3-4-3V44Z" fill="#B784D8" fill-opacity=".28"/>
+    <path d="m48 41 4 3v14l-4 3Z" fill="#371C4E"/>
+    <path d="m44 58 4-2 4 2-4 3Z" fill="#EAB477" fill-opacity=".65"/>
+    <path d="m48 69 1.2 4.8L53 75l-3.8 1.2L48 81l-1.2-4.8L43 75l3.8-1.2Z" fill="#EFCC94" fill-opacity=".55"/>
+  </g>
+</svg>
