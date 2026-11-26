@@ -180,7 +180,8 @@ export function createMissionRoster(el: HTMLElement, host: MissionRosterHost) {
     const team = agent.team;
     const model = w.activeModel ?? w.model;
     const effort = w.activeEffort ?? w.effort;
-    const line = orchestrator ? orchestratorLine(s.mission) : botLine(agent);
+    // Why the Orchestrator can't run is the owner's setup to fix, in Settings a guest never sees.
+    const line = orchestrator ? (blocked && s.owner === false ? 'Not available right now' : orchestratorLine(s.mission)) : botLine(agent);
     const status = blocked ? 'blocked' : (STATUS_LABEL[w.status] ?? w.status);
     const lastUsed = !orchestrator && agent.lastUsedAt ? `used ${timeAgo(agent.lastUsedAt)}` : '';
     const todos = orchestrator ? w.todos : undefined;

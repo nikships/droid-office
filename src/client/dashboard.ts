@@ -19,6 +19,7 @@ import {
   guestBadge,
   guestCloseOutcome,
   guestHelloOutcome,
+  guestMayFetch,
   guestOriginMarked,
   guestRefusalFinal,
   guestTokenAtBoot,
@@ -117,7 +118,11 @@ const guestToken = guestTokenAtBoot(location.hash, guestTab());
 if (guestToken) {
   history.replaceState(null, '', `${location.pathname}${hashWithoutGuestToken(location.hash)}`);
   // Fetches to the office carry the token as a header; the request line never does.
-  window.fetch = guestFetch(() => location.href, window.fetch.bind(window));
+  window.fetch = guestFetch(
+    () => location.href,
+    window.fetch.bind(window),
+    (pathname) => guestMayFetch(pathname, abilities.work),
+  );
 }
 /**
  * This page is on a share link's origin without a token: opened bare, or refreshed after its link ended.

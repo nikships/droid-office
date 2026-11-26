@@ -62,21 +62,22 @@ export function guestApiUrl(url: string, base: string): string | undefined {
 
 /**
  * Sends the guest token on every fetch to this office's API as `Authorization: Bearer`, never in the
- * request line. Installed once, by a share link's page.
+ * request line. Installed once, by a share link's page. `may` says which office paths the link can use at
+ * all; any other is answered here, as the guest backend would (404), without asking it.
  */
-export function guestFetch(base: () => string, real: typeof fetch): typeof fetch {
+export function guestFetch(base: () => string, real: typeof fetch, may: (pathname: string) => boolean = () => true): typeof fetch {
   return (input, init) => {
     const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const page = base();
     const path = guestTokenOn() ? guestApiUrl(raw, page) : undefined;
     if (path === undefined) return real(input, init);
-    const target = new URL(path, page).href;
+    const target = new URL(path, page);
+    if (!may(target.pathname)) return Promise.resolve(new Response(JSON.stringify({ error: 'Not found' }), { status: 404, headers: { 'content-type': 'application/json' } }));
     const headers = new Headers(init?.headers ?? (typeof input === 'object' && 'headers' in input ? input.headers : undefined));
     headers.set('Authorization', `Bearer ${guestToken}`);
-    if (typeof input === 'object' && !(input instanceof URL)) return real(new Request(target, input), { ...init, headers });
-    return real(target, { ...init, headers });
+    if (typeof input === 'object' && !(input instanceof URL)) return real(new Request(target.href, input), { ...init, headers });
+    return real(target.href, { ...init, headers });
   };
 }
-
 /** Whether this page is a share link's. */
 export const guestTokenOn = () => !!guestToken;

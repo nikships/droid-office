@@ -363,7 +363,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const refresh = () => {
     const w = store.worker(workerId);
     if (!w) {
-      modal.close();
+      // A watch-only pane keeps the last screen of a worker that left; its pane says so and closes it.
+      if (!readOnly) modal.close();
       return;
     }
     header?.refresh(w);

@@ -153,6 +153,25 @@ export function guestUnavailableView(reason: GuestUnavailableReason): { title: s
   return { title: GUEST_UNAVAILABLE_TITLE[reason], text: GUEST_UNAVAILABLE_TEXT[reason] };
 }
 
+/**
+ * Guest backend routes it opens only to write presets (server-runtime/guest-http.ts): a view-only page
+ * never asks for them, so model badges and file links don't send requests the office would refuse.
+ */
+export const GUEST_WRITE_ONLY_PATHS: ReadonlySet<string> = new Set([
+  '/api/agents/droid/models',
+  '/api/agents/droid/commands',
+  '/api/thread/file',
+  '/api/thread/files',
+  '/api/term/paths',
+  '/api/term/file',
+  '/api/term/drop',
+  '/api/prompt/image',
+  '/api/whiteboard/blob',
+  '/api/gh/labels',
+]);
+
+export const guestMayFetch = (pathname: string, write: boolean): boolean => write || !GUEST_WRITE_ONLY_PATHS.has(pathname);
+
 /** Where this tab keeps its link's token, so a refresh still opens it. Per tab (sessionStorage), never localStorage. */
 export const GUEST_TAB_KEY = 'droid-office.guest-link';
 

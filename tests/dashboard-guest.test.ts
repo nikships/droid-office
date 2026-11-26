@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import { GUEST_PRESETS, GUEST_UNAVAILABLE_TEXT, guestSessionOf, guestWsProtocols, type GuestSession } from '../src/shared/guest-links.js';
 import {
   GUEST_ORIGIN_TAB_KEY,
   GUEST_TAB_KEY,
+  GUEST_WRITE_ONLY_PATHS,
   OWNER_ABILITIES,
   clearGuestOrigin,
   forgetGuestToken,
+  guestMayFetch,
   guestOriginMarked,
   markGuestOrigin,
   mayBeGuestOrigin,
@@ -267,4 +270,34 @@ test('the owner’s page keeps its own credentials; a guest page sends only its 
   ]);
   for (const s of seen.slice(0, 2)) assert.doesNotMatch(s.url, /[?&]g=|[?&][td]=/);
   assert.deepEqual(guestWsProtocols(TOKEN), ['droid-office-guest', TOKEN]);
+
+  // A view-only page answers write-only routes itself, without sending them.
+  seen.length = 0;
+  const viewOnly = guestFetch(
+    () => base,
+    real,
+    (p) => guestMayFetch(p, false),
+  );
+  const refused = await viewOnly('/api/agents/droid/models');
+  assert.equal(refused.status, 404);
+  assert.deepEqual(await refused.json(), { error: 'Not found' });
+  await viewOnly(withToken('/api/thread/image?worker=pixel'));
+  assert.deepEqual(
+    seen.map((s) => s.url),
+    ['https://office.example/api/thread/image?worker=pixel'],
+  );
+});
+
+test('a view-only page never asks for the routes the guest backend opens only to write presets', () => {
+  const source = readFileSync(new URL('../src/server/server-runtime/guest-http.ts', import.meta.url), 'utf8');
+  const writeOnly = [...source.matchAll(/^\s+'(\/api\/[a-z/]+)': \{ methods: \[\], write:/gm)].map((m) => m[1]);
+  assert.ok(writeOnly.length >= 5, 'the server table was read');
+  // The model and command lists are answered only to write presets, ahead of that table.
+  assert.match(source, /'\/api\/agents\/droid\/models'\) \{\s+if \(method !== 'GET' \|\| !write\)/);
+  assert.deepEqual([...GUEST_WRITE_ONLY_PATHS].sort(), [...writeOnly, '/api/agents/droid/models', '/api/agents/droid/commands'].sort());
+  for (const p of GUEST_WRITE_ONLY_PATHS) {
+    assert.equal(guestMayFetch(p, false), false, p);
+    assert.equal(guestMayFetch(p, true), true, p);
+  }
+  for (const p of ['/api/guest/hello', '/api/thread/image', '/api/changes/file', '/api/whiteboard/render', '/api/gh/pull']) assert.equal(guestMayFetch(p, false), true, p);
 });
