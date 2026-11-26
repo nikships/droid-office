@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" fill="none">
+  <!-- Signs double in the wet glass; keep the reflections at the edge of each pane. -->
+  <defs>
+    <linearGradient id="cyan" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#83f5ff" stop-opacity=".92"/>
+      <stop offset=".5" stop-color="#39caee" stop-opacity=".6"/>
+      <stop offset="1" stop-color="#39caee" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="rose" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#ff82bd" stop-opacity=".86"/>
+      <stop offset="1" stop-color="#ff428a" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <svg x="100%" width="1" height="1" overflow="visible">
+    <path fill="url(#cyan)" d="M-14 0h3v21h-3z M-13 25h1v44h-1z M-22 0h1v8h-1z M-22 13h1v33h-1z"/>
+    <path fill="url(#rose)" d="M-31 0h4v11h-4z M-30 14h2v29h-2z M-37 0h1v23h-1z"/>
+  </svg>
+  <svg y="100%" width="1" height="1" overflow="visible">
+    <path stroke="#fd65a1" opacity=".48" d="M0-15h11m3 0h8M0-12h19"/>
+    <path stroke="#6bdff7" opacity=".4" d="M0-8h34m5 0h6"/>
+  </svg>
+</svg>
