@@ -25,6 +25,8 @@ The eight `family: 'artwork'` entries in [`companion-themes.ts`](../src/shared/c
 
 The wallpaper and the floor nameplate identify the theme. The work controls identify what you can do. Start by **deleting** overrides, not by replacing one button skin with another.
 
+Orbital Foundry omits `panel-edge`, `heading-font`, `badge-face` and `badge-ink` and uses the kit defaults for those surfaces; the other seven artwork themes use the treatments below.
+
 | Surface | Budget for all eight artwork themes |
 | --- | --- |
 | Sidebar floor / branch / theme card | **Preserve the shipped values.** `.dash-side-head` uses `chrome-finish` for the face, `panel-edge` for its original 3 px bottom edge, `imprint` on `::before` and `heading-font` on `.dash-side-title`. The branch in `.dash-side-sub` keeps its original mono type. Keep the palette that colors the imprint. Do not reuse the face, edge or imprint on other panels. |
