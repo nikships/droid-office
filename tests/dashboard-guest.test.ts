@@ -3,9 +3,15 @@ import test from 'node:test';
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import { GUEST_PRESETS, GUEST_UNAVAILABLE_TEXT, guestSessionOf, guestWsProtocols, type GuestSession } from '../src/shared/guest-links.js';
 import {
+  GUEST_ORIGIN_TAB_KEY,
   GUEST_TAB_KEY,
   OWNER_ABILITIES,
+  clearGuestOrigin,
   forgetGuestToken,
+  guestOriginMarked,
+  markGuestOrigin,
+  mayBeGuestOrigin,
+  tokenlessGuestHello,
   guestAbilities,
   guestBadge,
   guestCloseOutcome,
@@ -162,6 +168,45 @@ test('the token lives in this tab only and leaves the address bar', () => {
   assert.equal(hashWithoutGuestToken('#worker=pixel'), '#worker=pixel');
 });
 
+test('a page on the share link origin with no token ends on the guest status screen, never pairing', () => {
+  // The guest backend answers the owner's hello 404; nothing else that answers 404 there is the office.
+  assert.equal(mayBeGuestOrigin(404), true);
+  for (const status of [200, 401, 403, 502]) assert.equal(mayBeGuestOrigin(status), false, String(status));
+  // Its tokenless hello: the guest backend's own refusal says this is its origin, and why nothing opens.
+  assert.equal(tokenlessGuestHello(401, { ok: false, reason: 'unavailable', error: GUEST_UNAVAILABLE_TEXT.unavailable }), 'unavailable');
+  assert.equal(tokenlessGuestHello(403, { ok: false, reason: 'disabled', error: GUEST_UNAVAILABLE_TEXT.disabled }), 'disabled');
+  // Anything else is not the guest backend (go on as the owner's page) or nothing useful answered (ask later).
+  assert.equal(tokenlessGuestHello(404, { error: 'Not found' }), 'other');
+  assert.equal(tokenlessGuestHello(401, { error: 'Unauthorized' }), 'other', 'an owner-style 401 is not a guest refusal');
+  assert.equal(tokenlessGuestHello(401, { ok: false, reason: 'nope' }), 'other');
+  assert.equal(tokenlessGuestHello(200, { ok: true }), 'other');
+  assert.equal(tokenlessGuestHello(502, undefined), 'offline');
+  assert.equal(tokenlessGuestHello(429, undefined), 'offline');
+
+  // A link that ended in this tab marks it, so a refresh asks the guest backend first; an owner's page can clear it.
+  const tab = new Tab();
+  assert.equal(guestOriginMarked(tab), false);
+  markGuestOrigin(tab);
+  assert.equal(tab.getItem(GUEST_ORIGIN_TAB_KEY), '1');
+  assert.equal(guestOriginMarked(tab), true);
+  clearGuestOrigin(tab);
+  assert.equal(guestOriginMarked(tab), false);
+  const blocked = {
+    getItem: (): string | null => {
+      throw new Error('blocked');
+    },
+    setItem: () => {
+      throw new Error('blocked');
+    },
+    removeItem: () => {
+      throw new Error('blocked');
+    },
+  };
+  markGuestOrigin(blocked);
+  clearGuestOrigin(blocked);
+  assert.equal(guestOriginMarked(blocked), false);
+  assert.equal(guestOriginMarked(undefined), false);
+});
 test('the badge says shared view, view only or can edit, and the expiry when there is one', () => {
   const view = guestBadge(session('view-worker'), () => 'never');
   assert.deepEqual(view, { label: 'Shared view', mode: 'View only', title: 'Shared view of one worker · view only · the link lasts until it is turned off' });

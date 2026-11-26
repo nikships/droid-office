@@ -13,17 +13,22 @@ import { connectWhiteboard, store, words } from './state';
 import { guestFetch, setBrowserAuth, setGuestAuth, withToken } from './token';
 import {
   type CompanionAbilities,
+  clearGuestOrigin,
   forgetGuestToken,
   guestAbilities,
   guestBadge,
   guestCloseOutcome,
   guestHelloOutcome,
+  guestOriginMarked,
   guestRefusalFinal,
   guestTokenAtBoot,
   guestUnavailableView,
   hashWithoutGuestToken,
+  markGuestOrigin,
+  mayBeGuestOrigin,
   OWNER_ABILITIES,
   parseGuestSession,
+  tokenlessGuestHello,
 } from './dashboard-guest';
 import { guestTokenFromHash, guestWsProtocols, type GuestSession, type GuestUnavailableReason } from '../shared/guest-links';
 import { $, closeAllModals, closeTopModal, h, modalOpen, onModalChange, openModal, toast } from './ui/dom';
@@ -114,6 +119,11 @@ if (guestToken) {
   // Fetches to the office carry the token as a header; the request line never does.
   window.fetch = guestFetch(() => location.href, window.fetch.bind(window));
 }
+/**
+ * This page is on a share link's origin without a token: opened bare, or refreshed after its link ended.
+ * It shows the guest status screens and never the owner's pairing ones.
+ */
+let guestOrigin = !guestToken && guestOriginMarked(guestTab());
 /** The link's session once the office has said what it allows. */
 let session: GuestSession | undefined;
 /** What this page shows and offers: everything for the owner, what the link allows for a guest. */
@@ -864,6 +874,23 @@ const net = new Net(
       : {}),
     authorize: async (signal) => {
       if (guestToken) return guestHello(signal);
+      if (guestOrigin) {
+        // A share link ended in this tab: ask the guest backend, not the owner's routes.
+        const heardHere = await tokenlessProbe(signal);
+        if (heardHere === 'offline') {
+          if (!authorized) {
+            gate = 'unreachable';
+            paint();
+          }
+          throw new Error('Office unavailable');
+        }
+        if (heardHere !== 'other') {
+          heardGuest = heardHere;
+          return false;
+        }
+        guestOrigin = false;
+        clearGuestOrigin(guestTab());
+      }
       let response: Response;
       try {
         response = await fetch(withToken('/api/mobile/hello?client=dashboard'), { cache: 'no-store', credentials: 'same-origin', signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]) });
@@ -878,6 +905,16 @@ const net = new Net(
         heard = await refusal(response);
         return false;
       }
+      if (mayBeGuestOrigin(response.status)) {
+        // A share link's origin opened without one (or after its link ended): its status screen, not pairing.
+        const heardHere = await tokenlessProbe(signal);
+        if (heardHere !== 'offline' && heardHere !== 'other') {
+          guestOrigin = true;
+          markGuestOrigin(guestTab());
+          heardGuest = heardHere;
+          return false;
+        }
+      }
       if (!response.ok) throw new Error('Office unavailable');
       const hello = (await response.json()) as { office?: { name: string; version: string } };
       if (signal.aborted) throw new Error('Access check cancelled');
@@ -889,7 +926,7 @@ const net = new Net(
       return true;
     },
     unauthorized: () => {
-      if (guestToken) {
+      if (guestToken || guestOrigin) {
         // A refused hello says why. A socket the office closed without saying asks hello again shortly.
         const why = heardGuest;
         heardGuest = undefined;
@@ -950,6 +987,19 @@ async function guestHello(signal: AbortSignal): Promise<boolean> {
   authorized = true;
   return true;
 }
+/** `GET /api/guest/hello` with no token: whether this page is on a share link's origin, and why it opens nothing. */
+async function tokenlessProbe(signal: AbortSignal): Promise<GuestUnavailableReason | 'offline' | 'other'> {
+  let response: Response;
+  try {
+    response = await fetch('/api/guest/hello', { cache: 'no-store', credentials: 'omit', signal: AbortSignal.any([signal, AbortSignal.timeout(8000)]) });
+  } catch {
+    if (signal.aborted) throw new Error('Access check cancelled');
+    return 'offline';
+  }
+  const body: unknown = await response.json().catch(() => undefined);
+  if (signal.aborted) throw new Error('Access check cancelled');
+  return tokenlessGuestHello(response.status, body);
+}
 /** Takes on what the link allows. Panes are rebuilt when that changes, since they read it when made. */
 function adoptSession(next: GuestSession) {
   const changedScope = JSON.stringify(next) !== JSON.stringify(session);
@@ -966,6 +1016,7 @@ function guestEnded(reason: GuestUnavailableReason) {
   clearTimeout(retryTimer);
   // Sharing turned off can come back, so its tab keeps the link for Try again; the rest are over.
   if (guestRefusalFinal(reason)) forgetGuestToken(guestTab());
+  markGuestOrigin(guestTab());
   closeAllModals();
   net.close();
   paint();
@@ -1615,7 +1666,7 @@ function paintGuestGate() {
 }
 
 function paintGate() {
-  if (guestToken) return paintGuestGate();
+  if (guestToken || guestOrigin) return paintGuestGate();
   const steps = (
     where === 'local'
       ? []
@@ -1689,7 +1740,8 @@ function paintGate() {
     ended: () => [h('div.spinner')],
   };
   authPanel.dataset.gate = gate;
-  authPanel.replaceChildren(h('div.dash-gate-card', {}, ...views[gate](), whereChip));
+  // No address while still connecting: the first answer may show this is a share link's origin.
+  authPanel.replaceChildren(h('div.dash-gate-card', {}, ...views[gate](), gate === 'connecting' ? null : whereChip));
 }
 
 function paintSide() {

@@ -189,6 +189,50 @@ export function forgetGuestToken(tab: TabStorage | undefined) {
   }
 }
 
+/**
+ * Set in this tab once a share link here has said anything about itself, so a refresh after the link ended
+ * (its token forgotten) asks the guest backend again instead of the owner's routes it would 404.
+ */
+export const GUEST_ORIGIN_TAB_KEY = 'droid-office.guest-origin';
+
+export function markGuestOrigin(tab: TabStorage | undefined) {
+  try {
+    tab?.setItem(GUEST_ORIGIN_TAB_KEY, '1');
+  } catch {
+    /* blocked: a refresh asks the owner's hello first, which the guest backend's 404 still leads back here */
+  }
+}
+
+export function guestOriginMarked(tab: TabStorage | undefined): boolean {
+  try {
+    return tab?.getItem(GUEST_ORIGIN_TAB_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function clearGuestOrigin(tab: TabStorage | undefined) {
+  try {
+    tab?.removeItem(GUEST_ORIGIN_TAB_KEY);
+  } catch {
+    /* blocked */
+  }
+}
+
+/** The guest backend answers every owner route 404, so an owner hello answered 404 may be a share link's origin. */
+export const mayBeGuestOrigin = (ownerHelloStatus: number): boolean => ownerHelloStatus === 404;
+
+/**
+ * What a page holding no token learns from `GET /api/guest/hello` without one: the guest backend's own
+ * refusal (this is a share link's origin, show its status screen), `offline` (nothing answered usefully,
+ * ask again later) or `other` (some other server: this is not the guest backend).
+ */
+export function tokenlessGuestHello(status: number, body: unknown): GuestUnavailableReason | 'offline' | 'other' {
+  const outcome = guestHelloOutcome(status, body);
+  if (outcome.kind === 'refused') return outcome.reason;
+  return status === 429 || status >= 500 ? 'offline' : 'other';
+}
+
 /** The address bar's hash without the token (other keys, such as a worker link, stay). */
 export function hashWithoutGuestToken(hash: string): string {
   const params = new URLSearchParams(hash.replace(/^#/, ''));
