@@ -25,12 +25,14 @@
     margin: 0;
     height: 100%;
     overflow: hidden;
-    background: #000000;
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
     -webkit-tap-highlight-color: transparent;
   }
+  /* The stock xterm viewport paints black behind its scrollable element. All three layers
+     need the same ground, including when the worker's artwork shows through. */
+  html, body, .xterm .xterm-viewport { background-color: var(--terminal-ground, #000000); }
   #term {
     position: absolute;
     top: 8px;

@@ -120,13 +120,13 @@ object TermPage {
 
     fun view(view: TermView) = call("view") { put("view", view.wire) }
 
-    fun colors(foreground: String?, cursor: String?, background: String?, selection: String?) = call("colors") {
+    fun colors(foreground: String?, cursor: String?, background: String?, selection: String?, cursorAccent: String? = background) = call("colors") {
         if (foreground != null && cursor != null && background != null && selection != null) {
             put("theme", buildJsonObject {
                 put("foreground", foreground)
                 put("cursor", cursor)
                 put("background", background)
-                put("cursorAccent", background)
+                put("cursorAccent", cursorAccent)
                 put("selectionBackground", selection)
             })
         }

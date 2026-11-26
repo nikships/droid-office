@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
@@ -65,6 +66,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -156,6 +158,10 @@ private val PhoneSizingSaver = Saver<PhoneSizing, List<Int>>(
 private class QueueReceipts(val queue: ThreadQueue, var onDisk: String?)
 
 private val localThreadQueues = mutableMapOf<String, QueueReceipts>()
+
+/** Only a compact, themed worker uses the artwork pane as its single reading surface. */
+internal val themedPhoneWorker: Boolean
+    @Composable get() = Palette.artwork != null && LocalWindowInfo.current.containerDpSize.width < 600.dp
 
 @Composable
 fun WorkerScreen(
@@ -269,7 +275,7 @@ fun WorkerScreen(
     }
 
     Column(
-        Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(Palette.Screen).windowInsetsPadding(paneInsets(embedded))
+        Modifier.fillMaxSize().tagged(Tags.Screen.WORKER).background(if (themedPhoneWorker) Palette.Pane else Palette.Screen).windowInsetsPadding(paneInsets(embedded))
             .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars).only(WindowInsetsSides.Bottom)),
     ) {
         if (worker == null) {
@@ -392,11 +398,11 @@ fun WorkerScreen(
             if (store.settings.threadView == it) scope.launch { graph.store.settings { s -> s.copy(threadView = !it) } }
         }
         // The view switch shares the PR and branch row. Send home stays in the header.
-        if (threadable && !cloud) Column(Modifier.fillMaxWidth().background(Palette.Bg)) {
+        if (threadable && !cloud) Column(Modifier.fillMaxWidth().background(if (themedPhoneWorker) Color.Transparent else Palette.Bg)) {
             Actions(worker, lead = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!tty) Box(
-                        Modifier.size(36.dp).clip(RoundedCornerShape(4.dp))
+                        Modifier.size(if (themedPhoneWorker) 48.dp else 36.dp).clip(RoundedCornerShape(4.dp))
                             .clickable(role = Role.Button, onClickLabel = "Search session") { threadSearch = !threadSearch }
                             .semantics { selected = threadSearch }.tagged(Tags.Worker.THREAD_SEARCH),
                         contentAlignment = Alignment.Center,
@@ -407,8 +413,10 @@ fun WorkerScreen(
                 }
             }, resumable = !mission)
             if (mission) TeamStrip(MissionControl.team(orchestrator), onOpen = { followTeamMember?.invoke(it) })
-            Box(Modifier.fillMaxWidth().height(4.dp))
-            Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+            if (!themedPhoneWorker) {
+                Box(Modifier.fillMaxWidth().height(4.dp))
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
+            }
         }
         else Actions(worker)
         Offline(link.phase, thread = !tty, composing = composing && !(!tty && worker.state == WorkerStatus.NeedsInput))
@@ -498,10 +506,10 @@ fun WorkerScreen(
                     )
                 } } }
             }
-        } else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 10.dp)) {
+        } else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = if (themedPhoneWorker) 4.dp else 10.dp)) {
             Terminal(
                 workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,
-                Modifier.fillMaxSize().border(1.dp, Palette.Border, RoundedCornerShape(12.dp)),
+                Modifier.fillMaxSize(),
                 onFit = { phoneSize = it },
                 directInput = directInput && !worker.isCloud,
                 csiEnter = !worker.isShell && !worker.isCloud,
@@ -517,7 +525,7 @@ fun WorkerScreen(
             val density = LocalDensity.current
             DisposableEffect(lift) { onDispose { lift.value = null } }
             // Snackbars rise above the quick keys and the composer instead of covering them.
-            Column(Modifier.background(if (tty) Palette.Bg else ThreadPalette.Bg).onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
+            Column(Modifier.background(if (themedPhoneWorker) Color.Transparent else if (tty) Palette.Bg else ThreadPalette.Bg).onSizeChanged { lift.value = with(density) { it.height.toDp() } + 8.dp }) {
                 if (!worker.isCloud && tty) {
                     QuickKeyRow(
                         workerId, worker.isShell, phone, directInput, link.phase == Phase.Connected, kittyFlags,
@@ -540,7 +548,7 @@ fun WorkerScreen(
                     { if (!connection.send(ClientMsg.closeSide(workerId))) scope.launch { snackbar.showSnackbar("Couldn't reach the office. The side chat is still open.") } }
                 } else null)
                 Composer(
-                    worker, draft, visible = blocked == null && !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus, thread = !tty,
+                    worker, draft, visible = blocked == null && !waiting && (!directInput || !tty || worker.isCloud), focusRequest = composerFocus, thread = !tty, onArtwork = themedPhoneWorker,
                     quote = quote, onQuoted = { quote = null },
                     fill = composerFill, onFilled = { composerFill = null },
                     prompts = remember(threadEntries) { ThreadTurns.prompts(threadEntries) },
@@ -713,10 +721,11 @@ private fun ActionChip(icon: ImageVector, text: String, color: Color, tag: Strin
     val haptics = LocalHapticFeedback.current
     val shape = RoundedCornerShape(if (square) 4.dp else 8.dp)
     Row(
-        Modifier.clip(shape).background(Palette.Surface).border(1.dp, if (onClick != null) color.copy(alpha = 0.35f) else Palette.Border, shape)
+        (if (themedPhoneWorker) Modifier else Modifier.clip(shape).background(Palette.Surface).border(1.dp, if (onClick != null) color.copy(alpha = 0.35f) else Palette.Border, shape))
             .then(if (onClick != null) Modifier.clickable { haptics.performHapticFeedback(HapticFeedbackType.ContextClick); onClick() } else Modifier)
             .tagged(tag)
-            .padding(horizontal = 10.dp, vertical = 7.dp)
+            .then(if (themedPhoneWorker && onClick != null) Modifier.heightIn(min = 48.dp) else Modifier)
+            .padding(horizontal = if (themedPhoneWorker) 4.dp else 10.dp, vertical = 7.dp)
             .widthIn(max = 240.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -797,7 +806,9 @@ private fun CloudError(w: WorkerInfo, error: String) {
 @Composable
 private fun Asleep(w: WorkerInfo) {
     val graph = LocalGraph.current
-    Box(Modifier.fillMaxSize().tagged(Tags.Worker.ASLEEP).background(Color(0xB3000000), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+    val shade = if (themedPhoneWorker) Modifier.background(Palette.Surface.copy(alpha = .85f))
+        else Modifier.background(Color(0xB3000000), RoundedCornerShape(12.dp))
+    Box(Modifier.fillMaxSize().tagged(Tags.Worker.ASLEEP).then(shade), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
             Icon(OfficeIcons.Moon, null, Modifier.size(28.dp), tint = Palette.TextSecondary)
             Spacer(Modifier.height(8.dp))
@@ -881,9 +892,10 @@ private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean
     val shape = RoundedCornerShape(7.dp)
     val interaction = if (checked == null) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier.toggleable(checked, enabled = enabled, role = Role.Switch) { onClick() }
     Box(
-        Modifier.height(34.dp).widthIn(min = 40.dp).clip(shape)
+        (if (themedPhoneWorker) Modifier.height(48.dp).widthIn(min = 48.dp).clip(shape).background(if (selected) Palette.AccentMuted else Color.Transparent)
+        else Modifier.height(34.dp).widthIn(min = 40.dp).clip(shape)
             .background(if (accent) Palette.AccentMuted else if (selected) Palette.SurfaceHigh else Palette.SurfaceRaised)
-            .border(1.dp, if (accent) Palette.Accent.copy(alpha = 0.5f) else Palette.BorderStrong, shape)
+            .border(1.dp, if (accent) Palette.Accent.copy(alpha = 0.5f) else Palette.BorderStrong, shape))
             .then(interaction)
             .clearAndSetSemantics {
                 contentDescription = spoken

@@ -60,6 +60,14 @@ class TermPageTest {
     }
 
     @Test
+    fun transparentTerminalStillHasAnOpaqueCursorAccent() {
+        val theme = message(TermPage.colors("#ffffff", "#ffaa22", "#50505000", "#444444", "#121212"))["theme"]!!.jsonObject
+        assertEquals("\"#50505000\"", theme["background"].toString())
+        assertEquals("\"#121212\"", theme["cursorAccent"].toString())
+        assertNull(message(TermPage.colors(null, null, null, null))["theme"])
+    }
+
+    @Test
     fun sendsThePageItsStreamAndView() {
         assertEquals(
             Json.parseToJsonElement("""{"t":"snapshot","data":"a\"b\u2028c","cols":120,"rows":40}"""),

@@ -129,7 +129,7 @@ import androidx.compose.runtime.setValue
 @Composable
 internal fun InlineViewToggle(tty: Boolean, onTty: (Boolean) -> Unit) {
     val shape = RoundedCornerShape(4.dp)
-    Row(Modifier.background(Palette.Surface, shape).border(1.dp, Palette.Border, shape).padding(2.dp)) {
+    Row(if (themedPhoneWorker) Modifier else Modifier.background(Palette.Surface, shape).border(1.dp, Palette.Border, shape).padding(2.dp)) {
         InlineSegment("Thread", !tty, Tags.Worker.VIEW_THREAD) { onTty(false) }
         InlineSegment("Raw TTY", tty, Tags.Worker.VIEW_TTY) { onTty(true) }
     }
@@ -138,9 +138,9 @@ internal fun InlineViewToggle(tty: Boolean, onTty: (Boolean) -> Unit) {
 @Composable
 private fun InlineSegment(text: String, on: Boolean, tag: String, onClick: () -> Unit) {
     Box(
-        Modifier.clip(RoundedCornerShape(3.dp)).background(if (on) Palette.SurfaceHigh else Color.Transparent)
+        Modifier.clip(RoundedCornerShape(3.dp)).background(if (!on) Color.Transparent else if (themedPhoneWorker) Palette.AccentMuted else Palette.SurfaceHigh)
             .clickable(role = Role.Tab, onClick = onClick).semantics { selected = on }.tagged(tag)
-            .heightIn(min = 30.dp).padding(horizontal = 10.dp),
+            .heightIn(min = if (themedPhoneWorker) 48.dp else 30.dp).padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(text.uppercase(), style = LocalOfficeType.current.eyebrow.copy(color = if (on) Palette.Text else Palette.TextSecondary))
@@ -637,7 +637,7 @@ internal fun Thread(
                     StatusIndicator(status, Modifier.padding(top = 14.dp))
                 }
             }
-            Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(8.dp).background(Brush.verticalGradient(listOf(ThreadPalette.Bg, Color.Transparent))))
+            if (!themedPhoneWorker) Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(8.dp).background(Brush.verticalGradient(listOf(ThreadPalette.Bg, Color.Transparent))))
             // Floats over the conversation's bottom corner rather than taking a row of its own above the composer.
             if ((ThreadScroll.showJump(follow, fromBottom()) || stuck) && rows.isNotEmpty() && !state.newerTrimmed) {
                 Jump(Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp), ::resume)

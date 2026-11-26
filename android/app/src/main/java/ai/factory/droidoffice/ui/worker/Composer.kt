@@ -141,6 +141,7 @@ fun Composer(
     focusRequest: Int = 0,
     intercept: ((String) -> Boolean)? = null,
     thread: Boolean = false,
+    onArtwork: Boolean = false,
     queueState: ThreadQueue? = null,
     onQueued: () -> Unit = {},
     /** After the office took a message from here, queued or not, with what was sent. */
@@ -310,6 +311,10 @@ fun Composer(
     if (!visible) return
     // The Thread view's composer is near-square and mono like the rest of its chrome; Raw TTY's keeps its round controls.
     val field = RoundedCornerShape(if (thread) 4.dp else 14.dp)
+    val fieldFace = if (onArtwork) Modifier.background(Palette.Border, field)
+        else Modifier.clip(field).background(if (thread) ThreadPalette.Surface else Palette.Surface)
+            .border(1.dp, if (thread) ThreadPalette.InputBorder else Palette.BorderStrong, field)
+    val hit = if (onArtwork) 48.dp else if (thread) 32.dp else 38.dp
     val control = if (thread) RoundedCornerShape(3.dp) else CircleShape
     val thumb = RoundedCornerShape(if (thread) 3.dp else 9.dp)
     // On a wide screen the Thread's composer keeps to the conversation's reading width.
@@ -409,7 +414,7 @@ fun Composer(
         }
         if (thread) {
             Column(
-                Modifier.fillMaxWidth().clip(field).background(ThreadPalette.Surface).border(1.dp, ThreadPalette.InputBorder, field),
+                Modifier.fillMaxWidth().then(fieldFace),
             ) {
                 if (!queuePanel.isEmpty) {
                     ComposerQueue(
@@ -432,13 +437,13 @@ fun Composer(
                 Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.Bottom) {
                     if (!w.isShell) {
                         Box(
-                            Modifier.size(32.dp).clip(control).clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }.tagged(Tags.Worker.ATTACH),
+                            Modifier.size(hit).clip(control).clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }.tagged(Tags.Worker.ATTACH),
                             contentAlignment = Alignment.Center,
                         ) { Icon(Icons.Default.Add, "Attach pictures", tint = ThreadPalette.TextSecondary) }
                     }
-                    Box(Modifier.weight(1f).heightIn(min = 32.dp).padding(horizontal = 8.dp, vertical = 4.dp), contentAlignment = Alignment.CenterStart) {
+                    Box(Modifier.weight(1f).heightIn(min = hit).padding(horizontal = 8.dp, vertical = 4.dp), contentAlignment = Alignment.CenterStart) {
                         if (text.isEmpty()) Text(
-                            hint, style = MaterialTheme.typography.bodyLarge, color = ThreadPalette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            hint, style = MaterialTheme.typography.bodyLarge, color = if (onArtwork) Palette.TextSecondary else ThreadPalette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.clearAndSetSemantics {},
                         )
                         BasicTextField(
@@ -458,16 +463,16 @@ fun Composer(
                         )
                     }
                     if (queueable) {
-                        Text(
-                            "Queue",
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (canQueue) ThreadPalette.Text else ThreadPalette.TextTertiary),
-                            modifier = Modifier.clip(control).clickable(enabled = canQueue, role = Role.Button, onClickLabel = "Queue for after this turn") { send(true) }
-                                .semantics { contentDescription = "Queue for after this turn" }.tagged(Tags.Worker.QUEUE_SEND).padding(horizontal = 8.dp, vertical = 8.dp),
-                        )
+                        Box(Modifier.clip(control).clickable(enabled = canQueue, role = Role.Button, onClickLabel = "Queue for after this turn") { send(true) }
+                            .semantics { contentDescription = "Queue for after this turn" }.tagged(Tags.Worker.QUEUE_SEND)
+                            .then(if (onArtwork) Modifier.heightIn(min = hit).widthIn(min = hit) else Modifier)
+                            .padding(horizontal = 8.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+                            Text("Queue", style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = if (canQueue) ThreadPalette.Text else ThreadPalette.TextTertiary))
+                        }
                     }
                     if (onStop != null) {
                         Box(
-                            Modifier.size(32.dp).clip(control).clickable(enabled = connected, role = Role.Button, onClickLabel = "Stop agent") {
+                            Modifier.size(hit).clip(control).clickable(enabled = connected, role = Role.Button, onClickLabel = "Stop agent") {
                                 haptics.performHapticFeedback(HapticFeedbackType.Confirm)
                                 onStop()
                             }.semantics { contentDescription = "Stop agent" }.tagged(Tags.Worker.STOP),
@@ -479,7 +484,7 @@ fun Composer(
                         }
                     }
                     Box(
-                        Modifier.size(32.dp).clip(control).clickable(enabled = ready) { send(false) }.tagged(Tags.Worker.SEND),
+                        Modifier.size(hit).clip(control).clickable(enabled = ready) { send(false) }.tagged(Tags.Worker.SEND),
                         contentAlignment = Alignment.Center,
                     ) {
                         Box(Modifier.size(24.dp).background(if (ready) ThreadPalette.Text else ThreadPalette.SurfaceHigh, control), contentAlignment = Alignment.Center) {
@@ -489,20 +494,18 @@ fun Composer(
                 }
             }
         } else Row(
-            Modifier.fillMaxWidth().clip(field).background(Palette.Surface)
-                .border(1.dp, Palette.BorderStrong, field)
-                .padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            Modifier.fillMaxWidth().then(fieldFace).padding(if (onArtwork) 2.dp else 6.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
             if (!w.isShell) {
                 Box(
-                    Modifier.size(38.dp).clip(control).clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }.tagged(Tags.Worker.ATTACH),
+                    Modifier.size(hit).clip(control).clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }.tagged(Tags.Worker.ATTACH),
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Default.Add, "Attach pictures", tint = Palette.TextSecondary) }
             }
-            Box(Modifier.weight(1f).heightIn(min = 38.dp).padding(horizontal = 8.dp, vertical = 9.dp), contentAlignment = Alignment.CenterStart) {
+            Box(Modifier.weight(1f).heightIn(min = hit).padding(horizontal = 8.dp, vertical = 9.dp), contentAlignment = Alignment.CenterStart) {
                 if (text.isEmpty()) Text(
-                    hint, style = MaterialTheme.typography.bodyLarge, color = Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    hint, style = MaterialTheme.typography.bodyLarge, color = if (onArtwork) Palette.TextSecondary else Palette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.clearAndSetSemantics {},
                 )
                 BasicTextField(
@@ -523,7 +526,7 @@ fun Composer(
             }
             if (onStop != null) {
                 Box(
-                    Modifier.padding(end = 6.dp).size(38.dp).clip(control)
+                    Modifier.padding(end = 6.dp).size(hit).clip(control)
                         .border(1.dp, Palette.BorderStrong, control)
                         .clickable(enabled = connected, role = Role.Button, onClickLabel = "Stop turn") {
                             haptics.performHapticFeedback(HapticFeedbackType.Confirm)
@@ -539,7 +542,7 @@ fun Composer(
             if (queueable) {
                 val square = RoundedCornerShape(3.dp)
                 Box(
-                    Modifier.padding(end = 6.dp).height(38.dp).clip(square)
+                    Modifier.padding(end = 6.dp).height(hit).clip(square)
                         .border(1.dp, if (canQueue) Palette.BorderStrong else Palette.Border, square)
                         .clickable(enabled = canQueue, role = Role.Button, onClickLabel = "Queue for after this turn") { send(true) }
                         .semantics { contentDescription = "Queue for after this turn" }
@@ -551,10 +554,10 @@ fun Composer(
                 }
             }
             Box(
-                Modifier.size(38.dp).clip(control).background(if (ready) Palette.Accent else Palette.SurfaceHigh).clickable(enabled = ready) { send(false) }.tagged(Tags.Worker.SEND),
+                Modifier.size(hit).clip(control).background(if (onArtwork) Color.Transparent else if (ready) Palette.Accent else Palette.SurfaceHigh).clickable(enabled = ready) { send(false) }.tagged(Tags.Worker.SEND),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(OfficeIcons.ArrowUp, if (queueable) "Send now" else "Send", Modifier.size(20.dp), tint = if (ready) Palette.Bg else Palette.TextTertiary)
+                Icon(OfficeIcons.ArrowUp, if (queueable) "Send now" else "Send", Modifier.size(20.dp), tint = if (!ready) Palette.TextTertiary else if (onArtwork) Palette.Accent else Palette.Bg)
             }
         }
     }

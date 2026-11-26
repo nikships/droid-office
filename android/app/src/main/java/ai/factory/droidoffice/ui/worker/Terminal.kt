@@ -18,6 +18,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -48,6 +50,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -92,8 +96,18 @@ fun Terminal(
     val latestLive by rememberUpdatedState(live)
     val latestFit by rememberUpdatedState(onFit)
     val latestScale by rememberUpdatedState(fontScale)
-    val ink = Palette.artwork?.terminal
-    val colors = remember(ink) { TermPage.colors(ink?.foreground, ink?.cursor, ink?.background, ink?.selection) }
+    val art = Palette.artwork
+    val unframed = themedPhoneWorker
+    val colors = remember(art, unframed) {
+        val ink = art?.terminal
+        // Transparent pixels show the same pane as the controls. Give xterm the RGB of its
+        // brightest possible backdrop for its ANSI contrast adjustment, not transparent black.
+        val ground = if (unframed && art != null) {
+            val brightest = art.tint.copy(alpha = art.glass).compositeOver(Color.White).toArgb()
+            "#%06x00".format(brightest and 0xffffff)
+        } else ink?.background
+        TermPage.colors(ink?.foreground, ink?.cursor, ground, ink?.selection, cursorAccent = ink?.background)
+    }
     val latestColors by rememberUpdatedState(colors)
     val latestKittyFlags by rememberUpdatedState(onKittyFlags)
     val workerName = if (workerId == ORCHESTRATOR_ID) {
@@ -139,7 +153,7 @@ fun Terminal(
     LaunchedEffect(page, csiEnter) { page.setCsiEnter(csiEnter) }
 
     Box(
-        modifier.clip(RoundedCornerShape(12.dp)).background(TermBg)
+        modifier.then(if (unframed) Modifier else Modifier.border(1.dp, Palette.Border, RoundedCornerShape(12.dp)).clip(RoundedCornerShape(12.dp)).background(TermBg))
             .tagged(Tags.Worker.TERMINAL)
             .semantics {
                 // TalkBack speaks the description; the whole screen is the node's text, so a
@@ -148,7 +162,12 @@ fun Terminal(
                 if (screen != null) text = AnnotatedString(screen.text())
             },
     ) {
-        key(page) { AndroidView(factory = { page.view }, modifier = Modifier.fillMaxSize()) }
+        key(page) {
+            AndroidView(factory = { page.view }, modifier = Modifier.fillMaxSize(), update = {
+                it.setBackgroundColor(if (unframed) android.graphics.Color.TRANSPARENT else TermPalette.BACKGROUND)
+                it.alpha = if (unframed && !drawn) 0f else 1f
+            })
+        }
         if (!drawn) {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spinner(Modifier.size(22.dp))
@@ -159,7 +178,7 @@ fun Terminal(
         AnimatedVisibility(drawn && !atBottom, Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp), enter = fadeIn(), exit = fadeOut()) {
             Row(
                 Modifier.clip(RoundedCornerShape(50)).background(Palette.SurfaceHigh).clickable { page.send(TermPage.scrollToBottom()) }
-                    .tagged(Tags.Worker.LATEST).padding(horizontal = 12.dp, vertical = 6.dp),
+                    .tagged(Tags.Worker.LATEST).then(if (unframed) Modifier.heightIn(min = 48.dp) else Modifier).padding(horizontal = 12.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Default.KeyboardArrowDown, null, Modifier.size(16.dp), tint = Palette.Text)
