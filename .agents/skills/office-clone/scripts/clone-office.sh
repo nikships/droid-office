@@ -16,6 +16,8 @@
 #   workers.json, cloud-workers.json, guests.json  a started office resumes every saved worker, so a
 #                                                  copy would run the owner's real sessions twice
 #   linear-floor.json autopilot.on & links         keeps team/project setup, turns autopilot off, clears links
+#   guest-funnel.json                              the owner's public Funnel mapping; start.sh also keeps
+#                                                  external sharing locked (DROID_OFFICE_GUEST_SHARING=off)
 #   pty.sock, pty-host.*, hook-port, shell.*       the running office's terminals and hooks
 #   scrollback/, worktrees/, drops/, images/, wiki-run*  other workers' terminals, checkouts, media and runs
 set -euo pipefail
@@ -32,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --office) OFFICE=$2; shift 2 ;;
     --dest) DEST=$2; shift 2 ;;
     --port) PORT=$2; shift 2 ;;
-    -h | --help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "clone-office: unknown option $1" >&2; exit 2 ;;
   esac
 done
@@ -83,7 +85,7 @@ if [[ "$FRESH" == true ]]; then
 else
 EXCLUDES=(--exclude workers.json --exclude cloud-workers.json --exclude guests.json
   --exclude /orchestrator/
-  --exclude remote-workers.json --exclude remote-mcp.json --exclude tailnet-https.json
+  --exclude remote-workers.json --exclude remote-mcp.json --exclude tailnet-https.json --exclude guest-funnel.json
   --exclude pty.sock --exclude 'pty-host.*' --exclude hook-port --exclude 'shell.*'
   --exclude scrollback/ --exclude worktrees/ --exclude drops/ --exclude images/ --exclude 'wiki-run*'
   --exclude bin/ --exclude 'droid-*.json' --exclude 'system-*.md' --exclude grok-home/ --exclude muse-home/)
@@ -182,6 +184,10 @@ fi
   # A clone leaves the owner's tailnet alone unless the run asks for it (DROID_OFFICE_REMOTE_MCP=on ./start.sh).
   echo 'export DROID_OFFICE_REMOTE_MCP="${DROID_OFFICE_REMOTE_MCP:-off}"'
   echo 'export DROID_OFFICE_TAILNET_HTTPS="${DROID_OFFICE_TAILNET_HTTPS:-off}"'
+  # External sharing publishes to the internet through Tailscale Funnel, so a clone keeps it locked even
+  # when the copied guest-links.json has it on. A run may unlock it only against a stub tailscale.
+  echo 'export DROID_OFFICE_GUEST_SHARING="${DROID_OFFICE_GUEST_SHARING:-off}"'
+  echo 'case "$DROID_OFFICE_GUEST_SHARING" in 0 | [oO][fF][fF] | [fF][aA][lL][sS][eE] | [nN][oO]) ;; *) [[ -n "${DROID_OFFICE_TAILSCALE_BIN:-}" ]] || { echo "start.sh: a clone turns on external sharing only with DROID_OFFICE_TAILSCALE_BIN set to a stub tailscale" >&2; exit 2; } ;; esac'
   printf 'exec node bin/droid-office.js '
   [[ "$FRESH" == false ]] || printf '%q ' "$DEST/floors/droid-office"
   printf -- '--home %q --port %s --host 127.0.0.1 --projects %q "$@"\n' "$DEST/office" "$PORT" "$DEST/floors"

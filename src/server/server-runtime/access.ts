@@ -22,6 +22,12 @@ interface AccessContext {
   address(): AddressInfo | string | null;
 }
 
+/** Whether a connection is a guest's (external sharing), never one of the owner's. */
+export const isGuestClient = (c: Client): boolean => !!(c as Client & { guest?: unknown }).guest;
+
+/** The owner's own browsers and phones, for the Mac menu bar's counts. */
+export const ownerDevices = (clients: Iterable<Client>) => [...clients].filter((c) => !isGuestClient(c)).map((c) => ({ device: c.device, phone: !!c.phoneSizes }));
+
 /** Shared HTTP/WebSocket credentials and owner-only pairing settings. */
 export function createAccess({ cfg, lanToken, devices, tailscale, companion, tailnetHttps, clients, version, address }: AccessContext) {
   /**
@@ -84,7 +90,7 @@ export function createAccess({ cfg, lanToken, devices, tailscale, companion, tai
     if (companion.on === on) return;
     companion.set(on, 'owner');
     console.log(`  🌐  The web companion is ${on ? 'on' : 'off'}`);
-    if (!on) for (const c of clients.values()) if (c.dashboard && !(c as Client & { guest?: unknown }).guest) c.ws.close(4403, 'The web companion was turned off');
+    if (!on) for (const c of clients.values()) if (c.dashboard && !isGuestClient(c)) c.ws.close(4403, 'The web companion was turned off');
   };
   /** Unpairs a phone: its token stops working, and its open connections are closed. */
   const forgetDevice = (id: string): boolean => {

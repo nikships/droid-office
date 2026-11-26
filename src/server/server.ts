@@ -10,7 +10,7 @@ import type { Config } from './config.js';
 import type { AddressInfo } from 'node:net';
 import { lanIPv4s, mintLanToken, tailscaleIPv4s } from './lan.js';
 import { DevicesStore } from './devices.js';
-import { TailscaleWatch } from './tailscale.js';
+import { TailscaleWatch, useTailscaleBinary } from './tailscale.js';
 import { WebCompanion } from './web-companion.js';
 import { TailnetHttps } from './tailnet-https.js';
 import { GuestLinks } from './guest-links.js';
@@ -140,6 +140,8 @@ export function leaveFloorTerminals(c: Pick<Client, 'attached' | 'stale'>) {
 }
 
 export async function startServer(cfg: Config) {
+  // Before anything asks Tailscale: an office pinned to a stub must never reach the real CLI.
+  useTailscaleBinary(cfg.tailscaleBin);
   const publicDir = findPublicDir();
   const appDir = sourceAppDir();
   const hotReload = new HotReload({ appDir, dataDir: cfg.dataDir, publicDir });
@@ -1058,6 +1060,7 @@ export async function startServer(cfg: Config) {
     request: guestHttp.guestRequest,
     upgrade: (req, socket, head) => server.emit('upgrade', req, socket, head),
     onState: () => guestLinksChanged(),
+    ...(cfg.guestSharing ? {} : { locked: 'External sharing is disabled by DROID_OFFICE_GUEST_SHARING=off.' }),
   });
 
   const onConnection = (ws: WebSocket, url: URL, device?: PairedDevice) => {
@@ -2669,7 +2672,7 @@ export async function startServer(cfg: Config) {
   await hotReload.start();
   workerLabels.start();
   const httpsReady = cfg.tailnetHttps ? httpsGateway.start() : Promise.resolve(httpsGateway.state());
-  if (guestLinks.on) void guestFunnel.set(true);
+  void guestFunnel.start(guestLinks.on);
 
   /** With `keep` (a restart), workers' terminals keep running for the next office to pick up. */
   const shutdown = (keep = false) => {
@@ -2723,5 +2726,7 @@ export async function startServer(cfg: Config) {
     owner: ownerOffice,
     projectsDir: () => building.projectsDir,
     resolvedAgent: agentPath,
+    /** Share links, their audit, and the guest backend's request handler (tests drive it without Funnel). */
+    guests: { links: guestLinks, audit: guestAudit, request: guestHttp.guestRequest },
   };
 }

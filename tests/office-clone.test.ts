@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -26,6 +26,8 @@ test('an office clone keeps Orchestrator settings but never copies its live sess
   writeFileSync(path.join(state, 'orchestrator.json'), JSON.stringify(settings));
   for (const file of ['workers.json', 'droid-hooks.json', 'hook.cjs', 'pty.sock']) writeFileSync(path.join(session, file), 'session must not copy');
   writeFileSync(path.join(state, 'remote-workers.json'), 'remote credentials must not copy');
+  writeFileSync(path.join(state, 'guest-funnel.json'), JSON.stringify({ office: state, backendPort: 45678, httpsPort: 10000, published: true }));
+  writeFileSync(path.join(state, 'guest-links.json'), JSON.stringify({ on: true, links: [] }));
   // The script runs the built CLI from dist/, whose original source is covered by the source-level suites.
   execFileSync('bash', [script, '--office', office, '--dest', dest, '--port', '4699'], { env: { ...process.env, HOME: home, NODE_V8_COVERAGE: '' }, timeout: 30_000, stdio: 'pipe' });
   const copied = path.join(dest, 'office', '.droid-office');
@@ -33,6 +35,17 @@ test('an office clone keeps Orchestrator settings but never copies its live sess
   assert.equal(existsSync(path.join(copied, 'orchestrator')), false);
   assert.equal(existsSync(path.join(copied, 'remote-workers.json')), false);
   assert.match(readFileSync(path.join(dest, 'start.sh'), 'utf8'), /export HOME=/);
+  // The owner's public Funnel mapping is theirs alone, and the clone starts with external sharing locked.
+  assert.equal(existsSync(path.join(copied, 'guest-funnel.json')), false);
+  assert.match(readFileSync(path.join(dest, 'start.sh'), 'utf8'), /export DROID_OFFICE_GUEST_SHARING="\$\{DROID_OFFICE_GUEST_SHARING:-off\}"/);
+  const env = { ...process.env, NODE_V8_COVERAGE: '' };
+  delete env.DROID_OFFICE_TAILSCALE_BIN;
+  const unlocked = spawnSync('bash', [path.join(dest, 'start.sh'), '--help'], { env: { ...env, DROID_OFFICE_GUEST_SHARING: 'on' }, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(unlocked.status, 2, 'sharing on needs a stub tailscale');
+  assert.match(unlocked.stderr, /DROID_OFFICE_TAILSCALE_BIN/);
+  const stubbed = spawnSync('bash', [path.join(dest, 'start.sh'), '--help'], { env: { ...env, DROID_OFFICE_GUEST_SHARING: 'on', DROID_OFFICE_TAILSCALE_BIN: process.execPath }, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(stubbed.status, 0, stubbed.stderr);
+  assert.equal(spawnSync('bash', [path.join(dest, 'start.sh'), '--help'], { env, encoding: 'utf8', timeout: 30_000 }).status, 0, 'locked by default');
 });
 
 test('an office clone keeps Linear team and project setup while disabling autopilot and clearing links', async (t) => {

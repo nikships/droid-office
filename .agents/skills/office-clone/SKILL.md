@@ -24,7 +24,7 @@ Source resolution order: `--office DIR`, `$DROID_OFFICE_HOME`, `officeDir` in `~
 | Per-floor state (decor, jukebox, Whiteboard, team, `linear-floor.json` team/project setup) and Home floor state | `<floor>/.droid-office/`, `~/.droid-office/` |
 | Mac app browser settings (profile, graphics, per-desk models, active floor) | `localStorage` LevelDB (`uv`) |
 
-**Excluded or disarmed so starting the clone cannot resume live sessions or mutate real issues:** `workers.json`, `cloud-workers.json`, `guests.json`, the entire `/orchestrator/` session directory, `remote-workers.json`, `remote-mcp.json`, PTY/hook sockets (`pty.sock`, `pty-host.*`, `hook-port`, `shell.*`), `scrollback/`, `worktrees/`, `drops/`, `images/` and `wiki-run*`; cloned `linear-floor.json` files turn `autopilot.on` off and clear `links`.
+**Excluded or disarmed so starting the clone cannot resume live sessions or mutate real issues:** `workers.json`, `cloud-workers.json`, `guests.json`, the entire `/orchestrator/` session directory, `remote-workers.json`, `remote-mcp.json`, `tailnet-https.json`, `guest-funnel.json` (the owner's public Funnel mapping), PTY/hook sockets (`pty.sock`, `pty-host.*`, `hook-port`, `shell.*`), `scrollback/`, `worktrees/`, `drops/`, `images/` and `wiki-run*`; cloned `linear-floor.json` files turn `autopilot.on` off and clear `links`.
 
 **No installed office (`--fresh`):** mutually exclusive with `--office`; creates a local clone of this checkout plus a test `Verifier` profile (`DROID_OFFICE_BROWSERS_PATH` overrides the browser cache). Prefer a real owner clone whenever one exists.
 
@@ -41,6 +41,7 @@ $T/start.sh                  # run with fireAndForget; prints URL (port 4677 or 
 - Launch `$T/start.sh` with `fireAndForget` (a `&` job inside a one-off shell dies when that shell exits).
 - `start.sh` binds `127.0.0.1` with `--home $T/office --projects $T/floors` and `HOME=$T/home`, isolating Home-floor state and PTY hosts inside `$T` while preserving `GH_CONFIG_DIR`, `GIT_CONFIG_GLOBAL`, `factory.json` and Whiteboard Chromium.
 - After any source edit, rerun `npm run build` and restart `$T/start.sh`; clone state persists across restarts.
+- `start.sh` exports `DROID_OFFICE_REMOTE_MCP`, `DROID_OFFICE_TAILNET_HTTPS` and `DROID_OFFICE_GUEST_SHARING` as `off` unless the run sets them, so a clone never changes the owner's Tailscale Serve or publishes anything through Funnel, even when the copied `guest-links.json` has external sharing on. `DROID_OFFICE_GUEST_SHARING=on` is refused (exit 2) unless `DROID_OFFICE_TAILSCALE_BIN` names a stub `tailscale`; the office then runs only that executable, with no fallback to the installed CLI.
 
 ## 3. Drive: `office-run.mjs`
 

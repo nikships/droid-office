@@ -16,6 +16,16 @@ export interface TailscaleSelf {
 
 /** Where the CLI is: on PATH, inside the Mac app, or Homebrew's (an app's PATH often lacks it). */
 const TAILSCALE_BINARIES = ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale', '/opt/homebrew/bin/tailscale', '/usr/local/bin/tailscale'];
+let binaries: readonly string[] = TAILSCALE_BINARIES;
+
+/**
+ * Pins every `tailscale` call this process makes to one executable (DROID_OFFICE_TAILSCALE_BIN), with
+ * no PATH lookup and no fallback to an installed CLI, so an office under test can only reach a stub.
+ * Undefined restores the search.
+ */
+export function useTailscaleBinary(bin: string | undefined): void {
+  binaries = bin ? [bin] : TAILSCALE_BINARIES;
+}
 
 /** What `tailscale status --json` says about this machine, or undefined when it isn't up on a tailnet. */
 export function parseTailscaleStatus(json: unknown): TailscaleSelf | undefined {
@@ -120,13 +130,16 @@ export function serveFailure(output: string): { message: string; fixUrl?: string
 export class TailscaleCli {
   private bin?: string;
 
+  /** Without `bins`, the CLI is looked up as useTailscaleBinary says at each call. */
   constructor(
-    private readonly bins: readonly string[] = TAILSCALE_BINARIES,
+    private readonly bins?: readonly string[],
     private readonly run: CliRun = runCli,
   ) {}
 
   async self(): Promise<TailscaleSelf | undefined> {
-    for (const bin of this.bin ? [this.bin, ...this.bins.filter((b) => b !== this.bin)] : this.bins) {
+    const bins = this.bins ?? binaries;
+    if (this.bin && !bins.includes(this.bin)) this.bin = undefined;
+    for (const bin of this.bin ? [this.bin, ...bins.filter((b) => b !== this.bin)] : bins) {
       const r = await this.run(bin, ['status', '--json'], 3000);
       if (!r.ok) continue;
       try {
@@ -199,7 +212,7 @@ function statusFrom(bin: string, timeoutMs: number): Promise<TailscaleSelf | und
 }
 
 /** This machine on its tailnet, from the first CLI that answers; undefined without Tailscale, signed out or stopped. */
-export async function tailscaleSelf(bins: readonly string[] = TAILSCALE_BINARIES, timeoutMs = 2000): Promise<TailscaleSelf | undefined> {
+export async function tailscaleSelf(bins: readonly string[] = binaries, timeoutMs = 2000): Promise<TailscaleSelf | undefined> {
   for (const bin of bins) {
     const self = await statusFrom(bin, timeoutMs);
     if (self) return self;

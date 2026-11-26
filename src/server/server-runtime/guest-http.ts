@@ -20,12 +20,14 @@ import { ORCHESTRATOR_ID } from '../../shared/mission-control.js';
 import {
   GUEST_AUDIT_PAGE_MAX,
   GUEST_LINKS_MAX,
+  GUEST_PRESET_INFO,
   GUEST_UNAVAILABLE_TEXT,
   guestShareUrl,
   type GuestAuditTarget,
   type GuestHello,
   type GuestLinkCreated,
   type GuestLinksState,
+  type GuestManage,
   type GuestRefusal,
   type GuestTargetFloor,
   type GuestUnavailableReason,
@@ -57,20 +59,26 @@ interface GuestHttpContext extends Pick<ReturnType<typeof createStaticFiles>, 's
   floorRequest: ReturnType<typeof createFloorHttp>;
 }
 
-/** Floor resources a guest may reach, by path: `read` for every preset in scope, `write` only for write presets. */
-const GUEST_FLOOR_ROUTES: Record<string, { methods: readonly string[]; write?: readonly string[]; worker: 'required' | 'optional' | 'none' }> = {
+/**
+ * Floor resources a guest may reach, by path: `methods` for every preset in scope, `write` only for write
+ * presets. A route that reads a file by a path the guest chooses is write-only: a floor's directory can be
+ * the owner's whole home folder, and a write guest already has the worker's terminal. `audit` marks the
+ * routes that change something.
+ */
+const GUEST_FLOOR_ROUTES: Record<string, { methods: readonly string[]; write?: readonly string[]; worker: 'required' | 'optional' | 'none'; audit?: boolean }> = {
   '/api/thread/image': { methods: ['GET'], worker: 'required' },
-  '/api/thread/file': { methods: ['GET'], worker: 'required' },
+  '/api/thread/file': { methods: [], write: ['GET'], worker: 'required' },
   '/api/thread/files': { methods: [], write: ['GET'], worker: 'required' },
-  '/api/term/paths': { methods: ['POST'], worker: 'required' },
-  '/api/term/file': { methods: ['GET'], worker: 'required' },
+  '/api/term/paths': { methods: [], write: ['POST'], worker: 'required' },
+  '/api/term/file': { methods: [], write: ['GET'], worker: 'required' },
+  // Only pictures in the worker's own list of changes, inside its checkout (changes.ts).
   '/api/changes/file': { methods: ['GET'], worker: 'required' },
-  '/api/term/drop': { methods: [], write: ['POST'], worker: 'required' },
-  '/api/prompt/image': { methods: [], write: ['POST', 'DELETE'], worker: 'optional' },
+  '/api/term/drop': { methods: [], write: ['POST'], worker: 'required', audit: true },
+  '/api/prompt/image': { methods: [], write: ['POST', 'DELETE'], worker: 'optional', audit: true },
   '/api/whiteboard/file': { methods: ['GET'], worker: 'none' },
   '/api/whiteboard/render': { methods: ['GET'], worker: 'none' },
   '/api/whiteboard/render/status': { methods: ['GET'], worker: 'none' },
-  '/api/whiteboard/blob': { methods: [], write: ['POST'], worker: 'none' },
+  '/api/whiteboard/blob': { methods: [], write: ['POST'], worker: 'none', audit: true },
   '/api/gh/pull': { methods: ['GET'], worker: 'none' },
   '/api/gh/issue': { methods: ['GET'], worker: 'none' },
   '/api/gh/pull/diff': { methods: ['GET'], worker: 'none' },
@@ -140,11 +148,18 @@ export function createGuestHttp(ctx: GuestHttpContext) {
     res.end(out.body);
   };
   /**
-   * Card frames and their relative assets cannot carry a token, so the capability in the path plus
-   * sharing being on is what authenticates them (as on every other listener). A request that does carry
-   * a token is held to its scope: a worker-only link sees no Whiteboard.
+   * Card frames and their relative assets cannot carry a token, so without one the capability in the path
+   * authenticates them (as on every other listener), but only on floors an active link shows Whiteboards
+   * for: an office link, or a floor link for that floor. A request that does carry a token is held to its
+   * scope: a worker-only link sees no Whiteboard.
    */
-  const guestCardFloor = (grant: GuestGrant | undefined, floorId: string): boolean => !grant || (grant.session.scope !== 'worker' && floorInScope(grant, floorId));
+  const guestCardFloor = (grant: GuestGrant | undefined, floorId: string): boolean => {
+    if (grant) return grant.session.scope !== 'worker' && floorInScope(grant, floorId);
+    return guestLinks.list().some((l) => {
+      const scope = GUEST_PRESET_INFO[l.preset].scope;
+      return l.status === 'active' && (scope === 'office' || (scope === 'floor' && l.floorId === floorId));
+    });
+  };
 
   /** The guest backend's request listener. */
   const guestRequest = async (req: http.IncomingMessage, res: http.ServerResponse) => {
@@ -232,7 +247,7 @@ export function createGuestHttp(ctx: GuestHttpContext) {
       if (route.worker !== 'none' && !mission && workerId && floorId !== null && floorOfWorker(workerId)?.id !== floorId) return send(res, 404, { error: 'No such worker' });
       if ((route.worker === 'none' || (route.worker === 'optional' && !mission)) && floorId === null) return send(res, 404, { error: 'No such floor' });
       const mutation = method !== 'GET';
-      if (mutation && route.write?.includes(method)) {
+      if (route.audit && mutation) {
         const target = auditTarget(workerId, floorId ?? undefined);
         const detail =
           p === '/api/prompt/image'
@@ -269,10 +284,11 @@ export function createGuestHttp(ctx: GuestHttpContext) {
       workers: f.everyone().map((w) => ({ id: w.id, name: w.name })),
     }));
 
-  /** The owner's Share list. */
-  const state = (): GuestLinksState => ({
+  /** The owner's Share list, and what this requester may do with it. */
+  const state = (manage: GuestManage = 'full'): GuestLinksState => ({
+    manage,
     on: guestLinks.on,
-    transport: guestLinks.on ? ctx.guestFunnel().state() : { status: 'off' },
+    transport: ctx.guestFunnel().state(),
     links: guestLinks.list(),
     guests: guestLinks.liveCount(),
     max: GUEST_LINKS_MAX,
@@ -280,16 +296,20 @@ export function createGuestHttp(ctx: GuestHttpContext) {
   });
 
   /** The kill switch: off disconnects every guest at once, then removes the Funnel mapping. */
-  const setSharing = async (on: boolean): Promise<GuestLinksState> => {
+  const setSharing = async (on: boolean, manage: GuestManage = 'full'): Promise<GuestLinksState> => {
     guestLinks.setOn(on);
     await ctx.guestFunnel().set(on);
     console.log(`  🔗  External sharing is ${on ? 'on' : 'off'}`);
-    return state();
+    return state(manage);
   };
 
-  /** `/api/guest-links*` for the office's own page (the caller has already checked ownPage). */
-  const ownerRequest = async (req: http.IncomingMessage, res: http.ServerResponse, p: string, url: URL) => {
+  /**
+   * `/api/guest-links*` for an authenticated owner request (never a guest). `full` is the office's own page
+   * on its own machine; `limited` may read, revoke and turn sharing off, never create a link or turn it on.
+   */
+  const ownerRequest = async (req: http.IncomingMessage, res: http.ServerResponse, p: string, url: URL, manage: GuestManage) => {
     const method = req.method ?? 'GET';
+    const ownMachineOnly = { error: 'Share links are created, and sharing is turned on, only from the office itself on its own computer.' };
     if (p === '/api/guest-links/audit') {
       if (method !== 'GET') return send(res, 405, { error: 'Use GET' });
       const limit = Number(url.searchParams.get('limit') ?? 50);
@@ -301,10 +321,11 @@ export function createGuestHttp(ctx: GuestHttpContext) {
       const label = guestLinks.get(id)?.label;
       if (!guestLinks.revoke(id)) return send(res, 404, { error: 'No such active share link' });
       console.log(`  🔗  Share link “${label}” revoked`);
-      return send(res, 200, state());
+      return send(res, 200, state(manage));
     }
     if (p !== '/api/guest-links') return send(res, 404, { error: 'Not found' });
-    if (method === 'GET') return send(res, 200, state());
+    if (method === 'GET') return send(res, 200, state(manage));
+    if (method === 'POST' && manage !== 'full') return send(res, 403, ownMachineOnly);
     let body: Record<string, unknown>;
     try {
       const raw: unknown = JSON.parse(await readBody(req, 4096));
@@ -314,7 +335,10 @@ export function createGuestHttp(ctx: GuestHttpContext) {
     }
     if (method === 'PUT') {
       if (typeof body.on !== 'boolean') return send(res, 400, { error: 'Send JSON: {"on": true}' });
-      return send(res, 200, await setSharing(body.on));
+      if (body.on && manage !== 'full') return send(res, 403, ownMachineOnly);
+      const locked = ctx.guestFunnel().state().locked;
+      if (body.on && locked) return send(res, 403, { error: locked });
+      return send(res, 200, await setSharing(body.on, manage));
     }
     if (method === 'POST') {
       if (!guestLinks.on) return send(res, 409, { error: 'Turn on external sharing first.' });
@@ -326,7 +350,7 @@ export function createGuestHttp(ctx: GuestHttpContext) {
       const made = guestLinks.create({ label: body.label, preset: body.preset, floorId: body.floorId, workerId: body.workerId, expiry: body.expiry ?? 'never' });
       if (!made.ok) return send(res, made.status, { error: made.error });
       console.log(`  🔗  Share link “${made.link.label}” created`);
-      return send(res, 200, { link: made.link, url: guestShareUrl(origin, made.token), state: state() } satisfies GuestLinkCreated);
+      return send(res, 200, { link: made.link, url: guestShareUrl(origin, made.token), state: state(manage) } satisfies GuestLinkCreated);
     }
     return send(res, 405, { error: 'Use GET, PUT or POST' });
   };
