@@ -1,5 +1,5 @@
-// Share-link guests on the WebSocket, end to end: a real office, a stubbed Tailscale CLI (first on PATH,
-// so nothing reaches the real tailnet), and guest sockets through the real guest backend listener with
+// Share-link guests on the WebSocket, end to end: a real office pinned to a stubbed Tailscale CLI
+// (--tailscale-bin: no PATH lookup, no fallback to an installed one), and guest sockets through the real guest backend listener with
 // the Host and Origin Funnel would send. Scope, read-only, owner-only, audit and disconnects are checked
 // against what actually arrives on the wire.
 import test, { type TestContext } from 'node:test';
@@ -21,27 +21,51 @@ import type { ClientMsg, ServerMsg } from '../src/shared/protocol.js';
 const DNS = 'office.guest-test.ts.net';
 const GUEST_ORIGIN = `https://${DNS}:10000`;
 
-/** A `tailscale` on PATH that answers like a signed-in machine with nothing served, and logs every call. */
-function stubTailscale(dir: string): string {
-  const bin = path.join(dir, 'bin');
-  mkdirSync(bin);
+/** The `tailscale` calls the office makes for guest sharing; the stub answers only these. */
+const EXPECTED_TAILSCALE = [/^status --json$/, /^(serve|funnel) status --json$/, /^funnel --bg --yes --https=10000 http:\/\/127\.0\.0\.1:\d+$/, /^funnel --yes --https=10000 off$/];
+
+/**
+ * A `tailscale` that answers like a signed-in machine (status trimmed from the real capture in
+ * remote-mcp.test.ts) and keeps the one Funnel mapping the office makes, in `serve status --json`'s
+ * shape, so turning sharing off finds and removes it. It logs every call; anything else exits non-zero,
+ * logged UNEXPECTED.
+ */
+function stubTailscale(dir: string): { bin: string; log: string } {
+  const bin = path.join(dir, 'tailscale');
   const log = path.join(dir, 'tailscale.log');
+  const mapping = path.join(dir, 'tailscale-serve.json');
   const status = JSON.stringify({ BackendState: 'Running', Self: { DNSName: `${DNS}.`, TailscaleIPs: ['100.101.102.103'] }, CurrentTailnet: { MagicDNSEnabled: true } });
+  const key = `${DNS}:10000`;
   writeFileSync(
-    path.join(bin, 'tailscale'),
+    bin,
     `#!/bin/sh
-echo "$@" >> '${log}'
-if [ "$1" = "status" ]; then printf '%s' '${status}'; exit 0; fi
-if [ "$1" = "serve" ] && [ "$2" = "status" ]; then printf '{}'; exit 0; fi
-exit 0
+case "$*" in
+  "status --json") echo "$*" >> '${log}'; printf '%s' '${status}'; exit 0 ;;
+  "serve status --json"|"funnel status --json") echo "$*" >> '${log}'; if [ -f '${mapping}' ]; then cat '${mapping}'; else printf '{}'; fi; exit 0 ;;
+  "funnel --bg --yes --https=10000 http://127.0.0.1:"*)
+    echo "$*" >> '${log}'
+    printf '{"TCP":{"10000":{"HTTPS":true}},"Web":{"${key}":{"Handlers":{"/":{"Proxy":"%s"}}}},"AllowFunnel":{"${key}":true}}' "$5" > '${mapping}'
+    exit 0 ;;
+  "funnel --yes --https=10000 off") echo "$*" >> '${log}'; rm -f '${mapping}'; exit 0 ;;
+esac
+echo "UNEXPECTED $*" >> '${log}'
+echo "tailscale stub: unexpected call: $*" >&2
+exit 64
 `,
   );
-  chmodSync(path.join(bin, 'tailscale'), 0o755);
-  process.env.PATH = `${bin}${path.delimiter}${process.env.PATH ?? ''}`;
-  // The office must reach this stub, never the real CLI.
-  assert.equal(execFileSync('/bin/sh', ['-c', 'command -v tailscale']).toString().trim(), path.join(bin, 'tailscale'));
-  assert.match(execFileSync('tailscale', ['status', '--json']).toString(), /guest-test/);
-  return log;
+  chmodSync(bin, 0o755);
+  writeFileSync(log, '');
+  return { bin, log };
+}
+/** Every call the stub saw, each one asserted to be one the office is expected to make. */
+function tailscaleCalls(log: string): string[] {
+  const calls = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+  for (const call of calls)
+    assert.ok(
+      EXPECTED_TAILSCALE.some((re) => re.test(call)),
+      `unexpected tailscale call: ${call}`,
+    );
+  return calls;
 }
 
 type Sock = ReturnType<typeof watch>;
@@ -94,12 +118,8 @@ function watch(t: TestContext, ws: WebSocket) {
 
 async function rig(t: TestContext) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'guest-ws-'));
-  const pathBefore = process.env.PATH;
-  t.after(() => {
-    process.env.PATH = pathBefore;
-    rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-  });
-  const log = stubTailscale(root);
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+  const { bin, log } = stubTailscale(root);
   const home = path.join(root, 'home');
   const projects = path.join(root, 'projects');
   const alpha = path.join(projects, 'alpha');
@@ -108,8 +128,11 @@ async function rig(t: TestContext) {
     mkdirSync(dir, { recursive: true });
     if (dir !== home) execFileSync('git', ['init', '-q'], { cwd: dir });
   }
-  const cfg = loadConfig([alpha, '--home', home, '--projects', projects, '--weather', 'clear', '--host', '127.0.0.1']);
+  const cfg = loadConfig([alpha, '--home', home, '--projects', projects, '--weather', 'clear', '--host', '127.0.0.1', '--tailscale-bin', bin]);
+  assert.equal(cfg.tailscaleBin, bin);
   cfg.port = 0;
+  // Unset in tests so they never publish; this one publishes to the stub only.
+  cfg.guestSharing = true;
   const office = await startServer(cfg);
   t.after(async () => {
     const closing = once(office.server, 'close');
@@ -151,7 +174,7 @@ async function rig(t: TestContext) {
     await delay(50);
   }
   const backend = (JSON.parse(readFileSync(path.join(cfg.dataDir, 'guest-funnel.json'), 'utf8')) as { backendPort: number }).backendPort;
-  assert.match(readFileSync(log, 'utf8'), new RegExp(`funnel --bg --yes --https=10000 http://127.0.0.1:${backend}`));
+  assert.ok(tailscaleCalls(log).includes(`funnel --bg --yes --https=10000 http://127.0.0.1:${backend}`));
 
   const link = async (label: string, preset: GuestPreset, extra: { floorId?: string; workerId?: string } = {}) => {
     const r = await api<GuestLinkCreated>('POST', '/api/guest-links', { label, preset, expiry: 'never', ...extra });
@@ -159,7 +182,7 @@ async function rig(t: TestContext) {
     return { id: r.body.link.id, token: new URL(r.body.url).hash.slice('#g='.length) };
   };
   const guest = (token: string, query = 'client=dashboard') => watch(t, new WebSocket(`ws://127.0.0.1:${backend}/ws?${query}`, [GUEST_WS_PROTOCOL, token], { headers: { host: `${DNS}:10000`, origin: GUEST_ORIGIN } }));
-  return { office, base, api, owner, alphaId, betaId, alphaDir: alpha, a1, a2, a3, b1, link, guest };
+  return { office, base, api, owner, tailscaleLog: log, alphaId, betaId, alphaDir: alpha, a1, a2, a3, b1, link, guest };
 }
 
 const OWNER_ONLY_WELCOME = [
@@ -277,6 +300,39 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   assert.equal(hired.ok, true, hired.error);
   await owner.wait('toast', (m) => m.text.includes('Alex - PR review (guest)'));
   assert.equal((await ef.act({ t: 'worker.spawn', deskId: 'auto', kind: 'shell', repos: [betaId] })).error, GUEST_REFUSED);
+  // A committed Whiteboard change is audited once; a retry, a malformed or rejected change, an ineligible ping and an empty comment are not.
+  const snapshot = ef.messages.find((m) => m.t === 'whiteboard' && m.floor === alphaId && m.update.kind === 'snapshot');
+  const epoch = snapshot?.t === 'whiteboard' && snapshot.update.kind === 'snapshot' ? snapshot.update.epoch : '';
+  assert.ok(epoch, 'the guest gets its floor’s Whiteboard');
+  const show = { t: 'whiteboard.apply', floor: alphaId, envelope: { epoch, seq: 1, ops: [{ op: 'show', selection: { kind: 'grid' } }] } } as unknown as ClientMsg;
+  ef.send(show);
+  await ef.wait('whiteboard', (m) => m.update.kind === 'ack' && m.update.seq === 1);
+  ef.send(show);
+  await ef.until(() => (ef.messages.filter((m) => m.t === 'whiteboard' && m.update.kind === 'ack' && m.update.seq === 1).length === 2 ? true : undefined), 'the retry’s ack');
+  ef.send({ t: 'whiteboard.apply', floor: alphaId, envelope: { epoch, seq: 2, ops: [{ op: 'card.title', card: 'nope', title: 'x' }] } } as unknown as ClientMsg);
+  await ef.wait('whiteboard', (m) => m.update.kind === 'rejected');
+  ef.send({ t: 'whiteboard.apply', floor: alphaId, envelope: { epoch, seq: 0, ops: [] } } as unknown as ClientMsg);
+  await ef.wait('toast', (m) => /malformed/.test(m.text));
+  // Committed, though its button press then reaches nobody (a page nobody made): still audited.
+  ef.send({
+    t: 'whiteboard.apply',
+    floor: alphaId,
+    envelope: {
+      epoch,
+      seq: 3,
+      ops: [
+        { op: 'card.create', card: 'c-guestpage1', kind: 'canvas', title: 'Guest page' },
+        { op: 'state.action', card: 'c-guestpage1', name: 'accept', ping: { text: 'Ship it.', label: 'Accept' } },
+      ],
+    },
+  } as unknown as ClientMsg);
+  await ef.wait('whiteboard', (m) => m.update.kind === 'ack' && m.update.seq === 3);
+  await ef.wait('toast', (m) => /didn't reach a worker/.test(m.text));
+  ef.send({ t: 'whiteboard.ping', worker: a1 });
+  const ping = await ef.wait('whiteboard.pinged', (m) => m.worker === a1);
+  assert.equal(ping.ok, false, 'a shell can’t be pinged');
+  ef.send({ t: 'gh.comment', kind: 'pull', number: 1, body: '  ' } as ClientMsg);
+  await ef.wait('gh.commented', (m) => m.number === 1);
   // Refused by the office's own checks: no audit entry, since nothing happened.
   const badAnswer = await ef.act({ t: 'worker.answer', workerId: a1 } as ClientMsg);
   assert.equal(badAnswer.ok, false);
@@ -437,6 +493,14 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
     false,
     'an action the office refused leaves no audit entry',
   );
+  assert.deepEqual(
+    audit.filter((e) => e.linkLabel === 'Alex - PR review' && (e.action === 'whiteboard' || e.action === 'git')).map((e) => [e.action, e.detail]),
+    [
+      ['whiteboard', '2 Whiteboard change(s)'],
+      ['whiteboard', '1 Whiteboard change(s)'],
+    ],
+    'only committed Whiteboard changes are audited, one with a press that reached nobody included',
+  );
 
   // --- A scoped floor closes and opens again ---------------------------------------------------------
   const viewBeta = await r.link('Viewer - beta', 'view-floor', { floorId: betaId });
@@ -476,6 +540,12 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   assert.equal((await r.api('PUT', '/api/guest-links', { on: false })).status, 200);
   for (const sock of [vwk, ef, eo, vo, vb]) assert.deepEqual(await sock.until(() => sock.closed(), 'guests to disconnect'), { code: GUEST_CLOSE_DISABLED, reason: 'disabled' });
   assert.equal(owner.ws.readyState, WebSocket.OPEN, 'the owner stays connected');
+  await owner.until(() => (readFileSync(r.tailscaleLog, 'utf8').includes('funnel --yes --https=10000 off') ? true : undefined), 'Funnel to be taken down');
+  const calls = tailscaleCalls(r.tailscaleLog);
+  assert.equal(
+    calls.some((c) => c.startsWith('UNEXPECTED')),
+    false,
+  );
   owner.send({ t: 'ping', at: 1 });
   await owner.wait('pong');
 });
