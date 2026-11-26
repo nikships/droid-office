@@ -147,7 +147,8 @@ test('signature materials stay on the nameplate, not on work controls', () => {
   );
   for (const t of themed.filter((t) => t.family === 'artwork')) {
     const styles = companionThemeVars(t);
-    for (const key of identity) assert.ok(styles[`--th-${key}`], `${t.id} keeps ${key}`);
+    const expected = t.id === 'orbital-foundry' ? ['chrome-finish', 'imprint'] : identity;
+    for (const key of expected) assert.ok(styles[`--th-${key}`], `${t.id} keeps ${key}`);
     for (const key of retired) assert.equal(styles[`--th-${key}`], undefined, `${t.id} retires ${key}`);
   }
   for (const key of retired) assert.ok(!css.includes(`data-immersive~="${key}"`), `no signature rule for ${key}`);
@@ -310,4 +311,12 @@ test('each selector consuming an immersive treatment requires that exact key on 
     }
   }
   assert.deepEqual([...used].sort(), [...IMMERSIVE_KEYS].sort());
+});
+
+test('Orbital Foundry uses the standard headings and badges and names its unstriped plate', () => {
+  const theme = companionTheme('orbital-foundry');
+  assert.equal(theme.immersive?.imprint, '"ORBITAL FOUNDRY" / ""');
+  for (const key of ['heading-font', 'panel-edge', 'badge-face', 'badge-ink']) {
+    assert.equal(companionThemeVars(theme)[`--th-${key}`], undefined, key);
+  }
 });

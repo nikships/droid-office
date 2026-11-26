@@ -5,15 +5,10 @@
       <circle cy=".5" r="2" fill="#69717c"/>
       <path d="m-1.1 1.3 2.2-2.2" stroke="#1b2029"/>
     </g>
-    <pattern id="slots" width="196" height="8" patternUnits="userSpaceOnUse">
-      <path d="m115 1-5 5h46l5-5z" fill="#0b1119"/>
-      <path d="m119 2-2.5 2.5h25L144 2z" fill="#ba7946"/>
-    </pattern>
   </defs>
-  <!-- Fit the seam to the plate, not the text. Only the expansion slots repeat. -->
+  <!-- Fit the seam to the plate, not the text. -->
   <path d="M2 2000V15L15 2H5000" fill="none" stroke="#060a11" stroke-opacity=".7" stroke-width="3"/>
   <path d="M4 2000V16L16 4H5000" fill="none" stroke="#adb6bd" stroke-opacity=".22"/>
-  <rect width="100%" height="8" fill="url(#slots)"/>
   <use href="#pin" x="8" y="8"/>
   <use href="#pin" x="100%" y="8" transform="translate(-8)"/>
 </svg>
