@@ -38,7 +38,20 @@ words are in `src/shared/guest-links.ts`.
   the Linear, Jira and Factory connections is owner-only, and their state never reaches a guest. A cloud
   hire from an edit preset still runs on the owner's Factory computers.
 - **Mission Control without its settings.** Office presets get Mission Control with the Orchestrator's
-  saved settings reduced to whether it is on (no model or effort), and without external bots.
+  saved settings reduced to whether it is on (no model or effort), and without external bots. When the
+  Orchestrator cannot start (Droid signed out, its model's subscription missing), office links see **Not
+  available right now** in place of the owner's reason and no Settings pane, and a guest's prompt is
+  refused with the same line.
+- **News follows the workers a link sees.** A notice (toast) that names workers reaches a link only when
+  the link sees every worker it names, including a worker that has since left. Visits and what visitors
+  say reach a link only when it sees both the visitor and the host, on a floor whose content it sees. A
+  single-worker link gets no visits.
+- **A floor's own news reaches its guests.** Notices about a floor that name no worker reach every link
+  that sees that floor's content (never a single-worker link). They include the floor's Linear and Jira
+  notices, such as a ticket identifier, an epic key, a team name and autopilot turning on or off, and
+  picture notices. A share link is for a teammate the owner trusts with the floor. The Linear and
+  Jira boards, their setup and their actions stay owner-only.
+
 ## Transport: a Funnel-only guest backend
 
 Guests are outside the tailnet, so the office publishes a third loopback listener, the **guest backend**
@@ -152,7 +165,11 @@ Everything is checked on the server and denied by default.
     the reason.
   - *Outbound.* Every send path (direct sends, broadcasts, floor sends, terminal data, off-floor screens
     and the welcome) passes one filter, `GUEST_OUTBOUND`, which drops or redacts every `ServerMsg` type for
-    the guest's scope. Out-of-scope floors, workers and Mission Control are never sent, not sent and hidden.
+    the guest's scope. Out-of-scope floors, workers and Mission Control are never sent, rather than sent
+    and hidden. A toast passes only when the guest sees every worker the server names for it (the worker it
+    is about and any others its text names), when it is a direct reply to that guest, or when it is a
+    floor's own news without a worker and the guest sees that floor's content. Visit lists keep only visits
+    between two workers the guest sees, and a visitor's line (`visit_say`) passes only for such a visit.
   - *Writes.* A write guest may resize a terminal; a view-only guest may not. Write presets may hire desk,
     shell and cloud workers on floors in scope. A guest's Whiteboard edits keep the owner as the board's
     author, and the audit names the link. Accepted writes are audited once the office has acted on them.
@@ -190,6 +207,11 @@ enforces every boundary itself; the page only avoids offering what the office wo
 
 - **Every guest.** The **Shell** button is hidden. Settings, usage, Orchestrator settings, pairing, setup,
   update prompts and adding, reordering or removing floors never appear.
+- **Notices and visits.** A floor link shows a notice only when it sees every worker the notice names, and
+  shows visits only between two workers it sees. A single-worker link shows no visits. A floor's own news
+  that names no worker, its Linear and Jira notices included, appears on links that see that floor.
+- **Orchestrator unavailable.** When the Orchestrator cannot start, office links show **Not available right
+  now** with no link to Settings, and a prompt from an `edit-office` link is refused with the same line.
 - **Edit presets only.** Work means prompts, terminal input and resizing, answering questions and
   permission prompts, hiring, interrupting, sending home, forking, resuming, rewinding, the queue, model
   and effort, git and pull requests, and Whiteboard edits. The Changes window opens only on edit presets
@@ -319,11 +341,12 @@ Refused attempts, and writes the forge or the office turned down, are not logged
   `?repo=`, card frames, the `full` and `limited` owner API, credential isolation between listeners, the
   menu bar counts, and the Hire dialog's floor file list.
 - `tests/office-clone.test.ts`: clones leave out `guest-funnel.json` and keep sharing locked.
-- `tests/guest-ws.test.ts`: guests get only their scope on the WebSocket, and only write presets change
-  anything.
+- `tests/guest-ws.test.ts`: guests get only their scope on the WebSocket, only write presets change
+  anything, and a blocked Orchestrator shows guests the fixed line and refuses their prompt with it.
 - `tests/guest-policy.test.ts`: the inbound and outbound policy, identical refusals, worker and floor
   targets, write-only changes, refused Linear tickets, cross-repository workers, scoped welcome, roster and
-  Mission Control, removal news, and audit wording.
+  Mission Control, the Orchestrator's fixed line without a Settings pane, toasts that name workers
+  (departed ones included), floor news, visits and visitors' lines, removal news, and audit wording.
 - `tests/guest-audit-outcome.test.ts`: forge and pipeline writes settle their audit only after the forge
   answers, and only as a success when the change happened.
 - `tests/guest-links-model.test.ts`: the Share window's states, the `limited` page, the lock, expiry
