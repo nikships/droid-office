@@ -255,6 +255,8 @@ export function guestAdmit(g: GuestScopeGrant, msg: unknown, here: string | null
   if (isWrite && !canWrite(g)) return undefined;
   const audit = rule.access === 'write' ? rule.audit : null;
   const m = msg as Record<string, unknown>;
+  // Guests have no Linear board: a ticket handed over with a hire or prompt moves on the owner's Linear account.
+  if ((t === 'worker.spawn' || t === 'worker.prompt') && m.linear !== undefined) return undefined;
   const ok = (target: GuestTargetRef): GuestAdmitted => ({ write: isWrite, audit, target });
   const target = rule.target;
   switch (target.kind) {

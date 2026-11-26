@@ -125,6 +125,18 @@ test('worker targets: in scope, other floors, closed floors, missing workers, th
   assert.equal(guestSeesWorker(GRANTS['view-worker'], 'a1', 'B', undefined), false);
 });
 
+test('a guest never hands a Linear ticket to a worker: that would move it on the owner’s Linear account', () => {
+  for (const preset of ['edit-floor', 'edit-office'] as const) {
+    const g = GRANTS[preset];
+    assert.ok(guestAdmit(g, { t: 'worker.spawn', deskId: 'auto', prompt: 'fix it' }, 'A', world));
+    assert.ok(guestAdmit(g, { t: 'worker.prompt', workerId: 'a1', prompt: 'fix it', issue: 7 }, 'A', world), 'a GitHub issue on its own floor is fine');
+    for (const linear of ['ENG-12', '', null]) {
+      assert.equal(guestAdmit(g, { t: 'worker.spawn', deskId: 'auto', prompt: 'fix it', linear }, 'A', world), undefined, `${preset} hire ${linear}`);
+      assert.equal(guestAdmit(g, { t: 'worker.prompt', workerId: 'a1', prompt: 'fix it', linear }, 'A', world), undefined, `${preset} prompt ${linear}`);
+    }
+  }
+});
+
 test('floors: scoped links only ever return to their own floor, office links move between open floors', () => {
   for (const preset of GUEST_PRESETS) {
     const g = GRANTS[preset];
