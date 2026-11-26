@@ -360,7 +360,7 @@ private fun Intro(enabled: Boolean, onExample: (String) -> Unit) {
         Spacer(Modifier.height(12.dp))
         Text(
             "Wakes only on your prompt or when its own crew reports back.",
-            style = MaterialTheme.typography.bodySmall, color = Palette.TextTertiary,
+            style = MaterialTheme.typography.bodySmall, color = Palette.TextSecondary,
         )
     }
 }

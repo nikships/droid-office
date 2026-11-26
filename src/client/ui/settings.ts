@@ -1596,7 +1596,12 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       h(
         'section.settings-pane',
         { role: 'tabpanel', id: `settings-pane-${p.id}`, 'aria-labelledby': `settings-tab-${p.id}` },
-        h('div.settings-head', {}, h('div.settings-head-row', {}, h('h3', {}, h('span.icon', { 'aria-hidden': 'true' }, p.id === 'orchestrator' ? orchestratorIcon(15) : p.icon), p.label), h('span.pill', {}, p.scope)), h('p', {}, p.blurb)),
+        h(
+          'div.settings-head',
+          {},
+          h('div.settings-head-row', {}, h('h3', {}, h('span.icon', { 'aria-hidden': 'true' }, p.id === 'orchestrator' ? orchestratorIcon(15, { animated: false }) : p.icon), p.label), h('span.pill', {}, p.scope)),
+          h('p', {}, p.blurb),
+        ),
         ...(panes[p.id] ?? []),
       ),
     );
