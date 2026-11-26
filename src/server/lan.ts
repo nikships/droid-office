@@ -24,6 +24,22 @@ export function markProxied(req: IncomingMessage): void {
   proxied.add(req);
 }
 
+const guests = new WeakSet<IncomingMessage>();
+
+/**
+ * Only the guest backend (guest-funnel.ts) marks requests: a guest is never local and never the owner,
+ * and authenticates only with a share link's token (see guest-links.ts).
+ */
+export function markGuest(req: IncomingMessage): void {
+  proxied.add(req);
+  guests.add(req);
+}
+
+/** Whether a request or WebSocket upgrade arrived on the guest backend. */
+export function isGuestRequest(req: IncomingMessage): boolean {
+  return guests.has(req);
+}
+
 export function isLocalRequest(req: IncomingMessage): boolean {
   return !proxied.has(req) && isLoopback(req.socket.remoteAddress);
 }
@@ -49,6 +65,7 @@ export function lanTokenOk(candidate: string | null | undefined, token: string):
  * loopback transport's privileges. Headers cannot mark a request as local.
  */
 export function lanAllowed(req: IncomingMessage, url: URL, token: string): boolean {
+  if (guests.has(req)) return false;
   if (isLocalRequest(req)) return true;
   return lanTokenOk(url.searchParams.get('t'), token);
 }

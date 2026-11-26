@@ -2,6 +2,7 @@
 
 import type { Look } from './avatar.js';
 import type { Forge } from './floors.js';
+import type { GuestSession } from './guest-links.js';
 import type { DecorPlacement, Decoration } from './decor.js';
 import type { FactoryFeatureId, FactoryState } from './factory.js';
 import type { CloudHire, CloudWorker } from './factory-cloud.js';
@@ -1162,12 +1163,16 @@ export type ServerMsg =
       missionControl?: MissionControlState;
       /** Every floor's workers and pull requests, so companions can show the whole building at once. */
       building?: FloorRoster[];
+      /** Only on a guest connection (a share link, see docs/guest-sharing.md): what its link lets it see and do. */
+      guest?: GuestSession;
     } & FloorView)
   /** You arrived on another floor: everything on it, replacing the last one's. */
   | ({ t: 'floor.enter'; arrival: Arrival } & FloorView)
   | { t: 'floors'; floors: FloorInfo[] }
   /** A building agent changed: sent to every connection, whatever floor it is on. */
   | { t: 'missionControl'; state: MissionControlState }
+  /** Share links, the sharing toggle, live guest counts or (with audit) the guest audit log changed. Never sent to guests; owner pages re-read `/api/guest-links`. */
+  | { t: 'guestLinks.changed'; audit?: boolean }
   /** A worker on `floor` changed, sent to every connection so building-wide views stay live. */
   | { t: 'building.worker'; floor: string; worker: WorkerInfo }
   /** A worker left `floor`, sent to every connection. */
