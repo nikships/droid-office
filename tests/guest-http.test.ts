@@ -242,6 +242,12 @@ test('each preset reaches only in-scope floors, workers and Mission Control, and
   assert.equal(await status(editFloor, '/api/term/drop?worker=w2&floor=floor-a&name=notes.txt', 'POST', PNG), 200);
   assert.equal(await status(editFloor, '/api/term/drop?worker=w3&name=notes.txt', 'POST', PNG), 404);
   assert.equal(await status(editFloor, '/api/thread/files?worker=w1&q=src'), 200);
+  // The Hire dialog's @ list names a floor and no worker: only a floor the link reaches, and only for write presets.
+  assert.equal(await status(editFloor, '/api/thread/files?floor=floor-a&q=src'), 200);
+  assert.equal(await status(editFloor, '/api/thread/files?floor=floor-b'), 404);
+  assert.equal(await status(editFloor, '/api/thread/files'), 404);
+  assert.equal(await status(editFloor, '/api/thread/file?floor=floor-a&path=README.md'), 404, 'reading a file still needs a worker');
+  assert.equal(await status(make('view-floor', { floorId: 'floor-a' }).token, '/api/thread/files?floor=floor-a'), 404);
   assert.equal(await status(editFloor, '/api/thread/file?worker=w2&path=README.md'), 200);
   assert.equal(await status(editFloor, '/api/thread/file?worker=w3&path=README.md'), 404);
   assert.equal(await status(editFloor, '/api/term/file?worker=w1&path=README.md'), 200);
