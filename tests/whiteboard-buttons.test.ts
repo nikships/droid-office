@@ -208,6 +208,18 @@ test('a share link guest’s press reaches the page’s last editor only when it
     { ok: false, error: GUEST_REFUSED },
   );
   assert.equal(hidden.calls.length, 0, 'nothing is typed into a worker the link leaves out');
+  // Lost or gone, a hidden editor's state is not the guest's to read: the same refusal, never its name.
+  for (const everyone of [[worker({ lost: { branch: 'here' } })], []]) {
+    const r = recorder();
+    assert.deepEqual(
+      deliverPress(b, press, everyone, r.workers, 'Main', undefined, () => false),
+      { ok: false, error: GUEST_REFUSED },
+    );
+    assert.equal(r.calls.length, 0);
+  }
+  // A link that sees it (the owner, an office link) still reads why.
+  assert.match((deliverPress(b, press, [worker({ lost: { branch: 'here' } })], recorder().workers, 'Main', undefined, () => true) as { error: string }).error, /Pixel's worktree is gone/);
+  assert.match((deliverPress(b, press, [], recorder().workers, 'Main', undefined, () => true) as { error: string }).error, /Pixel is no longer on this floor/);
   const seen = recorder();
   assert.deepEqual(
     deliverPress(b, press, [worker({})], seen.workers, 'Main', undefined, (id) => id === PIXEL.id),

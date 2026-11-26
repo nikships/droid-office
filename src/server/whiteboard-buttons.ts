@@ -47,14 +47,17 @@ export function freshPresses(board: Board, ops: readonly unknown[]): ButtonPress
 
 /**
  * Types one recorded press into the worker who last edited its card's page, on `board` as it is after the batch.
- * `reaches`: whether whoever pressed may have the office tell that worker (a share link's guest: a worker its link sees).
+ * `reaches`: whether whoever pressed may have the office tell that worker, by id, whether it is here or has left
+ * (a share link's guest: a worker its link sees).
  */
 export function deliverPress(board: Board, press: ButtonPress, everyone: readonly WorkerInfo[], workers: PressWorkers, floor: string, prompts?: PromptSource, reaches: (workerId: string) => boolean = () => true): PressOutcome {
   const card = findCard(board, press.card);
   if (!card) return { ok: false, error: 'The card is gone.' };
+  // Decided before any reason about that worker (lost, left) is put into words.
+  const by = card.stamps.content?.author;
+  if (by?.kind === 'worker' && !reaches(by.id)) return { ok: false, error: GUEST_REFUSED };
   const target = buttonTarget(card, everyone);
   if (!target.ok) return { ok: false, error: target.reason };
-  if (!reaches(target.id)) return { ok: false, error: GUEST_REFUSED };
   const w = everyone.find((x) => x.id === target.id);
   if (!w) return { ok: false, error: `${target.name} is no longer on this floor.` };
   const how = buttonDelivery(w);

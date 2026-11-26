@@ -147,12 +147,14 @@ export function createGuestGate({ floors, guestLinks, guestAudit, sendTo, worker
     world,
     /**
      * Whether `c` may have the office act on worker `workerId` beyond the one its message named: the owner
-     * always, a guest as admission decides (where the worker sits and every floor it works in).
+     * always, a guest as admission decides (where the worker sits and every floor it works in). One that
+     * has left took those floors with it: only an office-wide link still sees it.
      */
     sees(c: Client, workerId: string): boolean {
       if (!c.guest) return true;
       const floorId = world.floorOf(workerId);
-      return !!floorId && world.isOpen(floorId) && guestSeesWorker(c.guest, workerId, floorId, world.reposOf(workerId));
+      if (!floorId) return c.guest.session.scope === 'office';
+      return world.isOpen(floorId) && guestSeesWorker(c.guest, workerId, floorId, world.reposOf(workerId));
     },
     /**
      * Whether guest connection `c` may send `msg`: its link still open, then the policy. A refused
