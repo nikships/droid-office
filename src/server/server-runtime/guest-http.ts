@@ -239,13 +239,15 @@ export function createGuestHttp(ctx: GuestHttpContext) {
       const floorId = url.searchParams.get('floor');
       const workerId = str(url.searchParams.get('worker'), 32);
       const mission = workerId === ORCHESTRATOR_ID;
-      if (route.worker === 'required' && !workerInScope(grant, workerId)) return send(res, 404, { error: 'No such worker' });
+      // The Hire dialog's @ list names its floor and no worker: the floor's folder, like a floor resource.
+      const floorOnly = p === '/api/thread/files' && !url.searchParams.has('worker');
+      if (route.worker === 'required' && !floorOnly && !workerInScope(grant, workerId)) return send(res, 404, { error: 'No such worker' });
       if (route.worker === 'optional' && url.searchParams.has('worker') && !workerInScope(grant, workerId)) return send(res, 404, { error: 'No such worker' });
-      if (route.worker === 'none' && grant.session.scope === 'worker') return send(res, 404, { error: 'Not found' });
+      if ((route.worker === 'none' || floorOnly) && grant.session.scope === 'worker') return send(res, 404, { error: 'Not found' });
       if (floorId !== null && !floorInScope(grant, floorId)) return send(res, 404, { error: 'No such floor' });
       // A worker route without ?floor= resolves the worker's own floor; one with it must name that floor.
       if (route.worker !== 'none' && !mission && workerId && floorId !== null && floorOfWorker(workerId)?.id !== floorId) return send(res, 404, { error: 'No such worker' });
-      if ((route.worker === 'none' || (route.worker === 'optional' && !mission)) && floorId === null) return send(res, 404, { error: 'No such floor' });
+      if ((route.worker === 'none' || floorOnly || (route.worker === 'optional' && !mission)) && floorId === null) return send(res, 404, { error: 'No such floor' });
       const mutation = method !== 'GET';
       if (route.audit && mutation) {
         const target = auditTarget(workerId, floorId ?? undefined);
@@ -355,5 +357,5 @@ export function createGuestHttp(ctx: GuestHttpContext) {
     return send(res, 405, { error: 'Use GET, PUT or POST' });
   };
 
-  return { guestRequest, ownerRequest, state, setSharing };
+  return { guestRequest, ownerRequest };
 }
