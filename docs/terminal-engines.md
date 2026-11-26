@@ -11,6 +11,20 @@ The alternative is [ghostty-web](https://github.com/coder/ghostty-web) `0.4.0-ne
 - `src/shared/vt-scanner.ts`: `VtScanner` is a stateful, synchronous parser-hook adapter, not a second screen emulator. CSI, DCS, OSC, ESC and APC may cross writes; the last registered handler runs first. Returning `true` consumes the sequence; `false` observes it. Previous output is parsed before the callback. `reset()` drops unfinished input, not registrations. Each unfinished sequence is bounded to 8 Mi UTF-16 code units.
 - `term-mirror.ts` owns ordering, passive query suppression, visibility, resnapshot and focus deduplication for both engines. Ghostty's `onWriteParsed` fires after its synchronous parser; write callbacks run on a microtask, including the empty drain before a snapshot. `GhosttyAdapter.input()` requests user input, not local echo. Its key filter translates xterm's “true = continue” to Ghostty's “true = handled.”
 
+
+### Feature ownership
+
+Each feature attaches once to `engine.ghostty`, including on the read-only log. Implementations and their tests belong to that feature; the engine glue and UI callers stay shared. Keep imports of `ghostty-web` type-only here: its runtime and WASM belong in the lazy factory.
+
+| Module in `src/client/term-engine/` | Owned integration |
+| --- | --- |
+| `ghostty-keys.ts` | `attachGhosttyKeys(adapter).keyAction(event, csiEnter)` returns `default`, `swallow` or `send`. The view handles its own shortcuts first and sends the replacement only once. Read `adapter.options.macOptionIsMeta`; track negotiated Kitty modes through parser/reset hooks. The opened native instance exposes `options.ghostty.createKeyEncoder()`. |
+| `ghostty-graphics.ts` | `attachGhosttyGraphics(adapter, images?)` handles APC, placements, overlays and the existing `images.onExpandImage` viewer. No expand callback on Changes Log. Register stream handlers before open; mount DOM and observers via `onOpen`. |
+| `ghostty-scroll.ts` | `attachGhosttyScroll(adapter)` returns `handleKey(event)` (called after keyboard handling) and `snap()` (called after an immediate scroll). Own wheel/trackpad, scrollbar, page-key and reading-position behavior. `onBeforeWrite` observes native viewport state before output and `onWriteParsed` after it; `onData` includes keyboard, paste and focus reports. `scrollSensitivity`, `smoothScrollDuration` and `lineHeight` are available even when not mapped to native options. |
+| `ghostty-links.ts` | `attachGhosttyLinks(adapter, paths?).find(hit)` scrolls/highlights a search hit and returns `undefined` or a user-facing warning. This module also owns the native click guard, `ghosttyTheme(theme)` (open and live), and glass. `paths?.providePathLinks(row, readLine, reply)` shares the office resolver, `paths?.linkHandler` the OSC 8 policy. `row` and cell coordinates are one-based. No path or link activation on the read-only log. |
+
+`GhosttyAdapter.onOpen` passes the public native terminal and its `AbortSignal`. Use `native.renderer.getMetrics()`/`getCanvas()` for geometry, `native.getViewportY()` for its fractional offset from the bottom, and `adapter.redraw()` to force a redraw. Pre-open `adapter.options` includes the original theme and all office preferences. `onOptionChange(key)` fires after assignment (including unsupported native options), and `onReset()` fires before snapshot reset. Parser callbacks see prior VT output; `onBeforeWrite(data)`/`onWriteParsed()` bracket the complete write, including empty drains. Unsubscribe any external events/timers when the lifetime signal aborts.
+
 ## Parity by behavior
 
 **Works** means implemented for Ghostty. **To port** identifies the owner module or integration seam. **Gap** means the pinned public API does not expose what xterm uses; it does not imply that the server or Android changed.

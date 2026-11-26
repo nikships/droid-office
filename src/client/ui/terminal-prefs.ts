@@ -79,7 +79,7 @@ export function followTerminalPrefs(term: Pick<ClientTerminal, 'options'>, opts:
  * scroll), so scrolls that build on one another (or that should land at once, like a fresh
  * snapshot's) must not glide.
  */
-export function scrollAtOnce(term: Pick<ClientTerminal, 'options'>, scroll: () => void) {
+export function scrollAtOnce(term: Pick<ClientTerminal, 'options'>, scroll: () => void, snap = () => pixelScrollOf(term)?.snap()) {
   const glide = term.options.smoothScrollDuration ?? 0;
   if (!glide) return scroll();
   term.options.smoothScrollDuration = 0;
@@ -87,6 +87,6 @@ export function scrollAtOnce(term: Pick<ClientTerminal, 'options'>, scroll: () =
     scroll();
   } finally {
     term.options.smoothScrollDuration = glide;
-    pixelScrollOf(term)?.snap();
+    snap();
   }
 }

@@ -160,28 +160,42 @@ export class TerminalPathLinksAddon implements ITerminalAddon {
     return links;
   }
 
+  /** Resolve the same logical line for either engine. Re-read after an async lookup: the
+   * buffer may have switched or the line may have scrolled away. Coordinates are one-based. */
+  providePathLinks(row: number, readLine: () => { text: string; cells: Position[] } | undefined, callback: (links: ILink[] | undefined) => void): void {
+    const line = readLine();
+    if (this.context.inert || !line) {
+      callback(undefined);
+      return;
+    }
+    const candidates = parseTerminalPathRefs(line.text).slice(0, 64);
+    if (!candidates.length) {
+      callback(undefined);
+      return;
+    }
+    const key = `${this.floor()}\n${line.text}`;
+    const hit = this.cache.get(key);
+    if (hit && Date.now() - hit.at < 5000 && hit.value) {
+      callback(this.buildLinks(row, line, candidates, hit.value));
+      return;
+    }
+    void this.lookup(
+      key,
+      candidates.map((candidate) => candidate.raw),
+    )
+      .then((result) => {
+        if (this.controller.signal.aborted || readLine()?.text !== line.text) return callback(undefined);
+        callback(this.buildLinks(row, line, candidates, result));
+      })
+      .catch(() => callback(undefined));
+  }
+
   activate(term: Terminal): void {
     if (this.context.inert) return;
     this.provider = term.registerLinkProvider({
       provideLinks: (row, callback) => {
         const buffer = term.buffer.active;
-        const line = terminalLogicalLine(buffer, row, term.cols);
-        const candidates = parseTerminalPathRefs(line.text).slice(0, 64);
-        if (!candidates.length) return callback(undefined);
-        const key = `${this.floor()}\n${line.text}`;
-        const hit = this.cache.get(key);
-        if (hit && Date.now() - hit.at < 5000 && hit.value) {
-          return callback(this.buildLinks(row, line, candidates, hit.value));
-        }
-        void this.lookup(
-          key,
-          candidates.map((candidate) => candidate.raw),
-        )
-          .then((result) => {
-            if (this.controller.signal.aborted || buffer !== term.buffer.active || terminalLogicalLine(buffer, row, term.cols).text !== line.text) return callback(undefined);
-            callback(this.buildLinks(row, line, candidates, result));
-          })
-          .catch(() => callback(undefined));
+        this.providePathLinks(row, () => (buffer === term.buffer.active ? terminalLogicalLine(buffer, row, term.cols) : undefined), callback);
       },
     });
   }

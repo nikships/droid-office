@@ -1,10 +1,11 @@
+import type { TerminalFind } from '../term-engine/types';
 import { createTerminalEngine } from '../term-engine';
 import { attachEngineFeatures } from '../term-engine/features';
 import { TerminalPathLinksAddon } from './terminal-path-links';
 import type { Net } from '../net';
 import { store } from '../state';
 import { withToken } from '../token';
-import { TERM_THEME, onTermTheme, termTheme, termThemeTransparent } from '../term-theme';
+import { onTermTheme, termTheme, termThemeTransparent } from '../term-theme';
 import { focusReports, suppressMirrorQueries, TerminalMirror } from '../term-mirror';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { orchestratorIcon } from './icons';
@@ -18,14 +19,13 @@ import { missionTeamLine } from '../mission-office';
 import { forkRefusal } from '../../shared/worker-fork';
 import { openForkWorker } from './fork-worker';
 import { creditsNote } from '../../shared/factory-sessions';
-import { findLine } from '../../shared/search';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { loadFonts, TERM_FONT } from '../fonts';
 import type { ExpandedKittyImage } from '../term-kitty';
 import { wantsCsiEnter } from '../term-keys';
 import { viewPicture } from './picture-viewer';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
-import { followTerminalPrefs, scrollAtOnce, terminalOptions, terminalPrefs } from './terminal-prefs';
+import { followTerminalPrefs, terminalOptions, terminalPrefs } from './terminal-prefs';
 import { mountWorkerThread, type WorkerThread } from './worker-thread';
 
 function openKittyPicture(img: ExpandedKittyImage, about: string, isAlive: () => boolean, focusTerm: () => void, state: { modal: Modal | null }) {
@@ -43,13 +43,7 @@ function openKittyPicture(img: ExpandedKittyImage, about: string, isAlive: () =>
   });
 }
 
-/** A line to scroll to once the terminal has loaded: a search hit (see search.ts). */
-export interface TerminalFind {
-  /** What was searched for, as a searchKey. */
-  needle: string;
-  /** How many rows from the bottom of the worker's terminal the line was. */
-  fromEnd: number;
-}
+export type { TerminalFind } from '../term-engine/types';
 
 /** Sends a file dropped or pasted into a worker's terminal to the office; where the office keeps it. */
 async function uploadDrop(workerId: string, f: File): Promise<string> {
@@ -398,35 +392,9 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     }
   };
 
-  /** Scrolls a search hit into view and lights it up for a few seconds. */
-  const jumpTo = (f: TerminalFind) => {
-    const term = engine.xterm;
-    if (!term) return toast('Search highlights are available with the xterm engine.', 'warn');
-    const buf = term.buffer.active;
-    const row = findLine(buf, f.needle, f.fromEnd);
-    if (row === undefined) return toast('That line has scrolled out of the terminal since', 'warn');
-    let end = row;
-    while (buf.getLine(end + 1)?.isWrapped) end++;
-    // A marker follows the line when the terminal reflows, which it does as the window settles.
-    const marker = term.registerMarker(row - (buf.baseY + buf.cursorY));
-    if (!marker) return;
-    const mark = term.registerDecoration({ marker, width: term.cols, height: end - row + 1, backgroundColor: TERM_THEME.yellow, foregroundColor: TERM_THEME.background });
-    const scroll = () => {
-      if (marker.line < 0) return;
-      // xterm scrolls from where its scrollbar is, which lags behind a resize; from the top is exact.
-      scrollAtOnce(term, () => {
-        term.scrollLines(-term.buffer.active.length);
-        term.scrollLines(Math.max(0, marker.line - Math.floor(term.rows / 3)));
-      });
-    };
-    scroll();
-    // The window settles its size just after it opens; stay on the line through that.
-    const follow = term.onResize(() => setTimeout(scroll, 50));
-    setTimeout(() => follow.dispose(), 1500);
-    setTimeout(() => {
-      mark?.dispose();
-      marker.dispose();
-    }, 8000);
+  const jumpTo = (hit: TerminalFind) => {
+    const warning = features.find(hit);
+    if (warning) toast(warning, 'warn');
   };
   let pendingFind = find;
 
@@ -441,7 +409,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       term.options.disableStdin = readOnly || !net.up;
       disconnected.classList.add('hidden');
       sendSize();
-      scrollAtOnce(term, () => term.scrollToBottom());
+      features.scrollAtOnce(() => term.scrollToBottom());
       refresh();
       if (pendingFind) jumpTo(pendingFind);
       pendingFind = undefined;
@@ -852,7 +820,7 @@ export function openOfficeShell(net: Net) {
       lastSentSize = '';
       pendingSizes.length = 0;
       sendSize();
-      scrollAtOnce(term, () => term.scrollToBottom());
+      features.scrollAtOnce(() => term.scrollToBottom());
     },
     () => net.send({ t: 'shell.attach' }),
   );

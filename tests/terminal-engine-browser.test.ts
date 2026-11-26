@@ -44,6 +44,11 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
     w.term = term;
     w.sent = [];
     w.parsed = 0;
+    w.hooks = [];
+    term.onBeforeWrite(() => w.hooks.push('before'));
+    term.onWriteParsed(() => w.hooks.push('parsed'));
+    term.onReset(() => w.hooks.push('reset'));
+    term.onOptionChange((key: string) => w.hooks.push(key));
     term.onOpen((native: { element?: HTMLElement }, lifetime: AbortSignal) => {
       w.opened = native.element?.isConnected;
       lifetime.addEventListener('abort', () => {
@@ -83,6 +88,7 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
       term.options.fontSize = 19;
       term.options.cursorStyle = 'bar';
       term.options.theme = { foreground: '#ffffff', background: '#121212' };
+      term.options.scrollSensitivity = 2;
       const after = { history: term.buffer.active.baseY, parsed: (window as any).parsed, scroll: scrolled.viewportY === 0 && scrolled.baseY > 0, focusMode: term.modes.sendFocusMode, font: term.native.options.fontSize };
       term.dispose();
       return after;
@@ -91,5 +97,6 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
   );
   assert.equal(await page.locator('#host canvas').count(), 0);
   assert.deepEqual(await page.evaluate(() => [(window as any).opened, (window as any).released]), [true, true]);
+  assert.deepEqual(await page.evaluate(() => (window as any).hooks), ['before', 'parsed', 'disableStdin', 'before', 'parsed', 'reset', 'before', 'parsed', 'fontSize', 'cursorStyle', 'theme', 'scrollSensitivity']);
   assert.deepEqual(errors, []);
 });

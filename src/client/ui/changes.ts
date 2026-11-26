@@ -14,7 +14,7 @@ import { colorDot, emptyState } from './kit';
 import { confirmDialog, openPrompt } from './prompt';
 import { officePrompt } from './prompts';
 import { onTermFontSize, termFontSize } from './term-font';
-import { followTerminalPrefs, scrollAtOnce, terminalOptions, terminalPrefs } from './terminal-prefs';
+import { followTerminalPrefs, terminalOptions, terminalPrefs } from './terminal-prefs';
 
 // The Changes window at a desk: the files a worker changed and their diff against the branch the
 // office was opened on, refreshed while the worker works, with commit / discard / open-a-PR, and
@@ -189,15 +189,13 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
 
   /** The worker's terminal, read-only, made the first time T shows it and attached until the window closes. */
   let term: ClientTerminal | null = null;
+  let scrollToBottom = () => {};
   let unfollow = () => {};
   let attached = false;
   let view: 'diff' | 'log' = 'diff';
 
   const openLog = () => {
-    if (term) {
-      const t = term;
-      return scrollAtOnce(t, () => t.scrollToBottom());
-    }
+    if (term) return scrollToBottom();
     const fixed = { cursorBlink: false };
     const engine = createTerminalEngine(
       {
@@ -224,7 +222,8 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       offFont();
       offTheme();
     };
-    attachEngineFeatures(engine);
+    const features = attachEngineFeatures(engine);
+    scrollToBottom = () => features.scrollAtOnce(() => t.scrollToBottom());
     // Keys belong to the window (T, Esc), never to the program in the terminal.
     t.attachCustomKeyEventHandler(() => false);
     term = t;
@@ -430,7 +429,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       const t = term;
       t.reset();
       t.resize(msg.cols, msg.rows);
-      t.write(msg.data, () => scrollAtOnce(t, () => t.scrollToBottom()));
+      t.write(msg.data, scrollToBottom);
     } else if (msg.t === 'changes' && msg.state.workerId === workerId && msg.state.repo === repo) onState(msg.state);
     else if (msg.t === 'changes.diff' && msg.workerId === workerId && msg.repo === repo && msg.path === selected) {
       loading = false;

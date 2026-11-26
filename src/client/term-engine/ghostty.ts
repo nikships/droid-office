@@ -1,5 +1,6 @@
 import type { FitAddon, ITerminalOptions, Terminal } from 'ghostty-web';
 import { VtScanner } from '../../shared/vt-scanner';
+import { ghosttyTheme } from './ghostty-links';
 import type { ClientTerminal, ClientTerminalOptions } from './types';
 
 function event<T>() {
@@ -21,13 +22,16 @@ function event<T>() {
 /** Only options supported by the public Ghostty constructor. Its palette requires an opaque background. */
 export function ghosttyOptions(opts: ClientTerminalOptions): ITerminalOptions {
   const { cursorBlink, cursorStyle, disableStdin, fontSize, fontFamily, theme, scrollback, smoothScrollDuration } = opts;
-  return { cursorBlink, cursorStyle, disableStdin, fontSize, fontFamily, scrollback, smoothScrollDuration, theme: { ...theme, background: theme?.background?.startsWith('rgba(') ? '#000000' : theme?.background } };
+  return { cursorBlink, cursorStyle, disableStdin, fontSize, fontFamily, scrollback, smoothScrollDuration, theme: ghosttyTheme(theme) };
 }
 
 export class GhosttyAdapter implements ClientTerminal {
   readonly parser = new VtScanner();
   readonly options: ClientTerminalOptions;
   private readonly parsed = event<void>();
+  private readonly beforeWrite = event<string>();
+  private readonly resetting = event<void>();
+  private readonly changed = event<keyof ClientTerminalOptions>();
   private readonly data = event<string>();
   private readonly opened = event<Terminal>();
   private readonly lifetime = new AbortController();
@@ -59,12 +63,13 @@ export class GhosttyAdapter implements ClientTerminal {
               this.redraw();
             } else if (Object.hasOwn(mapped, key)) Reflect.set(this.native.options, key, Reflect.get(mapped, key));
           }
+          this.changed.fire(key);
           return true;
         },
       },
     );
   }
-  private redraw() {
+  redraw() {
     const t = this.native;
     if (t?.renderer && t.wasmTerm) t.renderer.render(t.wasmTerm, true, t.getViewportY(), t);
   }
@@ -109,9 +114,6 @@ export class GhosttyAdapter implements ClientTerminal {
     // open() focuses both immediately and on its next timer. Neither may steal focus from a
     // sibling pane. The owning window explicitly focuses interactive terminals when ready.
     root.inert = true;
-    // Built-in OSC 8 activation does not apply the office's URI policy. Leave clicks inert
-    // until the engine-specific links module installs the office's activation handler.
-    root.addEventListener('click', (e) => e.stopImmediatePropagation(), true);
     term.open(root);
     root.tabIndex = -1;
     term.onData((d) => this.data.fire(d));
@@ -141,9 +143,19 @@ export class GhosttyAdapter implements ClientTerminal {
   onWriteParsed(fn: () => void) {
     return this.parsed.on(fn);
   }
+  onBeforeWrite(fn: (data: string) => void) {
+    return this.beforeWrite.on(fn);
+  }
+  onReset(fn: () => void) {
+    return this.resetting.on(fn);
+  }
+  onOptionChange(fn: (key: keyof ClientTerminalOptions) => void) {
+    return this.changed.on(fn);
+  }
   write(data: string, done?: () => void) {
     if (!this.closed) {
       const reporting = this.native?.hasFocusEvents();
+      this.beforeWrite.fire(data);
       this.parser.write(data, (chunk) => this.native?.write(chunk));
       if (!reporting && this.native?.hasFocusEvents() && !this.options.disableStdin && this.textarea === document.activeElement) this.data.fire('\x1b[I');
       this.parsed.fire();
@@ -155,6 +167,7 @@ export class GhosttyAdapter implements ClientTerminal {
     }
   }
   reset() {
+    this.resetting.fire();
     this.parser.reset();
     // RIS resets in place: native.reset() frees the core retained by the selection manager.
     this.native?.write('\x1bc\x1b[3J');
@@ -186,5 +199,8 @@ export class GhosttyAdapter implements ClientTerminal {
     this.parser.reset();
     this.data.clear();
     this.parsed.clear();
+    this.beforeWrite.clear();
+    this.resetting.clear();
+    this.changed.clear();
   }
 }

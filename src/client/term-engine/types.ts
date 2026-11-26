@@ -35,3 +35,11 @@ export interface ClientTerminal extends Pick<Terminal, 'cols' | 'rows' | 'focus'
   onData(fn: (data: string) => void): { dispose(): void };
   onWriteParsed(fn: () => void): { dispose(): void };
 }
+
+/** A line to scroll to once the terminal has loaded: a search hit (see search.ts). */
+export interface TerminalFind {
+  /** What was searched for, as a searchKey. */
+  needle: string;
+  /** How many rows from the bottom of the worker's terminal the line was. */
+  fromEnd: number;
+}
