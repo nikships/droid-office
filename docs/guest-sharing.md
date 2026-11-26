@@ -71,7 +71,9 @@ refuses Funnel traffic.
 owns in `guest-funnel.json` (backend port, Funnel port, `published`, and the office's data folder) before it
 runs the CLI. It removes a mapping only while that mapping still points at its own backend.
 
-- **Clean shutdown** removes the mapping (unlike Tailscale HTTPS, which keeps its private mapping).
+- **Clean shutdown** removes the mapping (unlike Tailscale HTTPS, which keeps its private mapping). Ctrl+C
+  (SIGINT), SIGTERM and closing the terminal the office was started from (SIGHUP) all shut down cleanly,
+  and the shutdown finishes even when that terminal is gone. SIGHUP keeps the workers running, like SIGTERM.
 - **Crash or kill while sharing is on.** The mapping stays published and points at a loopback port that
   nothing owns until the office starts again. Funnel answers with a gateway error meanwhile. If another local
   program binds that port in the meantime, Funnel exposes it. At the next start the office takes the
@@ -288,6 +290,8 @@ Refused attempts, and writes the forge or the office turned down, are not logged
   mapping is gone or no longer points at its backend. Turning sharing back on stops the retry. If the office
   quits first, its next start removes the mapping, or prints that command when sharing is locked (see
   [Mapping lifetime](#mapping-lifetime)).
+- **A process ended without a shutdown.** SIGINT, SIGTERM and SIGHUP remove the mapping. SIGKILL, a crash or
+  a power loss leave it published until the next start (see [Mapping lifetime](#mapping-lifetime)).
 - **The guest port is the office's alone.** Turning sharing off runs `tailscale funnel --yes --https=<port> off`,
   which removes every handler on that port. Do not mount anything else on the guest port.
 
