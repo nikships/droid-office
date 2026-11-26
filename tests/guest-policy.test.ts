@@ -204,10 +204,23 @@ test('outbound: owner-only messages never reach a guest, worker and floor messag
     assert.equal(!!out(preset, { t: 'gh.pulls', pulls: {} }, ctx({ via: 'floor', floor: 'B' })), OFFICE.has(preset));
     assert.equal(!!out(preset, { t: 'whiteboard', floor: 'B' }), OFFICE.has(preset));
     assert.equal(out(preset, { t: 'whiteboard', floor: 'C' }), undefined);
-    assert.equal(!!out(preset, { t: 'missionControl', state: { orchestrator: {}, bots: [{ id: 'bot' }] } }), OFFICE.has(preset));
+    assert.equal(!!out(preset, { t: 'missionControl', state: { orchestrator: { settings: { on: true } }, bots: [{ id: 'bot' }] } }), OFFICE.has(preset));
   }
   assert.equal(out('view-worker', { t: 'worker.remove', workerId: 'a1' }, ctx({ via: 'floor', floor: 'A' }))?.t, 'worker.remove', 'a single-worker guest hears its worker leave');
-  assert.deepEqual(out('edit-office', { t: 'missionControl', state: { orchestrator: { id: ORCHESTRATOR_ID }, bots: [{ id: 'bot' }] } }), { t: 'missionControl', state: { orchestrator: { id: ORCHESTRATOR_ID }, bots: [] } });
+  assert.deepEqual(out('edit-office', { t: 'missionControl', state: { orchestrator: { id: ORCHESTRATOR_ID, settings: { on: true } }, bots: [{ id: 'bot' }] } }), {
+    t: 'missionControl',
+    state: { orchestrator: { id: ORCHESTRATOR_ID, settings: { on: true } }, bots: [] },
+  });
+  // Its saved model and effort are the owner's settings: a guest gets only whether it's on.
+  const saved = { orchestrator: { settings: { on: false, model: 'claude-opus', effort: 'high' }, team: [], blocked: 'Droid is signed out' }, bots: [] };
+  for (const preset of ['view-office', 'edit-office'] as const) {
+    assert.deepEqual(out(preset, { t: 'missionControl', state: saved }), { t: 'missionControl', state: { orchestrator: { settings: { on: false }, team: [], blocked: 'Droid is signed out' }, bots: [] } });
+    assert.deepEqual((out(preset, { t: 'welcome', connection: 'c', arrival: { floor: 'A', via: 'lobby' }, floors: [], version: '1', missionControl: saved, ...VIEW }) as { missionControl: unknown }).missionControl, {
+      orchestrator: { settings: { on: false }, team: [], blocked: 'Droid is signed out' },
+      bots: [],
+    });
+  }
+  assert.equal(saved.orchestrator.settings.model, 'claude-opus', 'the owner’s state is untouched');
 });
 
 test('outbound toasts: about an in-scope worker, a reply, or the guest’s own floor', () => {
@@ -251,7 +264,7 @@ test('a guest’s welcome, floor list and roster hold only its scope, without pa
       { floor: 'A', workers: [worker('a1'), worker('a2')], pulls: [{ number: 2 }] },
       { floor: 'B', workers: [worker('b1')], pulls: [] },
     ],
-    missionControl: { orchestrator: { id: ORCHESTRATOR_ID }, bots: [{ id: 'bot' }] },
+    missionControl: { orchestrator: { id: ORCHESTRATOR_ID, settings: { on: true } }, bots: [{ id: 'bot' }] },
     guest: { preset: 'view-worker' },
     factory: { key: 'secret' },
     setup: { droid: {} },
@@ -285,7 +298,7 @@ test('a guest’s welcome, floor list and roster hold only its scope, without pa
     ],
   );
   assert.equal('lastVisitedAt' in o.floors[0]!, false);
-  assert.deepEqual(o.missionControl, { orchestrator: { id: ORCHESTRATOR_ID }, bots: [] });
+  assert.deepEqual(o.missionControl, { orchestrator: { id: ORCHESTRATOR_ID, settings: { on: true } }, bots: [] });
 
   // A scoped guest entering another floor's view gets an empty one, as if in the lobby.
   const beta = out('view-floor', { t: 'floor.enter', arrival: { floor: 'B', via: 'elevator' }, ...VIEW, floor: 'B', workers: [worker('b1')] }) as unknown as FloorView & { arrival: unknown };

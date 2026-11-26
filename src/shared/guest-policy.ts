@@ -383,9 +383,9 @@ export function guestBuilding(roster: readonly FloorRoster[], g: GuestScopeGrant
   return roster.filter((r) => guestListsFloor(g, r.floor)).map((r) => ({ floor: r.floor, workers: r.workers.flatMap((w) => scopedWorker(w, g, r.floor, world) ?? []), pulls: guestSeesFloor(g, r.floor) ? r.pulls : [] }));
 }
 
-/** Mission Control for office-wide links: the Orchestrator, without external bots. */
+/** Mission Control for office-wide links: the Orchestrator, without its saved settings beyond whether it's on, and without external bots. */
 export function guestMission(state: MissionControlState, g: GuestScopeGrant): MissionControlState | undefined {
-  return officeWide(g) ? { orchestrator: state.orchestrator, bots: [] } : undefined;
+  return officeWide(g) ? { orchestrator: { ...state.orchestrator, settings: { on: state.orchestrator.settings.on } }, bots: [] } : undefined;
 }
 
 const arrivalFor = (arrival: WelcomeMsg['arrival'], view: FloorView): WelcomeMsg['arrival'] => (arrival.floor === view.floor ? arrival : { floor: null, via: 'lobby' });
