@@ -227,8 +227,6 @@ export const COMPANION_THEMES = [
     terminal: { foreground: '#eef6ef', cursor: '#f3c45a', background: '#030d09', selection: '#2c3a1e' },
     immersive: {
       'heading-font': 'Iowan Old Style, Palatino Linotype, Palatino, Georgia, serif',
-      'caption-font': '600 11px/1.5 Palatino, Georgia, serif',
-      'panel-radius': '24px 24px 7px 7px / 13px 13px 7px 7px',
       // Backlit shoji at the edges, falling into dark pond lacquer behind the lettering.
       'chrome-finish':
         'linear-gradient(96deg, transparent, #061710e8 36%, #0a1c16e0 67%, transparent), repeating-linear-gradient(90deg, #0b1511cc 0 2px, #ceac6145 2px 3px, transparent 3px 29px), repeating-linear-gradient(0deg, #101a14c2 0 2px, #b69f6440 2px 3px, transparent 3px 23px), radial-gradient(ellipse at 0 85%, #785126c9, #253729ce 34%, #152c24ed 73%, #3b4930d9)',
@@ -237,16 +235,6 @@ export const COMPANION_THEMES = [
         'radial-gradient(circle at 78% 20%, #fff3b7 0 1px, #b4d98166 2px, transparent 7px), repeating-radial-gradient(ellipse at 0 110%, transparent 0 7px, #d0b07655 8px, transparent 9px 14px), linear-gradient(145deg, #48533a, #102c23 60%, #071a15)',
       'badge-ink': '#ffe1a0',
       imprint: '"蛍   /   POND PAVILION" / ""',
-      'control-finish': 'linear-gradient(180deg, #ffedbf3d 0 1px, transparent 1px 48%, #172a2014 72%, #171b1438), linear-gradient(110deg, #d4b47812, transparent 38%, #69b8970d)',
-      'control-radius': '11px 11px 4px 4px / 7px 7px 4px 4px',
-      'focus-outline': '2px solid #b7efbf',
-      selection: '#305b45',
-      'row-hover': 'radial-gradient(circle at 5px 50%, #e4efb1 0 1px, #78aa7355 2px, transparent 6px), linear-gradient(90deg, #2e4736, #12261d 64%)',
-      'row-active': 'radial-gradient(circle at 5px 50%, #fff2b7 0 2px, #bd984255 3px, transparent 7px), linear-gradient(90deg, #4b3a23, #243a2d 40%, #12281f)',
-      'section-rule': 'linear-gradient(90deg, #ae8854, #d9bc77 11%, #36573f 29%, transparent 70%)',
-      'sheet-finish': 'repeating-linear-gradient(178deg, transparent 0 13px, #afae7e09 14px, transparent 15px 19px), radial-gradient(ellipse at 95% 0, #354a38, #162c23 46%, #0b1e17 86%)',
-      'scrollbar-thumb': '#92ab83',
-      'control-motion': '220ms cubic-bezier(.22,.72,.28,1)',
     },
   },
   {
