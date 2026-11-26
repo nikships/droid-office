@@ -18,6 +18,7 @@ import {
   companionThemeVars,
   contrastRatio,
   glassAlpha,
+  immersiveEntries,
   mixHex,
   parseHex,
   pictureShade,
@@ -132,6 +133,35 @@ test('immersive treatments are additive, independently optional and do not chang
     assert.deepEqual(full, original);
   }
   assert.deepEqual(companionTerminalColors(carbon), companionTerminalColors(base));
+});
+
+test('signature materials stay on the nameplate, not on work controls', () => {
+  const css = readFileSync(new URL('../src/client/style.css', import.meta.url), 'utf8');
+  const identity = ['heading-font', 'chrome-finish', 'panel-edge', 'badge-face', 'badge-ink', 'imprint'];
+  const retired = ['control-finish', 'control-radius', 'control-motion', 'focus-outline', 'row-hover', 'row-active', 'sheet-finish', 'panel-radius'];
+  assert.deepEqual(
+    immersiveEntries(companionTheme('carbons-copy'))
+      .map(([key]) => key)
+      .sort(),
+    identity.toSorted(),
+  );
+  for (const t of themed.filter((t) => t.family === 'artwork')) {
+    const styles = companionThemeVars(t);
+    for (const key of identity) assert.ok(styles[`--th-${key}`], `${t.id} keeps ${key}`);
+    for (const key of retired) assert.equal(styles[`--th-${key}`], undefined, `${t.id} retires ${key}`);
+  }
+  for (const key of retired) assert.ok(!css.includes(`data-immersive~="${key}"`), `no signature rule for ${key}`);
+  for (const [key, selector] of [
+    ['chrome-finish', '.dash-side-head'],
+    ['panel-edge', '.dash-side-head::after'],
+    ['imprint', '.dash-side-head::before'],
+  ]) {
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(([, , body]) => body.includes(`var(--th-${key})`));
+    assert.deepEqual(
+      rules.map(([, head]) => head.replace(/\/\*[\s\S]*?\*\//g, '').trim()),
+      [`.themed[data-immersive~="${key}"] ${selector}`],
+    );
+  }
 });
 
 test('color helpers', () => {

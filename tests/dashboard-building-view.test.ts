@@ -99,7 +99,7 @@ test('all-workers directory filters, opens cross-floor workers, and keeps focus 
     'nikships/droid-office on droid-office and nikships/tools on Tools',
   );
   assert.deepEqual(await page.locator('.dash-building-role').allInnerTexts(), ['Subworker of Pixel']);
-  // A button that travels on hover/press must still accept a click on its original edge.
+  // A signature cannot move a filter out from under a stationary pointer.
   await page.evaluate(() => {
     document.body.classList.add('themed');
     document.body.dataset.immersive = 'control-motion';
@@ -109,7 +109,7 @@ test('all-workers directory filters, opens cross-floor workers, and keeps focus 
   const bounds = (await needsYou.boundingBox())!;
   await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 0.25);
   await page.mouse.down();
-  assert.equal(await needsYou.evaluate((el) => getComputedStyle(el).translate), '0px 2px');
+  assert.equal(await needsYou.evaluate((el) => getComputedStyle(el).translate), 'none');
   await page.mouse.up();
   assert.equal(await needsYou.getAttribute('aria-pressed'), 'true', 'the stationary pointer released on the filter');
   await page.evaluate(() => {

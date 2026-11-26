@@ -16,6 +16,7 @@ import {
   type CompanionThemeId,
   type GlassLevel,
   type ThemeStageSpec,
+  immersiveEntries,
   pictureShade,
 } from '../../shared/companion-themes';
 import { setTermThemeColors } from '../term-theme';
@@ -159,8 +160,8 @@ function showPicture(b: Backdrop, src: string | null, position: string) {
   if (b.art.complete && b.art.naturalWidth) b.art.classList.add('ready');
 }
 
-function paintTreatments(theme: CompanionTheme, p: AppearancePrefs) {
-  const treatments = Object.keys(theme.immersive ?? {}).filter((key) => key !== 'control-motion' || animating(p));
+function paintTreatments(theme: CompanionTheme) {
+  const treatments = immersiveEntries(theme).map(([key]) => key);
   if (treatments.length) document.body.dataset.immersive = treatments.join(' ');
   else delete document.body.dataset.immersive;
 }
@@ -171,7 +172,7 @@ function paint(p: AppearancePrefs) {
   const og = theme.id === OG_THEME_ID;
   body.dataset.theme = theme.id;
   body.classList.toggle('themed', !og);
-  paintTreatments(theme, p);
+  paintTreatments(theme);
   for (const key of applied) body.style.removeProperty(key);
   applied = [];
   if (!og) {
@@ -294,8 +295,6 @@ async function switchTo(p: AppearancePrefs) {
   const changedTheme = lastTheme !== undefined && lastTheme !== p.theme;
   lastTheme = p.theme;
   const theme = companionTheme(p.theme);
-  // Honor Still on the visible controls even while the next wallpaper is decoding.
-  paintTreatments(companionTheme(document.body.dataset.theme), p);
   if (theme.id !== OG_THEME_ID) await prepare(backdropPicture(p, theme, wallSrc));
   if (ticket !== pending) return;
   const transition = (document as Document & { startViewTransition?: (fn: () => void) => unknown }).startViewTransition;
