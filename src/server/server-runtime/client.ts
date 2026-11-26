@@ -36,6 +36,8 @@ export interface Client {
    * the owner; every message it sends passes the guest gate and everything sent to it is scoped (guest-policy.ts).
    */
   guest?: GuestGrant;
+  /** The last refusal `warn` gave this connection; a guest's audit reads it when its message settles. */
+  lastWarning?: string;
   /** An external worker's owner action: `refused` is the first warning it was given, its outcome when nothing else says. */
   owner?: { refused?: string; unconfirmed?: boolean };
 }

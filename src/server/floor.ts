@@ -699,11 +699,14 @@ export class Floor {
     return [...this.workers.list(), ...this.cloud.list()];
   }
 
-  /** Someone just walked in: boards that haven't been looked at in a while get fetched again. */
-  arrived() {
+  /**
+   * Someone just walked in: boards that haven't been looked at in a while get fetched again. A share
+   * link's guest (not `owner`) sees no Jira or Linear, and a Linear refresh can hand out autopilot work.
+   */
+  arrived(owner = true) {
     if (Date.now() - Math.max(this.board.issues.fetchedAt, this.board.pulls.fetchedAt) > REFRESH_MS) void this.board.refresh();
-    if (Date.now() - this.jira.fetchedAt > REFRESH_MS) void this.jira.refresh();
-    if (Date.now() - this.linear.fetchedAt > REFRESH_MS) void this.linear.refresh();
+    if (owner && Date.now() - this.jira.fetchedAt > REFRESH_MS) void this.jira.refresh();
+    if (owner && Date.now() - this.linear.fetchedAt > REFRESH_MS) void this.linear.refresh();
     if (Date.now() - this.pipelines.state.fetchedAt > PIPELINES_STALE_MS) void this.pipelines.refresh();
   }
 

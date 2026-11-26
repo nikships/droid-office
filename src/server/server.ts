@@ -272,7 +272,9 @@ export async function startServer(cfg: Config) {
   };
   /** Tells just this person why their request didn't happen; nothing when there's no error. */
   const warn = (c: Client, error: string | undefined) => {
-    if (error) sendTo(c, { t: 'toast', text: error, level: 'warn' });
+    if (!error) return;
+    c.lastWarning = error;
+    sendTo(c, { t: 'toast', text: error, level: 'warn' });
   };
   const answers = new Answers();
 
@@ -812,7 +814,8 @@ export async function startServer(cfg: Config) {
     screenChanged: (workerId) => threadWatches?.screenChanged(workerId),
     connections: (floor) => {
       let n = 0;
-      for (const c of clients.values()) if (c.floor === floor.id) n++;
+      // The owner looking keeps a floor's boards fresh; a share link's guest does not.
+      for (const c of clients.values()) if (c.floor === floor.id && !c.guest) n++;
       return n;
     },
     leaveOnMerge: () => leaveOnMerge.on,
@@ -901,6 +904,8 @@ export async function startServer(cfg: Config) {
         if (worker.status === 'needs_input') broadcastOffFloorScreen(floor, worker.id);
       }
       if (floor.board.pulls.items.length) broadcast({ t: 'building.pulls', floor: floor.id, pulls: floor.board.pulls.items });
+      // A floor or single-worker link waiting in the lobby for its floor is back on it.
+      for (const c of clients.values()) if (c.guest && c.guest.session.scope !== 'office' && c.floor === null && c.guest.floorId === floor.id) goToFloor(c, floor);
       return floor;
     } catch (err) {
       console.error(`droid-office: couldn't open the ${def.name} floor: ${(err as Error).message}`);
@@ -1167,7 +1172,7 @@ export async function startServer(cfg: Config) {
     if (floor) sendTo(client, { t: 'visits', visits: floor.visits.list() });
     floorsChanged();
     if (floor) {
-      floor.arrived();
+      floor.arrived(!guest);
       // Anyone whose process ended since (exited, or failed to resume) gets up as you walk in. A guest wakes nobody.
       if (!guest) floor.workers.wakeAll();
     }
@@ -1219,7 +1224,7 @@ export async function startServer(cfg: Config) {
     screensOf(c, floor);
     sendBoard(c, floor);
     sendTo(c, { t: 'visits', visits: floor.visits.list() });
-    floor.arrived();
+    floor.arrived(!c.guest);
     if (!c.guest) floor.workers.wakeAll();
     officeVibes.syncViewers(true);
     floorsChanged();
@@ -1361,11 +1366,19 @@ export async function startServer(cfg: Config) {
 
   const handleMessage = (c: Client, msg: ClientMsg) => {
     // A share link's guest: default deny before anything else reads the message (shared/guest-policy.ts).
+    let settleGuest: ((error: string | undefined) => void) | undefined;
     if (c.guest) {
       const guest = c as Client & { guest: GuestGrant };
       const admitted = guestGate.admit(guest, msg);
       if (!admitted) return;
-      guestGate.record(guest, msg, admitted);
+      // An audit entry means the office acted: written once the handler settles without refusing, never before.
+      let settled = false;
+      c.lastWarning = undefined;
+      settleGuest = (error) => {
+        if (settled) return;
+        settled = true;
+        if (!error) guestGate.record(guest, msg, admitted);
+      };
     }
     const who = c.peer.name;
     const requestId = str(msg.requestId, 64);
@@ -1373,6 +1386,7 @@ export async function startServer(cfg: Config) {
     // An awaited action calls done() from a later callback. Do not complete the receipt at the end of this turn.
     let pending = false;
     const done = (error?: string, workerId?: string, note?: string) => {
+      settleGuest?.(error);
       if (!requestId || finished) return;
       finished = true;
       sendTo(c, { t: 'action.result', requestId, ok: !error, ...(error ? { error } : {}), ...(workerId ? { workerId } : {}), ...(note ? { note } : {}) });
@@ -1392,6 +1406,7 @@ export async function startServer(cfg: Config) {
     /** A request id is a receipt request. Sync handlers that did not answer, and actions the companion does not await, still close the receipt so the client does not wait out its timeout. */
     const unanswered = () => {
       if (pending || finished) return;
+      settleGuest?.(c.lastWarning);
       // A handler that neither answered nor warned may have done nothing at all (an unknown id it ignores).
       if (c.owner && !c.owner.refused) c.owner.unconfirmed = true;
       done(c.owner ? c.owner.refused : 'This action was not confirmed. Check the office before trying again; it was not replayed.');
