@@ -57,7 +57,7 @@ export const SETTINGS_PANES: PaneDef[] = [
   { id: 'subagents', icon: '🧭', label: 'Subagents & visits', section: 'Workers', scope: 'Everyone', blurb: 'Workers that hire workers at the desks near them, and workers visiting each other’s desks.' },
   {
     id: 'orchestrator',
-    icon: '🛰️',
+    icon: '◈',
     label: 'Orchestrator',
     section: 'Workers',
     scope: 'Office-wide',

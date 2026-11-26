@@ -108,8 +108,8 @@ import ai.factory.droidoffice.ui.home.ConnectionBanner
 import ai.factory.droidoffice.ui.home.Repair
 import ai.factory.droidoffice.ui.home.WorkerActionsSheet
 import ai.factory.droidoffice.ui.home.rememberNow
-import ai.factory.droidoffice.ui.mission.AgentTile
 import ai.factory.droidoffice.ui.mission.BotTile
+import ai.factory.droidoffice.ui.mission.OrchestratorTile
 import ai.factory.droidoffice.ui.mission.OrchestratorTint
 import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
@@ -482,7 +482,7 @@ private fun PinnedAskCard(
         ) {
             if (floorLabel != null) {
                 ContextPill(
-                    icon = if (isMission) OfficeIcons.Orbit else OfficeIcons.Layers,
+                    icon = if (isMission) OfficeIcons.Orchestrator else OfficeIcons.Layers,
                     text = floorLabel,
                     tint = Palette.Text,
                     border = Palette.BorderStrong,
@@ -641,7 +641,7 @@ private fun BuildingWorkerCard(
             // Top row: avatar/dot, name, kind badges, status pill
             Row(verticalAlignment = Alignment.CenterVertically) {
                 when {
-                    isOrchestrator -> AgentTile(OfficeIcons.Orbit, if (loud) Palette.Danger else OrchestratorTint, small = true)
+                    isOrchestrator -> OrchestratorTile(if (loud) Palette.Danger else OrchestratorTint, small = true, animated = row.blocked == null)
                     isBot -> BotTile(row.grokBot, if (state.asleep) Palette.TextSecondary else statusLook(state).color, small = true)
                     else -> WorkerDot(parseColor(w.color), state, 10.dp)
                 }
@@ -745,7 +745,7 @@ private fun BuildingWorkerCard(
             ) {
                 if (floorName != null) {
                     ContextPill(
-                        icon = if (isOrchestrator) OfficeIcons.Orbit else if (isBot) OfficeIcons.Antenna else OfficeIcons.Layers,
+                        icon = if (isOrchestrator) OfficeIcons.Orchestrator else if (isBot) OfficeIcons.Antenna else OfficeIcons.Layers,
                         text = floorName,
                         tint = if (onCurrentFloor) Palette.Accent else Palette.Text,
                         border = if (onCurrentFloor) Palette.Accent.copy(alpha = 0.38f) else Palette.BorderStrong,

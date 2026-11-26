@@ -5,6 +5,7 @@ import type { Net } from '../net';
 import { store, words, workerForPull } from '../state';
 import { h, openModal, timeAgo } from './dom';
 import { emptyState } from './kit';
+import { icon } from './icons';
 import { labelChip, openIssue, openLabels, openPull } from './pull';
 import { renderJiraBoard } from './jira';
 import { autopilotSummary, openNewLinearTicket, renderLinearBoard } from './linear';
@@ -331,7 +332,7 @@ export function openBoard(kind: 'issues' | 'pulls', net: Net, actions: BoardActi
     pilot.classList.toggle('hidden', !onLinear());
     pilot.classList.toggle('on', store.linear.autopilot.on);
     pilot.setAttribute('aria-pressed', String(store.linear.autopilot.on));
-    pilot.textContent = `🛰️ ${autopilotSummary()}`;
+    pilot.replaceChildren(icon('bolt', 13), h('span', {}, autopilotSummary()));
     pilot.title = store.linear.autopilot.on ? 'Turn off autopilot: new tickets wait for you to hand them out' : 'Turn on autopilot: every new ticket gets a worker of its own (more in Settings → Connections)';
     statusText();
     if (onLinear()) {
