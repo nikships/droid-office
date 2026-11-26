@@ -23,7 +23,7 @@ interface AccessContext {
 }
 
 /** Whether a connection is a guest's (external sharing), never one of the owner's. */
-export const isGuestClient = (c: Client): boolean => !!(c as Client & { guest?: unknown }).guest;
+export const isGuestClient = (c: Client): boolean => !!c.guest;
 
 /** The owner's own browsers and phones, for the Mac menu bar's counts. */
 export const ownerDevices = (clients: Iterable<Client>) => [...clients].filter((c) => !isGuestClient(c)).map((c) => ({ device: c.device, phone: !!c.phoneSizes }));
