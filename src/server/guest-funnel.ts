@@ -28,6 +28,8 @@ export interface GuestFunnelOptions {
   retryMs?: number;
   /** Called after each start, retry or stop settles, so owner pages can show the new state. */
   onState?: () => void;
+  /** Why this office never publishes the guest backend (DROID_OFFICE_GUEST_SHARING=off); it then never runs the CLI. */
+  locked?: string;
 }
 
 /**
@@ -96,6 +98,7 @@ export class GuestFunnel {
   }
 
   state(): GuestTransportState {
+    if (this.opts.locked) return { status: this.on ? 'unavailable' : 'off', locked: this.opts.locked };
     return {
       status: this.status,
       ...(this.publicOrigin ? { origin: this.publicOrigin } : {}),
@@ -146,7 +149,7 @@ export class GuestFunnel {
 
   private async enable() {
     clearTimeout(this.retry);
-    if (!this.active()) return;
+    if (!this.active() || this.opts.locked) return;
     if (!this.publicOrigin) this.status = 'starting';
     this.reason = this.fixUrl = undefined;
     try {
@@ -205,7 +208,7 @@ export class GuestFunnel {
 
   /** Removes the Funnel mapping on the saved port, only while it still points at this office's backend. */
   private async unpublish() {
-    if (this.saved.backendPort === undefined || this.saved.httpsPort === undefined) return;
+    if (this.opts.locked || this.saved.backendPort === undefined || this.saved.httpsPort === undefined) return;
     const self = await this.cli.self();
     if (!self?.dnsName) return;
     const target = `http://127.0.0.1:${this.saved.backendPort}`;

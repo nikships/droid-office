@@ -1058,6 +1058,7 @@ export async function startServer(cfg: Config) {
     request: guestHttp.guestRequest,
     upgrade: (req, socket, head) => server.emit('upgrade', req, socket, head),
     onState: () => guestLinksChanged(),
+    ...(cfg.guestSharing ? {} : { locked: 'External sharing is disabled by DROID_OFFICE_GUEST_SHARING=off.' }),
   });
 
   const onConnection = (ws: WebSocket, url: URL, device?: PairedDevice) => {
@@ -2723,5 +2724,7 @@ export async function startServer(cfg: Config) {
     owner: ownerOffice,
     projectsDir: () => building.projectsDir,
     resolvedAgent: agentPath,
+    /** Share links, their audit, and the guest backend's request handler (tests drive it without Funnel). */
+    guests: { links: guestLinks, audit: guestAudit, request: guestHttp.guestRequest },
   };
 }
