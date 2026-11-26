@@ -374,8 +374,17 @@ export function launchBrowser(): Promise<Browser> {
       throw fail({ kind: 'other', summary: "Playwright couldn't be loaded.", fix: '', detail: (err as Error).message });
     }
     try {
-      // The executable is named, so the launch never looks anywhere but the shared folder.
-      const b = await playwright.chromium.launch({ headless: true, chromiumSandbox: true, executablePath: status.executable });
+      // The executable is named, so the launch never looks anywhere but the shared folder. Signals stay the
+      // office's: Playwright's own SIGINT handler exits with 130 mid-shutdown, before the Funnel mapping is
+      // removed. Its exit handler still kills this browser whenever the process ends.
+      const b = await playwright.chromium.launch({
+        headless: true,
+        chromiumSandbox: true,
+        executablePath: status.executable,
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false,
+      });
       lastError = null;
       b.once('disconnected', () => {
         if (browser === started) browser = null;

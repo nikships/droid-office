@@ -43,6 +43,9 @@ test('transport states read as plain words, with the origin and fix link only wh
   assert.deepEqual([locked.pill, locked.text], ['Locked', 'Disabled by DROID_OFFICE_GUEST_SHARING=off.']);
   // Off wins over a stale serving transport, and never shows the origin.
   assert.equal(transportView(false, serving).origin, undefined);
+  // Off while the public address is still being removed says so.
+  const stuck = transportView(false, { status: 'off', reason: 'The public address could not be removed yet. Retrying…' });
+  assert.deepEqual([stuck.pill, stuck.tone, stuck.text], ['Off', 'warn', 'The public address could not be removed yet. Retrying…']);
 });
 
 test('creation is blocked with a reason unless sharing is on, serving and under the cap', () => {

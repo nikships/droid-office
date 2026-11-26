@@ -116,5 +116,5 @@ test('a prompt and Stop are the Orchestrator’s own messages; everything else s
 test('a bot says what it last reported, or that it hasn’t since the office started', () => {
   assert.equal(botLine(bot), 'Reading the inbox');
   assert.equal(botLine({ ...bot, worker: { ...bot.worker, status: 'offline' } }), 'Hasn’t reported since the office started');
-  assert.equal(ORCHESTRATOR_EXAMPLES.length, 3);
+  assert.equal(ORCHESTRATOR_EXAMPLES.length, 4);
 });

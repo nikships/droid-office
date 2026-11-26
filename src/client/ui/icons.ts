@@ -46,7 +46,6 @@ const PATHS = {
   panel: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
   panes: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>',
   chevron: '<path d="m9 6 6 6-6 6"/>',
-  satellite: '<path d="M13 7 9 3 5 7l4 4"/><path d="m17 11 4 4-4 4-4-4"/><path d="m8 12 4 4 6-6-4-4z"/><path d="m16 8 3-3"/><path d="M9 21a6 6 0 0 0-6-6"/>',
   bot: '<path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/>',
   settings:
     '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
@@ -69,8 +68,7 @@ export function grokBotLogo(size = 20): HTMLImageElement {
   return img;
 }
 
-/** A 24-unit stroke icon as an inline SVG, `size` pixels square, hidden from screen readers. */
-export function icon(name: IconName, size = 16): SVGSVGElement {
+function strokeIcon(size: number, className: string, paths: string): SVGSVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   for (const [k, v] of Object.entries({
     viewBox: '0 0 24 24',
@@ -82,9 +80,29 @@ export function icon(name: IconName, size = 16): SVGSVGElement {
     'stroke-linecap': 'round',
     'stroke-linejoin': 'round',
     'aria-hidden': 'true',
-    class: 'icon',
+    class: className,
   }))
     svg.setAttribute(k, String(v));
-  svg.innerHTML = PATHS[name];
+  svg.innerHTML = paths;
   return svg;
+}
+
+/** A 24-unit stroke icon as an inline SVG, `size` pixels square, hidden from screen readers. */
+export function icon(name: IconName, size = 16): SVGSVGElement {
+  return strokeIcon(size, 'icon', PATHS[name]);
+}
+
+const ORCHESTRATOR_PATHS =
+  '<rect class="orc-mark-frame" x="7" y="7" width="10" height="10" rx="2"/>' +
+  '<rect class="orc-mark-core" x="10.5" y="10.5" width="3" height="3" rx="0.6" fill="currentColor" stroke="none"/>' +
+  '<path class="orc-mark-stem" d="M12 7V4.5"/>' +
+  '<rect class="orc-mark-node orc-mark-node-a" x="10.5" y="1.5" width="3" height="3" rx="0.6" fill="currentColor" stroke="none"/>' +
+  '<path class="orc-mark-stem" d="M7 12H4.5"/>' +
+  '<rect class="orc-mark-node orc-mark-node-b" x="1.5" y="10.5" width="3" height="3" rx="0.6" fill="currentColor" stroke="none"/>' +
+  '<path class="orc-mark-plinth" d="M12 17v3.5M7 20.5h10"/>' +
+  '<g class="orc-mark-arrow"><path d="M17 12h4"/><path d="M18.75 9.75 21 12l-2.25 2.25"/></g>';
+
+/** The Orchestrator's Circuit Core mark: a central hub connected to worker nodes and an outbound dispatch spoke. */
+export function orchestratorIcon(size = 16, { animated = true }: { animated?: boolean } = {}): SVGSVGElement {
+  return strokeIcon(size, animated ? 'icon orc-mark' : 'icon orc-mark static', ORCHESTRATOR_PATHS);
 }

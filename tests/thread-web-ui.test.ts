@@ -27,7 +27,7 @@ const baseWorker: WorkerInfo = {
   open: true,
 };
 
-async function mountV3Thread(t: TestContext, mounted: WorkerInfo = baseWorker, floor = 'floor-1') {
+async function mountV3Thread(t: TestContext, mounted: WorkerInfo = baseWorker, floor = 'floor-1', withIntro = false) {
   const browser = await launchBrowser();
   t.after(closeBrowser);
   const context = await newIsolatedContext(browser);
@@ -53,7 +53,7 @@ async function mountV3Thread(t: TestContext, mounted: WorkerInfo = baseWorker, f
   await page.addScriptTag({ content: 'window.__name = (fn) => fn;' });
 
   await page.evaluate(
-    ({ worker, floor }) => {
+    ({ worker, floor, withIntro }) => {
       const w = window as any;
       w.worker = worker;
       w.sent = [];
@@ -128,6 +128,11 @@ async function mountV3Thread(t: TestContext, mounted: WorkerInfo = baseWorker, f
 
       w.question = document.createElement('div');
       w.question.hidden = true;
+      if (withIntro) {
+        w.intro = document.createElement('div');
+        w.intro.style.minHeight = '700px';
+        w.intro.textContent = 'Suggested prompts';
+      }
 
       w.thread = w.ThreadUI.mountWorkerThread(net, {
         worker,
@@ -144,6 +149,7 @@ async function mountV3Thread(t: TestContext, mounted: WorkerInfo = baseWorker, f
         raw() {
           w.openedRaw = true;
         },
+        intro: withIntro ? () => w.intro : undefined,
         team: () => w.team,
         openWorker: (id: string) => w.openedWorkers.push(id),
         openChanges: (id: string) => w.openedChanges.push(id),
@@ -159,11 +165,44 @@ async function mountV3Thread(t: TestContext, mounted: WorkerInfo = baseWorker, f
       w.thread.update(worker, true);
       w.thread.activate(true);
     },
-    { worker: mounted, floor },
+    { worker: mounted, floor, withIntro },
   );
 
   return { page, errors };
 }
+
+test('clearing an inspected conversation starts the intro at the top and follows its next messages', { skip: chromium }, async (t) => {
+  const { page, errors } = await mountV3Thread(t, { ...baseWorker, id: 'orchestrator', status: 'idle' }, 'floor-1', true);
+  await page.setViewportSize({ width: 800, height: 340 });
+  const update = (entries: ThreadEntry[]) =>
+    page.evaluate(({ entries, rows }) => (window as any).receive({ t: 'thread.snapshot', workerId: 'orchestrator', request: 'push', push: true, sessionId: 'session-1', entries, hasMore: false, presentation: { version: 1, rows } }), {
+      entries,
+      rows: presentThread(entries, false),
+    });
+  const text = (i: number): ThreadEntry => ({ id: `m${i}`, seq: i, role: 'assistant', kind: 'text', text: `Message ${i}` });
+  await update([{ id: 'thought', seq: 0, role: 'assistant', kind: 'thinking', text: 'Inspecting earlier work' }, ...Array.from({ length: 25 }, (_, i) => text(i + 1))]);
+  await page.locator('details.wt-thinking summary').click();
+  await page.locator('details.wt-thinking[open]').waitFor();
+  await page.getByRole('button', { name: /Scroll to bottom|Follow latest/ }).waitFor();
+
+  const scroll = page.locator('.wt-scroll');
+  await update([]);
+  await page.getByText('Suggested prompts').waitFor();
+  assert.equal(await scroll.evaluate((el) => el.scrollTop), 0);
+  assert.ok(await scroll.evaluate((el) => el.scrollHeight - el.clientHeight > 120), 'intro overflows');
+  assert.equal(await page.locator('.wt-latest').isHidden(), true);
+  await update(Array.from({ length: 25 }, (_, i) => text(i + 26)));
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector<HTMLElement>('.wt-scroll')!;
+      return el.scrollHeight - el.clientHeight > 120 && el.scrollHeight - el.clientHeight - el.scrollTop <= 2;
+    },
+    undefined,
+    { timeout: 2500 },
+  );
+  assert.equal(await page.locator('.wt-latest').isHidden(), true);
+  assert.deepEqual(errors, []);
+});
 
 test('worker-thread subscribes via thread.watch, consumes push snapshots immediately, reconciles every 15s, and cleans up watches', { skip: chromium }, async (t) => {
   const { page, errors } = await mountV3Thread(t);

@@ -4,6 +4,7 @@ import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../
 import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings } from '../../shared/protocol';
 import { SETTINGS_PANES, initialSettingsPane, searchSettings, settingsCards, settingsPaneAfter, settingsPanes, type SettingsCardTitle, type SettingsPane, type SettingsSurface } from '../../shared/settings-nav';
 import { claimEscape, h, openModal, timeAgo } from './dom';
+import { orchestratorIcon } from './icons';
 import { onJiraSetup } from './jira';
 import { onLinearSetup } from './linear';
 import { modelPicker } from './model-picker';
@@ -1601,7 +1602,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
     const tab = h(
       'button.settings-tab',
       { type: 'button', role: 'tab', id: `settings-tab-${p.id}`, 'aria-controls': `settings-pane-${p.id}`, onclick: () => show(p.id) },
-      h('span.icon', { 'aria-hidden': 'true' }, p.icon),
+      h('span.icon', { 'aria-hidden': 'true' }, p.id === 'orchestrator' ? orchestratorIcon(14, { animated: false }) : p.icon),
       h('span', {}, p.label),
     ) as HTMLButtonElement;
     tabs.set(p.id, tab);
@@ -1611,7 +1612,12 @@ export function openSettings(net: Net, opts: SettingsOptions) {
       h(
         'section.settings-pane',
         { role: 'tabpanel', id: `settings-pane-${p.id}`, 'aria-labelledby': `settings-tab-${p.id}` },
-        h('div.settings-head', {}, h('div.settings-head-row', {}, h('h3', {}, h('span.icon', { 'aria-hidden': 'true' }, p.icon), p.label), h('span.pill', {}, p.scope)), h('p', {}, p.blurb)),
+        h(
+          'div.settings-head',
+          {},
+          h('div.settings-head-row', {}, h('h3', {}, h('span.icon', { 'aria-hidden': 'true' }, p.id === 'orchestrator' ? orchestratorIcon(15, { animated: false }) : p.icon), p.label), h('span.pill', {}, p.scope)),
+          h('p', {}, p.blurb),
+        ),
         ...(panes[p.id] ?? []),
       ),
     );
@@ -1697,7 +1703,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
                       flashRow(hit.title);
                     },
                   },
-                  h('span.icon', { 'aria-hidden': 'true' }, pane.icon),
+                  h('span.icon', { 'aria-hidden': 'true' }, pane.id === 'orchestrator' ? orchestratorIcon(14, { animated: false }) : pane.icon),
                   h('span.list-main', {}, h('span.list-title', {}, hit.title), h('span.list-meta', {}, `${pane.section} · ${pane.label}`)),
                 );
               }),

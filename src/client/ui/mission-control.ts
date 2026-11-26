@@ -7,7 +7,7 @@ import { newOrchestratorConversation, stopOrchestrator } from './orchestrator';
 import type { Net } from '../net';
 import { store } from '../state';
 import { h, openModal, STATUS_LABEL, toast } from './dom';
-import { grokBotLogo } from './icons';
+import { grokBotLogo, orchestratorIcon } from './icons';
 import { colorDot, emptyState, windowHeader } from './kit';
 import { openPrompt } from './prompt';
 
@@ -25,7 +25,7 @@ export interface OrchestratorActions {
 export function openOrchestrator(net: Net, actions: OrchestratorActions) {
   const state = store.missionControl;
   if (!state) {
-    toast('🛰️ This office has no Orchestrator yet: restart it to get one', 'warn');
+    toast('This office has no Orchestrator yet: restart it to get one', 'warn');
     return;
   }
   const o = state.orchestrator;
@@ -59,7 +59,8 @@ export function openOrchestrator(net: Net, actions: OrchestratorActions) {
       )
     : null;
   openPrompt({
-    title: `🛰️ ${w?.name ?? ORCHESTRATOR_NAME}`,
+    icon: orchestratorIcon(15),
+    title: w?.name ?? ORCHESTRATOR_NAME,
     subtitle: !w ? ORCHESTRATOR_PITCH : busy ? `${STATUS_LABEL[w.status] ?? w.status}${w.task?.name ? ` · ${w.task.name}` : ''}. Send steers its turn; Queue waits until it's over.` : (w.task?.name ?? ORCHESTRATOR_PITCH),
     warning: w?.status === 'needs_input' ? `${w.name} is waiting on an answer: open its terminal to reply.` : undefined,
     placeholder: 'What do you want done? It can hire and direct workers on any floor',
@@ -77,7 +78,7 @@ function orchestratorOff(net: Net, actions: OrchestratorActions) {
   const el = h(
     'div.modal',
     { role: 'dialog', 'aria-label': 'The Orchestrator is off' },
-    windowHeader('🛰️ The Orchestrator is off', 'Mission Control'),
+    windowHeader(h('span.modal-title-icon', {}, orchestratorIcon(15, { animated: false }), 'The Orchestrator is off'), 'Mission Control'),
     h('div.body.stack', {}, h('p', {}, ORCHESTRATOR_PITCH), h('p.note.info', {}, 'While it is off, its team carries on working and reports to nobody until it is back.')),
     h('footer', {}, h('span.grow'), settings, on),
   );
@@ -93,7 +94,7 @@ function orchestratorOff(net: Net, actions: OrchestratorActions) {
       return;
     }
     modal.close();
-    toast('🛰️ The Orchestrator is on. Press E at it, or M anywhere, to talk to it');
+    toast('The Orchestrator is on. Press E at it, or M anywhere, to talk to it');
   });
   setTimeout(() => on.focus(), 30);
 }
@@ -104,7 +105,7 @@ function orchestratorBlocked(why: string, pane: SettingsPane, actions: Orchestra
   const el = h(
     'div.modal',
     { role: 'alertdialog', 'aria-label': "The Orchestrator can't start" },
-    windowHeader("🛰️ The Orchestrator can't start", 'Mission Control'),
+    windowHeader(h('span.modal-title-icon', {}, orchestratorIcon(15, { animated: false }), "The Orchestrator can't start"), 'Mission Control'),
     h('div.body.stack', {}, h('p.note.bad', { role: 'alert' }, why || 'Something stops it starting.'), h('p', {}, 'Fix that and it starts on your next prompt.')),
     h('footer', {}, h('span.grow'), close, settings),
   );

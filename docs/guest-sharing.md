@@ -23,6 +23,18 @@ remote MCP, share-link management and the sharing toggle, floor management, the 
 decor and the jukebox stay owner-only for every preset, including `edit-office`. The presets and their
 words are in `src/shared/guest-links.ts`.
 
+- **Single-floor links leave out cross-repository workers.** A `view-floor` or `edit-floor` link does not
+  show a worker that also works in another floor's repository, because its terminal and Changes window
+  reach that repository. Share such a worker with a single-worker link (view-only, with the other
+  repositories' entries removed) or an office link.
+- **Changes are for edit presets.** Listing and reading a worker's changes (`changes.watch`,
+  `changes.diff`) needs an edit preset. View presets keep only the changed-picture route
+  (`GET /api/changes/file`).
+- **No connections.** A guest's prompt or hire cannot name a Linear ticket. No guest field ever drives the
+  owner's Linear, Jira or Factory connections.
+- **Mission Control without its settings.** Office presets get Mission Control without the Orchestrator's
+  saved settings, apart from whether it is on.
+
 ## Transport: a Funnel-only guest backend
 
 Guests are outside the tailnet, so the office publishes a third loopback listener, the **guest backend**
@@ -34,7 +46,8 @@ refuses Funnel traffic.
   the guest backend and runs `tailscale funnel --bg --yes --https=<port> http://127.0.0.1:<backend>`
   ([CLI reference](https://tailscale.com/kb/1311/tailscale-funnel)). Turning it off closes every guest
   socket at once (close code 4411), closes the listener and runs `tailscale funnel --yes --https=<port> off`.
-  Nothing public remains.
+  Once that succeeds, nothing public remains. Until it does, the office keeps retrying and the Share window
+  says so (see [Known risks](#known-risks)).
 - **Ports.** Funnel allows only 443, 8443 and 10000. The office tries 10000, then 8443, then 443. It never
   takes a port another mapping uses: Serve and Funnel cannot share a port, so the tailnet HTTPS gateway
   keeps its own. The chosen ports are saved so the guest URL stays the same across restarts.
@@ -111,7 +124,7 @@ Everything is checked on the server and denied by default.
   | --- | --- | --- |
   | `GET /api/thread/image` (pictures by id), `GET /api/changes/file` (changed pictures) | all | worker in scope |
   | `GET /api/whiteboard/file`, `/render`, `/render/status`, `GET /api/gh/pull`, `/issue`, `/pull/diff` | office and floor presets | floor in scope |
-  | `GET /api/thread/file`, `GET /api/thread/files`, `GET /api/term/file`, `POST /api/term/paths` | write presets | worker in scope |
+  | `GET /api/thread/file`, `GET /api/thread/files`, `GET /api/term/file`, `POST /api/term/paths` | write presets | worker in scope; `/api/thread/files` without a worker (the Hire dialog's `@` list): floor in scope, never for a single-worker link |
   | `POST /api/term/drop`, `POST`/`DELETE /api/prompt/image`, `POST /api/whiteboard/blob`, `GET /api/gh/labels` | write presets | worker or floor in scope |
   | `GET /api/agents/droid/models`, `GET /api/agents/droid/commands` | write presets | commands: worker or floor in scope |
 
@@ -260,6 +273,20 @@ An entry is written once the office knows the write happened, never before:
 
 Refused attempts, and writes the forge or the office turned down, are not logged.
 
+## Known risks
+
+- **A mapping that cannot be removed yet.** Turning sharing off disconnects every guest and closes the
+  guest backend at once, then removes the Funnel mapping. When Tailscale does not answer, or the removal
+  fails, the mapping stays published and points at a loopback port nothing owns: Funnel answers with a
+  gateway error, and a local program that binds that port would be exposed. The Share window stays **Off**
+  and says "The public address could not be removed yet. Retrying…" with the command that removes it
+  (`tailscale funnel --https=<port> off`). The office retries every 30 seconds while it stays open, until the
+  mapping is gone or no longer points at its backend. Turning sharing back on stops the retry. If the office
+  quits first, its next start removes the mapping, or prints that command when sharing is locked (see
+  [Mapping lifetime](#mapping-lifetime)).
+- **The guest port is the office's alone.** Turning sharing off runs `tailscale funnel --yes --https=<port> off`,
+  which removes every handler on that port. Do not mount anything else on the guest port.
+
 ## State and configuration
 
 | File (office `.droid-office/`) | Holds |
@@ -277,10 +304,12 @@ Refused attempts, and writes the forge or the office turned down, are not logged
 
 - `tests/guest-links.test.ts`: tokens, hashes, expiry, revocation, the failed-token limit, token
   presentation and the audit log.
-- `tests/guest-funnel.test.ts`: Funnel port planning, ownership, kill switch, leftover mappings after an
-  unclean exit, copied state from another office, the lock, and the Tailscale binary pin.
+- `tests/guest-funnel.test.ts`: Funnel port planning, ownership, the kill switch and its retried removal,
+  leftover mappings after an unclean exit, copied state from another office, the lock, and the Tailscale
+  binary pin.
 - `tests/guest-http.test.ts`: the guest allowlist, scope per preset, card frames, the `full` and `limited`
-  owner API, credential isolation between listeners, and the menu bar counts.
+  owner API, credential isolation between listeners, the menu bar counts, and the Hire dialog's floor file
+  list.
 - `tests/office-clone.test.ts`: clones leave out `guest-funnel.json` and keep sharing locked.
 - `tests/guest-ws.test.ts`: guests get only their scope on the WebSocket, and only write presets change
   anything.

@@ -238,20 +238,32 @@ export class GuestFunnel {
     }
   }
 
-  /** Removes the Funnel mapping on the saved port, only while it still points at this office's backend. */
+  /**
+   * Removes the Funnel mapping on the saved port, only while it still points at this office's backend.
+   * While sharing stays off and the mapping may still be published (Tailscale didn't answer, or removing it
+   * failed), it says so and tries again: tailscaled would otherwise keep publishing a port nothing owns.
+   */
   private async unpublish() {
     const { backendPort, httpsPort } = this.saved;
-    if (this.opts.locked || backendPort === undefined || httpsPort === undefined) return;
-    const self = await this.cli.self();
-    if (!self?.dnsName) return;
-    const routes = await this.cli.routes(self.dnsName);
-    if (!routes) return;
-    const target = `http://127.0.0.1:${backendPort}`;
-    const ours = routes.find((r) => r.port === httpsPort && r.proxy === target);
-    // Gone, or now someone else's: either way nothing of this office's is published there.
-    if (!ours || (await this.cli.unfunnel(httpsPort))) this.save({ backendPort, httpsPort, published: false });
+    if (this.opts.locked || backendPort === undefined || httpsPort === undefined || this.active()) return;
+    try {
+      const self = await this.cli.self();
+      const routes = self?.dnsName ? await this.cli.routes(self.dnsName) : undefined;
+      if (!routes) return;
+      const target = `http://127.0.0.1:${backendPort}`;
+      const ours = routes.find((r) => r.port === httpsPort && r.proxy === target);
+      // Gone, or now someone else's: either way nothing of this office's is published there.
+      if (!ours || (await this.cli.unfunnel(httpsPort))) this.save({ backendPort, httpsPort, published: false });
+    } finally {
+      if (this.closed || this.active()) {
+        // Shutting down, or turned back on: enable() owns the mapping now.
+      } else if (this.saved.published) {
+        this.reason = `The public address could not be removed yet. Retrying… To remove it now, run: tailscale funnel --https=${httpsPort} off`;
+        clearTimeout(this.retry);
+        this.retry = setTimeout(() => void this.queue(() => this.unpublish()), this.opts.retryMs ?? 30_000).unref();
+      } else this.reason = undefined;
+    }
   }
-
   private disconnect() {
     clearTimeout(this.retry);
     this.publicOrigin = this.reason = this.fixUrl = undefined;

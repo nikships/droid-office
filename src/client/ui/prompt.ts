@@ -3,7 +3,7 @@ import type { AgentEffort, LostBranch, ServerMsg, WorktreeCleanup, WorktreeState
 import { slashRefusal } from '../../shared/slash-commands';
 import { store } from '../state';
 import { attachComposerAssist, type ComposerAssist } from './composer-assist';
-import { claimEscape, h, openModal } from './dom';
+import { claimEscape, h, openModal, type Child } from './dom';
 import { promptImages, type PromptImages } from './images';
 import { choices as optionCards, groupRow, toggle, windowHeader } from './kit';
 import { agentPicker, type AgentFields } from './models';
@@ -12,6 +12,7 @@ import type { CloudChoice, RunsOn } from './factory-cloud';
 
 export interface PromptOptions {
   title: string;
+  icon?: Child;
   subtitle?: string;
   /** A warning over the prompt, e.g. that the machine is under pressure. */
   warning?: string;
@@ -176,7 +177,7 @@ export function openPrompt(opts: PromptOptions) {
   const form = h(
     'form.modal.prompt-box',
     { role: 'dialog', 'aria-label': opts.title },
-    windowHeader(opts.title, opts.subtitle, ...(opts.actions ?? [])),
+    windowHeader(opts.icon ? h('span.modal-title-icon', {}, opts.icon, opts.title) : opts.title, opts.subtitle, ...(opts.actions ?? [])),
     h('div.body.stack', {}, opts.warning ? h('p.note.bad', { role: 'alert' }, opts.warning) : null, composer, rows.length ? h('div.group.prompt-opts', { role: 'group', 'aria-label': 'Options' }, ...rows) : null, failed),
     h('footer', {}, sendHint(false), cancel, queue, submit),
   ) as HTMLFormElement;

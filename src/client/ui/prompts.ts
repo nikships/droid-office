@@ -2,6 +2,7 @@ import type { Net } from '../net';
 import { store } from '../state';
 import { PROMPTS, PROMPT_GROUPS, PROMPT_IDS, PROMPT_MAX, fillPrompt, placeholders, promptText, type PromptGroup, type PromptId, type PromptVars } from '../../shared/prompts';
 import { h, openModal, timeAgo } from './dom';
+import { orchestratorIcon } from './icons';
 
 /** One of the office's prompts, as it has it now (rewritten in Settings, or the default), filled in. */
 export function officePrompt(id: PromptId, vars: PromptVars = {}): string {
@@ -35,7 +36,7 @@ export function openPromptEditor(net: Net, first: PromptId = PROMPT_IDS[0]) {
   const groups = new Map<PromptGroup, PromptId[]>();
   for (const id of PROMPT_IDS) groups.set(PROMPTS[id].group, [...(groups.get(PROMPTS[id].group) ?? []), id]);
   for (const [group, ids] of groups) {
-    list.append(h('h4.eyebrow', {}, PROMPT_GROUPS[group]));
+    list.append(h('h4.eyebrow', {}, group === 'orchestrator' ? orchestratorIcon(12, { animated: false }) : null, PROMPT_GROUPS[group]));
     for (const id of ids) {
       const b = h('button.list-row.prompt-item', { type: 'button', onclick: () => pick(id) }, h('span.list-main', {}, h('span.list-title', {}, PROMPTS[id].label)), h('span.list-end.prompt-mark')) as HTMLButtonElement;
       items.set(id, b);

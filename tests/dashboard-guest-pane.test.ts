@@ -156,3 +156,115 @@ test('a share link’s view-only pane watches its worker without offering any wo
   await page.evaluate(() => (window as any).panes.forEach((pane: any) => pane.dispose()));
   assert.deepEqual(errors, []);
 });
+
+test('the Orchestrator’s start screen offers its suggested dispatches only to a page that can prompt it, and tells a guest nothing about the owner’s setup', {
+  skip: status.installed ? false : `Chromium is not installed in ${status.path}`,
+}, async (t) => {
+  const browser = await launchBrowser();
+  t.after(closeBrowser);
+  const context = await newIsolatedContext(browser, { viewport: { width: 1500, height: 760 } });
+  t.after(() => context.close());
+  const page = await context.newPage();
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  const bundle = buildSync({
+    stdin: {
+      contents: "export { createPane } from './dashboard-pane'; export { store } from './state'; export { orchestratorWorker } from './mission'; export { ORCHESTRATOR_EXAMPLES } from './mission';",
+      resolveDir: fileURLToPath(new URL('../src/client', import.meta.url)),
+    },
+    bundle: true,
+    format: 'iife',
+    globalName: 'PaneUI',
+    write: false,
+    target: 'es2022',
+  }).outputFiles[0].text;
+  await page.setContent('<!doctype html><div id="dashboard"><div class="dash-workspace"></div></div>');
+  await page.addStyleTag({ content: readFileSync(new URL('../src/client/style.css', import.meta.url), 'utf8') });
+  await page.addStyleTag({
+    content:
+      '.dash-workspace { position: relative; flex: none; height: 720px; width: 100%; } .dash-pane { top: 0; width: 32.5%; height: 100%; transition: none; animation: none; } .dash-pane:nth-child(1) { left: 0; } .dash-pane:nth-child(2) { left: 33.75%; } .dash-pane:nth-child(3) { left: 67.5%; }',
+  });
+  await page.addScriptTag({ content: bundle });
+  await page.addScriptTag({ content: 'window.__name = (fn) => fn;' });
+  await page.evaluate(() => {
+    const w = window as any;
+    // Before its first prompt: on, no session yet, nothing blocking it.
+    w.mission = { orchestrator: { settings: { on: true }, team: [] }, bots: [] };
+    w.sent = [];
+    w.calls = [];
+    const net = {
+      up: true,
+      send(msg: any) {
+        w.sent.push(msg.t);
+        return true;
+      },
+      onMessage: () => () => undefined,
+    };
+    // The owner's page, an edit-office guest, and a view-office guest.
+    const host = (work: boolean, owner: boolean) => ({
+      net,
+      live: () => true,
+      floor: () => 'floor',
+      busy: () => false,
+      read: () => '',
+      remember() {},
+      action: async () => undefined,
+      usable: () => true,
+      mission: () => w.mission,
+      worker: () => w.PaneUI.orchestratorWorker(w.mission),
+      focus() {},
+      close() {},
+      sendHome() {},
+      hire() {},
+      settings: () => w.calls.push('settings'),
+      setView() {},
+      work: () => work,
+      owner: () => owner,
+    });
+    w.panes = [w.PaneUI.createPane(host(true, true), 0), w.PaneUI.createPane(host(true, false), 1), w.PaneUI.createPane(host(false, false), 2)];
+    document.querySelector('.dash-workspace')!.append(...w.panes.map((pane: any) => pane.el));
+    w.paint = () => {
+      const worker = w.PaneUI.orchestratorWorker(w.mission);
+      w.panes.forEach((pane: any, index: number) => pane.update({ worker, view: 'thread', focused: index === 0, maximized: false, canMaximize: false, covered: false, candidates: [], anyone: true, takeFocus: false }));
+    };
+    w.paint();
+  });
+  const [owner, edit, view] = [0, 1, 2].map((i) => page.locator('.dash-pane').nth(i));
+  for (const pane of [owner, edit, view]) await pane.locator('.orc-intro').waitFor();
+  const examples = await page.evaluate(() => (window as any).PaneUI.ORCHESTRATOR_EXAMPLES.map((e: { prompt: string }) => e.prompt));
+
+  // The owner and an edit guest get the suggestions, and one fills the draft.
+  for (const pane of [owner, edit]) {
+    assert.equal(await pane.locator('.orc-example').count(), examples.length);
+    assert.equal(await pane.locator('h3').innerText(), 'Point it at the building.');
+    await pane.locator('.orc-example').first().click();
+    assert.equal(await pane.locator('textarea.wt-input').inputValue(), examples[0]);
+  }
+  // A view guest watches: the same picture of what it is, no suggestions, no draft, no composer.
+  assert.equal(await view.locator('.orc-example, .orc-examples, .orc-examples-eyebrow').count(), 0);
+  assert.equal(await view.locator('h3').innerText(), 'Nothing dispatched yet.');
+  assert.match(await view.locator('.orc-intro-foot').innerText(), /when the owner gives it a prompt/);
+  assert.equal(await view.locator('textarea.wt-input:visible, form.wt-composer:visible').count(), 0);
+  assert.equal(await view.locator('.orc-hero-emblem').count(), 1);
+  await page.screenshot({ path: '/tmp/sprocket-shots/unit-orchestrator-start.png' });
+
+  // Blocked by the owner's setup: the owner reads why and gets Settings; a guest reads only that it isn't available.
+  const why = 'Droid isn’t ready on this computer. Install it, then sign in or add a custom model in airgapped mode from ⚙️ Settings → Connections → Droid.';
+  await page.evaluate((why) => {
+    const w = window as any;
+    w.mission = { orchestrator: { settings: { on: true }, team: [], blocked: why }, bots: [] };
+    w.paint();
+  }, why);
+  await owner.locator('.wt-blocked:visible').waitFor();
+  assert.equal(await owner.locator('.wt-blocked-text').innerText(), why);
+  assert.equal(await owner.locator('.wt-blocked button:has-text("Settings")').count(), 1);
+  for (const pane of [edit, view]) {
+    await pane.locator('.wt-blocked:visible').waitFor();
+    assert.equal(await pane.locator('.wt-blocked-text').innerText(), 'Not available right now');
+    assert.equal(await pane.locator('.wt-blocked button').count(), 0);
+    assert.doesNotMatch(await pane.innerText(), /Settings|Connections|Install it/);
+  }
+  assert.deepEqual(await page.evaluate(() => (window as any).calls), []);
+  await page.evaluate(() => (window as any).panes.forEach((pane: any) => pane.dispose()));
+  assert.deepEqual(errors, []);
+});

@@ -14,7 +14,7 @@ import { doingLine, workerKind as kind } from './worker-words';
 import { store } from './state';
 import { h, STATUS_LABEL, timeAgo, toast } from './ui/dom';
 import { colorDot } from './ui/kit';
-import { grokBotLogo, icon, type IconName } from './ui/icons';
+import { grokBotLogo, icon, orchestratorIcon, type IconName } from './ui/icons';
 import { modelBadgeLabel, modelBadgeNode } from './ui/models';
 import { mountWorkerThread, type WorkerThread } from './ui/worker-thread';
 import type { QuestionDraft, QuestionReply, openQuestionWorkspace } from './ui/question-workspace';
@@ -24,6 +24,7 @@ import { workerTeams } from '../shared/team';
 import { missionAgent, ORCHESTRATOR_ID, type MissionAgent, type MissionControlState, type MissionTeamMember } from '../shared/mission-control';
 import type { SettingsPane } from '../shared/settings-nav';
 import { botLine, buildingAgent, missionLead, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_PITCH, orchestratorBlocked, orchestratorLine, orchestratorMessage, orchestratorSettingsPane, orchestratorStarted } from './mission';
+import { orchestratorBlockedFor } from './dashboard-guest';
 import { orchestratorAwake } from './mission-office';
 
 /** What a sidebar row carries when it's dragged onto a pane. */
@@ -403,7 +404,7 @@ export function createPane(host: PaneHost, index: number): Pane {
         ...(orchestrator
           ? {
               intro: () => (orchestratorStarted(host.mission()) ? undefined : (intro ??= orchestratorIntro())),
-              blocked: () => orchestratorBlocked(host.mission()),
+              blocked: () => orchestratorBlockedFor(orchestratorBlocked(host.mission()), owns),
               ...(owns ? { blockedAction: h('button.btn.sm', { type: 'button', onclick: () => host.settings(orchestratorSettingsPane(host.mission())) }, icon('settings', 13), 'Settings') } : {}),
               interrupt: true,
               promptWakes: true,
@@ -426,7 +427,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     term = terminal.openTerminal(host.net, wid, undefined, undefined, { mount: stage, focus: takeFocus, hideTeam: true, readOnly: !works });
   }
 
-  /** The Orchestrator's empty conversation: what it's for, and prompts that fill the composer. */
+  /** The Orchestrator's empty conversation: what it's for, and (for a page that can prompt it) prompts that fill the composer. */
   function orchestratorIntro() {
     const fill = (text: string) => {
       const input = thread?.element.querySelector<HTMLTextAreaElement>('textarea.wt-input');
@@ -436,19 +437,48 @@ export function createPane(host: PaneHost, index: number): Pane {
       input.focus();
       input.setSelectionRange(text.length, text.length);
     };
+    const heroBus = svg(
+      'svg',
+      { class: 'orc-hero-bus', width: 180, height: 45, viewBox: '0 0 180 45', preserveAspectRatio: 'xMaxYMid meet', 'aria-hidden': 'true' },
+      svg('path', { class: 'orc-bus-rail', d: 'M0 22.5h10M14 22.5h22.5V7.5h138M14 22.5h160.5M14 22.5h22.5v15h138' }),
+      svg('rect', { class: 'orc-bus-junction', x: 10, y: 20.5, width: 4, height: 4, rx: 0.6 }),
+      svg('rect', { class: 'orc-bus-pad', x: 174.5, y: 5, width: 5, height: 5, rx: 0.8 }),
+      svg('rect', { class: 'orc-bus-pad', x: 174.5, y: 20, width: 5, height: 5, rx: 0.8 }),
+      svg('rect', { class: 'orc-bus-pad', x: 174.5, y: 35, width: 5, height: 5, rx: 0.8 }),
+      svg('rect', { class: 'orc-bus-packet', x: 42, y: 6.5, width: 10, height: 2, rx: 0.5 }),
+      svg('rect', { class: 'orc-bus-packet orc-bus-packet-b', x: 22, y: 21.5, width: 10, height: 2, rx: 0.5 }),
+      svg('rect', { class: 'orc-bus-packet orc-bus-packet-c', x: 42, y: 36.5, width: 10, height: 2, rx: 0.5 }),
+    );
     return h(
       'div.orc-intro',
       {},
-      h('div.orc-intro-mark', { 'aria-hidden': 'true' }, icon('satellite', 22)),
-      h('span.eyebrow', {}, 'Mission Control'),
-      h('h3', {}, 'What should the building get done?'),
-      h('p', {}, ORCHESTRATOR_PITCH),
       h(
-        'div.orc-examples',
-        { role: 'group', 'aria-label': 'Example prompts' },
-        ...ORCHESTRATOR_EXAMPLES.map((text) => h('button.orc-example', { type: 'button', title: 'Put this in the message box', onclick: () => fill(text) }, h('span', {}, text), icon('arrow', 13))),
+        'div.orc-hero',
+        {},
+        h('div.orc-hero-head', {}, h('span.eyebrow', {}, h('span.no', {}, '01'), 'Mission Control'), h('span.orc-hero-status', {}, h('span.orc-hero-dot', { 'aria-hidden': 'true' }), 'Building-wide agent')),
+        h('div.orc-hero-stage', { 'aria-hidden': 'true' }, h('div.orc-hero-emblem', {}, orchestratorIcon(28)), h('span.orc-hero-trunk'), heroBus),
       ),
-      h('p.orc-intro-foot', {}, 'It acts only on what you ask, and when its own team reports back.'),
+      h('h3', {}, works ? 'Point it at the building.' : 'Nothing dispatched yet.'),
+      h('p.orc-intro-copy', {}, ORCHESTRATOR_PITCH),
+      // Watch-only: the suggestions fill a composer this page doesn't have.
+      ...(works
+        ? [
+            h('span.eyebrow.orc-examples-eyebrow', {}, h('span.no', {}, '02'), 'Suggested dispatches'),
+            h(
+              'div.orc-examples',
+              { role: 'group', 'aria-label': 'Example prompts' },
+              ...ORCHESTRATOR_EXAMPLES.map(({ tag, prompt }, i) =>
+                h(
+                  'button.orc-example',
+                  { type: 'button', title: 'Put this in the message box', 'aria-label': `Use this prompt: ${prompt}`, onclick: () => fill(prompt) },
+                  h('span.orc-example-head', {}, h('span.orc-example-tag', {}, h('span.no', {}, `0${i + 1}`), tag), icon('arrow', 13)),
+                  h('span.orc-example-text', {}, prompt),
+                ),
+              ),
+            ),
+          ]
+        : []),
+      h('p.orc-intro-foot', {}, works ? 'Wakes only on your prompt or when its own crew reports back.' : 'It starts when the owner gives it a prompt. This view shows its work as it happens.'),
     );
   }
 
@@ -578,8 +608,9 @@ export function createPane(host: PaneHost, index: number): Pane {
     const threaded = mode === 'thread';
     // The Orchestrator has a terminal only while a session it started is awake.
     const bot = w?.remote ? missionAgent(host.mission(), w.id) : undefined;
+    const blocked = w?.id === ORCHESTRATOR_ID && !!orchestratorBlocked(host.mission());
     const toggles = local && w.kind === 'agent' && (w.id !== ORCHESTRATOR_ID || !!orchestratorAwake(host.mission()));
-    const key = JSON.stringify([w && [w.id, w.name, w.color, w.status, w.acked, w.lead, bot?.grokBot, headLine(w), w.activeModel ?? w.model, w.activeEffort ?? w.effort], toggles, mode, s.maximized, s.canMaximize, host.live()]);
+    const key = JSON.stringify([w && [w.id, w.name, w.color, w.status, w.acked, w.lead, bot?.grokBot, blocked, headLine(w), w.activeModel ?? w.model, w.activeEffort ?? w.effort], toggles, mode, s.maximized, s.canMaximize, host.live()]);
     if (key === headKey) return;
     headKey = key;
     el.setAttribute('aria-label', w ? `Pane ${index + 1}: ${w.name}` : `Pane ${index + 1}: empty`);
@@ -599,7 +630,13 @@ export function createPane(host: PaneHost, index: number): Pane {
       views.hidden = flip.hidden = true;
       return;
     }
-    who.replaceChildren(bot?.grokBot ? h('span.dash-mission-mark.sm', { 'data-status': w.status, 'aria-hidden': 'true' }, grokBotLogo(16), workerDot(w, true)) : workerDot(w, true));
+    who.replaceChildren(
+      w.id === ORCHESTRATOR_ID
+        ? h('span.dash-mission-mark.sm', { 'data-status': blocked ? 'blocked' : w.status, 'aria-hidden': 'true' }, orchestratorIcon(11, { animated: !blocked }), workerDot(w, true))
+        : bot?.grokBot
+          ? h('span.dash-mission-mark.sm', { 'data-status': w.status, 'aria-hidden': 'true' }, grokBotLogo(16), workerDot(w, true))
+          : workerDot(w, true),
+    );
     name.textContent = w.name;
     name.title = `${w.name} · ${kind(w)}`;
     const doing = headLine(w);
@@ -607,7 +644,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     task.title = doing;
     const engine = w.kind === 'agent' ? modelBadgeNode(w.activeModel ?? w.model, w.activeEffort ?? w.effort) : kind(w);
     model.replaceChildren(...(engine ? [engine] : []));
-    state.replaceChildren(workerStatusIcon(w, 16, w.id === ORCHESTRATOR_ID && !!orchestratorBlocked(host.mission())));
+    state.replaceChildren(workerStatusIcon(w, 16, blocked));
     views.hidden = flip.hidden = !toggles;
     views.setAttribute('aria-label', `${w.name} view`);
     views.replaceChildren(
@@ -1032,7 +1069,9 @@ export function createPane(host: PaneHost, index: number): Pane {
       else if (mode === 'thread') {
         thread?.update(w, host.live());
         // An example can only fill a composer that's there to take it.
-        const open = host.live() && !orchestratorBlocked(host.mission());
+        const blocked = !!orchestratorBlocked(host.mission());
+        const open = host.live() && !blocked;
+        intro?.classList.toggle('blocked', blocked);
         for (const b of intro?.querySelectorAll<HTMLButtonElement>('.orc-example') ?? []) b.disabled = !open;
       } else paintInfo(w);
       paintQuestion();

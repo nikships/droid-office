@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test, { type TestContext } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import {
   apparmorProfile,
   BrowserError,
@@ -286,6 +288,49 @@ test('a real launch runs headless Chromium with its sandbox on', { skip: skipRea
   }
 });
 
+test('Ctrl+C leaves shutdown to the office, and its exit still ends the browser', { skip: process.platform === 'win32' ? 'POSIX signals' : skipReason, timeout: 90_000 }, async () => {
+  // An office-like process: SIGINT runs slow shutdown work, then the office exits on its own terms.
+  const mod = pathToFileURL(path.join(import.meta.dirname, '../src/server/whiteboard-browser.ts')).href;
+  const code = `
+    import { closeBrowser, launchBrowser } from ${JSON.stringify(mod)};
+    const browser = await launchBrowser();
+    const cdp = await browser.newBrowserCDPSession();
+    const { processInfo } = await cdp.send('SystemInfo.getProcessInfo');
+    await cdp.detach();
+    process.on('SIGINT', () => setTimeout(() => {
+      void closeBrowser();
+      console.log('shutdown done');
+      setTimeout(() => process.exit(0), 300);
+    }, 500));
+    console.log('ready ' + processInfo.find((info) => info.type === 'browser').id);
+    setInterval(() => {}, 1000);
+  `;
+  const child = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], { stdio: ['ignore', 'pipe', 'inherit'] });
+  let out = '';
+  child.stdout.on('data', (d) => {
+    out += String(d);
+  });
+  const exited = once(child, 'exit') as Promise<[number | null, NodeJS.Signals | null]>;
+  while (!/ready \d+/.test(out)) {
+    if (child.exitCode !== null) assert.fail(`the child exited early: ${out}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  const pid = Number(/ready (\d+)/.exec(out)![1]);
+  child.kill('SIGINT');
+  const [exitCode] = await exited;
+  assert.equal(exitCode, 0, 'Playwright never exits the process itself (130)');
+  assert.match(out, /shutdown done/);
+  const alive = () => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  for (const end = Date.now() + 5000; alive() && Date.now() < end; ) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(alive(), false, 'no Chromium is left behind');
+});
 test('a fresh context gets no permissions, no storage from another context, and no service workers', { skip: skipReason, timeout: 90_000 }, async (t) => {
   t.after(closeBrowser);
   const server = http.createServer((req, res) => {

@@ -133,7 +133,7 @@ import ai.factory.droidoffice.ui.components.paneInsets
 import ai.factory.droidoffice.ui.components.parseColor
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.home.deskLabel
-import ai.factory.droidoffice.ui.mission.AgentTile
+import ai.factory.droidoffice.ui.mission.OrchestratorTile
 import ai.factory.droidoffice.ui.mission.BotScreen
 import ai.factory.droidoffice.ui.mission.OrchestratorBlocked
 import ai.factory.droidoffice.ui.mission.OrchestratorIdle
@@ -653,7 +653,7 @@ private fun Header(w: WorkerInfo, embedded: Boolean, connected: Boolean, onBack:
     val floorName = if (mission || data.floors.size <= 1) null else data.floorOfWorker(w.id)?.name?.ifBlank { null }
     Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 6.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack, modifier = Modifier.tagged(Tags.Worker.BACK)) { Icon(if (embedded) Icons.Default.Close else Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-        if (mission) Box(Modifier.padding(end = 8.dp)) { AgentTile(OfficeIcons.Orbit, if (w.state == WorkerStatus.NeedsInput) Palette.Danger else OrchestratorTint, small = true) }
+        if (mission) Box(Modifier.padding(end = 8.dp)) { OrchestratorTile(if (w.state == WorkerStatus.NeedsInput) Palette.Danger else OrchestratorTint, small = true, animated = !blocked) }
         else WorkerDot(parseColor(w.color), w.state, 10.dp)
         Column(Modifier.weight(1f).padding(start = 2.dp)) {
             Text(w.name.ifBlank { w.id }, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.tagged(Tags.Worker.NAME))

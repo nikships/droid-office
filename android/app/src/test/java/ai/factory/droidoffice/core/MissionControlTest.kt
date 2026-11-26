@@ -318,8 +318,8 @@ class MissionControlTest {
         assertEquals("Ready for a task anywhere in the building", MissionControl.READY)
         assertEquals("Ready for a task anywhere in the building", MissionControl.orchestratorLine(OrchestratorState()))
         assertEquals("Office default", MissionControl.OFFICE_DEFAULT)
-        assertEquals(3, MissionControl.examples.size)
-        assertEquals("What is everyone doing?", MissionControl.examples.last())
+        assertEquals(4, MissionControl.examples.size)
+        assertEquals(MissionControl.Example("Triage", "Triage every open issue across my projects and put workers on the three that matter most."), MissionControl.examples.last())
     }
 
     @Test
