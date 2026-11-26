@@ -24,17 +24,21 @@ decor and the jukebox stay owner-only for every preset, including `edit-office`.
 words are in `src/shared/guest-links.ts`.
 
 - **Single-floor links leave out cross-repository workers.** A `view-floor` or `edit-floor` link does not
-  show a worker that also works in another floor's repository, because its terminal and Changes window
-  reach that repository. Share such a worker with a single-worker link (view-only, with the other
-  repositories' entries removed) or an office link.
+  show a worker that also works in another floor's repository (its `repos`), because its terminal, Changes
+  window and pull requests reach that repository. Share such a worker with a single-worker link (view-only;
+  the worker arrives without its entries for other floors) or an office link. An HTTP request that names
+  another floor's repository with `?repo=` answers 404 unless the link reaches that floor, and a guest's
+  hire can add only repositories on floors the link reaches.
 - **Changes are for edit presets.** Listing and reading a worker's changes (`changes.watch`,
-  `changes.diff`) needs an edit preset. View presets keep only the changed-picture route
+  `changes.unwatch`, `changes.diff`) needs an edit preset and is not audited; only edit links receive the
+  `changes` and `changes.diff` frames. View presets keep only the changed-picture route
   (`GET /api/changes/file`).
-- **No connections.** A guest's prompt or hire cannot name a Linear ticket. No guest field ever drives the
-  owner's Linear, Jira or Factory connections.
-- **Mission Control without its settings.** Office presets get Mission Control without the Orchestrator's
-  saved settings, apart from whether it is on.
-
+- **Connections stay the owner's.** A guest's hire or prompt that hands a worker a Linear ticket is
+  refused, since the ticket would move on the owner's Linear account. Connecting, refreshing or changing
+  the Linear, Jira and Factory connections is owner-only, and their state never reaches a guest. A cloud
+  hire from an edit preset still runs on the owner's Factory computers.
+- **Mission Control without its settings.** Office presets get Mission Control with the Orchestrator's
+  saved settings reduced to whether it is on (no model or effort), and without external bots.
 ## Transport: a Funnel-only guest backend
 
 Guests are outside the tailnet, so the office publishes a third loopback listener, the **guest backend**
@@ -307,14 +311,15 @@ Refused attempts, and writes the forge or the office turned down, are not logged
 - `tests/guest-funnel.test.ts`: Funnel port planning, ownership, the kill switch and its retried removal,
   leftover mappings after an unclean exit, copied state from another office, the lock, and the Tailscale
   binary pin.
-- `tests/guest-http.test.ts`: the guest allowlist, scope per preset, card frames, the `full` and `limited`
-  owner API, credential isolation between listeners, the menu bar counts, and the Hire dialog's floor file
-  list.
+- `tests/guest-http.test.ts`: the guest allowlist, scope per preset, cross-repository workers and
+  `?repo=`, card frames, the `full` and `limited` owner API, credential isolation between listeners, the
+  menu bar counts, and the Hire dialog's floor file list.
 - `tests/office-clone.test.ts`: clones leave out `guest-funnel.json` and keep sharing locked.
 - `tests/guest-ws.test.ts`: guests get only their scope on the WebSocket, and only write presets change
   anything.
 - `tests/guest-policy.test.ts`: the inbound and outbound policy, identical refusals, worker and floor
-  targets, scoped welcome and roster, removal news, and audit wording.
+  targets, write-only changes, refused Linear tickets, cross-repository workers, scoped welcome, roster and
+  Mission Control, removal news, and audit wording.
 - `tests/guest-audit-outcome.test.ts`: forge and pipeline writes settle their audit only after the forge
   answers, and only as a success when the change happened.
 - `tests/guest-links-model.test.ts`: the Share window's states, the `limited` page, the lock, expiry
