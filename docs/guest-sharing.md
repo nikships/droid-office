@@ -28,7 +28,9 @@ words are in `src/shared/guest-links.ts`.
   window and pull requests reach that repository. Share such a worker with a single-worker link (view-only;
   the worker arrives without its entries for other floors) or an office link. An HTTP request that names
   another floor's repository with `?repo=` answers 404 unless the link reaches that floor, and a guest's
-  hire can add only repositories on floors the link reaches.
+  hire can add only repositories on floors the link reaches. Such a worker comes and goes without any
+  frame to a floor link, its departure included: the office sends a departure with the floors the worker
+  worked in, so only links that could see it hear that it left.
 - **Changes are for edit presets.** Listing and reading a worker's changes (`changes.watch`,
   `changes.unwatch`, `changes.diff`) needs an edit preset and is not audited; only edit links receive the
   `changes` and `changes.diff` frames. View presets keep only the changed-picture route
@@ -45,7 +47,12 @@ words are in `src/shared/guest-links.ts`.
 - **News follows the workers a link sees.** A notice (toast) that names workers reaches a link only when
   the link sees every worker it names, including a worker that has since left. Visits and what visitors
   say reach a link only when it sees both the visitor and the host, on a floor whose content it sees. A
-  single-worker link gets no visits.
+  floor link shows a visit only while both workers are still in the office and in its scope, so a visit
+  whose host or visitor was sent home mid-visit reaches only office links. A single-worker link gets no
+  visits.
+- **Actions on several workers stay in scope.** Rebuilding every lost worktree from a share link rebuilds
+  only the workers the link sees, and a guest's press of a Whiteboard button reaches the card's last
+  editor only when the link sees that worker.
 - **A floor's own news reaches its guests.** Notices about a floor that name no worker reach every link
   that sees that floor's content (never a single-worker link). They include the floor's Linear and Jira
   notices, such as a ticket identifier, an epic key, a team name and autopilot turning on or off, and
@@ -169,10 +176,18 @@ Everything is checked on the server and denied by default.
     and hidden. A toast passes only when the guest sees every worker the server names for it (the worker it
     is about and any others its text names), when it is a direct reply to that guest, or when it is a
     floor's own news without a worker and the guest sees that floor's content. Visit lists keep only visits
-    between two workers the guest sees, and a visitor's line (`visit_say`) passes only for such a visit.
+    between two workers the guest sees, and a visitor's line (`visit_say`) passes only for such a visit;
+    for a floor link both workers must also still be on the roster. A worker's departure (`worker.remove`,
+    `building.remove`) carries the floors it worked in, since it no longer lists them once it has left,
+    and passes only to guests that saw it with those floors counted.
   - *Writes.* A write guest may resize a terminal; a view-only guest may not. Write presets may hire desk,
     shell and cloud workers on floors in scope. A guest's Whiteboard edits keep the owner as the board's
     author, and the audit names the link. Accepted writes are audited once the office has acted on them.
+  - *Writes that reach other workers.* A message names one worker, and the gate checks that one. Where
+    the office then acts on more workers, it checks each against the link (`sees` in `guest-gate.ts`): a
+    bulk rebuild (`worker.rebuild` with `all`) adds only lost workers the link sees, and a Whiteboard
+    button press (`deliverPress` in `src/server/whiteboard-buttons.ts`) whose target is out of scope is
+    refused with the generic refusal and the press is taken back.
   - *No owner side effects.* A guest never counts as the owner looking: opening or acknowledging a worker,
     last-visited floors, board polling, wake-ups, and Jira or Linear refreshes ignore guests. A guest is not
     one of the owner's browsers: the web companion switch does not close guest sockets, and the Mac menu
@@ -342,11 +357,16 @@ Refused attempts, and writes the forge or the office turned down, are not logged
   menu bar counts, and the Hire dialog's floor file list.
 - `tests/office-clone.test.ts`: clones leave out `guest-funnel.json` and keep sharing locked.
 - `tests/guest-ws.test.ts`: guests get only their scope on the WebSocket, only write presets change
-  anything, and a blocked Orchestrator shows guests the fixed line and refuses their prompt with it.
+  anything, a blocked Orchestrator shows guests the fixed line and refuses their prompt with it, a floor
+  guest's bulk rebuild on a floor of mixed scope rebuilds only the workers its link sees, and a
+  cross-repository worker comes and goes without a frame to a floor link.
 - `tests/guest-policy.test.ts`: the inbound and outbound policy, identical refusals, worker and floor
-  targets, write-only changes, refused Linear tickets, cross-repository workers, scoped welcome, roster and
-  Mission Control, the Orchestrator's fixed line without a Settings pane, toasts that name workers
-  (departed ones included), floor news, visits and visitors' lines, removal news, and audit wording.
+  targets, write-only changes, refused Linear tickets, cross-repository workers and their departure,
+  scoped welcome, roster and Mission Control, the Orchestrator's fixed line without a Settings pane,
+  toasts that name workers (departed ones included), floor news, visits (one whose host was sent home
+  mid-visit included) and visitors' lines, removal news, and audit wording.
+- `tests/whiteboard-buttons.test.ts`: a share link guest's press reaches the page's last editor only when
+  its link sees that worker.
 - `tests/guest-audit-outcome.test.ts`: forge and pipeline writes settle their audit only after the forge
   answers, and only as a success when the change happened.
 - `tests/guest-links-model.test.ts`: the Share window's states, the `limited` page, the lock, expiry
