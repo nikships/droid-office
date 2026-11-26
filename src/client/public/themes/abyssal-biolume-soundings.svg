@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="480" height="176" viewBox="0 0 480 176" fill="none">
+  <defs>
+    <path id="shelf" d="M-6 24C24 39 54 53 86 46S132 9 162 14s40 39 68 38 31-23 61-22 48 30 81 25 54-37 81-36q12 0 33 11"/>
+    <path id="shoal" d="M291 98c14-12 40-14 57-7s13 14 4 19-21 6-32 13-31 6-37-2 0-17 8-23Z"/>
+  </defs>
+  <g stroke="#6adacb" stroke-opacity=".23" stroke-width=".8">
+    <use xlink:href="#shelf"/>
+    <use xlink:href="#shelf" transform="translate(0 10) scale(1 .91)"/>
+    <use xlink:href="#shelf" transform="translate(0 23) scale(1 .76)"/>
+    <use xlink:href="#shelf" transform="translate(0 38) scale(1 .65)"/>
+  </g>
+  <g stroke="#a497ff" stroke-opacity=".26" stroke-width=".9">
+    <use xlink:href="#shoal"/>
+    <use xlink:href="#shoal" transform="translate(321 108) scale(.72 .69) translate(-321 -108)"/>
+    <use xlink:href="#shoal" transform="translate(321 108) scale(.41 .34) translate(-321 -108)"/>
+  </g>
+  <path stroke="#90f4ec" stroke-opacity=".38" d="M58 86h7m-3.5-3.5v7M408 146h7m-3.5-3.5v7"/>
+</svg>
