@@ -75,16 +75,16 @@ export interface FloorContext {
   linearHire(floor: Floor, prompt: string, identifier: string, model?: string): Promise<{ workerId?: string; error?: string }>;
   /** The office's prompts and the worker a new one starts on when nobody picks, as set in Settings. */
   prompts: PromptSource;
-  /** To everyone on this floor. */
-  emit(floor: Floor, msg: ServerMsg, droppable?: boolean): unknown;
+  /** To everyone on this floor; `about` the workers it names that may have left, for guests' scope. */
+  emit(floor: Floor, msg: ServerMsg, droppable?: boolean, about?: readonly GuestNamed[]): unknown;
   /** To everyone on this floor; `workerId` names the worker it is about, when one is, and `about` any other workers its text names. */
   toast(floor: Floor, text: string, level?: ToastLevel, workerId?: string, about?: readonly GuestNamed[]): void;
   /** A worker's terminal output, for whoever has that terminal open. */
   termData(workerId: string, data: string, connectionIds: string[]): void;
   /** What a worker changed, for whoever has its Changes window open. */
   changes(state: ChangesState, clients: string[]): void;
-  /** A worker on this floor changed, or left (then just its id). */
-  workerChanged(floor: Floor, w: WorkerInfo | string): void;
+  /** A worker on this floor changed, or left (then just its id, and `about` it with the floors it worked in). */
+  workerChanged(floor: Floor, w: WorkerInfo | string, about?: readonly GuestNamed[]): void;
   /** A worker needing input updated its terminal screen, so off-floor companions keep its menu live. */
   offFloorScreen?(floor: Floor, workerId: string): void;
   /** A local worker repainted: its watched Thread's live output may have moved without a hook. */
@@ -315,11 +315,13 @@ export class Floor {
           this.linear?.workersChanged();
           if (worker.pr && this.linear?.linkOf(worker.id)) void this.linear.sync(this.board.pulls.items);
         },
-        remove: (workerId, shot) => {
+        remove: (workerId, shot, repos) => {
           this.changes?.forget(workerId);
-          ctx.emit(this, { t: 'worker.remove', workerId, ...(shot ? { shot } : {}) });
+          // Gone from the roster now: only `left` still says which floors it worked in.
+          const left = [{ id: workerId, ...(repos ? { repos } : {}) }];
+          ctx.emit(this, { t: 'worker.remove', workerId, ...(shot ? { shot } : {}) }, false, left);
           workerLeft(workerId, ctx.building, this);
-          ctx.workerChanged(this, workerId);
+          ctx.workerChanged(this, workerId, left);
           this.linear?.workersChanged();
           void this.linear?.sync(this.board.pulls.items);
         },

@@ -168,7 +168,8 @@ export interface OpenedPr {
 
 export interface WorkerEvents {
   update(info: WorkerInfo): void;
-  remove(workerId: string, shot?: boolean): void;
+  /** `repos`: the other repositories it worked in, which it no longer lists once it has left. */
+  remove(workerId: string, shot?: boolean, repos?: WorkerInfo['repos']): void;
   data(workerId: string, data: string, connectionIds: string[]): void;
   screen(workerId: string, frame: ScreenFrame): unknown;
   /** `workerId` names the worker it is about, when one is (a shot worker's dismissal), and `about` workers its text names that may have left. */
@@ -1160,7 +1161,7 @@ export class WorkerManager {
     this.scrollback.remove(id);
     this.drops.remove(id);
     rmSync(this.spool.file(id), { force: true });
-    this.events.remove(id);
+    this.events.remove(id, false, w.info.repos);
     this.persist();
     return true;
   }
@@ -1304,7 +1305,7 @@ export class WorkerManager {
         // a leftover overlay is harmless: the next launch rewrites it
       }
     }
-    this.events.remove(id, shot);
+    this.events.remove(id, shot, w.info.repos);
     // Its subagents stay at their desks, working for nobody now.
     for (const sub of this.workers.values()) {
       if (sub.info.lead !== id) continue;

@@ -130,10 +130,10 @@ function fixture(t: { after(fn: () => void): void }): Fixture {
 
 const events: WorkerEvents = { update() {}, remove() {}, data() {}, screen() {}, toast() {} };
 
-function manager(f: Fixture, t: { after(fn: () => void): void }): WorkerManager {
+function manager(f: Fixture, t: { after(fn: () => void): void }, on: WorkerEvents = events): WorkerManager {
   const data = path.join(f.a, '.droid-office');
   mkdirSync(data, { recursive: true });
-  const workers = new WorkerManager(f.a, data, f.agent, [], { url: 'http://127.0.0.1:1', token: '' }, events);
+  const workers = new WorkerManager(f.a, data, f.agent, [], { url: 'http://127.0.0.1:1', token: '' }, on);
   t.after(() => workers.shutdown());
   return workers;
 }
@@ -241,7 +241,8 @@ test('hiring across repositories needs its own worktree and different repositori
 
 test('sending a worker across repositories home checks every worktree, and deletes them all and its workspace', async (t) => {
   const f = fixture(t);
-  const workers = manager(f, t);
+  const removed: [string, string[] | undefined][] = [];
+  const workers = manager(f, t, { ...events, remove: (id, _shot, repos) => removed.push([id, repos?.map((r) => r.floor)]) });
   const hire = () => workers.spawn('desk-1', 'Cody', undefined, true, 'agent', undefined, undefined, [source('floor-api', f.b)]) as WorkerInfo;
   const w = hire();
   const ws = path.join(f.a, '.droid-office', 'worktrees', w.worktree!.branch.slice('office/'.length));
@@ -267,6 +268,11 @@ test('sending a worker across repositories home checks every worktree, and delet
   assert.equal(existsSync(ws2), false);
   assert.equal(git(f.a, 'branch', '--list', w2.worktree!.branch), '');
   assert.equal(git(f.b, 'branch', '--list', w2.worktree!.branch), '');
+  // Its removal still names the floors it worked in, so share links that never saw it don't hear it leave.
+  assert.deepEqual(removed, [
+    [w.id, ['floor-api']],
+    [w2.id, ['floor-api']],
+  ]);
 });
 
 test('kill and sending a worker across repositories home make one branch decision, a deleted office branch included', async (t) => {

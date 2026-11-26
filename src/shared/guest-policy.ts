@@ -321,8 +321,8 @@ export interface GuestSendContext {
   /** The floor this guest is on. */
   here: string | null;
   /**
-   * Workers a message names that it doesn't carry as its own subject (a toast's text): each must be in
-   * scope too. `repos` keeps the floors one worked in after it has left.
+   * Workers a message names (a toast's text, a worker that has just left): each must be in scope too.
+   * `repos` keeps the floors one worked in after it has left the roster.
    */
   about?: readonly GuestNamed[];
 }
@@ -547,6 +547,7 @@ export function guestOutbound(g: GuestScopeGrant, msg: ServerMsg, ctx: GuestSend
       const id = rule.worker(msg);
       if (typeof id !== 'string' || (rule.write && !canWrite(g))) return undefined;
       const floor = rule.floor?.(msg) ?? world.floorOf(id) ?? ctx.floor;
+      if (ctx.about?.some((w) => !seesNamed(g, world, w, floor))) return undefined;
       return guestSeesWorker(g, id, floor, world.reposOf(id)) ? (msg as GuestServerMsg) : undefined;
     }
     case 'floor': {

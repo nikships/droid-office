@@ -116,7 +116,8 @@ function watch(t: TestContext, ws: WebSocket) {
   return { ws, messages, wait, until, send, act, closed: () => closed, opened };
 }
 
-async function rig(t: TestContext) {
+/** `commits`: each project gets a first commit, so a worker can have worktrees of them. */
+async function rig(t: TestContext, { commits = false } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'guest-ws-'));
   t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
   const { bin, log } = stubTailscale(root);
@@ -127,10 +128,17 @@ async function rig(t: TestContext) {
   for (const dir of [home, alpha, beta]) {
     mkdirSync(dir, { recursive: true });
     if (dir !== home) execFileSync('git', ['init', '-q'], { cwd: dir });
+    if (dir !== home && commits) execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: dir });
   }
   const cfg = loadConfig([alpha, '--home', home, '--projects', projects, '--weather', 'clear', '--host', '127.0.0.1', '--tailscale-bin', bin]);
   assert.equal(cfg.tailscaleBin, bin);
   cfg.port = 0;
+  if (commits) {
+    // A stand-in Droid: a session just waits, and the office's checks (--version, doctor) find it not installed.
+    const fake = path.join(root, 'fake-droid');
+    writeFileSync(fake, "#!/usr/bin/env node\nif (process.argv[2] === '--version' || process.argv[2] === 'doctor') process.exit(1);\nprocess.stdin.resume();\n", { mode: 0o755 });
+    cfg.agentCmd = fake;
+  }
   // Unset in tests so they never publish; this one publishes to the stub only.
   cfg.guestSharing = true;
   const office = await startServer(cfg);
@@ -560,4 +568,34 @@ test('share-link guests get only their scope on the WebSocket, and only write pr
   );
   owner.send({ t: 'ping', at: 1 });
   await owner.wait('pong');
+});
+
+test('a worker across repositories comes and goes without a frame to a floor link that never saw it', { timeout: 60_000 }, async (t) => {
+  const r = await rig(t, { commits: true });
+  const { owner, alphaId, betaId } = r;
+  const vf = r.guest((await r.link('Viewer - alpha', 'view-floor', { floorId: alphaId })).token);
+  const vo = r.guest((await r.link('Viewer - office', 'view-office')).token);
+  await vf.wait('welcome');
+  await vo.wait('welcome');
+  const hired = await owner.act({ t: 'worker.spawn', deskId: 'auto', kind: 'agent', worktree: true, repos: [betaId] });
+  assert.equal(hired.ok, true, hired.error);
+  const id = hired.workerId!;
+  const seen = await owner.wait('worker.update', (m) => m.worker.id === id && !!m.worker.repos?.length);
+  assert.deepEqual(
+    seen.worker.repos?.map((x) => x.floor),
+    [betaId],
+  );
+  await vo.wait('worker.update', (m) => m.worker.id === id);
+  const sent = await owner.act({ t: 'worker.kill', workerId: id, cleanup: 'all' });
+  assert.equal(sent.ok, true, sent.error);
+  // An office link saw it, so it hears it leave: by then the floor link has had its chance to as well.
+  await vo.wait('worker.remove', (m) => m.workerId === id);
+  await vo.wait('building.remove', (m) => m.workerId === id && m.floor === alphaId);
+  vf.send({ t: 'ping', at: 2 });
+  await vf.wait('pong');
+  assert.deepEqual(
+    vf.messages.filter((m) => JSON.stringify(m).includes(id)),
+    [],
+    'no frame names it',
+  );
 });
