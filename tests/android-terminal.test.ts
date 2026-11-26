@@ -12,7 +12,7 @@ import {
   KittyGraphicsStore as AndroidStore,
   KittyKeyboardState as AndroidKeyboard,
 } from '../android/app/src/main/assets/terminal/kitty.js';
-import { THEME } from '../android/app/src/main/assets/terminal/theme.js';
+import { minimumContrast, THEME } from '../android/app/src/main/assets/terminal/theme.js';
 import { TERM_THEME } from '../src/client/world/laptop.js';
 import { decodeBase64, decodePlaceholderCell, KITTY_CELL_PX_H, KITTY_CELL_PX_W, KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
 import { builtFiles, vendoredPaths } from '../tools/android-terminal.mjs';
@@ -27,6 +27,14 @@ test("the phone's pixel scroller is built from the office terminal's (node tools
 
 test("the phone's terminal colours are the office's", () => {
   assert.deepEqual(THEME, TERM_THEME);
+});
+
+test('dim ANSI cannot pass contrast by darkening to black on the transparent Carbon pane', () => {
+  // White behind the Carbon tint yields RGB(74,74,77). Black on that reference is 2.38:1,
+  // but nearly invisible over the artwork's dark areas. xterm uses half the target for dim.
+  assert.ok(minimumContrast('#4a4a4d00') / 2 > 2.38);
+  assert.equal(minimumContrast('#000000'), 4.5);
+  assert.equal(minimumContrast('#050507'), 4.5);
 });
 
 test('fitGrid counts whole cells within the PTY limits', () => {

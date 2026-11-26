@@ -16,7 +16,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
@@ -311,7 +313,7 @@ fun Composer(
     if (!visible) return
     // The Thread view's composer is near-square and mono like the rest of its chrome; Raw TTY's keeps its round controls.
     val field = RoundedCornerShape(if (thread) 4.dp else 14.dp)
-    val fieldFace = if (onArtwork) Modifier.background(Palette.Border, field)
+    val fieldFace = if (onArtwork) Modifier.background(Palette.SurfaceRaised.copy(alpha = .65f), field)
         else Modifier.clip(field).background(if (thread) ThreadPalette.Surface else Palette.Surface)
             .border(1.dp, if (thread) ThreadPalette.InputBorder else Palette.BorderStrong, field)
     val hit = if (onArtwork) 48.dp else if (thread) 32.dp else 38.dp
@@ -434,14 +436,14 @@ fun Composer(
                     Box(Modifier.fillMaxWidth().height(1.dp).background(ThreadPalette.Border))
                 }
                 // One row keeps the composer short: the draft grows upward and the buttons stay on its last line.
-                Row(Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.Bottom) {
+                val controls: @Composable RowScope.() -> Unit = {
                     if (!w.isShell) {
                         Box(
                             Modifier.size(hit).clip(control).clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }.tagged(Tags.Worker.ATTACH),
                             contentAlignment = Alignment.Center,
                         ) { Icon(Icons.Default.Add, "Attach pictures", tint = ThreadPalette.TextSecondary) }
                     }
-                    Box(Modifier.weight(1f).heightIn(min = hit).padding(horizontal = 8.dp, vertical = 4.dp), contentAlignment = Alignment.CenterStart) {
+                    Box(Modifier.weight(1f).then(if (onArtwork) Modifier.widthIn(min = 96.dp) else Modifier).heightIn(min = hit).padding(horizontal = 8.dp, vertical = 4.dp), contentAlignment = Alignment.CenterStart) {
                         if (text.isEmpty()) Text(
                             hint, style = MaterialTheme.typography.bodyLarge, color = if (onArtwork) Palette.TextSecondary else ThreadPalette.TextTertiary, maxLines = 1, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.clearAndSetSemantics {},
@@ -492,6 +494,9 @@ fun Composer(
                         }
                     }
                 }
+                val row = Modifier.fillMaxWidth().padding(4.dp)
+                if (onArtwork) FlowRow(row, itemVerticalAlignment = Alignment.Bottom) { controls() }
+                else Row(row, verticalAlignment = Alignment.Bottom, content = controls)
             }
         } else Row(
             Modifier.fillMaxWidth().then(fieldFace).padding(if (onArtwork) 2.dp else 6.dp),
@@ -557,7 +562,7 @@ fun Composer(
                 Modifier.size(hit).clip(control).background(if (onArtwork) Color.Transparent else if (ready) Palette.Accent else Palette.SurfaceHigh).clickable(enabled = ready) { send(false) }.tagged(Tags.Worker.SEND),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(OfficeIcons.ArrowUp, if (queueable) "Send now" else "Send", Modifier.size(20.dp), tint = if (!ready) Palette.TextTertiary else if (onArtwork) Palette.Accent else Palette.Bg)
+                Icon(OfficeIcons.ArrowUp, if (queueable) "Send now" else "Send", Modifier.size(20.dp), tint = if (!ready) Palette.TextTertiary else if (onArtwork) Palette.Text else Palette.Bg)
             }
         }
     }

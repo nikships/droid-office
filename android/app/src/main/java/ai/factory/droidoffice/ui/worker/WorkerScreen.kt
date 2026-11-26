@@ -911,7 +911,7 @@ private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean
         if (icon != null) {
             Icon(icon, null, tint = Palette.TextSecondary, modifier = Modifier.size(16.dp))
         } else {
-            Text(label, style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (accent) Palette.Accent else Palette.Text))
+            Text(label, style = LocalOfficeType.current.monoBody.copy(fontSize = 13.sp, color = if (accent && !themedPhoneWorker) Palette.Accent else Palette.Text))
         }
     }
 }
