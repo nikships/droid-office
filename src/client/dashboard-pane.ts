@@ -446,7 +446,7 @@ export function createPane(host: PaneHost, index: number): Pane {
       svg('rect', { class: 'orc-bus-pad', x: 174.5, y: 5, width: 5, height: 5, rx: 0.8 }),
       svg('rect', { class: 'orc-bus-pad', x: 174.5, y: 20, width: 5, height: 5, rx: 0.8 }),
       svg('rect', { class: 'orc-bus-pad', x: 174.5, y: 35, width: 5, height: 5, rx: 0.8 }),
-      svg('rect', { class: 'orc-bus-packet orc-bus-packet-a', x: 42, y: 6.5, width: 10, height: 2, rx: 0.5 }),
+      svg('rect', { class: 'orc-bus-packet', x: 42, y: 6.5, width: 10, height: 2, rx: 0.5 }),
       svg('rect', { class: 'orc-bus-packet orc-bus-packet-b', x: 22, y: 21.5, width: 10, height: 2, rx: 0.5 }),
       svg('rect', { class: 'orc-bus-packet orc-bus-packet-c', x: 42, y: 36.5, width: 10, height: 2, rx: 0.5 }),
     );

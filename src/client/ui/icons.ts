@@ -68,8 +68,7 @@ export function grokBotLogo(size = 20): HTMLImageElement {
   return img;
 }
 
-/** A 24-unit stroke icon as an inline SVG, `size` pixels square, hidden from screen readers. */
-export function icon(name: IconName, size = 16): SVGSVGElement {
+function strokeIcon(size: number, className: string, paths: string): SVGSVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   for (const [k, v] of Object.entries({
     viewBox: '0 0 24 24',
@@ -81,11 +80,16 @@ export function icon(name: IconName, size = 16): SVGSVGElement {
     'stroke-linecap': 'round',
     'stroke-linejoin': 'round',
     'aria-hidden': 'true',
-    class: 'icon',
+    class: className,
   }))
     svg.setAttribute(k, String(v));
-  svg.innerHTML = PATHS[name];
+  svg.innerHTML = paths;
   return svg;
+}
+
+/** A 24-unit stroke icon as an inline SVG, `size` pixels square, hidden from screen readers. */
+export function icon(name: IconName, size = 16): SVGSVGElement {
+  return strokeIcon(size, 'icon', PATHS[name]);
 }
 
 const ORCHESTRATOR_PATHS =
@@ -99,21 +103,6 @@ const ORCHESTRATOR_PATHS =
   '<g class="orc-mark-arrow"><path d="M17 12h4"/><path d="M18.75 9.75 21 12l-2.25 2.25"/></g>';
 
 /** The Orchestrator's Circuit Core mark: a central hub connected to worker nodes and an outbound dispatch spoke. */
-export function orchestratorIcon(size = 16, opts: { animated?: boolean } = {}): SVGSVGElement {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  for (const [k, v] of Object.entries({
-    viewBox: '0 0 24 24',
-    width: size,
-    height: size,
-    fill: 'none',
-    stroke: 'currentColor',
-    'stroke-width': 1.75,
-    'stroke-linecap': 'round',
-    'stroke-linejoin': 'round',
-    'aria-hidden': 'true',
-    class: opts.animated === false ? 'icon orc-mark static' : 'icon orc-mark',
-  }))
-    svg.setAttribute(k, String(v));
-  svg.innerHTML = ORCHESTRATOR_PATHS;
-  return svg;
+export function orchestratorIcon(size = 16, { animated = true }: { animated?: boolean } = {}): SVGSVGElement {
+  return strokeIcon(size, animated ? 'icon orc-mark' : 'icon orc-mark static', ORCHESTRATOR_PATHS);
 }
