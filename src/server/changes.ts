@@ -50,7 +50,8 @@ export interface ChangesTarget {
 
 export interface ChangesEvents {
   state(state: ChangesState, clients: string[]): void;
-  toast(text: string, level: 'info' | 'warn' | 'error'): void;
+  /** `workerId`: whose desk it happened at. */
+  toast(text: string, level: 'info' | 'warn' | 'error', workerId?: string): void;
   /** Something changed on GitHub (a PR was opened): refresh the boards. */
   refreshGitHub(): void;
 }
@@ -356,7 +357,7 @@ export class Changes {
       await git(['add', '-A'], t.cwd);
       await git(['commit', '-q', '-m', msg], t.cwd, 120_000);
       const subject = msg.split('\n')[0];
-      this.events.toast(`${who} committed “${subject.length > 60 ? `${subject.slice(0, 59)}…` : subject}” at ${t.name}'s desk`, 'info');
+      this.events.toast(`${who} committed “${subject.length > 60 ? `${subject.slice(0, 59)}…` : subject}” at ${t.name}'s desk`, 'info', workerId);
     });
   }
 
@@ -369,12 +370,12 @@ export class Changes {
         if (!file) return 'That file has no uncommitted changes';
         if (file.status === '?' && (await gitMaybe(['cat-file', '-e', `HEAD:${file.path}`], t.cwd)) === undefined) await git(['clean', '-f', '--', file.path], t.cwd);
         else await git(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...(file.from ? [file.from] : []), file.path], t.cwd);
-        this.events.toast(`${who} discarded the changes to ${path.basename(file.path)} at ${t.name}'s desk`, 'info');
+        this.events.toast(`${who} discarded the changes to ${path.basename(file.path)} at ${t.name}'s desk`, 'info', workerId);
       } else {
         const n = w.last?.files.filter((f) => f.uncommitted).length ?? 0;
         await git(['reset', '-q', '--hard'], t.cwd);
         await git(['clean', '-fd'], t.cwd);
-        this.events.toast(`${who} discarded ${n ? `${n} uncommitted change${n > 1 ? 's' : ''}` : 'the uncommitted changes'} at ${t.name}'s desk`, 'info');
+        this.events.toast(`${who} discarded ${n ? `${n} uncommitted change${n > 1 ? 's' : ''}` : 'the uncommitted changes'} at ${t.name}'s desk`, 'info', workerId);
       }
       return undefined;
     });
@@ -395,7 +396,7 @@ export class Changes {
       await pushBranch(t.cwd, s.branch, 120_000);
       const { number, url } = await this.pulls.createPull(t.cwd, s.branch, s.prBase, title.trim(), body);
       this.opened.set(openedKey(repo, s.branch), { number, url });
-      this.events.toast(`${who} opened a pull request for ${t.name}: ${url}`, 'info');
+      this.events.toast(`${who} opened a pull request for ${t.name}: ${url}`, 'info', workerId);
       if (t.refreshGitHub) t.refreshGitHub();
       else this.events.refreshGitHub();
       return undefined;

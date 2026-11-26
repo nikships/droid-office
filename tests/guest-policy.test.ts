@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { GUEST_PRESETS, type GuestPreset } from '../src/shared/guest-links.js';
 import {
   GUEST_INBOUND,
+  GUEST_ORCHESTRATOR_BLOCKED,
   GUEST_OUTBOUND,
   guestAdmit,
   guestBuilding,
@@ -21,6 +22,8 @@ import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 import { OFFICE_SHELL_ID } from '../src/shared/office-shell.js';
 import { ROOF } from '../src/shared/rooftop.js';
 import { readMenu } from '../src/shared/asks.js';
+import { orchestratorBlocked, orchestratorSettingsPane } from '../src/client/mission.js';
+import { GUEST_ORCHESTRATOR_BLOCKED as CLIENT_GUEST_ORCHESTRATOR_BLOCKED } from '../src/client/dashboard-guest.js';
 import type { ClientMsg, FloorInfo, FloorView, ServerMsg, WorkerInfo } from '../src/shared/protocol.js';
 
 // Floors A and B are open, C was closed; a1/a2 sit on A, b1 on B, c1 on the closed C. ab sits on A and works in B's repository too.
@@ -28,7 +31,9 @@ const SEATS: Record<string, string> = { a1: 'A', a2: 'A', b1: 'B', c1: 'C', ab: 
 const REPOS: Record<string, string[]> = { ab: ['B'] };
 const isOpen = (id: string) => id === 'A' || id === 'B';
 // As guestWorld: only open floors seat anyone.
-const world: GuestWorld = { floorOf: (id) => (isOpen(SEATS[id] ?? '') ? SEATS[id] : undefined), isOpen, reposOf: (id) => REPOS[id] };
+// Visits under way on A: a1 tells a2, ab tells a1, a2 asks ab.
+const VISITS: Record<string, { visitor: string; host: string }> = { v1: { visitor: 'a1', host: 'a2' }, v2: { visitor: 'ab', host: 'a1' }, v3: { visitor: 'a2', host: 'ab' } };
+const world: GuestWorld = { floorOf: (id) => (isOpen(SEATS[id] ?? '') ? SEATS[id] : undefined), isOpen, reposOf: (id) => REPOS[id], visitOf: (id) => VISITS[id] };
 
 const GRANTS: Record<GuestPreset, GuestScopeGrant> = {
   'view-office': { preset: 'view-office' },
@@ -212,15 +217,32 @@ test('outbound: owner-only messages never reach a guest, worker and floor messag
     state: { orchestrator: { id: ORCHESTRATOR_ID, settings: { on: true } }, bots: [] },
   });
   // Its saved model and effort are the owner's settings: a guest gets only whether it's on.
-  const saved = { orchestrator: { settings: { on: false, model: 'claude-opus', effort: 'high' }, team: [], blocked: 'Droid is signed out' }, bots: [] };
+  const saved = { orchestrator: { settings: { on: false, model: 'claude-opus', effort: 'high' }, team: [] }, bots: [] };
   for (const preset of ['view-office', 'edit-office'] as const) {
-    assert.deepEqual(out(preset, { t: 'missionControl', state: saved }), { t: 'missionControl', state: { orchestrator: { settings: { on: false }, team: [], blocked: 'Droid is signed out' }, bots: [] } });
+    assert.deepEqual(out(preset, { t: 'missionControl', state: saved }), { t: 'missionControl', state: { orchestrator: { settings: { on: false }, team: [] }, bots: [] } });
     assert.deepEqual((out(preset, { t: 'welcome', connection: 'c', arrival: { floor: 'A', via: 'lobby' }, floors: [], version: '1', missionControl: saved, ...VIEW }) as { missionControl: unknown }).missionControl, {
-      orchestrator: { settings: { on: false }, team: [], blocked: 'Droid is signed out' },
+      orchestrator: { settings: { on: false }, team: [] },
       bots: [],
     });
   }
   assert.equal(saved.orchestrator.settings.model, 'claude-opus', 'the owner’s state is untouched');
+});
+
+test('why the Orchestrator is blocked is the owner’s setup: guests get one fixed line and no Settings pane', () => {
+  // The subscriptions gate names the owner's model and provider; unready() names their Droid sign-in.
+  const blocked = (why: string, pane?: string) => ({ orchestrator: { settings: { on: true }, team: [], blocked: why, ...(pane ? { blockedPane: pane } : {}) }, bots: [] });
+  for (const state of [blocked('claude-opus-4 needs a Claude Max subscription: connect it in ⚙️ Settings → Subscriptions'), blocked('Droid isn’t ready on this computer. Install it, then sign in…', 'connections')]) {
+    for (const preset of ['view-office', 'edit-office'] as const) {
+      const sent = out(preset, { t: 'missionControl', state }) as Extract<ServerMsg, { t: 'missionControl' }>;
+      assert.deepEqual(sent.state.orchestrator, { settings: { on: true }, team: [], blocked: GUEST_ORCHESTRATOR_BLOCKED });
+      assert.equal(orchestratorBlocked(sent.state), GUEST_ORCHESTRATOR_BLOCKED, 'the guest page paints the fixed line');
+      assert.equal(orchestratorSettingsPane(sent.state), 'orchestrator');
+      const welcome = out(preset, { t: 'welcome', connection: 'c', arrival: { floor: 'A', via: 'lobby' }, floors: [], version: '1', missionControl: state, ...VIEW }) as { missionControl: { orchestrator: unknown } };
+      assert.deepEqual(welcome.missionControl.orchestrator, sent.state.orchestrator);
+    }
+    assert.notEqual(state.orchestrator.blocked, GUEST_ORCHESTRATOR_BLOCKED, 'the owner’s state is untouched');
+  }
+  assert.equal(GUEST_ORCHESTRATOR_BLOCKED, CLIENT_GUEST_ORCHESTRATOR_BLOCKED, 'the server sends the line the guest page paints');
 });
 
 test('outbound toasts: about an in-scope worker, a reply, or the guest’s own floor', () => {
@@ -360,6 +382,64 @@ test('a worker across repositories is outside floor links, and a single-worker l
     assert.ok(guestAdmit(GRANTS[preset], about('worker.attach', 'ab'), 'A', world));
     assert.deepEqual(guestFloorView(view, GRANTS[preset], world).workers, [worker('a1'), ab]);
   }
+});
+
+test('toasts reach a floor link only when it sees every worker they name, the ones that left included', () => {
+  const ab = { ...worker('ab'), repos: [{ floor: 'B', name: 'beta', dir: '/Users/owner/beta', path: 'ws/beta', branch: 'office/ab', base: 'abc' }] } as WorkerInfo;
+  const onA = (about?: GuestSendContext['about']) => ctx({ via: 'floor', floor: 'A', ...(about ? { about } : {}) });
+  const toast = (text: string, workerId?: string) => ({ t: 'toast', text, level: 'info', ...(workerId ? { workerId } : {}) });
+  const hire = toast('Owner hired ab across alpha + beta', 'ab');
+  const sentHome = toast('Owner sent ab home');
+  const reported = toast('📨 a1 reported to ab: “done”', 'a1');
+  for (const preset of ['view-floor', 'edit-floor'] as const) {
+    assert.equal(out(preset, hire, onA()), undefined, `${preset}: the hire of a worker across repositories`);
+    assert.equal(out(preset, sentHome, onA([ab])), undefined, `${preset}: it left already, its repos still count`);
+    assert.equal(out(preset, reported, onA([{ id: 'ab' }])), undefined, `${preset}: a toast about a1 that names ab`);
+    assert.ok(out(preset, toast('Owner hired a2', 'a2'), onA()));
+    assert.ok(out(preset, toast('Owner sent gone home'), onA([{ id: 'gone' }])), 'a plain worker that left is still floor news');
+    assert.ok(out(preset, toast('📨 a1 reported to a2: “done”', 'a1'), onA([{ id: 'a2' }])));
+    assert.ok(out(preset, toast('🚀 Owner started CI'), onA()));
+  }
+  // A single-worker link: its own worker's toasts only, as before, and none that names another worker.
+  const pick: GuestScopeGrant = { preset: 'view-worker', floorId: 'A', workerId: 'ab' };
+  const o = (msg: unknown, c: GuestSendContext) => guestOutbound(pick, msg as ServerMsg, c, world);
+  assert.ok(o(hire, onA()));
+  assert.equal(o(toast('🧭 a1 hired ab', 'ab'), onA([{ id: 'a1' }])), undefined);
+  assert.equal(o(sentHome, onA([ab])), undefined, 'floor news never reaches a single-worker link');
+  assert.equal(o(toast('Owner hired a2', 'a2'), onA()), undefined);
+  // Office links see every open floor.
+  for (const preset of ['view-office', 'edit-office'] as const)
+    for (const [msg, about] of [
+      [hire, undefined],
+      [sentHome, [ab]],
+      [reported, [{ id: 'ab' }]],
+    ] as const)
+      assert.ok(out(preset, msg, onA(about)), preset);
+});
+
+test('visits and what visitors say reach a guest only between two workers it sees', () => {
+  const visit = (id: string, visitor: string, host: string) => ({ id, visitor, host, kind: 'tell', phase: 'talking', slot: 0, since: 1 });
+  const visits = { t: 'visits', visits: [visit('v1', 'a1', 'a2'), visit('v2', 'ab', 'a1'), visit('v3', 'a2', 'ab')] };
+  const ids = (m: unknown) => (m as { visits?: { id: string }[] } | undefined)?.visits?.map((v) => v.id);
+  const say = (v: string) => ({ t: 'visit_say', visit: v, worker: VISITS[v]?.visitor ?? 'a1', text: 'the build is green' });
+  for (const via of ['floor', 'direct'] as const) {
+    const c = ctx({ via, ...(via === 'floor' ? { floor: 'A' } : {}), here: 'A' });
+    for (const preset of ['view-floor', 'edit-floor'] as const) {
+      assert.deepEqual(ids(out(preset, visits, c)), ['v1'], `${preset} ${via}`);
+      assert.ok(out(preset, say('v1'), c));
+      for (const v of ['v2', 'v3', 'gone']) assert.equal(out(preset, say(v), c), undefined, `${preset} ${v}`);
+    }
+    for (const preset of ['view-office', 'edit-office'] as const) {
+      assert.deepEqual(ids(out(preset, visits, c)), ['v1', 'v2', 'v3']);
+      for (const v of ['v1', 'v2', 'v3']) assert.ok(out(preset, say(v), c));
+      assert.equal(out(preset, say('gone'), c), undefined, 'a visit nobody knows says nothing');
+    }
+    // A single-worker link sees no floor content, visits included, as before.
+    const pick: GuestScopeGrant = { preset: 'view-worker', floorId: 'A', workerId: 'a1' };
+    assert.equal(guestOutbound(pick, visits as ServerMsg, c, world), undefined);
+    assert.equal(guestOutbound(pick, say('v1') as ServerMsg, c, world), undefined);
+  }
+  assert.equal(out('view-floor', visits, ctx({ via: 'floor', floor: 'B' })), undefined, 'another floor’s visits');
 });
 
 test('removal news reaches every guest whose scope held the worker, after it left every map', () => {
