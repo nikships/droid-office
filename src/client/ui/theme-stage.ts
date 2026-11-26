@@ -86,6 +86,8 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
   let vertex: WebGLShader | null = null;
   /** Linked programs by shader; null marks one that failed to build, so it isn't retried every frame. */
   const programs = new Map<ThemeShader, Program | null>();
+  // Only time changes every frame. Rebind and upload the other state after a spec or buffer change.
+  let bound: Program | null = null;
   let spec: ThemeStageSpec | null = null;
   let specKey = '';
   let colors: Float32Array = new Float32Array(12);
@@ -145,27 +147,29 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
   }
 
   function clear() {
-    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
   }
 
   function draw() {
     if (lost || destroyed) return;
-    const p = spec && programFor(spec.shader);
+    const p = bound ?? (spec && programFor(spec.shader));
     if (!p) {
       clear();
       return;
     }
-    const w = gl.drawingBufferWidth;
-    const h = gl.drawingBufferHeight;
-    gl.viewport(0, 0, w, h);
-    gl.useProgram(p.program);
-    gl.uniform2f(p.uRes, w, h);
+    if (!bound) {
+      const w = gl.drawingBufferWidth;
+      const h = gl.drawingBufferHeight;
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(p.program);
+      gl.uniform2f(p.uRes, w, h);
+      gl.uniform3fv(p.uColors, colors);
+      gl.uniform1i(p.uColorCount, count);
+      gl.bindVertexArray(vao);
+      bound = p;
+    }
     gl.uniform1f(p.uTime, time);
-    gl.uniform3fv(p.uColors, colors);
-    gl.uniform1i(p.uColorCount, count);
-    gl.bindVertexArray(vao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
@@ -201,6 +205,7 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
     if (canvas.width === width && canvas.height === height) return;
     canvas.width = width;
     canvas.height = height;
+    bound = null;
     // A resized canvas comes back blank; a still one needs its frame again, a moving one gets it next frame.
     if (!raf) draw();
   }
@@ -230,6 +235,7 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
     lost = true;
     stop();
     programs.clear();
+    bound = null;
     vao = null;
     vertex = null;
   };
@@ -256,6 +262,7 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
         colors = colorUniforms(next.colors);
         count = colorCount(next.colors);
       }
+      if (key !== specKey) bound = null;
       // A still stage holds its composed moment rather than wherever the clock last stopped.
       if (next && !nextAnimate) time = STILL_TIMES[next.shader];
       spec = next;

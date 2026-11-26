@@ -67,6 +67,7 @@ interface Rig {
   deleted: string[];
   lost: boolean;
   compiled: string[];
+  uploads: { size: number[]; program: string }[];
   frames: Map<number, (now: number) => void>;
   resize(width: number, height: number): void;
   tick(now: number): void;
@@ -112,7 +113,7 @@ function rig(t: { after(fn: () => void): void }, { webgl = true } = {}): Rig {
     },
   );
 
-  const r = { draws: [], clears: 0, deleted: [], lost: false, compiled: [], frames } as unknown as Rig;
+  const r = { draws: [], clears: 0, deleted: [], lost: false, compiled: [], uploads: [], frames } as unknown as Rig;
   const canvas = Object.assign(new EventTarget(), { width: 300, height: 150 }) as unknown as HTMLCanvasElement & EventTarget;
   let current = '';
   let time = 0;
@@ -153,7 +154,7 @@ function rig(t: { after(fn: () => void): void }, { webgl = true } = {}): Rig {
     useProgram: (p: { name: string }) => {
       current = p.name;
     },
-    uniform2f: () => {},
+    uniform2f: (_l: unknown, w: number, h: number) => r.uploads.push({ size: [w, h], program: current }),
     uniform1f: (_l: unknown, v: number) => {
       time = v;
     },
@@ -238,6 +239,31 @@ test('a hidden page pauses the stage and resumes without a time jump', (t) => {
   r.tick(60_016);
   const after = r.draws.at(-1)!.time;
   assert.ok(Math.abs(after - before - 0.016 * EMBERS.speed) < 1e-9, `${before} -> ${after}`);
+  stage.destroy();
+});
+
+test('Live uploads static GL state only when the size, palette or program changes', (t) => {
+  const r = rig(t);
+  const stage = createThemeStage(r.canvas)!;
+  stage.show(NEBULA, true);
+  r.tick(0);
+  r.tick(8);
+  r.tick(16);
+  assert.equal(r.draws.length, 3, 'still draws on every animation frame');
+  assert.equal(r.uploads.length, 1);
+  r.resize(2880, 1800);
+  r.tick(24);
+  stage.show({ ...NEBULA, colors: ['#ffbb00'] }, true);
+  r.tick(32);
+  close(r.draws.at(-1)!.colors, [...colorUniforms(['#ffbb00'])]);
+  stage.show(EMBERS, true);
+  r.tick(40);
+  assert.deepEqual(r.uploads, [
+    { size: [300, 150], program: 'p1' },
+    { size: [2880, 1800], program: 'p1' },
+    { size: [2880, 1800], program: 'p1' },
+    { size: [2880, 1800], program: 'p2' },
+  ]);
   stage.destroy();
 });
 

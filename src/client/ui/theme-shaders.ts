@@ -79,9 +79,12 @@ float starLayer(vec2 p, float scale, float chance, float t) {
   if (h.z > chance) return 0.0;
   vec2 f = fract(g) - 0.5 - (h.xy - 0.5) * 0.7;
   float r = scale * devicePx() * mix(0.8, 2.0, h.x * h.x);
-  float core = exp(-dot(f, f) / (r * r));
+  float r2 = dot(f, f);
+  if (r2 > 20.0 * r * r) return 0.0;
+  float core = exp(-r2 / (r * r));
   float twinkle = 0.7 + 0.3 * sin(t * (0.6 + 2.2 * h.y) + h.x * 40.0);
-  return core * twinkle * mix(0.25, 1.0, pow(fract(h.x * 7.13 + h.y * 3.7), 3.0));
+  float mag = fract(h.x * 7.13 + h.y * 3.7);
+  return core * twinkle * mix(0.25, 1.0, mag * mag * mag);
 }
 // Like starLayer, tinted by the theme, with a soft halo and, where spikes is 1, diffraction spikes on the brightest.
 vec3 starCell(vec2 p, float scale, float chance, float t, float spikes) {
@@ -94,9 +97,11 @@ vec3 starCell(vec2 p, float scale, float chance, float t, float spikes) {
   float r = px * mix(0.8, 2.1, mag);
   float core = exp(-dot(f, f) / (r * r));
   float halo = exp(-length(f) / (px * 6.0)) * 0.05 * mag;
-  float bright = step(0.86, mag) * spikes;
-  vec2 a = abs(f);
-  float spike = bright * (exp(-a.x / (px * 0.7)) * exp(-a.y / (px * 9.0)) + exp(-a.y / (px * 0.7)) * exp(-a.x / (px * 9.0))) * 0.35;
+  float spike = 0.0;
+  if (spikes > 0.0 && mag >= 0.86) {
+    vec2 d = abs(f) / px;
+    spike = (exp(-dot(d, vec2(1.0 / 0.7, 1.0 / 9.0))) + exp(-dot(d, vec2(1.0 / 9.0, 1.0 / 0.7)))) * 0.35 * spikes;
+  }
   float twinkle = 0.62 + 0.38 * sin(t * (0.8 + 2.4 * h.y) + h.x * 40.0);
   vec3 tint = mix(vec3(1.0), tone(int(h.y * 3.0)), 0.25 + 0.6 * fract(h.z * 31.0));
   return tint * (core + halo + spike) * twinkle * mix(0.3, 1.15, mag);
@@ -178,7 +183,8 @@ vec3 swarm(vec2 p, float scale, float t, float soft) {
       vec2 pos = cell + 0.5 + (h.xy - 0.5) * 0.12 + wander;
       vec2 d = g - pos;
       float r2 = dot(d, d);
-      float blink = pow(0.5 + 0.5 * sin(t * (0.5 + 0.6 * h.y) + h.x * 50.0), 3.0);
+      float pulse = 0.5 + 0.5 * sin(t * (0.5 + 0.6 * h.y) + h.x * 50.0);
+      float blink = pulse * pulse * pulse;
       float core = exp(-r2 / (px * px * mix(4.0, 9.0, h.y) * soft * soft));
       float halo = exp(-r2 * 26.0 / (soft * soft)) * 0.22 * smoothstep(0.25, 0.09, r2);
       vec3 tint = tone(int(fract(h.x * 13.0) * 3.0));
@@ -211,13 +217,16 @@ vec3 sparks(vec2 p, float scale, float rise, float t, float soft, float chance) 
     float rate = 0.9 + h.y;
     float phase = t * rate + h.x * 20.0 + cell.y * 0.7;
     vec2 pos = cell + vec2(0.5 + (h.x - 0.5) * 0.45 + 0.28 * sin(phase), 0.5 + (h.y - 0.5) * 0.8);
-    vec2 dir = normalize(vec2(0.28 * rate * cos(phase), rise));
     vec2 d = g - pos;
-    vec2 local = vec2(dot(d, vec2(dir.y, -dir.x)), dot(d, dir));
+    float r2 = dot(d, d);
     float w = px * mix(1.0, 1.9, h.y) * soft;
+    // The glow is the widest falloff (sqrt(40) * w; the core is at most 3.2 * w).
+    if (r2 > 20.0 * 40.0 * w * w) continue;
+    vec2 dir = normalize(vec2(0.28 * rate * cos(phase), rise));
+    vec2 local = vec2(dot(d, vec2(dir.y, -dir.x)), dot(d, dir));
     float len = w * mix(1.3, 3.2, h.x);
     float core = exp(-(local.x * local.x) / (w * w) - (local.y * local.y) / (len * len));
-    float glow = exp(-dot(d, d) / (w * w * 40.0)) * 0.16;
+    float glow = exp(-r2 / (w * w * 40.0)) * 0.16;
     float flicker = 0.6 + 0.4 * sin(t * (6.0 + 8.0 * h.x) + h.y * 60.0) * sin(t * 2.3 + h.x * 11.0);
     float heat = 0.3 + 0.7 * fract(h.z * 17.0 + h.x);
     vec3 tint = mix(tone(0), tone(1), heat * fract(h.y * 23.0));
@@ -246,15 +255,20 @@ float caustic(vec2 uv, float t) {
   vec2 p = mod(uv * 6.2831853, 6.2831853) - 250.0;
   vec2 i = p;
   float c = 1.0;
-  float inten = 0.005;
+  vec2 base = p * 0.005;
   for (int n = 0; n < 4; n++) {
     float tt = t * (1.0 - 3.5 / float(n + 1));
     i = p + vec2(cos(tt - i.x) + sin(tt + i.y), sin(tt - i.y) + cos(tt + i.x));
-    c += 1.0 / length(vec2(p.x / (sin(i.x + tt) / inten), p.y / (cos(i.y + tt) / inten)));
+    vec2 wave = vec2(sin(i.x + tt), cos(i.y + tt));
+    // Multiply through the reciprocal length by |wave.x * wave.y| to avoid per-axis divides.
+    vec2 weighted = base * wave.yx;
+    c += abs(wave.x * wave.y) * inversesqrt(max(dot(weighted, weighted), 1e-20));
   }
   c /= 4.0;
   c = 1.17 - pow(c, 1.4);
-  return pow(abs(c), 8.0);
+  c *= c;
+  c *= c;
+  return c * c;
 }
 void main() {
   vec2 p = centered();
@@ -272,8 +286,11 @@ void main() {
   vec3 h = hash32(floor(g));
   vec2 f = fract(g) - 0.5 - (h.xy - 0.5) * 0.6;
   float mr = 34.0 * devicePx() * mix(1.0, 2.2, h.x);
-  float mote = step(h.z, 0.12) * exp(-dot(f, f) / (mr * mr)) * (0.5 + 0.5 * sin(uTime * (0.6 + h.y) + h.x * 30.0));
-  c += mix(tone(2), tone(1), h.y) * mote * 0.5;
+  float r2 = dot(f, f);
+  if (h.z <= 0.12 && r2 <= 20.0 * mr * mr) {
+    float mote = exp(-r2 / (mr * mr)) * (0.5 + 0.5 * sin(uTime * (0.6 + h.y) + h.x * 30.0));
+    c += mix(tone(2), tone(1), h.y) * mote * 0.5;
+  }
   outColor = lightColor(c);
 }
 `);
@@ -292,15 +309,18 @@ vec4 petal(vec2 p, float scale, float t, float soft, float alpha, float chance) 
   float sa = sin(a);
   vec2 q = mat2(ca, sa, -sa, ca) * f;
   float flip = cos(t * (0.8 + 1.2 * h.y) + h.x * 20.0);
-  q.x /= max(abs(flip), 0.15);
+  float face = max(abs(flip), 0.15);
+  q.x /= face;
   float size = mix(0.12, 0.17, fract(h.z * 11.0));
   vec2 s = q / size;
+  // fwidth would jump at cell seams; one device pixel in petal units, widened where the petal turns edge-on.
+  float fw = scale * devicePx() / size * soft * 0.5 * (1.0 + 1.0 / face);
+  // The antialiased silhouette is zero outside these bounds.
+  if (abs(s.x) >= 0.66 + fw || abs(s.y) >= 1.0 + fw) return vec4(0.0);
   float y = clamp(s.y, -1.0, 1.0);
   float width = 0.62 * sqrt(max(1.0 - y * y, 0.0)) * (0.45 + 0.55 * (y + 1.0) * 0.5) + 0.04;
   float d = max(abs(s.x) - width, abs(s.y) - 1.0);
   d = max(d, 0.2 - length(vec2(s.x * 1.2, s.y - 1.08)));
-  // fwidth would jump at cell seams; one device pixel in petal units, widened where the petal turns edge-on.
-  float fw = scale * devicePx() / size * soft * 0.5 * (1.0 + 1.0 / max(abs(flip), 0.15));
   float shape = 1.0 - smoothstep(-fw, fw, d);
   vec3 col = mix(tone(0), tone(1), smoothstep(-0.9, 0.8, s.y));
   col = mix(col, tone(2), 0.45 * smoothstep(-0.2, -1.0, s.y));
@@ -330,6 +350,7 @@ float streaks(vec2 p, float cols, float fall, float t, float len, float chance) 
   float x = (f.x - 0.5 - (h.x - 0.5) * 0.7) / cols;
   float w = devicePx() * mix(0.7, 1.4, h.y);
   float y = f.y - h.y * (1.0 - len);
+  if (y <= 0.0 || y >= len || x * x > 20.0 * w * w) return 0.0;
   float body = smoothstep(0.0, 0.04, y) * (1.0 - smoothstep(0.0, len, y));
   return exp(-x * x / (w * w)) * body * body * mix(0.4, 1.0, h.x);
 }
@@ -349,12 +370,15 @@ void main() {
     float life = fract(t * 0.12 + h.x * 7.0);
     float show = smoothstep(0.0, 0.03, life) * (1.0 - smoothstep(0.35, 1.0, life));
     float rad = mix(0.07, 0.16, h.y);
-    float d = length(f * vec2(1.0, 0.92));
     float px = 16.0 * devicePx();
-    float disc = 1.0 - smoothstep(rad - px, rad + px, d);
-    float rim = disc * smoothstep(rad * 0.55, rad, d) * 0.6;
-    float glint = exp(-dot(f - vec2(-0.3, 0.35) * rad, f - vec2(-0.3, 0.35) * rad) / (rad * rad * 0.04));
-    c += (neon * (disc * 0.05 + rim * 0.35) + mix(neon, vec3(1.0), 0.6) * glint * disc * 0.6) * show;
+    float d = length(f * vec2(1.0, 0.92));
+    if (d < rad + px) {
+      float disc = 1.0 - smoothstep(rad - px, rad + px, d);
+      float rim = disc * smoothstep(rad * 0.55, rad, d) * 0.6;
+      vec2 glintAt = f - vec2(-0.3, 0.35) * rad;
+      float glint = exp(-dot(glintAt, glintAt) / (rad * rad * 0.04));
+      c += (neon * (disc * 0.05 + rim * 0.35) + mix(neon, vec3(1.0), 0.6) * glint * disc * 0.6) * show;
+    }
   }
   outColor = lightColor(c);
 }
