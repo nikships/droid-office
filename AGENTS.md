@@ -17,6 +17,7 @@ A 3D browser and Mac office where one owner hires Droid workers at desks and wor
 | Setup & Subscriptions: Droid install and sign-in, welcome, DroidProxy, quota, pace and model eligibility, Artificial Analysis benchmarks | [docs/subscriptions.md](docs/subscriptions.md) |
 | Office MCP: worker tools for teams, subagents, visits, questions and Whiteboards | [docs/office-mcp.md](docs/office-mcp.md) |
 | Mission Control: Orchestrator, external Tailscale bots, remote MCP | [docs/mission-control.md](docs/mission-control.md) |
+| External guest sharing: share links, presets, the Funnel guest backend, enforcement, audit | [docs/guest-sharing.md](docs/guest-sharing.md) |
 
 ## Repository map
 
