@@ -17,6 +17,7 @@ private val gold = Color(0xFFF3C46B)
 internal val AstralCathedral = Artwork(
     id = "astral-cathedral", name = "Astral Cathedral", blurb = "Monoliths floating through a lavender haze.",
     image = R.drawable.art_astral_cathedral, preview = R.drawable.preview_astral_cathedral,
+    portrait = PortraitArt(R.drawable.art_astral_cathedral_portrait, focalX = .5f, focalY = .25f),
     x = .5f, y = .4f,
     bg = Color(0xFF0D0A16), tint = Color(0xFF120E1F), text = Color(0xFFF5F0FF), muted = Color(0xFFB6AACB),
     accent = lavender, accent2 = gold, line = Color(0xFFE6DBFF), glass = .74f,
