@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" fill="none">
+  <!-- Anchor the chart to the starboard edge on both shallow rails and tall panels. -->
+  <svg x="100%" y="50%" overflow="visible" opacity=".55">
+    <g transform="translate(57 20) rotate(-19)">
+      <g stroke="#9a87db" stroke-width=".85">
+        <ellipse rx="138" ry="48" opacity=".38"/>
+        <ellipse rx="111" ry="36" opacity=".2" stroke-dasharray="2 5"/>
+        <ellipse rx="82" ry="25" opacity=".36"/>
+        <path d="M-151 0h42m-25-5v10m45-5h16m-9-4v8" opacity=".65"/>
+      </g>
+      <circle cx="-101" cy="-33" r="4.5" stroke="#cf9ac9" opacity=".45"/>
+      <circle cx="-101" cy="-33" r="1.8" fill="#b77b66"/>
+      <circle cx="-49" cy="20" r="1.5" fill="#b4adff"/>
+    </g>
+    <path d="M-175-20h6m-3-3v6" stroke="#b9adff" opacity=".58"/>
+    <path d="M-190 11h1m-49-20h1m37 50h1m-92-32h1m92-54h1" stroke="#d9c7ff" stroke-linecap="round" opacity=".42"/>
+  </svg>
+</svg>
