@@ -13,6 +13,7 @@ type Sink = Pick<WTermAdapter, 'reset' | 'resize' | 'write'> & Partial<Pick<WTer
 export class TerminalMirror {
   ready = false;
   private generation = 0;
+  private cancelHold?: () => void;
   private waiting = true;
   private pending: string[] = [];
   private bytes = 0;
@@ -27,6 +28,8 @@ export class TerminalMirror {
 
   disconnect() {
     this.generation++;
+    this.cancelHold?.();
+    this.cancelHold = undefined;
     this.ready = false;
     this.inputReady?.(false);
     this.waiting = true;
@@ -46,7 +49,7 @@ export class TerminalMirror {
   snapshot(snapshot: Snapshot) {
     if (!this.visible) return;
     this.disconnect();
-    this.term.holdSnapshot?.();
+    this.cancelHold = this.term.holdSnapshot?.();
     this.waiting = false;
     const generation = this.generation;
     // Drain old async writes *before* clearing them. Live data arriving meanwhile waits below.
@@ -66,6 +69,7 @@ export class TerminalMirror {
             return;
           }
           this.ready = true;
+          this.cancelHold = undefined;
           this.inputReady?.(true);
           this.onReady(snapshot);
         };

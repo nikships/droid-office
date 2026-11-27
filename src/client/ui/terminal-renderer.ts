@@ -37,12 +37,13 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
   const request = (typing = false) => {
     pending = true;
     claim ||= typing;
-    if (!settling && !dragging) commit();
+    if (settling || dragging) {
+      if (!document.hidden) term.setFitPending(true);
+    } else commit();
   };
   term.onFit((resized) => {
     if (resized) changed();
     if (resized && (settling || dragging) && !document.hidden) {
-      term.setFitPending(true);
       settle();
     }
     request();
@@ -72,7 +73,17 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
       settling = dragging = false;
       term.setFitPending(false);
     };
-    document.addEventListener('visibilitychange', () => (document.hidden ? release() : commit()), { signal });
+    document.addEventListener(
+      'visibilitychange',
+      () => {
+        if (document.hidden) return release();
+        dragging = !!workspace?.classList.contains('resizing');
+        settling = true;
+        if (pending) term.setFitPending(true);
+        settle();
+      },
+      { signal },
+    );
     signal.addEventListener(
       'abort',
       () => {
@@ -87,7 +98,20 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
 
 /** Opening never attaches to a PTY until the renderer is ready. Only an explicit
  * Retry repeats a failed attempt, in the existing host. */
-export async function openTerminalRenderer(term: WTermAdapter, host: HTMLElement, alive: () => boolean) {
+export async function openTerminalRenderer(term: WTermAdapter, host: HTMLElement, alive: () => boolean, interactive = false) {
+  if (interactive)
+    term.onOpen((native, signal) => {
+      // Concealed cells cannot handle a pointer, but the click still belongs to this keyboard.
+      host.addEventListener(
+        'pointerdown',
+        (e) => {
+          if (e.button !== 0 || e.target !== host || !native.element.classList.contains('replaying')) return;
+          e.preventDefault();
+          term.focus();
+        },
+        { signal },
+      );
+    });
   let notified = false;
   while (alive()) {
     try {

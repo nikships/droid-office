@@ -38,12 +38,12 @@ test('inline terminals follow pane geometry without focus or stale size rollback
         const mount = document.getElementById('mount')!;
         mount.style.width = '600px';
         mount.style.height = '350px';
-        if (mode === 'dashboard') {
+        if (mode === 'dashboard' || mode === 'dragging') {
           const body = document.createElement('div');
           body.className = 'dash-body';
           body.style.cssText = 'position:fixed;inset:0';
           const workspace = document.createElement('div');
-          workspace.className = 'dash-workspace';
+          workspace.className = mode === 'dragging' ? 'dash-workspace resizing' : 'dash-workspace';
           body.append(document.createElement('aside'), workspace);
           document.body.append(body);
           workspace.append(mount);
@@ -320,9 +320,94 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     assert.deepEqual(input, ['k']);
     await page.evaluate(() => (window as any).term.write('\x1b[?2026l'));
     await page.waitForFunction(() => !document.querySelector('.office-wterm.replaying'));
+    await page.keyboard.type('z');
+    assert.equal(await page.evaluate(() => (window as any).messages.at(-1).data), 'z', 'the concealed click leaves keyboard input at the terminal');
     await page.mouse.click(bounds.x + 25, bounds.y + 34);
     assert.match(await page.evaluate(() => (window as any).messages.at(-1).data), /^\x1b\[<0;/);
   });
+
+  for (const mode of ['shell', 'dragging']) {
+    await t.test(`${mode} reveals its first grid only after a queued exclusive fit`, async () => {
+      const page = await rig(false, true, false, mode);
+      if (mode === 'shell') {
+        await page.setViewportSize({ width: 1450, height: 900 });
+        await page.evaluate(() => (window as any).frames());
+      }
+      await page.evaluate((mode) => {
+        const w = window as any,
+          el = w.term.native.element;
+        w.firstVisible = new Promise((resolve) => {
+          const observer = new MutationObserver(() => {
+            if (el.classList.contains('replaying')) return;
+            observer.disconnect();
+            resolve({ grid: [w.term.cols, w.term.rows], sizes: w.sizes() });
+          });
+          observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+        });
+        if (mode === 'shell') window.addEventListener('resize', () => w.snapshot('first screen'), { once: true });
+        else w.snapshot('first screen');
+      }, mode);
+      if (mode === 'shell') await page.setViewportSize({ width: 1510, height: 900 });
+      else
+        await page.evaluate(async () => {
+          const w = window as any;
+          await w.frames();
+          document.querySelector('.dash-workspace')!.classList.remove('resizing');
+        });
+      const result = await page.evaluate(async () => {
+        const w = window as any,
+          first = await w.firstVisible,
+          fit = w.term.proposeDimensions();
+        return { first, expected: [fit.cols, fit.rows] };
+      });
+      assert.deepEqual(result.first, { grid: result.expected, sizes: [result.expected] });
+    });
+  }
+
+  await t.test('showing a tab during a continuing drag waits for release before claiming size', async () => {
+    const page = await rig(false, false, false, 'dashboard');
+    const result = await page.evaluate(async () => {
+      const w = window as any,
+        raw = document.querySelector<HTMLElement>('#mount')!,
+        ws = raw.parentElement!;
+      w.messages = [];
+      ws.classList.add('resizing');
+      raw.style.setProperty('--w', '.6');
+      await w.frames();
+      w.visibility(true);
+      w.visibility(false);
+      await w.frames();
+      raw.style.setProperty('--w', '.7');
+      await w.frames();
+      const during = w.sizes();
+      ws.classList.remove('resizing');
+      await w.frames();
+      const { cols, rows } = w.term.proposeDimensions();
+      return { during, after: w.sizes(), expected: [cols, rows] };
+    });
+    assert.deepEqual(result.during, []);
+    assert.deepEqual(result.after, [result.expected]);
+  });
+
+  for (const first of [false, true]) {
+    await t.test(`disconnect cancels the ${first ? 'first' : 'replacement'} snapshot paint hold`, async () => {
+      const page = await rig(true, true);
+      const state = await page.evaluate(async (first) => {
+        const w = window as any,
+          el = w.term.native.element;
+        if (!first) {
+          w.snapshot('previous screen');
+          await w.frames();
+        }
+        w.snapshot('incomplete snapshot');
+        w.net.up = false;
+        w.connectionStatus(false);
+        await w.frames();
+        return [!!w.term.paintSignal, el.classList.contains('replaying'), el.textContent.includes('incomplete snapshot')];
+      }, first);
+      assert.deepEqual(state, [true, first, false]);
+    });
+  }
 
   for (const mode of ['inline', 'shell']) {
     await t.test(`${mode} keeps a painted grid visible throughout a same-size resync`, async () => {
@@ -514,6 +599,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       await w.frames();
       w.visibility(true);
       const hiddenFit = w.term.fitting;
+      raw.parentElement!.classList.remove('resizing');
       w.visibility(false);
       await w.frames();
       w.term.write('paint after interrupted drag');

@@ -40,6 +40,7 @@ export class WTermAdapter {
   private proposal?: { cols: number; rows: number };
   private replay?: 'waiting' | 'parsing' | 'parsed' | 'painted';
   private revealFrame = 0;
+  private afterSnapshotPaint?: () => void;
   private readonly changed = event<keyof ClientTerminalOptions>();
   private readonly data = event<string>();
   private readonly lifetime = new AbortController();
@@ -303,7 +304,8 @@ export class WTermAdapter {
           this.paintedDiscarded = discarded;
           if (!this.pendingRestore && this.holdReaderAfterPaint && this.heldAlternate === this.core?.usingAltScreen()) this.pendingRestore = { appliedTop: root.scrollTop };
           const restore = this.pendingRestore;
-          if (restore || this.replay === 'parsed')
+          const reader = this.afterSnapshotPaint;
+          if (restore || this.replay === 'parsed' || reader)
             queueMicrotask(() => {
               if (this.metricsPending || !root.clientHeight) return;
               if (restore && restore === this.pendingRestore) {
@@ -320,6 +322,10 @@ export class WTermAdapter {
               if (this.replay === 'parsed') {
                 this.replay = 'painted';
                 this.revealPaintedGrid();
+              }
+              if (!this.fitting && reader && reader === this.afterSnapshotPaint) {
+                this.afterSnapshotPaint = undefined;
+                reader();
               }
             });
         },
@@ -441,10 +447,16 @@ export class WTermAdapter {
   }
   /** Keep an existing grid painted while an accepted snapshot replaces the core. */
   holdSnapshot() {
+    this.afterSnapshotPaint = undefined;
     this.replay = 'parsing';
     this.syncRendering();
+    return () => {
+      this.replay = this.root?.classList.contains('replaying') ? 'waiting' : undefined;
+      this.syncRendering();
+    };
   }
-  endSnapshot() {
+  endSnapshot(afterPaint?: () => void) {
+    this.afterSnapshotPaint = afterPaint;
     this.replay = this.root?.classList.contains('replaying') ? 'parsed' : undefined;
     this.syncRendering();
   }

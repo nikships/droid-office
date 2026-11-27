@@ -162,7 +162,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const canThread = !inline && info.kind === 'agent' && !info.cloud;
   const readOnly = !!inline?.readOnly;
   let thread: WorkerThread | undefined;
-  let threadView = false;
+  let threadView: boolean | undefined;
   let setThreadView = (_next: 'thread' | 'raw', _focus = true) => {};
   const threadButton = canThread ? h('button.btn.sm', { type: 'button', onclick: () => setThreadView('thread') }, 'Thread') : null;
   const rawButton = canThread ? h('button.btn.sm', { type: 'button', onclick: () => setThreadView('raw') }, 'Raw TTY') : null;
@@ -410,10 +410,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       pendingSizes.length = 0;
       disconnected.classList.add('hidden');
       requestFit();
-      if (restoreReader && !pendingFind) restoreReader();
-      else term.scrollToBottom();
+      const restore = pendingFind ? undefined : restoreReader;
+      if (!restore) term.scrollToBottom();
+      term.endSnapshot(restore);
       restoreReader = undefined;
-      term.endSnapshot();
       refresh();
       if (pendingFind) jumpTo(pendingFind);
       pendingFind = undefined;
@@ -570,7 +570,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       saved = localStorage.getItem(`${THREAD_VIEW_KEY}${workerId}`) ?? 'thread';
     } catch {}
     setThreadView = (next, focus = true) => {
-      if (!thread || !threadHost) return;
+      if (!thread || !threadHost || threadView === (next === 'thread')) return;
       if (!threadView && next === 'thread') restoreReader = term.saveReader();
       threadView = next === 'thread';
       threadHost.hidden = !threadView;
@@ -588,7 +588,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         thread.activate(true);
       } else {
         thread.activate(false);
-        term.beginSnapshot();
         mirror.disconnect();
         net.send({ t: 'worker.attach', workerId });
         if (focus) setTimeout(() => alive && term.focus(), 0);
@@ -670,7 +669,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   void loadFonts()
     .then(async () => {
       if (!alive) return;
-      await openTerminalRenderer(term, host, () => alive);
+      await openTerminalRenderer(term, host, () => alive, !readOnly);
       if (!alive) return;
       opened = true;
       adoptSharedSize = store.worker(workerId)?.open === true;
@@ -941,7 +940,7 @@ export function openOfficeShell(net: Net) {
   void loadFonts()
     .then(async () => {
       if (current?.modal !== modal) return;
-      await openTerminalRenderer(term, host, () => shellAlive);
+      await openTerminalRenderer(term, host, () => shellAlive, !guestTokenOn());
       if (!shellAlive) return;
       opened = true;
       net.send({ t: 'shell.attach' });
