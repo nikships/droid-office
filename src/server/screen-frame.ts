@@ -1,6 +1,22 @@
 import type headless from '@xterm/headless';
 import { cellUnderlineId, decodePlaceholderCell, isKittyPlaceholderCell, kittyImageSignature, type DecodedPlaceholder } from '../shared/kitty.js';
-import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, screenHistoryRows, type Run, type ScreenImage, type ScreenPlacement } from '../shared/protocol.js';
+import {
+  DECORATIONS,
+  FLAG_BOLD,
+  FLAG_DIM,
+  FLAG_INVERSE,
+  FLAG_INVISIBLE,
+  FLAG_ITALIC,
+  FLAG_OVERLINE,
+  FLAG_STRIKE,
+  FLAG_UNDERLINE,
+  paintsBlankCell,
+  RGB_FLAG,
+  screenHistoryRows,
+  type Run,
+  type ScreenImage,
+  type ScreenPlacement,
+} from '../shared/protocol.js';
 import { getTerminalKitty, SERVER_CELL_PX_H, SERVER_CELL_PX_W } from './screen.js';
 
 // Runs in the server only: the PTY host never paints a laptop, so changing this needs no PTY_PROTOCOL bump.
@@ -42,14 +58,83 @@ interface RawCell {
 
 const EMPTY_SPANS: readonly RowSpan[] = [];
 
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+function cellFlags(cell: BufferCell) {
+  if (cell.isAttributeDefault()) return 0;
+  if (cell.isInvisible()) return FLAG_INVISIBLE | (cell.isInverse() ? FLAG_INVERSE : 0);
+  return (
+    (cell.isBold() ? FLAG_BOLD : 0) |
+    (cell.isInverse() ? FLAG_INVERSE : 0) |
+    (cell.isDim() ? FLAG_DIM : 0) |
+    (cell.isItalic() ? FLAG_ITALIC : 0) |
+    (cell.isStrikethrough() ? FLAG_STRIKE : 0) |
+    (cell.isUnderline() ? FLAG_UNDERLINE : 0) |
+    (cell.isOverline() ? FLAG_OVERLINE : 0)
+  );
+}
+
+/** Plain text stays coalesced. Shape complex glyphs together even when Unicode11
+ * splits one ZWJ sequence over several cells; advance by those cells, not by glyph count. */
+class RowRuns {
+  readonly runs: Run[] = [];
+  private text = '';
+  private fg = -1;
+  private bg = -1;
+  private flags = 0;
+  private widths?: number[];
+  add(raw: string, width: number, fg: number, bg: number, flags: number) {
+    if (flags & FLAG_INVISIBLE) raw = ' '.repeat(width);
+    const complex = !(flags & FLAG_INVISIBLE) && (width !== 1 || raw.length !== 1 || raw.charCodeAt(0) > 127);
+    if (this.text && (fg !== this.fg || bg !== this.bg || flags !== this.flags || complex !== !!this.widths)) this.flush();
+    this.fg = fg;
+    this.bg = bg;
+    this.flags = flags;
+    if (complex) {
+      const widths = (this.widths ??= []);
+      widths[this.text.length] = width;
+    }
+    this.text += raw;
+  }
+  private flush() {
+    if (!this.text) return;
+    if (!this.widths) this.runs.push([this.text, this.fg, this.bg, this.flags]);
+    else {
+      let batch: Run | undefined;
+      for (const { segment, index } of graphemes.segment(this.text)) {
+        let cols = 0;
+        for (let i = index; i < index + segment.length; i++) cols += this.widths[i] ?? 0;
+        // Keep whitespace separate for trailing trim and Kitty background clipping.
+        const simple = this.widths[index] === cols && cols > 0 && /^\S$/u.test(segment);
+        if (simple && batch && (batch[5] ?? batch[4]) === cols) {
+          batch[0] += segment;
+          batch[4] = batch[4]! + cols;
+          batch[5] = cols;
+        } else {
+          const run: Run = [segment, this.fg, this.bg, this.flags, cols];
+          this.runs.push(run);
+          batch = simple ? run : undefined;
+        }
+      }
+      this.widths = undefined;
+    }
+    this.text = '';
+  }
+  finish() {
+    this.flush();
+    trimRuns(this.runs);
+    return this.runs;
+  }
+}
+
 function trimRuns(runs: Run[]) {
   // Trim trailing default-styled whitespace to keep frames small.
   while (runs.length) {
     const r = runs[runs.length - 1];
-    if (r[2] !== -1 || r[3] & FLAG_INVERSE) break;
-    const trimmed = r[0].replace(/\s+$/, '');
+    if (r[2] !== -1 || r[3] & (FLAG_INVERSE | DECORATIONS)) break;
+    const trimmed = r[0].trimEnd();
     if (trimmed) {
-      r[0] = trimmed;
+      if (r[4] === undefined) r[0] = trimmed;
       break;
     }
     runs.pop();
@@ -57,7 +142,7 @@ function trimRuns(runs: Run[]) {
 }
 
 function extractKittyRow(line: BufferLine, cols: number, cell: BufferCell): { runs: Run[]; spans: readonly RowSpan[] } {
-  const runs: Run[] = [];
+  const row = new RowRuns();
   const spans: RowSpan[] = [];
   const cells: RawCell[] = [];
   let prevPh: DecodedPlaceholder | undefined;
@@ -70,7 +155,7 @@ function extractKittyRow(line: BufferLine, cols: number, cell: BufferCell): { ru
     let ch = raw;
     let fg = cell.isFgDefault() ? -1 : cell.isFgRGB() ? RGB_FLAG | cell.getFgColor() : cell.getFgColor();
     let bg = cell.isBgDefault() ? -1 : cell.isBgRGB() ? RGB_FLAG | cell.getBgColor() : cell.getBgColor();
-    let flags = (cell.isBold() ? FLAG_BOLD : 0) | (cell.isInverse() ? FLAG_INVERSE : 0) | (cell.isDim() ? FLAG_DIM : 0);
+    let flags = cellFlags(cell);
     let phBg: number | undefined;
 
     if (isKittyPlaceholderCell(raw)) {
@@ -81,7 +166,7 @@ function extractKittyRow(line: BufferLine, cols: number, cell: BufferCell): { ru
       ch = ' ';
       fg = -1;
       bg = -1;
-      flags &= ~FLAG_INVERSE;
+      flags = 0;
       if (ph) {
         if (curSpan && curSpan.id === ph.imageId && curSpan.placementId === ph.placementId && curSpan.srcRow === ph.row && curSpan.x + curSpan.cols === x && curSpan.srcCol + curSpan.cols === ph.col) {
           curSpan.cols++;
@@ -106,8 +191,9 @@ function extractKittyRow(line: BufferLine, cols: number, cell: BufferCell): { ru
     let imgStart = Infinity;
     for (let i = 0; i < spans.length; i++) imgStart = Math.min(imgStart, spans[i].x);
     let lastVisibleCol = 0;
+    const visible = (c: RawCell) => paintsBlankCell(c.bg, c.flags) || (!(c.flags & FLAG_INVISIBLE) && !!c.ch.trim());
     for (const c of cells) {
-      if (c.ch.trim() || c.flags & FLAG_INVERSE) lastVisibleCol = c.x + c.width;
+      if (visible(c)) lastVisibleCol = c.x + c.width;
     }
     const blankFrom = Math.max(imgStart, lastVisibleCol);
     for (let i = 0; i < cells.length; i++) {
@@ -115,34 +201,22 @@ function extractKittyRow(line: BufferLine, cols: number, cell: BufferCell): { ru
       if (phBg === undefined) continue;
       for (let j = i - 1; j >= 0; j--) {
         const left = cells[j];
-        if (left.ch.trim() || left.flags & FLAG_INVERSE || left.bg !== phBg) break;
+        if (visible(left) || left.bg !== phBg) break;
         left.bg = -1;
       }
     }
     for (const c of cells) {
-      if (c.x >= blankFrom && !c.ch.trim() && !(c.flags & FLAG_INVERSE)) c.bg = -1;
+      if (c.x >= blankFrom) c.bg = -1;
     }
   }
 
-  let cur: Run | null = null;
-  for (const { ch, fg, bg, flags } of cells) {
-    if (cur && cur[1] === fg && cur[2] === bg && cur[3] === flags) cur[0] += ch;
-    else {
-      cur = [ch, fg, bg, flags];
-      runs.push(cur);
-    }
-  }
-  trimRuns(runs);
-  return { runs, spans };
+  for (const { ch, width, fg, bg, flags } of cells) row.add(ch, width, fg, bg, flags);
+  return { runs: row.finish(), spans };
 }
 
 function extractRow(line: BufferLine | undefined, cols: number, cell: BufferCell): { runs: Run[]; spans: readonly RowSpan[] } {
   if (!line) return { runs: [], spans: EMPTY_SPANS };
-  const runs: Run[] = [];
-  let curText = '';
-  let curFg = -2;
-  let curBg = -2;
-  let curFlags = -1;
+  const row = new RowRuns();
   for (let x = 0; x < cols; x++) {
     line.getCell(x, cell);
     const width = cell.getWidth();
@@ -153,20 +227,9 @@ function extractRow(line: BufferLine | undefined, cols: number, cell: BufferCell
     }
     const fg = cell.isFgDefault() ? -1 : cell.isFgRGB() ? RGB_FLAG | cell.getFgColor() : cell.getFgColor();
     const bg = cell.isBgDefault() ? -1 : cell.isBgRGB() ? RGB_FLAG | cell.getBgColor() : cell.getBgColor();
-    const flags = (cell.isBold() ? FLAG_BOLD : 0) | (cell.isInverse() ? FLAG_INVERSE : 0) | (cell.isDim() ? FLAG_DIM : 0);
-    if (fg === curFg && bg === curBg && flags === curFlags) {
-      curText += raw;
-    } else {
-      if (curFlags >= 0) runs.push([curText, curFg, curBg, curFlags]);
-      curText = raw;
-      curFg = fg;
-      curBg = bg;
-      curFlags = flags;
-    }
+    row.add(raw, width, fg, bg, cellFlags(cell));
   }
-  if (curFlags >= 0) runs.push([curText, curFg, curBg, curFlags]);
-  trimRuns(runs);
-  return { runs, spans: EMPTY_SPANS };
+  return { runs: row.finish(), spans: EMPTY_SPANS };
 }
 
 interface MergedSpan extends RowSpan {
@@ -185,7 +248,7 @@ export function snapshotScreen(term: HeadlessTerminal, last: string[]): ScreenFr
   const buf = term.buffer.active;
   const cols = term.cols;
   const rows = term.rows;
-  const full = last.length !== rows + 2;
+  const full = last.length !== rows + 3 || !last[rows + 2]?.startsWith(`${cols}:`);
   const lines: Record<number, Run[]> = {};
   let changed = false;
   const cell = buf.getNullCell();
@@ -296,7 +359,10 @@ export function snapshotScreen(term: HeadlessTerminal, last: string[]): ScreenFr
   const prevPlacementsKey = full ? '' : (last[rows + 1] ?? '');
   const placementsChanged = placementsKey !== prevPlacementsKey;
   last[rows + 1] = placementsKey;
-  last.length = rows + 2;
+  const cursorKey = `${cols}:${buf.cursorX}:${buf.cursorY}`;
+  const cursorChanged = last[rows + 2] !== cursorKey;
+  last[rows + 2] = cursorKey;
+  last.length = rows + 3;
 
   let sent = deliveredImages.get(last);
   if (!sent || full) {
@@ -325,7 +391,7 @@ export function snapshotScreen(term: HeadlessTerminal, last: string[]): ScreenFr
     }
   }
 
-  if (!changed && !aboveChanged && !placementsChanged && !imagesChanged) return null;
+  if (!changed && !aboveChanged && !placementsChanged && !imagesChanged && !cursorChanged) return null;
   return {
     cols,
     rows,

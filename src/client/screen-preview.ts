@@ -1,7 +1,7 @@
 // A worker's live screen in a few lines of text, for the web companion's overview: the same
 // `screen` frames the laptops draw, read as text with the terminal's colors. No DOM at import time.
 
-import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run } from '../shared/protocol';
+import { DECORATIONS, FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, FLAG_INVISIBLE, FLAG_ITALIC, FLAG_OVERLINE, FLAG_STRIKE, FLAG_UNDERLINE, RGB_FLAG, type Run } from '../shared/protocol';
 import { TERM_THEME } from './term-theme';
 
 const BASE16 = [
@@ -47,9 +47,12 @@ export interface PreviewRun {
   background?: string;
   bold?: boolean;
   dim?: boolean;
+  italic?: boolean;
+  decoration?: string;
+  cols?: number;
 }
 
-const blank = (row: Run[] | undefined) => !row?.some((r) => r[0].trim());
+const blank = (row: Run[] | undefined) => !row?.some(([text, , bg, flags]) => text.trim() || bg !== -1 || flags & (FLAG_INVERSE | DECORATIONS));
 
 /**
  * The bottom `max` rows of a screen that has anything on it, as styled runs: trailing blank rows are
@@ -62,15 +65,19 @@ export function previewRows(lines: readonly (Run[] | undefined)[], rows: number,
   const out: PreviewRun[][] = [];
   for (let i = start; i < end; i++) {
     out.push(
-      (lines[i] ?? []).map(([text, fg, bg, flags]) => {
+      (lines[i] ?? []).flatMap(([text, fg, bg, flags, cols, stride]) => {
         const inverse = (flags & FLAG_INVERSE) !== 0;
         const color = runColor(inverse ? bg : fg) ?? (inverse ? TERM_THEME.background : undefined);
         const background = runColor(inverse ? fg : bg) ?? (inverse ? TERM_THEME.foreground : undefined);
-        const run: PreviewRun = { text };
+        const run: PreviewRun = { text: flags & FLAG_INVISIBLE ? ' '.repeat(cols ?? [...text].length) : text };
+        if (cols !== undefined) run.cols = cols;
         if (color) run.color = color;
         if (background) run.background = background;
         if (flags & FLAG_BOLD) run.bold = true;
         if (flags & FLAG_DIM) run.dim = true;
+        if (flags & FLAG_ITALIC) run.italic = true;
+        if (!(flags & FLAG_INVISIBLE) && flags & DECORATIONS) run.decoration = [flags & FLAG_UNDERLINE && 'underline', flags & FLAG_STRIKE && 'line-through', flags & FLAG_OVERLINE && 'overline'].filter(Boolean).join(' ');
+        if (stride !== undefined && !(flags & FLAG_INVISIBLE)) return Array.from(text, (glyph) => ({ ...run, text: glyph, cols: stride }));
         return run;
       }),
     );

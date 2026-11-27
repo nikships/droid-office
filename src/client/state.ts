@@ -775,7 +775,7 @@ function sameRuns(a: Run[] | undefined, b: Run[] | undefined): boolean {
   for (let i = 0; i < al; i++) {
     const ar = a![i];
     const br = b![i];
-    if (ar[0] !== br[0] || ar[1] !== br[1] || ar[2] !== br[2] || ar[3] !== br[3]) return false;
+    if (ar[0] !== br[0] || ar[1] !== br[1] || ar[2] !== br[2] || ar[3] !== br[3] || ar[4] !== br[4] || ar[5] !== br[5]) return false;
   }
   return true;
 }

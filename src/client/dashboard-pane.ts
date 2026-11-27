@@ -192,10 +192,11 @@ function renderPreview(into: HTMLElement, id: string, max: number) {
         'span.dash-preview-row',
         {},
         ...row.map((r) => {
-          if (!r.color && !r.background && !r.bold && !r.dim) return r.text;
-          const span = h('span', { class: [r.bold ? 'b' : '', r.dim ? 'd' : ''].join(' ').trim() || undefined }, r.text);
+          if (!r.color && !r.background && !r.bold && !r.dim && !r.italic && !r.decoration && r.cols === undefined) return r.text;
+          const span = h('span', { class: [r.bold && 'b', r.dim && 'd', r.italic && 'i', (r.cols !== undefined || r.decoration) && 'dash-preview-cell', r.decoration].filter(Boolean).join(' ') }, r.text);
           if (r.color) span.style.color = r.color;
           if (r.background) span.style.background = r.background;
+          if (r.cols !== undefined) span.style.width = `${r.cols}ch`;
           return span;
         }),
       ),

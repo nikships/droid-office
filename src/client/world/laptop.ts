@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { ANISOTROPY } from './texture-quality';
-import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run, type ScreenPlacement } from '../../shared/protocol';
+import { DECORATIONS, FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, FLAG_INVISIBLE, FLAG_ITALIC, FLAG_OVERLINE, FLAG_STRIKE, FLAG_UNDERLINE, paintsBlankCell, RGB_FLAG, type Run, type ScreenPlacement } from '../../shared/protocol';
 import { mesh, roundedBox, toon } from './toon';
 import { propReady, useProp } from './props';
 import { fontRevision, TERM_FONT } from '../fonts';
@@ -84,10 +84,10 @@ function codePointCount(text: string): number {
 const runLen = (runs: Run[] | undefined) => {
   if (!runs) return 0;
   let n = 0;
-  for (let i = 0; i < runs.length; i++) n += codePointCount(runs[i][0]);
+  for (const [text, , , , cols] of runs) n += cols ?? codePointCount(text);
   return n;
 };
-const filled = (runs: Run[] | undefined) => !!runs?.some((r) => r[0].trim() || r[2] !== -1);
+const filled = (runs: Run[] | undefined) => !!runs?.some(([text, , bg, flags]) => text.trim() || bg !== -1 || flags & (FLAG_INVERSE | DECORATIONS));
 const CHAR_WIDTH = 0.6;
 const LINE_HEIGHT = 1.25;
 const MIN_ZOOM_ROWS = 12;
@@ -176,27 +176,21 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
       for (let i = 0; i < rowPlacements.length; i++) imgStart = Math.min(imgStart, Math.max(0, rowPlacements[i].x));
       let lastVisibleCol = 0;
       let col = 0;
-      for (const [text, , , flags] of runs) {
-        const inv = !!(flags & FLAG_INVERSE);
-        for (let i = 0; i < text.length; i++) {
-          const c = text.charCodeAt(i);
-          let step = 0;
-          if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length) {
-            const lo = text.charCodeAt(i + 1);
-            if (lo >= 0xdc00 && lo <= 0xdfff) step = 1;
-          }
-          const ch = step ? text.slice(i, i + 2) : text[i];
-          col++;
-          if (inv || ch.trim()) lastVisibleCol = col;
-          i += step;
+      for (const [text, , bg, flags, cols] of runs) {
+        const end = col + (cols ?? codePointCount(text));
+        if (paintsBlankCell(bg, flags)) lastVisibleCol = end;
+        else {
+          const ink = text.trimEnd();
+          if (ink) lastVisibleCol = cols === undefined ? col + codePointCount(ink) : end;
         }
+        col = end;
       }
       blankFrom = Math.max(imgStart, lastVisibleCol);
     }
     let x = 0;
     const py = pad + y * lineH;
-    for (const [text, fgc, bgc, flags] of runs) {
-      const len = codePointCount(text);
+    for (const [text, fgc, bgc, flags, cols, stride] of runs) {
+      const len = cols ?? codePointCount(text);
       let fg = color(fgc, TERM_THEME.foreground);
       let bg = bgc < 0 ? null : color(bgc, SCREEN_BLACK);
       if (flags & FLAG_INVERSE) {
@@ -209,7 +203,7 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
         ctx.fillStyle = bg;
         if (!rowPlacements?.length || flags & FLAG_INVERSE) {
           ctx.fillRect(px, py, len * charW + 0.5, lineH + 0.5);
-        } else if (text.trim() || !rowPlacements.some((p) => x < p.x + p.cols && x + len > p.x)) {
+        } else if (paintsBlankCell(bgc, flags) || text.trim() || !rowPlacements.some((p) => x < p.x + p.cols && x + len > p.x)) {
           let spanStart = -1;
           const end = Math.min(x + len, blankFrom);
           for (let c = x; c <= end; c++) {
@@ -222,8 +216,9 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
           }
         }
       }
-      if (text.trim()) {
-        const nextFont = flags & FLAG_BOLD ? font700 : font400;
+      if (!(flags & FLAG_INVISIBLE) && (text.trim() || flags & DECORATIONS)) {
+        const weight = flags & FLAG_BOLD ? font700 : font400;
+        const nextFont = flags & FLAG_ITALIC ? `italic ${weight}` : weight;
         if (nextFont !== curFont) {
           curFont = nextFont;
           ctx.font = nextFont;
@@ -231,7 +226,19 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
         const dim = !!(flags & FLAG_DIM);
         if (dim) ctx.globalAlpha = 0.55;
         ctx.fillStyle = fg;
-        ctx.fillText(text, px, py + (lineH - fontSize) / 2);
+        const ty = py + (lineH - fontSize) / 2;
+        if (stride !== undefined) {
+          let col = x;
+          for (const glyph of text) {
+            ctx.fillText(glyph, pad + col * charW, ty, stride * charW);
+            col += stride;
+          }
+        } else if (cols === undefined) ctx.fillText(text, px, ty);
+        else ctx.fillText(text, px, ty, len * charW);
+        const stroke = Math.max(1, fontSize / 16);
+        if (flags & FLAG_UNDERLINE) ctx.fillRect(px, ty + fontSize, len * charW, stroke);
+        if (flags & FLAG_STRIKE) ctx.fillRect(px, ty + fontSize * 0.55, len * charW, stroke);
+        if (flags & FLAG_OVERLINE) ctx.fillRect(px, ty, len * charW, stroke);
         if (dim) ctx.globalAlpha = 1;
       }
       x += len;

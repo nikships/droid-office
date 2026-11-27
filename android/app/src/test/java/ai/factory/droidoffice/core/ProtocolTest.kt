@@ -208,13 +208,16 @@ class ProtocolTest {
             """{"t":"screen","workerId":"w1","cols":10,"rows":3,"full":false,"cursor":[4,2],
                "placements":[{"imageId":7,"col":0,"row":0,"cols":4,"rows":2,"srcCol":0,"srcRow":0,"totalCols":4,"totalRows":2,"z":0}],
                "images":[{"id":7,"format":100,"width":2,"height":2,"data":"AAAA"}],
-               "lines":{"0":[["hi ",-1,-1,0],["there",1,-1,1]],"2":[["${'$'} ",16777215,-1,2]]}}""",
+               "lines":{"0":[["hi ",-1,-1,0],["there",1,-1,1]],"1":[["界𠮷",1,-1,8,4,2],["🇯🇵",1,-1,8,2]],"2":[["${'$'} ",16777215,-1,2],["👩‍💻",-1,-1,40,4]]}}""",
         ) as ServerMsg.Screen
         assertEquals(10, m.cols)
         assertEquals(4 to 2, m.cursor)
         assertFalse(m.full)
         assertEquals(Run("there", 1, -1, 1), m.lines.getValue(0)[1])
-        assertEquals(setOf(0, 2), m.lines.keys)
+        assertEquals(Run("👩‍💻", -1, -1, 40), m.lines.getValue(2)[1])
+        assertEquals(listOf(Run("界𠮷", 1, -1, 8), Run("🇯🇵", 1, -1, 8)), m.lines.getValue(1))
+        assertEquals("界𠮷🇯🇵", m.lines.getValue(1).joinToString("") { it.text })
+        assertEquals(setOf(0, 1, 2), m.lines.keys)
     }
 
     @Test

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { COMPANION_PATH, companionLink, originKind } from '../src/shared/devices.js';
 import { ORCHESTRATOR_ID, type MissionControlState } from '../src/shared/mission-control.js';
-import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, RGB_FLAG, type Run, type WorkerInfo } from '../src/shared/protocol.js';
+import { FLAG_BOLD, FLAG_DIM, FLAG_INVERSE, FLAG_INVISIBLE, FLAG_ITALIC, FLAG_STRIKE, FLAG_UNDERLINE, RGB_FLAG, type Run, type WorkerInfo } from '../src/shared/protocol.js';
 import { buildingRoster } from '../src/client/dashboard-building.js';
 import { buildingWaitingCount, companionDocumentTitle } from '../src/client/dashboard-title.js';
 import { previewRows, runColor } from '../src/client/screen-preview.js';
@@ -124,6 +124,29 @@ test('screen previews keep the terminal colors and drop the blank rows below the
   );
   assert.deepEqual(previewRows([undefined, [['   ', -1, -1, 0]]], 2, 4), []);
   assert.deepEqual(previewRows(lines, 1, 4), [[{ text: 'first' }]], 'rows past the screen height are ignored');
+  assert.deepEqual(
+    previewRows(
+      [
+        [
+          ['👩‍💻', -1, -1, FLAG_ITALIC | FLAG_UNDERLINE | FLAG_STRIKE, 4],
+          ['界𠮷', -1, -1, FLAG_ITALIC, 4, 2],
+          ['secret', -1, 1, FLAG_INVISIBLE],
+        ],
+        [['  ', -1, -1, FLAG_UNDERLINE]],
+      ],
+      2,
+      2,
+    ),
+    [
+      [
+        { text: '👩‍💻', cols: 4, italic: true, decoration: 'underline line-through' },
+        { text: '界', cols: 2, italic: true },
+        { text: '𠮷', cols: 2, italic: true },
+        { text: '      ', background: TERM_THEME.red },
+      ],
+      [{ text: '  ', decoration: 'underline' }],
+    ],
+  );
 });
 
 test('the web companion is on until the owner turns it off, and stays as set', (t) => {

@@ -273,13 +273,24 @@ export interface CarriedIssue {
   title: string;
 }
 
-/** A styled run of text on a terminal row: [text, fg, bg, flags]. */
-export type Run = [string, number, number, number];
+/** `columns` is the total terminal advance. Without `stride`, draw the text together
+ * (one grapheme when columns is present). A stride explicitly marks a sequence of
+ * single-code-point graphemes: draw each at the next stride, without re-segmenting. */
+export type Run = [text: string, fg: number, bg: number, flags: number, columns?: number, stride?: number];
 /** Color encoding: -1 default, 0..255 palette, >= 0x1000000 means 0x1000000 | rgb. */
 export const RGB_FLAG = 0x1000000;
 export const FLAG_BOLD = 1;
 export const FLAG_INVERSE = 2;
 export const FLAG_DIM = 4;
+export const FLAG_ITALIC = 8;
+export const FLAG_STRIKE = 16;
+export const FLAG_UNDERLINE = 32;
+export const FLAG_INVISIBLE = 64;
+export const FLAG_OVERLINE = 128;
+export const DECORATIONS = FLAG_UNDERLINE | FLAG_STRIKE | FLAG_OVERLINE;
+
+/** Spaces around Kitty placeholders normally lose the container fill. Keep intentional marks. */
+export const paintsBlankCell = (bg: number, flags: number) => !!(flags & (FLAG_INVERSE | DECORATIONS) || (flags & FLAG_INVISIBLE && bg !== -1));
 
 /** An inline Kitty terminal image carried to 3D laptop and monitor screens when visible. */
 export interface ScreenImage {

@@ -5,8 +5,103 @@ import test from 'node:test';
 import { buildSync } from 'esbuild';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 import { FIXTURE } from '../tools/thread-fixture.mjs';
+import headless from '@xterm/headless';
+import unicode11 from '@xterm/addon-unicode11';
+import { snapshotScreen } from '../src/server/screen-frame.js';
 
 const status = browserStatus();
+
+test('compact preview clips one-column ink at the baseline and decorates whole cell boxes', { skip: !status.installed }, async (t) => {
+  const term = new headless.Terminal({ cols: 40, rows: 10, allowProposedApi: true });
+  t.after(() => term.dispose());
+  term.loadAddon(new unicode11.Unicode11Addon());
+  term.unicode.activeVersion = '11';
+  await new Promise<void>((done) => term.write('Screen\r\n\r\n\r\nA🖥️Z\r\nA Z\r\n\x1b[38;2;0;255;0;4m   \r\n👩‍💻\x1b[0m\r\n\x1b[38;2;0;255;0;9;53m   \x1b[0m', done));
+  const frame = snapshotScreen(term, [])!;
+  const browser = await launchBrowser();
+  t.after(closeBrowser);
+  const context = await newIsolatedContext(browser);
+  t.after(() => context.close());
+  const page = await context.newPage();
+  await page.setContent('<!doctype html><body></body>');
+  await page.addStyleTag({ content: readFileSync(new URL('../src/client/style.css', import.meta.url), 'utf8') });
+  await page.addScriptTag({
+    content: buildSync({
+      stdin: { contents: "export { createPane } from './dashboard-pane'; export { store } from './state';", resolveDir: fileURLToPath(new URL('../src/client', import.meta.url)) },
+      bundle: true,
+      format: 'iife',
+      globalName: 'PaneUI',
+      write: false,
+      target: 'es2022',
+    }).outputFiles[0].text,
+  });
+  await page.addScriptTag({ content: 'window.__name = (fn) => fn;' });
+  await page.evaluate((frame) => {
+    const { createPane, store } = (window as any).PaneUI;
+    const worker = { id: 'shell', name: 'Shell', kind: 'shell', color: '#89d9ed', status: 'exited' };
+    store.apply({ ...frame, t: 'screen', workerId: worker.id });
+    const pane = createPane({ live: () => true, busy: () => false, worker: () => worker, mission: () => undefined, read: () => '', floor: () => '' }, 0);
+    pane.update({ worker, view: 'terminal', focused: true, candidates: [] });
+    document.body.append(pane.el.querySelector('.dash-preview'));
+  }, frame);
+  const rows = page.locator('.dash-preview-row');
+  async function pixels(index: number, hide = false) {
+    const row = rows.nth(index);
+    if (hide) await row.locator('span').evaluate((el) => ((el as HTMLElement).style.visibility = 'hidden'));
+    const png = await row.screenshot();
+    return page.evaluate(async (base64) => {
+      const img = new Image();
+      img.src = `data:image/png;base64,${base64}`;
+      await img.decode();
+      const canvas = document.createElement('canvas');
+      canvas.width = 100;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      return Array.from(ctx.getImageData(0, 0, 100, img.height).data);
+    }, png.toString('base64'));
+  }
+  const box = await rows.nth(3).evaluate((el) => {
+    const bounds = el.getBoundingClientRect(),
+      cell = el.querySelector('span')!.getBoundingClientRect();
+    return { left: cell.left - bounds.left, right: cell.right - bounds.left, width: cell.width };
+  });
+  const ink = await pixels(3),
+    off = await pixels(3, true),
+    plain = await pixels(4);
+  const changed = Array.from({ length: ink.length / 4 }, (_, i) => i).filter((i) => ink.slice(4 * i, 4 * i + 3).some((v, k) => Math.abs(v - off[4 * i + k]) > 10));
+  const right = Math.max(...changed.map((i) => i % 100)) + 1;
+  const baseline = (p: number[]) => {
+    let bottom = -1;
+    for (let i = 0; i < p.length; i += 4) if ((i / 4) % 100 < box.left && p[i] > 100) bottom = Math.floor(i / 400);
+    return bottom;
+  };
+  const strokes = async (i: number) => {
+    const p = await pixels(i);
+    const widths: number[] = [];
+    for (let row = 0; row < p.length; row += 400) {
+      let n = 0;
+      for (let j = row; j < row + 400; j += 4) if (p[j + 1] > 100 && p[j + 1] > p[j] + 50 && p[j + 1] > p[j + 2] + 50) n++;
+      widths.push(n);
+    }
+    return widths.filter((n) => n > 0);
+  };
+  const spaces = await strokes(5),
+    emoji = await strokes(6),
+    both = await strokes(7);
+  t.diagnostic(JSON.stringify({ box, right, baseline: [baseline(off), baseline(plain)], spaces, emoji, both }));
+  assert.ok(changed.length > 0 && right <= Math.ceil(box.right), 'the emoji must not paint into Z');
+  assert.ok(baseline(off) >= 0 && baseline(off) === baseline(plain), 'neighbouring text must not move vertically');
+  assert.ok(
+    spaces.some((n) => Math.abs(n - 3 * box.width) <= 1),
+    'underline spans three spaces',
+  );
+  assert.ok(
+    emoji.some((n) => Math.abs(n - 4 * box.width) <= 1),
+    'underline spans a four-column ZWJ',
+  );
+  assert.ok(both.filter((n) => Math.abs(n - 3 * box.width) <= 1).length >= 2, 'strike and overline span the blank run');
+});
 
 test('empty pane clicks hire in place without swallowing worker picks or allowing offline hires', { skip: status.installed ? false : `Chromium is not installed in ${status.path}` }, async (t) => {
   const browser = await launchBrowser();

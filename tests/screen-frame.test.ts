@@ -4,7 +4,7 @@ import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import unicode11 from '@xterm/addon-unicode11';
 import { KITTY_CELL_PX_H, KITTY_CELL_PX_W, KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
-import { screenHistoryRows } from '../src/shared/protocol.js';
+import { FLAG_INVERSE, FLAG_INVISIBLE, FLAG_ITALIC, FLAG_OVERLINE, FLAG_STRIKE, FLAG_UNDERLINE, screenHistoryRows, type Run } from '../src/shared/protocol.js';
 import { plainTail, searchTerminal } from '../src/server/history.js';
 import { screenSnapshot } from '../src/server/screen.js';
 import { snapshotScreen } from '../src/server/screen-frame.js';
@@ -16,7 +16,103 @@ function terminal(cols: number, rows: number) {
 }
 
 const numbered = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `line ${from + i}`).join('\r\n');
-const texts = (rows: [string, number, number, number][][] | undefined) => rows?.map((runs) => runs.map((r) => r[0]).join(''));
+const texts = (rows: Run[][] | undefined) => rows?.map((runs) => runs.map((r) => r[0]).join(''));
+
+test('conceal drops ink-only flags and retains inverse background', async (t) => {
+  const { term, write } = terminal(20, 3);
+  t.after(() => term.dispose());
+  await write('\x1b[1;2;3;4;8;9;53mhidden\r\n\x1b[7mX');
+  const lines = snapshotScreen(term, [])!.lines;
+  assert.deepEqual(lines[0], []);
+  assert.deepEqual(lines[1], [[' ', -1, -1, FLAG_INVISIBLE | FLAG_INVERSE]]);
+});
+
+test('trim preserves trailing whitespace inside a width-bearing grapheme', async (t) => {
+  const { term, write } = terminal(2, 2);
+  t.after(() => term.dispose());
+  term.loadAddon(new unicode11.Unicode11Addon());
+  term.unicode.activeVersion = '11';
+  await write('A\u0600\u00a0');
+  assert.deepEqual(snapshotScreen(term, [])!.lines[0].at(-1), ['\u0600\u00a0', -1, -1, 0, 1]);
+});
+
+test('Kitty keeps backgrounds on concealed and decorated spaces after a placeholder', async (t) => {
+  const { term, write } = terminal(20, 3);
+  t.after(() => term.dispose());
+  const ph = `\x1b[38;2;0;0;9m${KITTY_PLACEHOLDER_CHAR}${String.fromCodePoint(KITTY_DIACRITICS[0]).repeat(2)}`;
+  await write(`${ph}\x1b[0;8;41m \x1b[0;4;42m `);
+  assert.deepEqual(snapshotScreen(term, [])!.lines[0], [
+    [' ', -1, -1, 0],
+    [' ', -1, 1, FLAG_INVISIBLE],
+    [' ', -1, 2, FLAG_UNDERLINE],
+  ]);
+});
+
+test('a 120×40 Han screen sends one exact fixed-stride run per row', async (t) => {
+  const { term, write } = terminal(120, 40);
+  t.after(() => term.dispose());
+  term.loadAddon(new unicode11.Unicode11Addon());
+  term.unicode.activeVersion = '11';
+  const row = Array.from({ length: 60 }, (_, i) => String.fromCodePoint(0x4e00 + i)).join('');
+  await write(Array(40).fill(row).join('\r\n'));
+  const frame = snapshotScreen(term, [])!;
+  assert.equal(Object.keys(frame.lines).length, 40);
+  for (const runs of Object.values(frame.lines)) assert.deepEqual(runs, [[row, -1, -1, 0, 120, 2]]);
+  assert.deepEqual(frame.cursor, [120, 39]);
+});
+
+for (const [label, cluster, cols] of [
+  ['regional indicator flag', '🇯🇵', 2],
+  ['combining accent', 'é', 1],
+  ['variation selector', '🖥️', 1],
+  ['joined emoji', '👩‍💻', 4],
+] as const) {
+  test(`never marks a ${label} cluster as fixed-stride`, async (t) => {
+    const { term, write } = terminal(40, 2);
+    t.after(() => term.dispose());
+    term.loadAddon(new unicode11.Unicode11Addon());
+    term.unicode.activeVersion = '11';
+    await write(`界語${cluster}${cluster}語界éà\x1b[3m界語`);
+    assert.deepEqual(snapshotScreen(term, [])!.lines[0], [
+      ['界語', -1, -1, 0, 4, 2],
+      [cluster, -1, -1, 0, cols],
+      [cluster, -1, -1, 0, cols],
+      ['語界', -1, -1, 0, 4, 2],
+      ['éà', -1, -1, 0, 2, 1],
+      ['界語', -1, -1, FLAG_ITALIC, 4, 2],
+    ]);
+  });
+}
+
+test('compact frames retain terminal widths, SGR and cursor-only changes without leaking concealed text', async () => {
+  const { term, write } = terminal(40, 4);
+  term.loadAddon(new unicode11.Unicode11Addon());
+  term.unicode.activeVersion = '11';
+  try {
+    const last: string[] = [];
+    await write('x界👩‍💻éZ\r\n\x1b[3;4;9;53m   \x1b[0m\r\n\x1b[8;41msecret界\x1b[0m');
+    const f = snapshotScreen(term, last)!;
+    assert.deepEqual(f.lines[0], [
+      ['x', -1, -1, 0],
+      ['界', -1, -1, 0, 2],
+      ['👩‍💻', -1, -1, 0, 4],
+      ['é', -1, -1, 0, 1],
+      ['Z', -1, -1, 0],
+    ]);
+    assert.deepEqual(f.lines[1], [['   ', -1, -1, FLAG_ITALIC | FLAG_UNDERLINE | FLAG_STRIKE | FLAG_OVERLINE]]);
+    assert.deepEqual(f.lines[2], [['        ', -1, 1, FLAG_INVISIBLE]]);
+    assert.deepEqual(f.cursor, [8, 2]);
+    await write('\x1b[H');
+    const diff = snapshotScreen(term, last)!;
+    assert.deepEqual(diff.lines, {});
+    assert.deepEqual(diff.cursor, [0, 0]);
+    assert.equal(snapshotScreen(term, last), null);
+    term.resize(44, 4);
+    assert.equal(snapshotScreen(term, last)?.full, true, 'a column-only resize resets the frame');
+  } finally {
+    term.dispose();
+  }
+});
 
 test('a terminal wider than a laptop sends the scrollback rows just above its screen', async () => {
   const { term, write } = terminal(150, 30);
@@ -226,6 +322,28 @@ test('client store skips redundant screen repaints when incoming frames match ex
     unsub();
     store.apply({ t: 'worker.remove', workerId: wid });
   }
+});
+
+test('screen cache keeps per-glyph advances in live rows and history across diffs and full frames', async () => {
+  const { Store } = await import('../src/client/state.js');
+  const store = new Store();
+  const row = (width: number): Run[] => [['👩‍💻', -1, -1, 0, width]];
+  const frame = { t: 'screen' as const, workerId: 'width', cols: 40, rows: 3, cursor: [0, 0] as [number, number] };
+  const apply = (full: boolean, width: number) => store.apply({ ...frame, full, lines: { 0: row(width) }, above: [row(width)] });
+  apply(true, 2);
+  apply(false, 4);
+  assert.equal(store.screens.get('width')!.version, 2);
+  assert.deepEqual(store.screens.get('width')!.above, [row(4)]);
+  apply(true, 2);
+  assert.deepEqual(store.screens.get('width')!.lines[0], row(2));
+  assert.equal(store.screens.get('width')!.version, 3);
+  apply(false, 2);
+  assert.equal(store.screens.get('width')!.version, 3);
+  const oldHan: Run[] = [['界語', -1, -1, 0, 4]];
+  const batchedHan: Run[] = [['界語', -1, -1, 0, 4, 2]];
+  for (const runs of [oldHan, batchedHan]) store.apply({ ...frame, full: true, lines: { 0: runs }, above: [runs] });
+  assert.deepEqual(store.screens.get('width')!.lines[0], batchedHan);
+  assert.deepEqual(store.screens.get('width')!.above, [batchedHan]);
 });
 
 test('screen events identify both synchronous updates and delayed image-only updates', async (t) => {

@@ -2947,6 +2947,13 @@ body.themed { background: transparent; }
 .dash-preview-row { display: block; flex: none; min-height: 1.32em; overflow: hidden; }
 .dash-preview .b { font-weight: 600; }
 .dash-preview .d { opacity: .6; }
+.dash-preview .i { font-style: italic; }
+/* Clip the ink, not the inline-block's baseline. Decorations span cells, even blank ones. */
+.dash-preview-cell { display: inline-block; position: relative; clip-path: inset(0); }
+.dash-preview-cell.underline { --cell-bottom: currentColor; }
+.dash-preview-cell.overline { --cell-top: currentColor; }
+.dash-preview-cell.line-through { --cell-middle: currentColor; }
+.dash-preview-cell:is(.underline, .overline, .line-through)::after { content: ''; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 1px var(--cell-top, transparent), inset 0 -1px var(--cell-bottom, transparent); background: linear-gradient(var(--cell-middle, transparent), var(--cell-middle, transparent)) center / 100% 1px no-repeat; }
 .dash-preview-none { margin: auto; font-family: var(--font-sans); color: var(--text-tertiary); }
 .dash-preview.big { height: auto; max-height: 520px; margin: 0; padding: var(--space-3) var(--space-4); font-size: 12px; line-height: 16px; }
 .dash-preview.big .dash-preview-row { min-height: 16px; }

@@ -10,7 +10,7 @@ import { loadPropManifest, preloadProps, propReady } from '../src/client/world/p
 import { fontRevision, loadFonts } from '../src/client/fonts.js';
 import { BEANBAGS, DESK_LAPTOP, DESK_SIZE, DESKS, FLOOR, SEATING_BY_ID } from '../src/shared/layout.js';
 import { CLOUD_SCREEN_COLS, CLOUD_SCREEN_ROWS } from '../src/shared/cloud-screen.js';
-import { type Run, screenHistoryRows } from '../src/shared/protocol.js';
+import { FLAG_INVISIBLE, FLAG_ITALIC, FLAG_STRIKE, FLAG_UNDERLINE, type Run, screenHistoryRows } from '../src/shared/protocol.js';
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../src/server/workers.js';
 
 // three's FileLoader reports progress with it; Node has none.
@@ -59,6 +59,31 @@ function screen(cols: number, rows: number, activeRows: number, width = cols, bg
 function textYs(ops: Op[]) {
   return ops.filter((op) => op.kind === 'fillText').map((op) => Number(op.args[2]));
 }
+
+test('paints intact clusters at the mirror column, decoration on spaces and no concealed ink', () => {
+  const { ctx, ops } = canvasSpy();
+  const s = screen(40, 4, 0);
+  s.lines[0] = [
+    ['界𠮷', -1, -1, 0, 4, 2],
+    ['👩‍💻', -1, -1, 0, 4],
+    ['é', -1, -1, 0, 1],
+    ['Z', -1, -1, FLAG_ITALIC],
+    ['   ', -1, -1, FLAG_UNDERLINE | FLAG_STRIKE],
+    ['x', -1, 1, FLAG_INVISIBLE],
+  ];
+  paintScreen(ctx, 1000, 200, s);
+  const ink = ops.filter((op) => op.kind === 'fillText');
+  assert.deepEqual(
+    ink.map((op) => op.args[0]),
+    ['界', '𠮷', '👩‍💻', 'é', 'Z', '   '],
+  );
+  const cw = ((200 - 20) / 4 / 1.25) * 0.6; // The height limits this viewport, not the width.
+  assert.deepEqual(
+    ink.map((op) => op.args[1]),
+    [0, 2, 4, 8, 9, 10].map((x) => 10 + x * cw),
+  );
+  assert.equal(ops.filter((op) => op.kind === 'fillRect').length, 4, 'base, underline, strike, invisible background');
+});
 
 test('anchors sparse shell output to the laptop screen top-left', () => {
   const { ctx, ops } = canvasSpy();
@@ -691,4 +716,21 @@ test('paintScreen leaves empty space beside and behind inline images black inste
     assert.ok(x1 <= captionRight + 1, 'no grey rect paints into the empty space to the right of the image or caption');
   }
   assert.equal(drawnImages(), 1, 'inline image bitmap still draws');
+});
+
+test('backgrounds after a Kitty placement survive conceal and decoration', () => {
+  for (const flag of [FLAG_INVISIBLE, FLAG_UNDERLINE]) {
+    const { ctx, rectStyles } = canvasSpy();
+    const s = screen(10, 1, 0);
+    s.lines[0] = [
+      [' ', -1, -1, 0],
+      ['  ', -1, 1, flag],
+    ];
+    s.placements = [{ id: 1, x: 0, y: 0, cols: 1, rows: 1, srcCol: 0, srcRow: 0, totalCols: 1, totalRows: 1 }];
+    paintScreen(ctx, 100, 100, s);
+    const red = rectStyles.filter((r) => r.style === '#ff5c7a');
+    assert.equal(red.length, 1);
+    const cell = (100 - 2) / 10;
+    assert.deepEqual([red[0].args[0], red[0].args[2]], [1 + cell, 2 * cell + 0.5]);
+  }
 });
