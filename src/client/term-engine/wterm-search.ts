@@ -82,6 +82,7 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
     // A read-only window would close on Esc before the Find field saw it.
     const releaseEscape = keyboardHost
       ? claimEscape(panel, () => {
+          if (swallowed.has('Escape')) return true;
           if (bar.hidden || !document.activeElement || !ownsFocus(document.activeElement)) return false;
           swallowed.add('Escape');
           controller.close();
@@ -89,14 +90,14 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
         })
       : undefined;
     const keyboard = (e: KeyboardEvent) => {
-      if (!(e.target instanceof Element)) return;
-      const isPanel = panel.contains(e.target);
-      if (!ownsFocus(e.target)) return;
-      if (e.type === 'keyup' && swallowed.delete(e.code)) {
+      if (swallowed.has(e.code) && (e.repeat || e.type !== 'keydown')) {
+        if (e.type === 'keyup') swallowed.delete(e.code);
         e.preventDefault();
         e.stopImmediatePropagation();
         return;
       }
+      if (!(e.target instanceof Element) || !ownsFocus(e.target)) return;
+      const isPanel = panel.contains(e.target);
       const find = e.key.toLowerCase() === 'f' && !e.altKey && (mac ? e.metaKey && !e.ctrlKey && !e.shiftKey : e.ctrlKey && e.shiftKey && !e.metaKey);
       const again = !bar.hidden && e.key.toLowerCase() === 'g' && e.metaKey && !e.ctrlKey && !e.altKey;
       const enter = e.target === field && e.key === 'Enter';
@@ -112,6 +113,7 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
       } else if (isPanel) e.stopPropagation();
     };
     const scoped = { signal, capture: true };
+    window.addEventListener('blur', () => swallowed.clear(), { signal });
     for (const type of ['keydown', 'keypress', 'keyup'] as const) window.addEventListener(type, keyboard, scoped);
     // Host capture handlers turn pasted images into PTY input before the terminal sees them.
     window.addEventListener(

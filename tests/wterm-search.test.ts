@@ -104,6 +104,23 @@ test('native terminal search, working directory and read-only snapshots in Chrom
     assert.equal(await page.locator('#host .term-search-match').count(), 0);
     assert.ok(await page.locator('#host .wterm').evaluate((e) => e.scrollHeight - e.clientHeight - e.scrollTop <= 1));
   });
+  await t.test('holding Find Escape through focus changes sends no key to the PTY', async () => {
+    await page.keyboard.press(shortcut);
+    await page.evaluate(() => {
+      (window as any).keys.length = 0;
+    });
+    await page.keyboard.down('Escape');
+    assert.equal(await find.isVisible(), false);
+    await page.keyboard.down('Escape');
+    await page.locator('#log textarea').focus();
+    await page.keyboard.down('Escape');
+    await page.keyboard.up('Escape');
+    assert.deepEqual(await page.evaluate(() => (window as any).keys), []);
+    assert.deepEqual(await page.evaluate(() => (window as any).sent.splice(0)), []);
+    await page.locator('#host textarea').focus();
+    await page.keyboard.press('Escape');
+    assert.deepEqual(await page.evaluate(() => (window as any).sent.splice(0)), ['\x1b']);
+  });
   await t.test('reader stays off bottom after closing; reset clears the bar; read-only log accepts search only', async () => {
     const top = await page.evaluate(() => {
       const r = (window as any).hostRig.term.native.element;
