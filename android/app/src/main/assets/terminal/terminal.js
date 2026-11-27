@@ -29,8 +29,7 @@ async function expandImage({ blob, width, height }) {
 export async function start() {
   const [{ createAndroidTerminal, TERM_THEME }] = await Promise.all([
     import('./vendor/android-terminal.js'),
-    document.fonts.load(`400 ${READABLE_PX}px 'Geist Mono'`),
-    document.fonts.load(`400 ${READABLE_PX}px 'Droid Office Terminal Symbols'`, '\ue0b0'),
+    Promise.allSettled([document.fonts.load(`400 ${READABLE_PX}px 'Geist Mono'`), document.fonts.load(`400 ${READABLE_PX}px 'Droid Office Terminal Symbols'`, '\ue0b0')]),
   ]);
   const host = document.querySelector('#term');
   const { term, expandAtClient } = createAndroidTerminal({ onExpandImage: expandImage });

@@ -2,20 +2,22 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import { browserStatus, closeBrowser, launchBrowser } from '../src/server/whiteboard-browser.js';
 
 const status = browserStatus();
 const assets = fileURLToPath(new URL('../android/app/src/main/assets/', import.meta.url));
 const TYPES: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm', '.ttf': 'font/ttf' };
 
-test("the phone's Raw TTY follows a finger pixel for pixel with native scrolling and holds a historical reader", { skip: status.installed ? false : `Chromium is not installed in ${status.path}` }, async (t) => {
+const browserTest = { skip: status.installed ? false : `Chromium is not installed in ${status.path}` };
+async function openPhone(t: TestContext, missing?: 'fonts' | 'renderer') {
   const browser = await launchBrowser();
   t.after(closeBrowser);
   const context = await browser.newContext({ hasTouch: true, viewport: { width: 400, height: 700 }, deviceScaleFactor: 2 });
   t.after(() => context.close());
   await context.route('http://phone.test/**', async (route) => {
     const url = new URL(route.request().url());
+    if ((missing === 'fonts' && url.pathname.startsWith('/fonts/')) || (missing === 'renderer' && url.pathname.endsWith('/android-terminal.js'))) return route.fulfill({ status: 404, body: '' });
     const file = url.pathname.startsWith('/fonts/') ? path.join(assets, '../res/font', path.basename(url.pathname)) : path.join(assets, url.pathname);
     try {
       await route.fulfill({ body: await readFile(file), contentType: TYPES[path.extname(file)] ?? 'application/octet-stream' });
@@ -37,7 +39,24 @@ test("the phone's Raw TTY follows a finger pixel for pixel with native scrolling
   page.on('pageerror', (error) => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
   await page.goto('http://phone.test/terminal/index.html');
-  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'ready'));
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'ready' || m.t === 'unavailable'));
+  return { context, page };
+}
+
+test('unavailable fonts fall back to monospace but the renderer is mandatory', browserTest, async (t) => {
+  for (const [missing, expected] of [
+    ['fonts', 'ready'],
+    ['renderer', 'unavailable'],
+  ] as const) {
+    await t.test(missing, async (t) => {
+      const { page } = await openPhone(t, missing);
+      assert.equal(await page.evaluate(() => (window as any).posted.at(-1).t), expected);
+    });
+  }
+});
+
+test("the phone's Raw TTY follows a finger pixel for pixel with native scrolling and holds a historical reader", browserTest, async (t) => {
+  const { context, page } = await openPhone(t);
   const data = `${Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\r\n')}\r\n`;
   await page.evaluate((data) => {
     const w = window as any;
