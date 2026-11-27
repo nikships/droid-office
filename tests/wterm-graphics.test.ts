@@ -309,6 +309,9 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
         [7, 1, 1],
       );
     };
+    await page.mouse.move(point.x, point.y);
+    await page.locator('.office-wterm.term-kitty-clickable').waitFor();
+    assert.equal(await page.evaluate(({ x, y }) => getComputedStyle(document.elementFromPoint(x, y)!).cursor, point), 'zoom-in');
     await page.mouse.click(point.x, point.y);
     await expanded();
     await page.mouse.move(point.x, point.y);
