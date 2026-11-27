@@ -21,6 +21,9 @@ export class VtScanner {
   private handlers = new Map<string, Handler[]>();
   private state: State = 'text';
   private sequence = '';
+  private offset = 0;
+  private sequenceStart = 0;
+  private suppressOscBefore = new Map<number, number>();
   private oversized = false;
   private stPending = false;
   /** For Kitty only: end of the allowed body, including its ESC _ G or C1 APC G prefix. */
@@ -50,6 +53,11 @@ export class VtScanner {
   registerOscHandler(id: number, fn: (data: string) => boolean) {
     return this.register(`osc${id}`, fn);
   }
+  /** Ignore this OSC if its introducer is in or before the incoming write. Other VT,
+   * and the first OSC starting after the boundary, still reach the native parser. */
+  suppressOscInWrite(id: number, length: number) {
+    this.suppressOscBefore.set(id, this.offset + length);
+  }
   registerApcHandler(fn: (data: string) => boolean) {
     return this.register('apc', fn);
   }
@@ -72,7 +80,9 @@ export class VtScanner {
       const split = body.indexOf(';');
       const code = split < 0 ? body : body.slice(0, split);
       if (!/^\d+$/.test(code)) return;
-      key += Number(code);
+      const id = Number(code);
+      if (this.sequenceStart < (this.suppressOscBefore.get(id) ?? 0)) return true;
+      key += id;
       data = split < 0 ? '' : body.slice(split + 1);
     } else if (this.state === 'csi' || this.state === 'dcs') {
       const m = header.exec(body);
@@ -96,6 +106,8 @@ export class VtScanner {
 
   /** Emit preceding text before running a hook: a cursor or mode read by that hook is current. */
   write(input: string, emit: (text: string) => void) {
+    const offset = this.offset;
+    this.offset += input.length;
     let start = 0;
     let output = '';
     const flush = () => {
@@ -110,6 +122,7 @@ export class VtScanner {
         if (ch !== ESC && !c1[ch]) continue;
         output += input.slice(start, i);
         this.state = ch === ESC ? 'esc' : c1[ch];
+        this.sequenceStart = offset + i;
         this.sequence = ch;
         start = i + 1;
         continue;
@@ -148,6 +161,8 @@ export class VtScanner {
         const replay = this.stPending;
         this.reset();
         this.state = 'esc';
+        // The ESC that replaces a string may be the last byte of the previous write.
+        this.sequenceStart = offset + i - (replay ? 1 : 0);
         this.sequence = ESC;
         if (replay) i--;
         start = i + 1;

@@ -136,8 +136,9 @@ test('inline terminals follow pane geometry without focus or stale size rollback
         w.connectionStatus?.(true);
         data(marker);
         w.snapshot(marker);
-        data(marker);
+        data(`${marker}\x1b]52;c;b2xk`);
         await w.frames();
+        data('\x07'); // Live terminator of an OSC that started in the attach backlog.
         const reattached = writes.length;
         data(marker);
         return { initial, afterDrain, live, reattached, total: writes.length, ptyInput: w.messages.filter((m: any) => m.t.endsWith('.input')) };

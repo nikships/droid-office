@@ -23,7 +23,7 @@ In a web or Mac terminal, use **Find**, Cmd+F on Apple devices, or Ctrl+Shift+F 
 
 When a shell emits OSC 133 marks, the prompt chip shows its current phase or exit status. Its arrows and Ctrl+Shift+[ / Ctrl+Shift+] move between retained prompts. Reattaching restores text, not old marks. **Settings → Terminal → Shell prompt integration** controls the default zsh hooks for newly started Boss Shell and shell workers across all floors. Alt-drag selects a rectangle; use Shift+Alt-drag when the application tracks the mouse.
 
-A live, writable owner's terminal forwards supported OSC 52 clipboard writes to the platform. The browser decides permission, including whether to ask on the first write. The office never reads the clipboard for an OSC query, retries a denied write, or applies writes while parsing a snapshot or its queued output. A guest, read-only or disconnected terminal cannot write. A local OSC 7 directory report can help resolve relative file links, but cannot add a workspace root or grant access.
+A live, writable owner's terminal forwards supported OSC 52 clipboard writes to the platform. The browser decides permission, including whether to ask on the first write. The office never reads the clipboard for an OSC query, retries a denied write, or applies writes while parsing a snapshot or its queued output. A write request that starts in replay stays ineligible even when its terminator arrives live. A guest, read-only or disconnected terminal cannot write. A local OSC 7 directory report can help resolve relative file links, but cannot add a workspace root or grant access.
 
 ## Web and Mac parity matrix
 

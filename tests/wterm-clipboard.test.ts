@@ -69,6 +69,32 @@ test('OSC 52 writes silently on a live owner mirror and never reads the clipboar
   });
   const request = (value: string, selector = 'c') => write(`\x1b]52;${selector};${Buffer.from(value).toString('base64')}\x07`);
   const writes = () => page.evaluate(() => (window as any).writes);
+  await t.test('OSC 52 eligibility starts at its introducer, not its terminator', async () => {
+    const results = await page.evaluate(() => {
+      const w = window as any;
+      const check = (replay: string, live: string) => {
+        w.term.options.disableStdin = true;
+        w.term.write(replay);
+        w.term.options.disableStdin = false;
+        w.term.write(live);
+        return w.writes.splice(0) as string[];
+      };
+      const next = '\x1b]52;c;bGl2ZQ==\x07'; // "live"
+      const checks = [];
+      for (const end of ['\x07', '\x1b\\']) {
+        const first = `\x1b]52;c;b2xk${end}`; // "old"
+        for (let at = 0; at <= first.length; at++) {
+          const prefix = first.slice(0, at);
+          const suffix = first.slice(at);
+          checks.push({ at, output: check(prefix, suffix), expected: at === 0 ? ['old'] : [] });
+          // The next live sequence in the same transport chunk is still eligible.
+          if (at) checks.push({ at, output: check(prefix, suffix + next), expected: ['live'] });
+        }
+      }
+      return checks;
+    });
+    for (const { at, output, expected } of results) assert.deepEqual(output, expected, `replay split ${at}`);
+  });
   const exact = '\uFEFFtwo lines\nwith 🎈 and \u202e';
   await request(exact);
   assert.deepEqual(await writes(), [exact]);

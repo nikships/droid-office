@@ -132,6 +132,32 @@ test('query suppression handles ST, BEL and C1; OSC assignments, ordinary SGR an
   assert.deepEqual(chunks, [`${esc}[6n`]);
 });
 
+test('OSC replay cutoff follows the introducing ESC even when it replaces a string', () => {
+  const osc = ']52;c;eA==\x07';
+  const title = `${esc}]0;caption`;
+  const color = `${esc}]4;1;red\x07`;
+  const cases = [
+    // The trailing ESC cancels a title and starts an OSC in the next chunk.
+    { replay: title + esc, live: osc, expected: `${title}\x18` },
+    // The previous string started in replay, but the replacement starts live.
+    { replay: title, live: esc + osc, expected: `${title}\x18${esc}${osc}` },
+    { replay: esc, live: esc + osc, expected: `${esc}\x18${esc}${osc}` },
+    { replay: '😀\x9d52;c;', live: 'eA==\x9c', expected: '😀' },
+    { replay: color.slice(0, -1), live: color.slice(-1), expected: color },
+  ];
+  for (const { replay, live, expected } of cases) {
+    const parser = new VtScanner();
+    let output = '';
+    const emit = (chunk: string) => {
+      output += chunk;
+    };
+    parser.suppressOscInWrite(52, replay.length);
+    parser.write(replay, emit);
+    parser.write(live + esc + osc, emit);
+    assert.equal(output, expected + esc + osc);
+  }
+});
+
 test('bounded partial strings discard to ST; cancellations and reset do not leak into following text', () => {
   const scanner = new VtScanner();
   let output = '';

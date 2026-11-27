@@ -63,7 +63,7 @@ export function attachWtermPrompts(adapter: WTermAdapter) {
       label.textContent = phase === 'running' ? 'Running' : exitCode !== null ? `Exit ${exitCode}` : phase === 'complete' ? 'Finished' : 'Prompt';
       chip.dataset.state = phase === 'running' ? 'running' : exitCode ? 'error' : 'ready';
     };
-    attachWtermClipboard(native, signal, () => !adapter.options.disableStdin && !guestTokenOn());
+    attachWtermClipboard(adapter, native, signal, () => !adapter.options.disableStdin && !guestTokenOn());
     signal.addEventListener(
       'abort',
       () => {
