@@ -294,6 +294,47 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     assert.equal(await page.evaluate(() => (window as any).sizes().length), 1, 'typing explicitly reclaims size');
   });
 
+  await t.test('dashboard sidebar breakpoints and pane splits send only the settled grid', async () => {
+    const page = await rig(false);
+    await page.setViewportSize({ width: 1120, height: 720 });
+    await page.evaluate(() => {
+      const mount = document.getElementById('mount')!;
+      const body = document.createElement('div');
+      body.className = 'dash-body';
+      body.style.cssText = 'position:fixed;inset:0';
+      const workspace = document.createElement('div');
+      workspace.className = 'dash-workspace';
+      body.append(document.createElement('aside'), workspace);
+      document.body.append(body);
+      workspace.append(mount);
+      mount.className = 'dash-pane';
+      mount.dataset.mode = 'terminal';
+      mount.style.cssText = '--x:0;--y:0;--w:0.5;--h:1;--gl:0px;--gr:0px;--gt:0px;--gb:0px';
+    });
+    const settle = () =>
+      page.evaluate(async () => {
+        const w = window as any;
+        await w.frames();
+        await Promise.all(
+          document
+            .getAnimations()
+            .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity)
+            .map((a) => a.finished),
+        );
+        await w.frames();
+        const sizes = w.sizes();
+        w.messages = [];
+        return sizes;
+      });
+    await settle();
+    for (const width of [1080, 1230]) {
+      await page.setViewportSize({ width, height: 720 });
+      assert.equal((await settle()).length, 1, 'one resize across the responsive sidebar breakpoint');
+    }
+    await page.locator('#mount').evaluate((el) => el.style.setProperty('--w', '1'));
+    assert.equal((await settle()).length, 1, 'one resize when the terminal takes the full workspace');
+  });
+
   await t.test('shared attachment stays passive, but each pane size change claims its new box', async () => {
     const page = await rig();
     assert.deepEqual(await page.evaluate(() => (window as any).sizes()), []);

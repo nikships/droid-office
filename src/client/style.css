@@ -2951,6 +2951,8 @@ body.themed { background: transparent; }
 /* The floor down the side: stable worker teams, their activity, and hiring. */
 .dash-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); transition: grid-template-columns .24s var(--ease); }
 .dash-body.side-closed { grid-template-columns: 0 minmax(0, 1fr); }
+/* Changing the sidebar or split must not send the PTY a series of animated grids. */
+.dash-body:has(.dash-pane[data-mode=terminal]:not([hidden], .covered)) { transition: none; }
 .dash-body.side-closed .dash-side { visibility: hidden; }
 /* All workers is a directory, not another terminal layout. The hidden workspace keeps its panes. */
 .dash-building { flex: 1; min-height: 0; overflow: auto; border-top: 1px solid var(--border); outline: none; }
@@ -3203,6 +3205,7 @@ body.themed { background: transparent; }
 .dash-workspace.resizing { user-select: none; }
 .dash-pane { position: absolute; left: calc(var(--x) * 100% + var(--gl)); top: calc(var(--y) * 100% + var(--gt)); width: calc(var(--w) * 100% - var(--gl) - var(--gr)); height: calc(var(--h) * 100% - var(--gt) - var(--gb)); container: pane / inline-size; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); transition: left .32s var(--spring), top .32s var(--spring), width .32s var(--spring), height .32s var(--spring), opacity .2s var(--ease), border-color .2s var(--ease); animation: fade .24s var(--ease) both; }
 .dash-workspace.resizing .dash-pane { transition: border-color .2s var(--ease); }
+.dash-pane[data-mode=terminal] { transition: opacity .2s var(--ease), border-color .2s var(--ease); }
 .dash-pane.maximized { z-index: 5; }
 .dash-pane.covered { opacity: 0; pointer-events: none; }
 .dash-pane-head { position: relative; flex: none; display: flex; align-items: center; gap: var(--space-2); height: 44px; padding: 0 var(--space-1) 0 var(--space-3); border-bottom: 1px solid rgba(255, 255, 255, .055); }
