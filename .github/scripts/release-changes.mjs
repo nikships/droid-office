@@ -20,7 +20,7 @@ export function checksFor(files, { manual = false, androidVersionChanged = false
         /^(?:src\/|bin\/|skills\/|tests\/|native\/|\.husky\/|android\/app\/src\/main\/assets\/|android\/app\/src\/test\/resources\/(?:thread-presentation|floor-relevance)-golden\.json$|tools\/(?:props|frame-bench)\/|tools\/(?:android-terminal|android-model-icons|thread-fixture)\.mjs$|README\.md$|docs\/guide\/|biome\.jsonc$|\.oxlintrc\.json$|\.env\.example$|\.gitignore$|\.agents\/skills\/(?:office-clone|office-3d-testing|office-thermals|performance-proof|verify-droid-office)\/|\.agents\/skills\/office-video-capture\/references\/example-launch\/example-composition\.html$)/,
       ),
     website: all || touches(packages) || touches(/^(?:website\/|firebase\.json$|\.firebaserc$|biome\.jsonc$|\.oxlintrc\.json$)/),
-    // The client is shipped inside the Mac app, even though Linux can build its static files.
+    // Client changes also rebuild the Mac app that ships them.
     mac: all || touches(packages) || touches(config) || touches(/^(?:src\/|bin\/|skills\/|build\/|native\/|electron-builder\.yml$)/),
     // Root npm dependency/script edits don't rebuild Android; its terminal dependencies are vendored.
     android: all || androidVersionChanged || touches(/^(?:android\/(?!docs\/|.*\.md$)|tools\/android-model-icons\.mjs$)/),
