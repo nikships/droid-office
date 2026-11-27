@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import { buildSync } from 'esbuild';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 import { FIXTURE } from '../tools/thread-fixture.mjs';
@@ -11,12 +11,12 @@ import { snapshotScreen } from '../src/server/screen-frame.js';
 
 const status = browserStatus();
 
-test('compact preview clips one-column ink at the baseline and decorates whole cell boxes', { skip: !status.installed }, async (t) => {
+async function previewFixture(t: TestContext, data: string) {
   const term = new headless.Terminal({ cols: 40, rows: 10, allowProposedApi: true });
   t.after(() => term.dispose());
   term.loadAddon(new unicode11.Unicode11Addon());
   term.unicode.activeVersion = '11';
-  await new Promise<void>((done) => term.write('Screen\r\n\r\n\r\nA🖥️Z\r\nA Z\r\n\x1b[38;2;0;255;0;4m   \r\n👩‍💻\x1b[0m\r\n\x1b[38;2;0;255;0;9;53m   \x1b[0m\r\nxx\x1b[3;4mf\x1b[0mZ', done));
+  await new Promise<void>((done) => term.write(data, done));
   const frame = snapshotScreen(term, [])!;
   const browser = await launchBrowser();
   t.after(closeBrowser);
@@ -61,6 +61,11 @@ test('compact preview clips one-column ink at the baseline and decorates whole c
       return Array.from(ctx.getImageData(0, 0, 100, img.height).data);
     }, png.toString('base64'));
   }
+  return { rows, pixels };
+}
+
+test('compact preview clips one-column ink at the baseline and decorates whole cell boxes', { skip: !status.installed }, async (t) => {
+  const { rows, pixels } = await previewFixture(t, 'Screen\r\n\r\n\r\nA🖥️Z\r\nA Z\r\n\x1b[38;2;0;255;0;4m   \r\n👩‍💻\x1b[0m\r\n\x1b[38;2;0;255;0;9;53m   \x1b[0m\r\nxx\x1b[3;4mf\x1b[0mZ');
   const box = await rows.nth(3).evaluate((el) => {
     const bounds = el.getBoundingClientRect(),
       cell = el.querySelector('span')!.getBoundingClientRect();
@@ -122,6 +127,37 @@ test('compact preview clips one-column ink at the baseline and decorates whole c
   t.diagnostic(`Geist Mono italic f retains ${beyond} right-edge pixels lost by the clipped control`);
   assert.ok(beyond > 0, 'clipping removes right-edge ink from the italic f control');
   assert.deepEqual(actual, natural, 'the decorated ASCII f keeps its natural ink before Z');
+});
+
+test('preview shapes Arabic and Hebrew as unsplit words before the next cell', { skip: !status.installed }, async (t) => {
+  const words = ['سلام', 'שלום'];
+  const { rows, pixels } = await previewFixture(t, words.map((w) => `${w}Z`).join('\r\n'));
+  for (const [i, word] of words.entries()) {
+    const row = rows.nth(i);
+    const actual = await pixels(i);
+    assert.deepEqual(await row.locator('span').allTextContents(), [word]);
+    assert.equal(await row.locator('span').evaluate((el) => el.style.width), '4ch');
+    // Reference: one natural text node in a four-cell box, then the ASCII suffix.
+    await row.evaluate((el, word) => {
+      const ref = document.createElement('span');
+      ref.style.cssText = 'display:inline-block;width:4ch;clip-path:inset(0)';
+      ref.textContent = word;
+      el.replaceChildren(ref, 'Z');
+    }, word);
+    assert.deepEqual(actual, await pixels(i), `visual order and shaping for ${word}`);
+  }
+});
+
+test('one background color covers equal-height ASCII and wide cells in Chromium', { skip: !status.installed }, async (t) => {
+  const { rows, pixels } = await previewFixture(t, '\r\n\r\n\r\n\x1b[38;2;0;255;0;48;2;0;255;0mA界Z');
+  const x = await rows.nth(3).evaluate((el) => [...el.children].map((span) => Math.floor(span.getBoundingClientRect().left - el.getBoundingClientRect().left + span.getBoundingClientRect().width / 2)));
+  const p = await pixels(3);
+  const bands = x.map((col) => Array.from({ length: p.length / 400 }, (_, y) => y).filter((y) => p[y * 400 + col * 4 + 1] > 150));
+  t.diagnostic(`Background pixel rows for A界Z: ${JSON.stringify(bands.map((b) => [b[0], b.at(-1)]))}`);
+  assert.equal(bands.length, 3);
+  assert.ok(bands[0].length > 0);
+  assert.deepEqual(bands[1], bands[0]);
+  assert.deepEqual(bands[2], bands[0]);
 });
 
 test('empty pane clicks hire in place without swallowing worker picks or allowing offline hires', { skip: status.installed ? false : `Chromium is not installed in ${status.path}` }, async (t) => {

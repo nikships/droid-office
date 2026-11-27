@@ -59,6 +59,8 @@ interface RawCell {
 const EMPTY_SPANS: readonly RowSpan[] = [];
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+// These scripts need their neighbours for joining or bidirectional ordering.
+const contextualScript = /[\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Mandaic}\p{Script=Adlam}\p{Script=Mongolian}]/u;
 
 function cellFlags(cell: BufferCell) {
   if (cell.isAttributeDefault()) return 0;
@@ -101,9 +103,22 @@ class RowRuns {
     if (!this.widths) this.runs.push([this.text, this.fg, this.bg, this.flags]);
     else {
       let batch: Run | undefined;
+      let word: Run | undefined;
       for (const { segment, index } of graphemes.segment(this.text)) {
         let cols = 0;
         for (let i = index; i < index + segment.length; i++) cols += this.widths[i] ?? 0;
+        if (contextualScript.test(segment)) {
+          if (word) {
+            word[0] += segment;
+            word[4] = word[4]! + cols;
+          } else {
+            word = [segment, this.fg, this.bg, this.flags, cols];
+            this.runs.push(word);
+          }
+          batch = undefined;
+          continue;
+        }
+        word = undefined;
         // Keep whitespace separate for trailing trim and Kitty background clipping.
         const simple = this.widths[index] === cols && cols > 0 && /^\S$/u.test(segment);
         if (simple && batch && (batch[5] ?? batch[4]) === cols) {
@@ -191,9 +206,9 @@ function extractKittyRow(line: BufferLine, cols: number, cell: BufferCell): { ru
     let imgStart = Infinity;
     for (let i = 0; i < spans.length; i++) imgStart = Math.min(imgStart, spans[i].x);
     let lastVisibleCol = 0;
-    const visible = (c: RawCell) => paintsBlankCell(c.bg, c.flags) || (!(c.flags & FLAG_INVISIBLE) && !!c.ch.trim());
+    const hasInk = (c: RawCell) => !(c.flags & FLAG_INVISIBLE) && !!c.ch.trim();
     for (const c of cells) {
-      if (visible(c)) lastVisibleCol = c.x + c.width;
+      if (hasInk(c)) lastVisibleCol = c.x + c.width;
     }
     const blankFrom = Math.max(imgStart, lastVisibleCol);
     for (let i = 0; i < cells.length; i++) {
@@ -201,12 +216,12 @@ function extractKittyRow(line: BufferLine, cols: number, cell: BufferCell): { ru
       if (phBg === undefined) continue;
       for (let j = i - 1; j >= 0; j--) {
         const left = cells[j];
-        if (visible(left) || left.bg !== phBg) break;
+        if (hasInk(left) || paintsBlankCell(left.bg, left.flags) || left.bg !== phBg) break;
         left.bg = -1;
       }
     }
     for (const c of cells) {
-      if (c.x >= blankFrom) c.bg = -1;
+      if (c.x >= blankFrom && !paintsBlankCell(c.bg, c.flags)) c.bg = -1;
     }
   }
 
@@ -242,13 +257,13 @@ const deliveredImages = new WeakMap<string[], Map<number, string>>();
 
 /**
  * The rows of `term` that changed since `last`, for a laptop or monitor. `last` is updated in place:
- * one key per row, one for `above`, and one for image placements. An empty `last` gets a full frame.
+ * one key per row, then `above`, image placements and terminal width. An empty `last` gets a full frame.
  */
 export function snapshotScreen(term: HeadlessTerminal, last: string[]): ScreenFrame | null {
   const buf = term.buffer.active;
   const cols = term.cols;
   const rows = term.rows;
-  const full = last.length !== rows + 3 || !last[rows + 2]?.startsWith(`${cols}:`);
+  const full = last.length !== rows + 3 || last[rows + 2] !== String(cols);
   const lines: Record<number, Run[]> = {};
   let changed = false;
   const cell = buf.getNullCell();
@@ -359,9 +374,7 @@ export function snapshotScreen(term: HeadlessTerminal, last: string[]): ScreenFr
   const prevPlacementsKey = full ? '' : (last[rows + 1] ?? '');
   const placementsChanged = placementsKey !== prevPlacementsKey;
   last[rows + 1] = placementsKey;
-  const cursorKey = `${cols}:${buf.cursorX}:${buf.cursorY}`;
-  const cursorChanged = last[rows + 2] !== cursorKey;
-  last[rows + 2] = cursorKey;
+  last[rows + 2] = String(cols);
   last.length = rows + 3;
 
   let sent = deliveredImages.get(last);
@@ -391,7 +404,7 @@ export function snapshotScreen(term: HeadlessTerminal, last: string[]): ScreenFr
     }
   }
 
-  if (!changed && !aboveChanged && !placementsChanged && !imagesChanged && !cursorChanged) return null;
+  if (!changed && !aboveChanged && !placementsChanged && !imagesChanged) return null;
   return {
     cols,
     rows,

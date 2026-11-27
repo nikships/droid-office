@@ -622,10 +622,7 @@ export class Store {
               .catch(() => undefined);
           }
         }
-        if (s.cursor[0] !== msg.cursor[0] || s.cursor[1] !== msg.cursor[1]) {
-          s.cursor = msg.cursor;
-          changed = true;
-        }
+        s.cursor = msg.cursor; // Recorded on each delivered frame, but not painted by compact views.
         if (changed) {
           s.version++;
           this.emit('screens', msg.workerId);

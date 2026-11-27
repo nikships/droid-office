@@ -274,7 +274,7 @@ export interface CarriedIssue {
 }
 
 /** `columns` is the total terminal advance. Without `stride`, draw the text together
- * (one grapheme when columns is present). A stride explicitly marks a sequence of
+ * to preserve graphemes and contextual shaping. A stride explicitly marks a sequence of
  * single-code-point graphemes: draw each at the next stride, without re-segmenting. */
 export type Run = [text: string, fg: number, bg: number, flags: number, columns?: number, stride?: number];
 /** Color encoding: -1 default, 0..255 palette, >= 0x1000000 means 0x1000000 | rgb. */

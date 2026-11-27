@@ -40,9 +40,9 @@ test('Kitty keeps backgrounds on concealed and decorated spaces after a placehol
   const { term, write } = terminal(20, 3);
   t.after(() => term.dispose());
   const ph = `\x1b[38;2;0;0;9m${KITTY_PLACEHOLDER_CHAR}${String.fromCodePoint(KITTY_DIACRITICS[0]).repeat(2)}`;
-  await write(`${ph}\x1b[0;8;41m \x1b[0;4;42m `);
+  await write(`${ph}\x1b[0;100m   \x1b[0;8;41m \x1b[0;4;42m `);
   assert.deepEqual(snapshotScreen(term, [])!.lines[0], [
-    [' ', -1, -1, 0],
+    ['    ', -1, -1, 0],
     [' ', -1, 1, FLAG_INVISIBLE],
     [' ', -1, 2, FLAG_UNDERLINE],
   ]);
@@ -84,7 +84,21 @@ for (const [label, cluster, cols] of [
   });
 }
 
-test('compact frames retain terminal widths, SGR and cursor-only changes without leaking concealed text', async () => {
+test('joined and RTL words carry their total advance without a fixed stride', async (t) => {
+  const { term, write } = terminal(40, 2);
+  t.after(() => term.dispose());
+  await write('سلامZ\r\nשלוםZ');
+  const frame = snapshotScreen(term, [])!;
+  for (const [i, word] of ['سلام', 'שלום'].entries()) {
+    assert.deepEqual(frame.lines[i], [
+      [word, -1, -1, 0, 4],
+      ['Z', -1, -1, 0],
+    ]);
+    assert.equal(term.buffer.active.getLine(i)?.getCell(4)?.getChars(), 'Z');
+  }
+});
+
+test('compact frames retain terminal widths and SGR without leaking concealed text', async () => {
   const { term, write } = terminal(40, 4);
   term.loadAddon(new unicode11.Unicode11Addon());
   term.unicode.activeVersion = '11';
@@ -103,10 +117,7 @@ test('compact frames retain terminal widths, SGR and cursor-only changes without
     assert.deepEqual(f.lines[2], [['        ', -1, 1, FLAG_INVISIBLE]]);
     assert.deepEqual(f.cursor, [8, 2]);
     await write('\x1b[H');
-    const diff = snapshotScreen(term, last)!;
-    assert.deepEqual(diff.lines, {});
-    assert.deepEqual(diff.cursor, [0, 0]);
-    assert.equal(snapshotScreen(term, last), null);
+    assert.equal(snapshotScreen(term, last), null, 'a cursor-only move does not send a visual update');
     term.resize(44, 4);
     assert.equal(snapshotScreen(term, last)?.full, true, 'a column-only resize resets the frame');
   } finally {
@@ -306,7 +317,13 @@ test('client store skips redundant screen repaints when incoming frames match ex
     assert.equal(emits, 1);
     assert.equal(store.screens.get(wid)?.version, 1);
 
-    // Changing text or cursor bumps version once and notifies listeners.
+    // A recovery keyframe may carry a new cursor on an otherwise identical screen.
+    store.apply({ t: 'screen', workerId: wid, cols: 80, rows: 4, full: true, lines: { 0: [['prompt > ', -1, -1, 0]] }, cursor: [0, 0] });
+    assert.deepEqual(store.screens.get(wid)?.cursor, [0, 0]);
+    assert.equal(store.screens.get(wid)?.version, 1);
+    assert.equal(emits, 1);
+
+    // Changing the visible text bumps version once and notifies listeners.
     store.apply({
       t: 'screen',
       workerId: wid,

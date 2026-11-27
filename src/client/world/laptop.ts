@@ -176,10 +176,9 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
       for (let i = 0; i < rowPlacements.length; i++) imgStart = Math.min(imgStart, Math.max(0, rowPlacements[i].x));
       let lastVisibleCol = 0;
       let col = 0;
-      for (const [text, , bg, flags, cols] of runs) {
+      for (const [text, , , flags, cols] of runs) {
         const end = col + (cols ?? codePointCount(text));
-        if (paintsBlankCell(bg, flags)) lastVisibleCol = end;
-        else {
+        if (!(flags & FLAG_INVISIBLE)) {
           const ink = text.trimEnd();
           if (ink) lastVisibleCol = cols === undefined ? col + codePointCount(ink) : end;
         }
@@ -205,7 +204,7 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
           ctx.fillRect(px, py, len * charW + 0.5, lineH + 0.5);
         } else if (paintsBlankCell(bgc, flags) || text.trim() || !rowPlacements.some((p) => x < p.x + p.cols && x + len > p.x)) {
           let spanStart = -1;
-          const end = Math.min(x + len, blankFrom);
+          const end = paintsBlankCell(bgc, flags) ? x + len : Math.min(x + len, blankFrom);
           for (let c = x; c <= end; c++) {
             const keep = c < end && !rowPlacements.some((p) => c >= p.x && c < p.x + p.cols);
             if (keep && spanStart < 0) spanStart = c;
@@ -236,7 +235,7 @@ export function paintScreen(ctx: CanvasRenderingContext2D, w: number, h: number,
         } else if (cols === undefined) ctx.fillText(text, px, ty);
         else ctx.fillText(text, px, ty, len * charW);
         const stroke = Math.max(1, fontSize / 16);
-        if (flags & FLAG_UNDERLINE) ctx.fillRect(px, ty + fontSize, len * charW, stroke);
+        if (flags & FLAG_UNDERLINE) ctx.fillRect(px, Math.min(ty + fontSize, py + lineH - stroke), len * charW, stroke);
         if (flags & FLAG_STRIKE) ctx.fillRect(px, ty + fontSize * 0.55, len * charW, stroke);
         if (flags & FLAG_OVERLINE) ctx.fillRect(px, ty, len * charW, stroke);
         if (dim) ctx.globalAlpha = 1;

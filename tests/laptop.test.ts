@@ -724,13 +724,45 @@ test('backgrounds after a Kitty placement survive conceal and decoration', () =>
     const s = screen(10, 1, 0);
     s.lines[0] = [
       [' ', -1, -1, 0],
+      ['   ', -1, 0x1262626, 0],
       ['  ', -1, 1, flag],
     ];
     s.placements = [{ id: 1, x: 0, y: 0, cols: 1, rows: 1, srcCol: 0, srcRow: 0, totalCols: 1, totalRows: 1 }];
     paintScreen(ctx, 100, 100, s);
     const red = rectStyles.filter((r) => r.style === '#ff5c7a');
+    assert.ok(!rectStyles.some((r) => r.style === 'rgb(38,38,38)'), 'unmarked padding after the image stays black');
     assert.equal(red.length, 1);
     const cell = (100 - 2) / 10;
-    assert.deepEqual([red[0].args[0], red[0].args[2]], [1 + cell, 2 * cell + 0.5]);
+    assert.deepEqual([red[0].args[0], red[0].args[2]], [1 + 4 * cell, 2 * cell + 0.5]);
+  }
+});
+
+test('a one-pixel underline stays in its five-pixel row', () => {
+  const { ctx, rectStyles } = canvasSpy();
+  const s = screen(100, 2, 0);
+  s.lines[0] = [[' ', -1, -1, FLAG_UNDERLINE]];
+  paintScreen(ctx, 100, 100, s);
+  const { args } = rectStyles[1];
+  assert.equal(args[3], 1);
+  assert.equal(Number(args[1]) + 1, 6, '1px pad + 5px line height');
+});
+
+test('contextual words use one canvas draw and reserve four cells before ASCII', () => {
+  for (const word of ['سلام', 'שלום']) {
+    const { ctx, ops } = canvasSpy();
+    const s = screen(10, 1, 0);
+    s.lines[0] = [
+      [word, -1, -1, 0, 4],
+      ['Z', -1, -1, 0],
+    ];
+    paintScreen(ctx, 100, 100, s);
+    const ink = ops.filter((op) => op.kind === 'fillText').map((op) => op.args);
+    assert.deepEqual(
+      ink.map((a) => a[0]),
+      [word, 'Z'],
+    );
+    const advance = 4 * (98 / 10);
+    assert.equal(ink[0][3], advance);
+    assert.equal(ink[1][1], 1 + advance);
   }
 });
