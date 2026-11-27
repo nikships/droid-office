@@ -152,6 +152,7 @@ export class WTermAdapter {
     };
   }
   private rowHeight = 1;
+  private fontAdvance = 0;
   private metricsContext?: CanvasRenderingContext2D | null;
   private typography() {
     const el = this.root;
@@ -165,6 +166,7 @@ export class WTermAdapter {
     if (this.metricsContext) {
       this.metricsContext.font = font;
       const metrics = this.metricsContext.measureText('W');
+      this.fontAdvance = metrics.width;
       fontHeight = metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent;
     }
     if (!(fontHeight > 0)) {
@@ -294,7 +296,10 @@ export class WTermAdapter {
     const el = this.root;
     if (!el?.clientWidth || !el.clientHeight) return;
     const style = getComputedStyle(el);
-    const width = parseFloat(style.getPropertyValue('--term-cell-width'));
+    // The previous DOM renderer sized its screen to a whole CSS pixel, then
+    // divided by the current column count. A rounded single span can lose a
+    // column at the boundary, especially after changing the font or shared grid.
+    const width = this.fontAdvance > 0 ? Math.round(this.fontAdvance * this.cols) / this.cols : parseFloat(style.getPropertyValue('--term-cell-width'));
     if (!(width > 0)) return;
     return {
       cols: Math.floor((el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) / width),

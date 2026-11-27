@@ -99,7 +99,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
         { openTerminalRenderer } = await import(renderer);
       const pane = document.createElement('section');
       pane.className = 'dash-pane';
-      pane.style.cssText = 'width:566px;height:769px;border:0';
+      pane.style.cssText = 'width:566px;height:769px;border:0;transition:none';
       const modal = document.createElement('div');
       modal.className = 'modal term inline';
       const host = document.createElement('div');
@@ -117,7 +117,31 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
         const premature = !!term.native;
         scale.finish();
         await open;
-        return { premature, box: [host.clientWidth, host.clientHeight], pitch: parseFloat(term.native.element.style.getPropertyValue('--term-cell-width')), fit: term.proposeDimensions() };
+        const { x } = window as any;
+        const comparisons = [];
+        try {
+          for (const [px, size, cols] of [
+            [566, 14, 80],
+            [566, 16, 64],
+            [566, 14, 64],
+            [720, 14, 64],
+            [566, 14, 80],
+            [566, 14, 67],
+          ]) {
+            pane.style.width = `${px}px`;
+            for (const t of [x, term]) {
+              t.resize(cols, 39);
+              t.options.fontSize = size;
+            }
+            const screen = x.element.querySelector('.xterm-screen').getBoundingClientRect();
+            const expected = { cols: Math.floor((host.clientWidth - 28) / (screen.width / x.cols)), rows: Math.floor((host.clientHeight - 12) / (screen.height / x.rows)) };
+            comparisons.push({ px, size, cols, fit: term.proposeDimensions(), expected });
+          }
+        } finally {
+          x.resize(40, 8);
+          x.options.fontSize = 14;
+        }
+        return { premature, box: [host.clientWidth, host.clientHeight], pitch: parseFloat(term.native.element.style.getPropertyValue('--term-cell-width')), comparisons };
       } finally {
         scale.cancel();
         term.dispose();
@@ -128,7 +152,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     assert.deepEqual(sample.box, [566, 769]);
     assert.equal(sample.premature, false);
     assert.ok(Math.abs(sample.pitch - 8.4) < 0.02);
-    assert.deepEqual(sample.fit, { cols: 64, rows: 39 });
+    for (const c of sample.comparisons) assert.deepEqual(c.fit, c.expected, JSON.stringify(c));
   });
   await t.test('painted row pitch and usable rows match the previous renderer across fonts, sizes and line spacing', async () => {
     const samples = await page.evaluate(async () => {
@@ -147,7 +171,14 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
             await frame();
             const old = x.element.querySelector('.xterm-rows > div').getBoundingClientRect().height;
             const pitch = el.querySelector('.term-row').getBoundingClientRect().height;
-            samples.push({ fontFamily, fontSize, lineHeight, old, pitch, rows: a.proposeDimensions().rows, expectedRows: Math.floor(el.clientHeight / old) });
+            const xWidth = x.element.querySelector('.xterm-screen').getBoundingClientRect().width / x.cols;
+            const originalWidth = el.parentElement.style.width;
+            for (const width of [566, Math.ceil(xWidth * 80), Math.ceil(xWidth * 150)]) {
+              el.parentElement.style.width = `${width}px`;
+              const fit = a.proposeDimensions();
+              samples.push({ fontFamily, fontSize, lineHeight, old, pitch, cols: fit.cols, expectedCols: Math.floor(el.clientWidth / xWidth), rows: fit.rows, expectedRows: Math.floor(el.clientHeight / old) });
+            }
+            el.parentElement.style.width = originalWidth;
           }
         }
       } finally {
@@ -160,6 +191,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     for (const sample of samples) {
       assert.equal(sample.pitch, sample.old, JSON.stringify(sample));
       assert.equal(sample.rows, sample.expectedRows, JSON.stringify(sample));
+      assert.equal(sample.cols, sample.expectedCols, JSON.stringify(sample));
     }
   });
   await t.test('holds retained content through cap, resize and new output; typing and paste follow again', async () => {
