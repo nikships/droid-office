@@ -142,6 +142,7 @@ export class WTermAdapter {
   }
   /** An explicit navigation supersedes both a metric restore and an older saved reader. */
   cancelReaderRestore(revealed = true) {
+    this.root?.classList.remove('pinning-tail');
     if (revealed) this.holdReaderAfterPaint = false;
     this.readerRevision++;
     this.pendingRestore = undefined;
@@ -425,16 +426,6 @@ export class WTermAdapter {
       let cell: DOMRectReadOnly | undefined;
       let lastGeometry: string | undefined;
       this.lastClientHeight = root.clientHeight;
-      // CSS transition events run before animation-frame clients read the first
-      // changed box. ResizeObserver alone pins that first shrink one phase late.
-      root.ownerDocument.addEventListener(
-        'transitionstart',
-        (e) => {
-          if (e.target instanceof Element && e.target.contains(root)) this.keepTailOnShrink();
-        },
-        { capture: true, signal },
-      );
-      window.addEventListener('resize', () => this.keepTailOnShrink(), { signal });
       const observer = new ResizeObserver((entries) => {
         this.keepTailOnShrink();
         for (const entry of entries) {
@@ -632,9 +623,16 @@ export class WTermAdapter {
     this.paused = paused;
     this.syncRendering();
   }
+  /** Let layout keep the bottom edge attached while the scrollport shrinks.
+   * A JS scroll correction in ResizeObserver is too late for the first rAF. */
+  pinTailForFit() {
+    const el = this.root;
+    if (el && this.readerRow === undefined && this.isAtTail(el.scrollHeight - this.lastClientHeight)) el.classList.add('pinning-tail');
+  }
   /** Keep the last drawn rows while a changing box has no settled PTY size.
    * Live data still parses, and the final grid and its accumulated output paint together. */
   setFitPending(fitting: boolean) {
+    if (!fitting) this.root?.classList.remove('pinning-tail');
     if (this.fitting === fitting) return;
     this.fitting = fitting;
     this.syncRendering();

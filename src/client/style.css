@@ -845,6 +845,9 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .changes-log .office-wterm { --office-fit-bottom: 0px; }
 :is(.modal.term, .changes-log) .office-wterm { --office-tail-allowance: 1px; padding-bottom: calc(var(--office-fit-bottom) + var(--office-tail-allowance)); }
 :is(.modal.term, .changes-log) .office-wterm > .term-grid { margin-bottom: calc(-1 * var(--office-tail-allowance)); }
+/* Only a tail follower gets a snap target during layout motion, never a history reader. */
+.office-wterm.pinning-tail { scroll-snap-type: y proximity; }
+.office-wterm.pinning-tail::after { content: ''; display: block; height: 0; scroll-snap-align: end; scroll-margin-bottom: calc(var(--office-fit-bottom) + var(--office-tail-allowance)); }
 .office-wterm > textarea { min-height: 0; }
 /* The invisible input retains its last focused cursor position. After a history
    clear it must not extend the scrollport past the grid. The visible IME preedit

@@ -62,10 +62,11 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     }
     request();
   });
-  term.onOpen((_native, signal) => {
+  term.onOpen((native, signal) => {
     window.addEventListener(
       'resize',
       () => {
+        term.pinTailForFit();
         settling = true;
         settle();
       },
@@ -82,6 +83,16 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
       }
     });
     if (workspace) observer.observe(workspace, { attributes: true, attributeFilter: ['class'] });
+    // Arm the bottom snap target before the first interpolated layout. Waiting
+    // for ResizeObserver or even transitionstart misses the first shrinking box.
+    const geometry = new MutationObserver(() => {
+      if (document.hidden || !movingBox()) return;
+      settling = true;
+      term.pinTailForFit();
+      settle();
+    });
+    for (let el = native.element.parentElement; el; el = el.parentElement) geometry.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
+    for (const type of ['wheel', 'pointerdown', 'touchstart']) native.element.addEventListener(type, () => native.element.classList.remove('pinning-tail'), { capture: true, passive: true, signal });
     const release = () => {
       cancel();
       settling = dragging = false;
@@ -102,6 +113,7 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
       'abort',
       () => {
         observer.disconnect();
+        geometry.disconnect();
         release();
       },
       { once: true },
