@@ -195,6 +195,35 @@ test('wterm links and find against the xterm pane', { skip: !browserStatus().ins
       }
     local = true;
   });
+  await t.test('an explicit OSC file lookup error is visible, while hover and missing bare paths stay quiet', async () => {
+    const failed = '**/api/term/paths?**';
+    const failure = async (r: import('playwright-core').Route) => r.fulfill({ status: 503, body: 'unavailable' });
+    await page.route(failed, failure);
+    try {
+      const notices = [];
+      for (const id of ['x', 'w']) {
+        await write('missing-file.ts:4\r\n\x1b]8;;file:///checkout/missing-file.ts\x07source\x1b]8;;\x07');
+        await page.locator('#toasts').evaluate((e) => e.replaceChildren());
+        await click(id, 2, 0);
+        await frame();
+        const bare = await page.locator('#toasts').innerText();
+        const p = await position(id, 2, 1);
+        await page.keyboard.down('Control');
+        await page.mouse.move(p.x, p.y);
+        await frame();
+        const hover = await page.locator('#toasts').innerText();
+        await page.mouse.click(p.x, p.y);
+        await page.keyboard.up('Control');
+        await frame();
+        notices.push([bare, hover, await page.locator('#toasts').innerText()]);
+      }
+      t.diagnostic(JSON.stringify(notices));
+      assert.deepEqual(notices[0], ['', '', 'Could not resolve terminal paths.']);
+      assert.deepEqual(notices[1], notices[0]);
+    } finally {
+      await page.unroute(failed, failure);
+    }
+  });
   await t.test('ranges agree at the first, last and adjacent cells around each link', async () => {
     await write('漢e\u0301 https://e.dev.\r\n\x1b]8;;https://e.dev/link\x07word\x1b]8;;\x07!\r\n src/server.ts:120!');
     const edges = async (id: string) => {

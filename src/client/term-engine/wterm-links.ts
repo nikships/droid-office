@@ -1,4 +1,5 @@
 import type { GhosttyCore } from '@wterm/ghostty';
+import { toast } from '../ui/dom';
 import type { TerminalPaths } from '../ui/terminal-path-links';
 import type { TerminalFind } from './types';
 import type { WTermAdapter } from './wterm';
@@ -20,7 +21,7 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
     return { x: 1 + Math.floor((e.clientX - rect.left) / parseFloat(style.getPropertyValue('--term-cell-width'))), y: 1 + Math.floor((e.clientY - rect.top) / parseFloat(style.getPropertyValue('--term-row-height'))) };
   };
   // HTTP(S) activation stays synchronous for the browser's popup/user gesture policy.
-  function resolve(target: Target, ready: (action?: Action) => void) {
+  function resolve(target: Target, ready: (action?: Action) => void, activate = false) {
     const { kind, text } = target;
     if (kind === 'web' || (kind === 'osc8' && /^https?:\/\//i.test(text)))
       return ready(() => {
@@ -28,7 +29,7 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
       });
     void paths.resolveTarget(text, kind === 'osc8').then(
       (open) => ready(open),
-      () => ready(),
+      (error: unknown) => ready(activate && kind === 'osc8' ? () => toast(error instanceof Error ? error.message : 'Could not open file.', 'error') : undefined),
     );
   }
   let pointer: XY | undefined,
@@ -139,15 +140,19 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
       const sub = adapter.onWriteParsed(() => {
         if (!valid()) cancelled = true;
       });
-      resolve(current, (action) => {
-        sub.dispose();
-        if (signal.aborted) return; // adapter already disposed the entire core
-        try {
-          if (!cancelled && valid()) action?.(e);
-        } finally {
-          tracked.dispose();
-        }
-      });
+      resolve(
+        current,
+        (action) => {
+          sub.dispose();
+          if (signal.aborted) return; // adapter already disposed the entire core
+          try {
+            if (!cancelled && valid()) action?.(e);
+          } finally {
+            tracked.dispose();
+          }
+        },
+        true,
+      );
     },
     options,
   );
