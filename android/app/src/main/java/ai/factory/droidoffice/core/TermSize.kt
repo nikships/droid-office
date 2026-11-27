@@ -17,7 +17,9 @@ class PhoneSizing(original: TermSize? = null, sentSizes: List<TermSize> = emptyL
     /** The office has applied a size this phone sent, so the PTY at another one means another window. */
     private var confirmed = false
 
-    fun request(current: TermSize, target: TermSize): TermSize? {
+    fun request(current: TermSize, target: TermSize, finding: Boolean = false): TermSize? {
+        // Find is local to this reader. Opening its bar and IME must not reflow the shared PTY.
+        if (finding) return null
         if (original == null) original = current
         if (target == requested) return null
         if (target == current && (lastSent == null || lastSent == target)) {

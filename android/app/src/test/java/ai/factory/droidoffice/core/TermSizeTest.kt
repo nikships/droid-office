@@ -35,6 +35,18 @@ class TermSizeTest {
     }
 
     @Test
+    fun findIsLocalWhileTheComposerKeyboardStillResizesThePty() {
+        val sizing = PhoneSizing()
+        sizing.request(desktop, phone)
+        sizing.sent(phone)
+        val reduced = TermSize(47, 17)
+        assertNull(sizing.request(phone, reduced, finding = true))
+        assertEquals(listOf(phone), sizing.sentSizes)
+        assertNull(sizing.request(phone, phone))
+        assertEquals(keyboard, sizing.request(phone, keyboard))
+    }
+
+    @Test
     fun failedSendsAndReconnectsCanRetry() {
         val sizing = PhoneSizing()
         assertEquals(phone, sizing.request(desktop, phone))

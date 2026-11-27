@@ -429,7 +429,7 @@ fun WorkerScreen(
         var kittyFlags by remember(workerId, tty) { mutableIntStateOf(0) }
         val currentSize = TermSize(worker.cols, worker.rows)
         val canResize = live && link.phase == Phase.Connected && screen != null
-        LaunchedEffect(phone, phoneSize, canResize, currentSize, tty) {
+        LaunchedEffect(phone, phoneSize, canResize, currentSize, tty, terminalNav.finding) {
             if (!canResize) {
                 sizing.disconnected()
                 return@LaunchedEffect
@@ -446,7 +446,7 @@ fun WorkerScreen(
                 val target = phoneSize ?: return@LaunchedEffect
                 // Wait for keyboard and panel animations to settle before resizing the shared PTY.
                 delay(150)
-                sizing.request(currentSize, target)?.let { size ->
+                sizing.request(currentSize, target, finding = terminalNav.finding)?.let { size ->
                     if (connection.send(ClientMsg.termResize(workerId, size.cols, size.rows))) sizing.sent(size)
                 }
             } else {
