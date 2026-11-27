@@ -7,7 +7,6 @@ import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermPage
 import ai.factory.droidoffice.core.TermPalette
-import ai.factory.droidoffice.core.TermSize
 import ai.factory.droidoffice.core.TermView
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.Spinner
@@ -79,7 +78,7 @@ internal fun Terminal(
     live: Boolean,
     modifier: Modifier = Modifier,
     navigation: TerminalNavigation,
-    onFit: (TermSize) -> Unit = {},
+    onFit: (PageMsg.Fit) -> Unit = {},
     directInput: Boolean = false,
     csiEnter: Boolean = false,
     onKittyFlags: (Int) -> Unit = {},
@@ -139,7 +138,7 @@ internal fun Terminal(
                     is PageMsg.Prompts -> navigation.prompts = msg.available
                     PageMsg.Unavailable -> unavailable = true
                     is PageMsg.Bottom -> atBottom = msg.at
-                    is PageMsg.Fit -> latestFit(msg.size)
+                    is PageMsg.Fit -> latestFit(msg)
                     is PageMsg.Kitty -> latestKittyFlags(msg.flags)
                     is PageMsg.Image -> viewingImage = msg
                     is PageMsg.Input -> if (TermPage.acceptsInput(latestLive, drawn, unavailable)) connection.send(ClientMsg.termInput(workerId, msg.data))

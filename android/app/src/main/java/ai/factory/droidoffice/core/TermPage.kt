@@ -28,7 +28,11 @@ sealed interface PageMsg {
     /** Bytes for the program: a swipe over a full-screen program, as wheel events or arrow keys. */
     data class Input(val data: String) : PageMsg
     /** The grid that fits the phone at readable text. */
-    data class Fit(val size: TermSize) : PageMsg
+    data class Fit(val size: TermSize, val width: Int, val height: Int) : PageMsg {
+        // WebView reports whole CSS pixels; Compose measures the viewport in device pixels.
+        fun forPane(widthPx: Int, heightPx: Int, density: Float): TermSize? =
+            size.takeIf { kotlin.math.abs(widthPx / density - width) < 1 && kotlin.math.abs(heightPx / density - height) < 1 }
+    }
     data class Bottom(val at: Boolean) : PageMsg
     /** Active Kitty progressive keyboard enhancement flags (`0..31`). */
     data class Kitty(val flags: Int) : PageMsg
@@ -112,7 +116,9 @@ object TermPage {
             "fit" -> {
                 val cols = int("cols") ?: return null
                 val rows = int("rows") ?: return null
-                if (cols > 0 && rows > 0) PageMsg.Fit(TermSize(cols, rows)) else null
+                val width = int("width") ?: return null
+                val height = int("height") ?: return null
+                if (cols > 0 && rows > 0 && width > 0 && height > 0) PageMsg.Fit(TermSize(cols, rows), width, height) else null
             }
             "bottom" -> (o["at"] as? JsonPrimitive)?.booleanOrNull?.let { PageMsg.Bottom(it) }
             "kitty" -> int("flags")?.let { PageMsg.Kitty(it and KittyKeys.ALL_FLAGS) }

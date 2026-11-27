@@ -21,11 +21,20 @@ class TermPageTest {
         assertEquals(PageMsg.Ready, TermPage.decode("""{"t":"ready"}"""))
         assertEquals(PageMsg.Drawn, TermPage.decode("""{"t":"drawn"}"""))
         assertEquals(PageMsg.Input("\u001b[<64;5;7M"), TermPage.decode("""{"t":"input","data":"\u001b[<64;5;7M"}"""))
-        assertEquals(PageMsg.Fit(TermSize(45, 36)), TermPage.decode("""{"t":"fit","cols":45,"rows":36}"""))
+        assertEquals(PageMsg.Fit(TermSize(45, 36), 400, 700), TermPage.decode("""{"t":"fit","cols":45,"rows":36,"width":400,"height":700}"""))
         assertEquals(PageMsg.Bottom(false), TermPage.decode("""{"t":"bottom","at":false}"""))
         assertEquals(PageMsg.Kitty(1), TermPage.decode("""{"t":"kitty","flags":1}"""))
         assertEquals(PageMsg.Kitty(31), TermPage.decode("""{"t":"kitty","flags":63}"""))
         assertEquals(PageMsg.Image(640, 360, "iVBORw0KGgo="), TermPage.decode("""{"t":"image","width":640,"height":360,"data":"iVBORw0KGgo="}"""))
+    }
+
+    @Test
+    fun closingFindWaitsForTheMeasurementOfTheRestoredPane() {
+        val find = PageMsg.Fit(TermSize(51, 11), 404, 240)
+        val normal = PageMsg.Fit(TermSize(51, 30), 404, 598)
+        assertEquals(find.size, find.forPane(708, 420, 1.75f))
+        assertNull(find.forPane(708, 1047, 1.75f))
+        assertEquals(normal.size, normal.forPane(708, 1047, 1.75f))
     }
 
     @Test

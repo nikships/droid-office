@@ -83,6 +83,7 @@ import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -95,6 +96,7 @@ import ai.factory.droidoffice.core.Keys
 import ai.factory.droidoffice.core.Menu
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.PhoneSizing
+import ai.factory.droidoffice.core.PageMsg
 import ai.factory.droidoffice.core.QuickKeys
 import ai.factory.droidoffice.core.Receipts
 import ai.factory.droidoffice.core.ScreenState
@@ -425,7 +427,9 @@ fun WorkerScreen(
         if (tty && terminalNav.finding) TerminalFindBar(terminalNav)
         Offline(link.phase, thread = !tty, composing = composing && !(!tty && worker.state == WorkerStatus.NeedsInput))
         if (tty) NeedsYou(worker, screen, live && link.phase == Phase.Connected)
-        var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
+        var pane by remember(workerId, tty) { mutableStateOf(IntSize.Zero) }
+        var measuredFit by remember(workerId, tty, terminalNav.finding) { mutableStateOf<PageMsg.Fit?>(null) }
+        val phoneSize = measuredFit?.forPane(pane.width, pane.height, LocalDensity.current.density)
         var kittyFlags by remember(workerId, tty) { mutableIntStateOf(0) }
         val currentSize = TermSize(worker.cols, worker.rows)
         val canResize = live && link.phase == Phase.Connected && screen != null
@@ -513,9 +517,9 @@ fun WorkerScreen(
         } else Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = if (themedPhoneWorker) 4.dp else 10.dp)) {
             Terminal(
                 workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,
-                Modifier.fillMaxSize(),
+                Modifier.fillMaxSize().onSizeChanged { pane = it },
                 navigation = terminalNav,
-                onFit = { phoneSize = it },
+                onFit = { if (!terminalNav.finding) measuredFit = it },
                 directInput = directInput && !worker.isCloud && !terminalNav.finding,
                 csiEnter = !worker.isShell && !worker.isCloud,
                 onKittyFlags = { kittyFlags = it },

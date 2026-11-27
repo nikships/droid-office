@@ -77,8 +77,8 @@ export async function start() {
     root.style.paddingBottom = `${Math.max(0, availH - term.rows * cellH)}px`;
     restore?.();
     const fit = fitGrid(availW, availH, baseW, baseH);
-    const key = `${fit.cols}x${fit.rows}`;
-    if (key !== lastFit) post({ t: 'fit', ...fit });
+    const key = `${innerWidth},${innerHeight},${fit.cols},${fit.rows}`;
+    if (key !== lastFit) post({ t: 'fit', ...fit, width: innerWidth, height: innerHeight });
     lastFit = key;
   }
 
