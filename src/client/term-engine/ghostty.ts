@@ -30,10 +30,12 @@ export function ghosttyOptions(opts: ClientTerminalOptions): ITerminalOptions {
 }
 
 export class GhosttyAdapter implements ClientTerminal {
+  readonly supportsLineHeight = false;
   readonly parser = new VtScanner();
   readonly options: ClientTerminalOptions;
   private readonly parsed = event<void>();
   private readonly beforeWrite = event<string>();
+  private readonly nativeParsed = event<string>();
   private readonly resetting = event<void>();
   private readonly changed = event<keyof ClientTerminalOptions>();
   private readonly data = event<string>();
@@ -59,7 +61,7 @@ export class GhosttyAdapter implements ClientTerminal {
       this.parser.registerCsiHandler({ prefix: '?', final }, (params) => {
         if (!params.includes(2027)) return false;
         // DECSET/DECRST may name multiple independent modes in one CSI.
-        for (const mode of params) if (typeof mode === 'number' && mode !== 2027) this.native?.write(`\x1b[?${mode}${final}`);
+        for (const mode of params) if (typeof mode === 'number' && mode !== 2027) this.writeNative(`\x1b[?${mode}${final}`);
         return true;
       });
     }
@@ -183,6 +185,13 @@ export class GhosttyAdapter implements ClientTerminal {
   onBeforeWrite(fn: (data: string) => void) {
     return this.beforeWrite.on(fn);
   }
+  onNativeParsed(fn: (data: string) => void) {
+    return this.nativeParsed.on(fn);
+  }
+  private writeNative(data: string) {
+    this.native?.write(data);
+    this.nativeParsed.fire(data);
+  }
   onReset(fn: () => void) {
     return this.resetting.on(fn);
   }
@@ -195,7 +204,7 @@ export class GhosttyAdapter implements ClientTerminal {
       this.beforeWrite.fire(data);
       this.parsing = true;
       try {
-        this.parser.write(data, (chunk) => this.native?.write(chunk));
+        this.parser.write(data, (chunk) => this.writeNative(chunk));
       } finally {
         this.parsing = false;
       }
@@ -249,6 +258,7 @@ export class GhosttyAdapter implements ClientTerminal {
     this.data.clear();
     this.parsed.clear();
     this.beforeWrite.clear();
+    this.nativeParsed.clear();
     this.resetting.clear();
     this.changed.clear();
   }

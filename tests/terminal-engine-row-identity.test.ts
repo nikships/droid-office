@@ -4,6 +4,7 @@ import test from 'node:test';
 import headless from '@xterm/headless';
 import { Ghostty, type GhosttyTerminal } from 'ghostty-web';
 import { GraphicsRows } from '../src/client/term-engine/ghostty-graphics-rows.js';
+import { suppressMirrorQueries } from '../src/client/term-mirror.js';
 import { VtScanner } from '../src/shared/vt-scanner.js';
 
 const cs = '\x1b[';
@@ -24,8 +25,9 @@ function contents(core: GhosttyTerminal, index: number) {
     .trimEnd();
 }
 function feed(core: GhosttyTerminal, rows: GraphicsRows, s: string) {
-  rows.begin(s);
+  rows.begin();
   core.write(s);
+  rows.nativeParsed(s);
   rows.end();
 }
 
@@ -87,7 +89,7 @@ test('layout guards read inherited modes and wait for a real width resize after 
   rows.mode([3], true);
   core.write(`${cs}?3h${cs}?3l${cs}?40l\x1bc${cs}999G`);
   assert.deepEqual([core.getMode(3), core.getMode(40), core.cols, core.getCursor().x], [false, false, 40, 79]);
-  rows.reset(true);
+  rows.reset();
   assert.equal(rows.anchor(), undefined);
   core.resize(41, 8);
   rows.resized();
@@ -169,6 +171,12 @@ test('seeded physical row identity survives or the direct image is dropped', asy
   const alphabet = [
     'é',
     'ö\b!界',
+    `${cs}20\rh`,
+    `${cs}2;\x073r`,
+    `${cs}?20\r27h`,
+    `${cs}6n`,
+    `${cs}14t`,
+    `\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\${cs}c`,
     '日本',
     '👩‍💻',
     'e\u0301',
@@ -223,7 +231,7 @@ test('seeded physical row identity survives or the direct image is dropped', asy
       // Place some markers with pre-existing native modes: the tracker never saw
       // their setters. Region or margin changes go through the production VT hooks.
       const initial = pick(3) === 0 ? states[pick(states.length)][0] : '';
-      const regional = (s: string) => /\x1b\[[\d;]*r|\x1b\[\?69h/.test(s);
+      const regional = (s: string) => /\x1b\[[\d;]*r|\x1b\[\?69h/.test(s.replace(/[\r\x07]/g, ''));
       const inherited = initial && !regional(initial) && !oldMarker;
       if (inherited) core.write(initial);
       core.write(`${cs}${row + 1};1H`);
@@ -231,6 +239,8 @@ test('seeded physical row identity survives or the direct image is dropped', asy
       const rows = new GraphicsRows(core),
         marker = rows.anchor()!;
       const scanner = new VtScanner();
+      suppressMirrorQueries({ parser: scanner });
+      scanner.registerApcHandler((s) => s.startsWith('G'));
       scanner.registerCsiHandler({ final: 'r' }, (p) => {
         rows.setRegion((p[0] || 1) !== 1 || (p[1] || height) !== height);
         return false;
@@ -241,8 +251,11 @@ test('seeded physical row identity survives or the direct image is dropped', asy
           return false;
         });
       const write = (s: string) => {
-        rows.begin(s);
-        scanner.write(s, (raw) => core.write(raw));
+        rows.begin();
+        scanner.write(s, (raw) => {
+          core.write(raw);
+          rows.nativeParsed(raw);
+        });
         rows.end();
       };
       if (oldMarker) {

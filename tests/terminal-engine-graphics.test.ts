@@ -30,8 +30,9 @@ test('the zsh prompt preserves a placed image above the cursor on real WASM', as
   t.after(() => core.free());
   const rows = officeRows(core);
   const write = (data: string) => {
-    rows.begin(data);
+    rows.begin();
     core.write(data);
+    rows.nativeParsed(data);
     rows.end();
   };
   write(`${'row\r\n'.repeat(500)}\x1b[2J\x1b[HInline PNG\r\n`);
@@ -68,8 +69,9 @@ test('autowrap changes do not invent a row trim for an image anchor', async (t) 
   t.after(() => core.free());
   const rows = officeRows(core);
   const write = (data: string) => {
-    rows.begin(data);
+    rows.begin();
     core.write(data);
+    rows.nativeParsed(data);
     rows.end();
   };
   write('\r\n');
@@ -98,8 +100,9 @@ test('Unicode prompts and output keep direct image rows at the bottom and mid-sc
       const xt = new headless.Terminal({ cols: 80, rows: 24, scrollback: 5000, allowProposedApi: true });
       const rows = officeRows(core);
       const write = async (s: string) => {
-        rows.begin(s);
+        rows.begin();
         core.write(s);
+        rows.nativeParsed(s);
         rows.end();
         await new Promise<void>((r) => xt.write(s, r));
       };
@@ -150,8 +153,9 @@ test('tabular output and horizontal command edits keep the bottom-row image mark
     const xt = new headless.Terminal({ cols: 80, rows: 24, scrollback: 5000, allowProposedApi: true });
     const rows = officeRows(core);
     const write = async (s: string) => {
-      rows.begin(s);
+      rows.begin();
       core.write(s);
+      rows.nativeParsed(s);
       rows.end();
       await new Promise<void>((r) => xt.write(s, r));
     };
@@ -180,8 +184,9 @@ test('a Unicode line crossing the native trim boundary keeps only the correct nu
   t.after(() => core.free());
   const rows = officeRows(core);
   const write = (s: string) => {
-    rows.begin(s);
+    rows.begin();
     core.write(s);
+    rows.nativeParsed(s);
     rows.end();
   };
   // Discover a real page eviction instead of assuming the configured limit is in lines.
@@ -245,8 +250,11 @@ test('ED2 and ED3 handle screen and history image markers like xterm clear', asy
     });
     const write = async (data: string) => {
       await new Promise<void>((resolve) => server.write(data, resolve));
-      rows.begin(data);
-      scanner.write(data, (chunk) => core.write(chunk));
+      rows.begin();
+      scanner.write(data, (chunk) => {
+        core.write(chunk);
+        rows.nativeParsed(chunk);
+      });
       rows.end();
     };
     await write('image\r\n');
@@ -264,8 +272,9 @@ test('actual WASM rows follow identical output across history growth and page tr
   t.after(() => core.free());
   const rows = officeRows(core);
   const write = (data: string) => {
-    rows.begin(data);
+    rows.begin();
     core.write(data);
+    rows.nativeParsed(data);
     rows.end();
   };
   write('label');
@@ -382,6 +391,77 @@ test('Ghostty graphics: ordered split APC, actual snapshot, Retina pixels, scrol
       { timeout: 4000 },
     );
   };
+  await t.test('embedded CSI controls execute before width and scroll-region hooks', async () => {
+    await write('abc\x1b[?20\r');
+    const cursor = () =>
+      page.evaluate(() => {
+        const c = (window as any).term.native.wasmTerm;
+        return [c.getCursor().x, c.getMode(2027)];
+      });
+    const during = await cursor();
+    await write('27h');
+    const after = await cursor();
+    await write(`\x1b[2;\x076r${apc('a=T,i=81,f=24,s=1,v=1,C=1;/wAA')}`);
+    await page.waitForTimeout(100);
+    const pixel = await page.evaluate(() => (window as any).pixel(0, 0)[3]);
+    await write('\x1bc');
+    assert.deepEqual([during, after, pixel], [[0, false], [0, false], 0]);
+  });
+  await t.test('consumed image probes preserve both direct image rows', async () => {
+    const mod = '/term-mirror.ts';
+    await page.evaluate(async (m) => (await import(m)).suppressMirrorQueries((window as any).term), mod);
+    const results = [];
+    for (const probe of [apc('i=31,s=1,v=1,a=q,t=d,f=24;AAAA') + '\x1b[c', '\x1b[6n', '\x1b[14t', '\x1b[>c\x1b[?u\x1b[>q\x1b[?7$p\x1bP$qm\x1b\\\x1b]10;?\x07']) {
+      await write('\x1bc' + apc('a=T,i=82,f=24,s=1,v=1,C=1;/wAA'));
+      await painted(0, 0, true);
+      await page.evaluate(() => {
+        const w = window as any;
+        w.nativeSpans = [];
+        w.trace = w.term.onNativeParsed((s: string) => w.nativeSpans.push(s));
+      });
+      await write('\r\n' + probe + apc('a=T,i=83,f=24,s=1,v=1,C=1;/wAA'));
+      await painted(0, 1, true);
+      results.push(
+        await page.evaluate(() => {
+          const { term, pixel } = window as any;
+          (window as any).trace.dispose();
+          return [pixel(0, 0)[3], pixel(0, 1)[3], term.native.wasmTerm.getCursor().y, (window as any).nativeSpans.join('')];
+        }),
+      );
+    }
+    await write('\x1bc');
+    assert.deepEqual(results, Array(4).fill([255, 255, 1, '\r\n']));
+  });
+  await t.test('refused region placements still follow the xterm Kitty cursor', async () => {
+    const xt = new headless.Terminal({ cols: 40, rows: 8, allowProposedApi: true });
+    const serializer = new serialize.SerializeAddon();
+    xt.loadAddon(serializer);
+    screenSnapshot(xt, serializer);
+    try {
+      const positions = [];
+      const expected = [];
+      for (const flag of ['C=1', 'C=0']) {
+        const data = `\x1bc\x1b[2;6r\x1b[3;3H${apc(`a=T,i=84,c=4,r=3,${flag},f=24,s=1,v=1;/wAA`)}X`;
+        await write(data);
+        await new Promise<void>((done) => xt.write(data, done));
+        positions.push(
+          await page.evaluate(() => {
+            const { x, y } = (window as any).term.native.wasmTerm.getCursor();
+            return [x, y];
+          }),
+        );
+        expected.push([xt.buffer.active.cursorX, xt.buffer.active.cursorY]);
+      }
+      assert.deepEqual(expected, [
+        [3, 2],
+        [7, 4],
+      ]);
+      assert.deepEqual(positions, expected);
+    } finally {
+      xt.dispose();
+      await write('\x1bc');
+    }
+  });
   const packed = deflateSync(Buffer.from([255, 0, 0])).toString('base64');
   await t.test('streamed RIS clears margins without dropping an incomplete APC', async () => {
     await write('\x1b[?69h\x1bc\x1b_G'); // RIS followed by a still-incomplete APC in the same write.
@@ -408,6 +488,22 @@ test('Ghostty graphics: ordered split APC, actual snapshot, Retina pixels, scrol
     const overlay = document.querySelector<HTMLCanvasElement>('.term-kitty-layer')!;
     const b = overlay.getBoundingClientRect();
     return { x: r.left + m.width * 1.5, y: r.top + m.height * 3.75, aligned: b.left === r.left && b.top === r.top, dpr: overlay.width / b.width };
+  });
+  await t.test('release over Expand disarms the preceding image press', async () => {
+    const stale = await page.evaluate(({ x, y }) => {
+      const w = window as any;
+      const canvas = w.term.native.renderer.getCanvas();
+      const btn = document.querySelector('.term-kitty-expand')!;
+      let consumed = false;
+      for (const [el, type] of [
+        [canvas, 'mousedown'],
+        [btn, 'mouseup'],
+        [canvas, 'mouseup'],
+      ] as const)
+        consumed = !el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, ctrlKey: true }));
+      return consumed; // Only an armed modified press consumes the last release.
+    }, point);
+    assert.equal(stale, false);
   });
   assert.equal(point.aligned, true);
   assert.equal(point.dpr, 2);

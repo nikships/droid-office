@@ -30,7 +30,10 @@ export function ghosttyLines(core: GhosttyTerminal) {
     for (let x = 0; line && x < core.cols && offset + x < line.length; x++) {
       const cell = line[offset + x];
       if (!cell.width) continue;
-      const chars = cell.grapheme_len ? (y < history ? core.getScrollbackGraphemeString(y, x) : core.getGraphemeString(y - history, x)) : String.fromCodePoint(cell.codepoint || 32);
+      let chars: string;
+      if (!cell.grapheme_len) chars = String.fromCodePoint(cell.codepoint || 32);
+      else if (y < history) chars = core.getScrollbackGraphemeString(y, x);
+      else chars = core.getGraphemeString(y - history, x);
       text += chars;
       if (positions) for (let i = 0; i < chars.length; i++) positions.push({ x: x + 1, y: y + 1 });
     }
@@ -45,10 +48,16 @@ export function ghosttyLines(core: GhosttyTerminal) {
     while (first > 0 && row - first < 16 && wrapped(first)) first--;
     const cells: CellPosition[] = [];
     let text = '';
-    for (let y = first; y < length && y < first + 16; y++) {
-      text += read(y, cells);
-      if (!wrapped(y + 1)) break;
+    let last = first;
+    for (;;) {
+      text += read(last, cells);
+      if (!wrapped(last + 1) || last - first === 15) break;
+      last++;
     }
+    // Do not resolve fragments of a URL or workspace path. Mask only the edge
+    // token, preserving UTF-16 offsets for complete matches on the same line.
+    if (wrapped(first) || (first > 0 && first < history && /\S$/.test(read(first - 1)))) text = text.replace(/^\S+/, (fragment) => ' '.repeat(fragment.length));
+    if (last < history || wrapped(last + 1)) text = text.replace(/\S+$/, '');
     text = text.trimEnd();
     cells.length = text.length;
     return { text, cells };

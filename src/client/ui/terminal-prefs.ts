@@ -65,11 +65,11 @@ export function terminalOptions(p: TerminalPrefs = terminalPrefs()): TerminalPre
  * Keeps `term` on the saved choices until the returned unlisten. `fixed` options win over the
  * choices (a read-only log never blinks); `resized` runs when its cells change height.
  */
-export function followTerminalPrefs(term: Pick<ClientTerminal, 'options'>, opts: { fixed?: Partial<TerminalPrefOptions>; resized?: () => void } = {}): () => void {
+export function followTerminalPrefs(term: Pick<ClientTerminal, 'options' | 'supportsLineHeight'>, opts: { fixed?: Partial<TerminalPrefOptions>; resized?: () => void } = {}): () => void {
   return onTerminalPrefs((next) => {
     const before = term.options.lineHeight;
     Object.assign(term.options, terminalOptions(next), opts.fixed);
-    if (term.options.lineHeight !== before) opts.resized?.();
+    if (term.supportsLineHeight !== false && term.options.lineHeight !== before) opts.resized?.();
   });
 }
 

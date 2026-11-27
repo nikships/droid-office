@@ -188,6 +188,31 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
     assert.equal(await p.locator('.modal.term .xterm').count(), 0);
     await p.close();
   });
+  await t.test('a throw inside native open removes its root and falls back in the same shell', async () => {
+    const p = await context.newPage();
+    await p.route('**/fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<div id="modal-root"></div><div id="toasts"></div>' }));
+    await p.goto(page.url());
+    try {
+      await p.evaluate(async () => {
+        localStorage.setItem('droid-office.terminal', JSON.stringify({ engine: 'ghostty' }));
+        const get = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function (...args: Parameters<typeof get>) {
+          if (document.querySelector('.ghostty-terminal')) {
+            HTMLCanvasElement.prototype.getContext = get;
+            throw Error('Canvas unavailable');
+          }
+          return get.apply(this, args);
+        } as typeof get;
+        const url = '/ui/terminal.ts';
+        (await import(url)).openOfficeShell({ up: true, send: Boolean });
+        (window as any).shell = document.querySelector('.modal.term');
+      });
+      await p.locator('.term-host .xterm textarea').waitFor({ state: 'attached', timeout: 3000 });
+      assert.deepEqual(await p.evaluate(() => [(window as any).shell === document.querySelector('.modal.term'), document.querySelectorAll('.ghostty-terminal').length, document.querySelectorAll('#toasts .toast').length]), [true, 0, 1]);
+    } finally {
+      await p.close();
+    }
+  });
   await t.test('display writes never forward a native DA reply as user input', async () => {
     assert.deepEqual(
       await page.evaluate(async () => {

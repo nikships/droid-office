@@ -4,6 +4,25 @@ import { VtScanner } from '../src/shared/vt-scanner.js';
 import { suppressMirrorQueries } from '../src/client/term-mirror.js';
 
 const esc = '\x1b';
+test('C0 inside a split CSI executes in order without defeating CAN or SUB', () => {
+  for (const cancel of ['\x18', '\x1a']) {
+    const parser = new VtScanner();
+    const params: unknown[] = [];
+    parser.registerCsiHandler({ final: 'h', prefix: '?' }, (p) => {
+      params.push(p);
+      return true;
+    });
+    let native = '';
+    const put = (s: string) => {
+      native += s;
+    };
+    parser.write(`x${esc}[?20\r`, put);
+    assert.equal(native, 'x\r');
+    parser.write(`27${cancel}${esc}[?20\x0727h`, put);
+    assert.deepEqual(params, [[2027]]);
+    assert.equal(native, `x\r${esc}[?2027${cancel}\x07`);
+  }
+});
 test('split VT hooks observe the previous text, newest first; true swallows only that sequence', () => {
   const stream = `before${esc}[?1;2:3::4h${esc}]8;;https://example.org${esc}\\${esc}P1$qhello${esc}\\${esc}_G;data${esc}\\${esc}(B${esc}[31mafter`;
   for (let split = 0; split <= stream.length; split++) {

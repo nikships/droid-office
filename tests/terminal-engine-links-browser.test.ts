@@ -260,5 +260,30 @@ test('Ghostty link policy, search reflow, glass, selection, fonts and cursor on 
   });
   await page.locator('[aria-label="File preview: src/server.ts"]').waitFor({ state: 'attached', timeout: 4000 });
   assert.match(await page.locator('.wt-file-modal').innerText(), /Line 120/);
+  await t.test('history and scan cutoffs never open a URL fragment', async () => {
+    const opened = await page.evaluate(() => {
+      const { term } = (window as any).rig;
+      const opened: string[] = [];
+      window.open = (url) => {
+        opened.push(String(url));
+        return null;
+      };
+      for (const [cols, height, text] of [
+        [23, 8, 'https://example.com/docs' + '\r\n'.repeat(10)],
+        [23, 24, 'https://example.com/' + 'x'.repeat(23 * 18)],
+      ] as const) {
+        term.reset();
+        term.resize(cols, height);
+        term.write(text);
+        term.native.scrollToTop();
+        const rend = term.native.renderer,
+          c = rend.getCanvas(),
+          b = c.getBoundingClientRect();
+        c.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true, clientX: b.left + rend.charWidth * 2.5, clientY: b.top + rend.charHeight * 0.5 }));
+      }
+      return opened;
+    });
+    assert.deepEqual(opened, []);
+  });
   await page.evaluate(() => (window as any).rig.term.dispose());
 });

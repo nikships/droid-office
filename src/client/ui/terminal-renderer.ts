@@ -7,7 +7,7 @@ export async function openTerminalRenderer(engine: TerminalEngine, host: HTMLEle
     await engine.term.open(host);
   } catch (error) {
     if (!alive()) return;
-    if (!engine.ghostty || engine.ghostty.native) throw error;
+    if (!engine.ghostty) throw error;
     const fallback = createTerminalEngine({ ...engine.term.options }, 'xterm');
     engine.term.dispose();
     replace(fallback);

@@ -71,14 +71,14 @@ export class VtScanner {
     else if (this.state === 'osc') {
       const split = body.indexOf(';');
       const code = split < 0 ? body : body.slice(0, split);
-      if (!/^\d+$/.test(code)) return false;
+      if (!/^\d+$/.test(code)) return;
       key += Number(code);
       data = split < 0 ? '' : body.slice(split + 1);
     } else if (this.state === 'csi' || this.state === 'dcs') {
       const m = header.exec(body);
-      if (!m) return false;
+      if (!m) return;
       key += m[1] + m[3] + m[4];
-      if (!this.handlers.has(key)) return false;
+      if (!this.handlers.has(key)) return;
       params = m[2].split(';').flatMap((part): Params => {
         const [main, ...sub] = part.split(':');
         return sub.length ? [Number(main), sub.map((n) => (n ? Number(n) : -1))] : [Number(main)];
@@ -86,7 +86,7 @@ export class VtScanner {
       data = body.slice(m[0].length);
     }
     const matches = this.handlers.get(key);
-    if (!matches) return false;
+    if (!matches) return;
     flush();
     return matches
       .slice()
@@ -115,6 +115,13 @@ export class VtScanner {
         continue;
       }
       const string = this.state !== 'csi' && this.state !== 'esc';
+      // C0 executes immediately, even if the CSI continues in the next write. CAN and
+      // SUB cancel it instead; ESC starts a fresh sequence below.
+      if (this.state === 'csi' && ch < ' ' && ch !== ESC && ch !== '\x18' && ch !== '\x1a') {
+        output += ch;
+        start = i + 1;
+        continue;
+      }
       if (this.state === 'apc' && ch === 'G' && (this.sequence === '\x1b_' || this.sequence === '\x9f')) this.kittyLimit = this.sequence.length + 1 + MAX_KITTY_APC_BODY;
       const acceptsBell = this.state === 'osc' || this.kittyLimit !== 0;
       if (string && !this.stPending) {
@@ -163,7 +170,13 @@ export class VtScanner {
         const st = this.stPending && ch === '\\';
         const end = string ? st || ch === '\x9c' || (acceptsBell && ch === '\x07') : ch >= (this.state === 'esc' ? '0' : '@') && ch <= '~';
         if (end) {
-          if (!this.oversized && !this.dispatch(string ? (st ? 2 : 1) : 0, flush)) output += this.sequence;
+          if (!this.oversized) {
+            const handled = this.dispatch(string ? (st ? 2 : 1) : 0, flush);
+            if (!handled) output += this.sequence;
+            // A hook that observes but doesn't consume a mode switch needs the
+            // native result before any subsequent text (which may use another screen).
+            if (handled === false) flush();
+          }
           this.reset();
         } else this.stPending = ch === ESC;
       }

@@ -77,7 +77,10 @@ export function attachGhosttyScroll(adapter: GhosttyAdapter) {
       // Chromium can report even a physical notch as DOM_DELTA_PIXEL. Its 120-unit detent
       // signal is what xterm maps to 50 CSS pixels, independent of the OS's deltaY setting.
       const ticks = pixelMode && !e.deltaX && 'wheelDeltaY' in e && typeof e.wheelDeltaY === 'number' && e.wheelDeltaY % 120 === 0 ? -e.wheelDeltaY / 120 : 0;
-      const rows = ticks ? (ticks * 50) / cellHeight : pixelMode ? e.deltaY / cellHeight : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? e.deltaY * native.rows : e.deltaY;
+      let rows = e.deltaY;
+      if (ticks) rows = (ticks * 50) / cellHeight;
+      else if (pixelMode) rows /= cellHeight;
+      else if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) rows *= native.rows;
       const delta = rows * (adapter.options.scrollSensitivity ?? 1) * (e.altKey ? 5 : 1);
       if (pixelMode && !ticks) {
         // Precise trackpad events include momentum. A second easing curve would fight the OS.

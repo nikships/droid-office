@@ -26,6 +26,7 @@ export type ClientTerminalOptions = Pick<
  * discriminated native handle instead of pretending to implement an unsupported xterm API. */
 export interface ClientTerminal extends Pick<Terminal, 'cols' | 'rows' | 'focus' | 'paste' | 'input' | 'resize' | 'reset' | 'dispose' | 'scrollToBottom' | 'attachCustomKeyEventHandler'> {
   readonly options: ClientTerminalOptions;
+  readonly supportsLineHeight?: boolean;
   readonly parser: TerminalParser;
   readonly modes: Pick<Terminal['modes'], 'sendFocusMode' | 'applicationCursorKeysMode' | 'bracketedPasteMode' | 'mouseTrackingMode'>;
   readonly buffer: { readonly active: { readonly viewportY: number; readonly baseY: number } };

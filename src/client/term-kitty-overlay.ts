@@ -16,6 +16,7 @@ export interface KittyRowAnchor {
 export interface KittyOverlayView {
   /** The native canvas may capture clicks/mouse reports before a child button sees them. */
   capturePointer?: boolean;
+  moveWithoutAnchor?: boolean;
   readonly cols: number;
   readonly rows: number;
   cursorColumn(): number;
@@ -344,16 +345,17 @@ export function createKittyOverlay(view: KittyOverlayView, opts: KittyTerminalOp
     }
     const startCol = view.cursorColumn();
     const marker = view.anchorRow();
-    if (!marker) return undefined;
-    directPlacements.push({
-      imageId: req.imageId,
-      placementId: req.placementId,
-      marker,
-      col: startCol,
-      cols,
-      rows,
-      z: req.z,
-    });
+    if (!marker && !view.moveWithoutAnchor) return undefined;
+    if (marker)
+      directPlacements.push({
+        imageId: req.imageId,
+        placementId: req.placementId,
+        marker,
+        col: startCol,
+        cols,
+        rows,
+        z: req.z,
+      });
     while (directPlacements.length > MAX_DIRECT_PLACEMENTS) {
       directPlacements.shift()?.marker.dispose();
     }
@@ -737,6 +739,7 @@ export function createKittyOverlay(view: KittyOverlayView, opts: KittyTerminalOp
       };
       const onMouseUp = (e: MouseEvent) => {
         if (view.capturePointer && btn.contains(e.target as Node)) {
+          pendingPress = null;
           e.preventDefault();
           e.stopPropagation();
           return;

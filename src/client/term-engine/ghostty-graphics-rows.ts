@@ -1,6 +1,5 @@
 import type { GhosttyCell, GhosttyTerminal } from 'ghostty-web';
 import { decodePlaceholderCell, KITTY_PLACEHOLDER_CHAR, type DecodedPlaceholder } from '../../shared/kitty';
-import { VtScanner } from '../../shared/vt-scanner';
 import type { KittyRowAnchor } from '../term-kitty-overlay';
 
 const placeholder = KITTY_PLACEHOLDER_CHAR.codePointAt(0);
@@ -87,35 +86,12 @@ export class GraphicsRows {
   private readonly anchors = new Set<{ line: number }>();
   private before?: Position;
   private pendingWrap?: boolean;
-  private readonly boundaries = new VtScanner();
-  private spans: string[] = [];
-  private span = 0;
   private region = false;
   private uncertainWidth?: number;
-  private savedPrimary?: Position;
   private safeWidth = Infinity;
   private lastCols = 0;
   private lastTotalRows = 0;
-  constructor(private readonly core: GhosttyTerminal) {
-    // onBeforeWrite brackets the complete write, not each native text span. Use the same
-    // framing rules to account for only the text between callbacks, including split APC/ST.
-    this.boundaries.registerApcHandler(() => {
-      this.spans.push('');
-      return true;
-    });
-    this.boundaries.registerCsiHandler({ final: 'J' }, ([mode]) => {
-      // ED0/1 only erase cells. ED2/3 change markers at this point in the stream.
-      if (mode !== 2 && mode !== 3) return false; // ED0/1 cancel pending wrap in stream order.
-      this.spans.push('');
-      return true;
-    });
-    for (const final of ['h', 'l'])
-      this.boundaries.registerCsiHandler({ prefix: '?', final }, (params) => {
-        if (!switchesScreen(params)) return false;
-        this.spans.push('');
-        return true;
-      });
-  }
+  constructor(private readonly core: GhosttyTerminal) {}
 
   anchor(): KittyRowAnchor | undefined {
     if (this.core.isAlternateScreen() || this.region || this.core.getMode(69) || this.uncertainWidth !== undefined) return;
@@ -156,26 +132,11 @@ export class GraphicsRows {
     if (params.includes(3) && (this.core.getMode(40) || (set && params.includes(40)))) this.uncertainWidth = this.core.cols;
     if (set && params.includes(69) && !this.core.isAlternateScreen()) this.invalidate(true);
     if (!switchesScreen(params)) return;
-    this.advance(this.spans[this.span++] ?? '');
     this.pendingWrap = undefined;
-    if (set && !this.core.isAlternateScreen()) {
-      this.checkpoint();
-      this.savedPrimary = this.before;
-      this.before = undefined;
-    } else if (!set && this.core.isAlternateScreen()) {
-      // 1049 restores the normal cursor. 47/1047 do not promise the same cursor identity.
-      if (!params.includes(1049)) this.invalidate();
-      this.before = this.savedPrimary;
-      this.savedPrimary = undefined;
-    }
+    if (!set && this.core.isAlternateScreen() && !params.includes(1049)) this.invalidate();
   }
 
-  begin(raw: string) {
-    this.spans = [''];
-    this.span = 0;
-    this.boundaries.write(raw, (s) => {
-      this.spans[this.spans.length - 1] += s;
-    });
+  begin() {
     this.checkpoint();
   }
 
@@ -190,10 +151,9 @@ export class GraphicsRows {
     this.before = this.anchors.size && !this.core.isAlternateScreen() ? { ...this.core.getCursor(), history: this.core.getScrollbackLength(), autowrap: this.core.getMode(7), standardLayout: this.standardLayout() } : undefined;
   }
 
-  /** A scanner callback runs after the preceding output but before the following text. Split
-   * there so a placement midway through one PTY write sees only the output AFTER its anchor. */
-  apc() {
-    this.advance(this.spans[this.span++] ?? '');
+  /** Only native output affects row identity. Queries consumed by the mirror never arrive here. */
+  nativeParsed(data: string) {
+    this.advance(data);
     this.checkpoint();
   }
 
@@ -209,7 +169,6 @@ export class GraphicsRows {
   }
 
   erase(mode: 2 | 3, write: () => void) {
-    this.advance(this.spans[this.span++] ?? '');
     if (!this.core.isAlternateScreen()) {
       if (mode === 2)
         this.invalidate(true); // xterm removes screen markers, not history.
@@ -221,18 +180,14 @@ export class GraphicsRows {
   }
 
   end() {
-    this.advance(this.spans[this.span] ?? '');
-    this.spans = [];
     this.before = undefined;
     this.rememberWidth();
   }
 
-  reset(snapshot: boolean) {
+  reset() {
     this.pendingWrap = undefined;
     this.invalidate();
-    if (snapshot) this.boundaries.reset(); // Streamed RIS can be followed by a partial control in this write.
     this.region = false;
-    this.savedPrimary = undefined;
     this.safeWidth = Infinity;
   }
 

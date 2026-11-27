@@ -27,7 +27,9 @@ function legacyKey(e: KeyboardEvent, optionTypes: boolean, appCursor: boolean): 
     if (metaDeadKey(e, optionTypes)) return send(`\x1b${e.shiftKey ? e.code.slice(3) : e.code.slice(3).toLowerCase()}`);
     return { do: 'default' };
   }
-  if (e.ctrlKey && !e.altKey && !e.shiftKey && e.code === 'KeyV') return send('\x16'); // Ctrl+V quotes the next key; Cmd+V pastes.
+  // Native reserves the physical KeyV for paste. On another layout it may type a
+  // different Ctrl letter, while the key that actually types V must still quote.
+  if (e.ctrlKey && !e.altKey && !e.shiftKey && /^[a-z]$/i.test(e.key) && (e.code === 'KeyV' || e.key.toLowerCase() === 'v')) return send(String.fromCharCode(e.key.toUpperCase().charCodeAt(0) - 64));
   if (e.key === 'Enter' && e.ctrlKey) return send(e.altKey ? '\x1b\r' : '\r');
   if (e.altKey && e.key === 'Backspace') return send(e.ctrlKey ? '\x1b\b' : '\x1b\x7f');
   if (e.altKey && [...e.key].length === 1 && !e.getModifierState('AltGraph') && !(IS_WINDOWS && e.ctrlKey)) {

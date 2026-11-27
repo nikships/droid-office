@@ -199,7 +199,7 @@ function threadRows() {
   };
 }
 
-/** The Terminal pane: how worker terminals and the shell draw, scroll and read Option, saved in this browser and applied live to every open terminal. `dispose` stops listening. */
+/** The engine applies to the next terminal opened. Drawing, scrolling and Option choices update open terminals live. */
 function terminalRows() {
   const choose = <K extends keyof TerminalPrefs>(key: K, label: string, options: readonly (readonly [TerminalPrefs[K], string])[]) =>
     radios<TerminalPrefs[K]>(

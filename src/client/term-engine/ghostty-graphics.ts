@@ -10,6 +10,7 @@ export function attachGhosttyGraphics(adapter: GhosttyAdapter, images: KittyTerm
   const overlay = createKittyOverlay(
     {
       capturePointer: true,
+      moveWithoutAnchor: true,
       get cols() {
         return adapter.cols;
       },
@@ -46,22 +47,21 @@ export function attachGhosttyGraphics(adapter: GhosttyAdapter, images: KittyTerm
     images,
   );
   let virtual = false;
-  const reset = (snapshot: boolean) => {
+  const reset = () => {
     overlay.graphics.reset();
     overlay.clearPlacements();
     overlay.clearDecoded();
-    rows?.reset(snapshot);
+    rows?.reset();
     virtual = false;
     overlay.schedulePaint();
   };
   const hooks = [
-    adapter.onReset(() => reset(true)),
+    adapter.onReset(reset),
     adapter.parser.registerEscHandler({ final: 'c' }, () => {
-      reset(false);
+      reset();
       return false;
     }),
     adapter.parser.registerApcHandler((body) => {
-      rows?.apc();
       if (!body.startsWith('G')) return false;
       // Ignore the reply from KittyGraphicsStore: this is a passive PTY mirror.
       const move = overlay.handleApcBody(body.slice(1));
@@ -72,8 +72,9 @@ export function attachGhosttyGraphics(adapter: GhosttyAdapter, images: KittyTerm
     }),
     adapter.onBeforeWrite((data) => {
       if (!virtual && data.includes(KITTY_PLACEHOLDER_CHAR)) virtual = true;
-      rows?.begin(data);
+      rows?.begin();
     }),
+    adapter.onNativeParsed((data) => rows?.nativeParsed(data)),
     adapter.onWriteParsed(() => {
       rows?.end();
       if (overlay.needsPaint()) overlay.schedulePaint();
