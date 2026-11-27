@@ -10,6 +10,13 @@ import org.junit.Test
 
 class TermPageTest {
     @Test
+    fun inputRequiresAVisibleLiveTerminal() {
+        for (live in listOf(false, true)) for (drawn in listOf(false, true)) for (unavailable in listOf(false, true)) {
+            assertEquals(live && drawn && !unavailable, TermPage.acceptsInput(live, drawn, unavailable))
+        }
+    }
+
+    @Test
     fun readsWhatThePageSays() {
         assertEquals(PageMsg.Ready, TermPage.decode("""{"t":"ready"}"""))
         assertEquals(PageMsg.Drawn, TermPage.decode("""{"t":"drawn"}"""))

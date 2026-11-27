@@ -142,7 +142,7 @@ internal fun Terminal(
                     is PageMsg.Fit -> latestFit(msg.size)
                     is PageMsg.Kitty -> latestKittyFlags(msg.flags)
                     is PageMsg.Image -> viewingImage = msg
-                    is PageMsg.Input -> if (latestLive) connection.send(ClientMsg.termInput(workerId, msg.data))
+                    is PageMsg.Input -> if (TermPage.acceptsInput(latestLive, drawn, unavailable)) connection.send(ClientMsg.termInput(workerId, msg.data))
                 }
             },
             onGone = { generation++ },
@@ -162,7 +162,8 @@ internal fun Terminal(
     LaunchedEffect(page, view) { page.send(TermPage.view(view)) }
     LaunchedEffect(page, colors) { page.send(colors) }
     LaunchedEffect(page, fontScale) { page.send(TermPage.config(fontScale, view)) }
-    LaunchedEffect(page, directInput, live) { page.typeDirectly(directInput && live) }
+    val typing = directInput && TermPage.acceptsInput(live, drawn, unavailable)
+    LaunchedEffect(page, typing) { page.typeDirectly(typing) }
     LaunchedEffect(page, csiEnter) { page.setCsiEnter(csiEnter) }
 
     Box(

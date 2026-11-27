@@ -91,6 +91,8 @@ object PictureZoom {
 object TermPage {
     const val MAX_IMAGE_B64 = 16 * 1024 * 1024
 
+    fun acceptsInput(live: Boolean, drawn: Boolean, unavailable: Boolean) = live && drawn && !unavailable
+
     fun decode(json: String): PageMsg? {
         val o = runCatching { OfficeJson.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return null
         fun str(k: String) = (o[k] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
