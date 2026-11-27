@@ -231,6 +231,8 @@ export class WTermAdapter {
       t.setThemeColors({ foreground: rgb('foreground'), background: rgb('background'), cursor: rgb('cursor'), palette: palette.map(rgb) });
       this.root.style.setProperty('--term-bg', colors.background);
       this.root.style.setProperty('--term-selection-bg', colors.selectionBackground);
+      this.root.classList.toggle('has-cursor-accent', !!colors.cursorAccent);
+      this.root.style.setProperty('--office-cursor-accent', colors.cursorAccent ?? '');
     }
     if (key === 'cursorBlink') {
       this.root.classList.toggle('cursor-blink', this.options.cursorBlink === true);

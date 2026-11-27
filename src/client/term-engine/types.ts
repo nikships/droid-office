@@ -6,7 +6,7 @@ export interface ClientTerminalOptions {
   disableStdin?: boolean;
   fontFamily?: string;
   fontSize?: number;
-  theme?: Partial<typeof TERM_THEME>;
+  theme?: Partial<typeof TERM_THEME> & { cursorAccent?: string };
   scrollback?: number;
   smoothScrollDuration?: number;
   lineHeight?: number;

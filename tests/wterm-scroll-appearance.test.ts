@@ -596,6 +596,77 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       assert.equal(animation === 'none', i < 3);
     }
   });
+  await t.test('steady and blinking block cursors paint the artwork theme accent glyph on a transparent pane', async () => {
+    const colors = await page.evaluate(
+      async (themes) => {
+        const engine = '/term-engine/web-terminal.ts',
+          theme = '/term-theme.ts';
+        const [{ createWebTerminal }, { companionTheme, companionTerminalColors }, { setTermThemeColors, termTheme }] = await Promise.all([import(engine), import(themes), import(theme)]);
+        const palette = companionTerminalColors(companionTheme('carbons-copy'));
+        setTermThemeColors(palette);
+        const pane = document.createElement('section');
+        pane.className = 'dash-pane';
+        pane.style.cssText = 'position:fixed;inset:0 auto auto 0;width:560px;height:250px;z-index:100;animation:none';
+        pane.innerHTML = '<div class="modal term inline"><div class="term-host"></div></div>';
+        document.body.append(pane);
+        const { term } = createWebTerminal({ theme: termTheme(), fontSize: 28, fontFamily: 'monospace', cursorStyle: 'block', cursorBlink: false });
+        await term.open(pane.querySelector('.term-host'));
+        term.resize(20, 6);
+        term.write('M\r');
+        term.focus();
+        await (window as any).frame();
+        Object.assign(window, {
+          cursorProbe: {
+            term,
+            close: () => {
+              term.dispose();
+              pane.remove();
+              setTermThemeColors(null);
+            },
+          },
+        });
+        return palette;
+      },
+      `/@fs${fileURLToPath(new URL('../src/shared/companion-themes.ts', import.meta.url))}`,
+    );
+    try {
+      for (const blink of [false, true]) {
+        await page.evaluate(async (blink) => {
+          const { term } = (window as any).cursorProbe;
+          term.options.cursorBlink = blink;
+          await (window as any).frame();
+          for (const anim of term.native.element.querySelector('.term-cursor').getAnimations()) {
+            anim.pause();
+            anim.currentTime = 0;
+          }
+        }, blink);
+        const cursor = page.locator('.dash-pane .term-cursor');
+        assert.equal(await cursor.textContent(), 'M');
+        const data = (await cursor.screenshot()).toString('base64');
+        const ink = await page.evaluate(
+          async ({ data, color }) => {
+            const img = new Image();
+            img.src = `data:image/png;base64,${data}`;
+            await img.decode();
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d')!;
+            ctx.drawImage(img, 0, 0);
+            const pixels = ctx.getImageData(0, 0, img.width, img.height).data;
+            const rgb = parseInt(color.slice(1), 16);
+            let count = 0;
+            for (let i = 0; i < pixels.length; i += 4) if (Math.abs(pixels[i] - (rgb >> 16)) < 12 && Math.abs(pixels[i + 1] - ((rgb >> 8) & 255)) < 12 && Math.abs(pixels[i + 2] - (rgb & 255)) < 12) count++;
+            return count;
+          },
+          { data, color: colors.cursorAccent },
+        );
+        assert.ok(ink >= 3, `blink=${blink}: ${ink} accent pixels`);
+      }
+    } finally {
+      await page.evaluate(() => (window as any).cursorProbe.close());
+    }
+  });
   await t.test('full-screen true-color repaint measurement', async () => {
     const times = await page.evaluate(async () => {
       const { a, el, frame } = window as any;
