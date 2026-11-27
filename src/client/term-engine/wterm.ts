@@ -196,7 +196,43 @@ export class WTermAdapter {
   }
   private rowHeight = 1;
   private fontAdvance = 0;
+  private lastClientHeight = 0;
   private metricsContext?: CanvasRenderingContext2D | null;
+  private keepTailOnShrink() {
+    const el = this.root;
+    if (!el) return;
+    const clientHeight = el.clientHeight;
+    if (clientHeight <= 0) return;
+    const shrank = this.lastClientHeight > 0 && clientHeight < this.lastClientHeight;
+    if (shrank && this.readerRow === undefined && this.isAtTail(el.scrollHeight - this.lastClientHeight) && !this.isAtTail()) this.followTail();
+    this.lastClientHeight = clientHeight;
+  }
+  private scaleOf(el: HTMLElement) {
+    if (!el.offsetWidth || !el.offsetHeight) return;
+    const rect = el.getBoundingClientRect();
+    // Fractional CSS widths/heights round to integers in offsetWidth/offsetHeight
+    // (at most 0.5px off), so require a >1px discrepancy before treating as scaled.
+    if (Math.abs(rect.width - el.offsetWidth) <= 1 && Math.abs(rect.height - el.offsetHeight) <= 1) return;
+    const sx = rect.width / el.offsetWidth;
+    const sy = rect.height / el.offsetHeight;
+    if (!(sx > 0.01) || !(sy > 0.01)) return;
+    return [sx, sy] as const;
+  }
+  /** WTerm measures cell pitch with getBoundingClientRect(), which inherits ancestor
+   * CSS scale transforms (such as pane opening animations) while DOM row heights and
+   * scroll extents stay in unscaled CSS pixels. Counter-scale during synchronous probes. */
+  private withoutScale<T>(el: HTMLElement, fn: () => T): T {
+    const scale = this.scaleOf(el);
+    if (!scale) return fn();
+    const transform = el.style.transform;
+    const counter = `scale(${1 / scale[0]}, ${1 / scale[1]})`;
+    el.style.transform = transform ? `${counter} ${transform}` : counter;
+    try {
+      return fn();
+    } finally {
+      el.style.transform = transform;
+    }
+  }
   refreshMetrics() {
     const el = this.root;
     if (!el) return;
@@ -235,14 +271,20 @@ export class WTermAdapter {
     if (this.native && el.clientWidth) {
       // fit() remeasures the font before considering a resize. An empty content width
       // lets it refresh mouse/cell metrics without reflowing the authoritative PTY grid.
-      const width = el.style.width;
-      el.style.width = '0px';
-      try {
-        this.native.fit();
-        this.metricsPending = false;
-      } finally {
-        el.style.width = width;
-      }
+      this.withoutScale(el, () => {
+        const { width, paddingLeft, paddingRight } = el.style;
+        el.style.width = '0px';
+        el.style.paddingLeft = '0px';
+        el.style.paddingRight = '0px';
+        try {
+          this.native!.fit();
+          this.metricsPending = false;
+        } finally {
+          el.style.width = width;
+          el.style.paddingLeft = paddingLeft;
+          el.style.paddingRight = paddingRight;
+        }
+      });
       if (previousHeight !== this.rowHeight) {
         if (this.readerRow !== undefined) el.scrollTop = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
         this.pendingRestore = { appliedTop: el.scrollTop };
@@ -350,16 +392,25 @@ export class WTermAdapter {
           if (e.target !== root) return;
           if (restoredSameTop && lastScrollTop === root.scrollTop) e.stopImmediatePropagation();
           restoredSameTop = false;
+          this.keepTailOnShrink();
           lastScrollTop = root.scrollTop;
           this.sampleReader(true);
         },
         { capture: true, passive: true, signal },
       );
       this.syncRendering();
-      const observer = new ResizeObserver(() => {
-        if (root.clientWidth > 0 && this.metricsPending) this.refreshMetrics();
+      this.lastClientHeight = root.clientHeight;
+      const probe = root.querySelector('.term-size-probe');
+      const observer = new ResizeObserver((entries) => {
+        this.keepTailOnShrink();
+        // WTerm's own ResizeObserver on .term-size-probe runs before ours and
+        // measures scaled rects when an ancestor animates transform. Remeasure
+        // unscaled before the next render frame commits spacers or scrollTop.
+        const probeResized = probe !== null && entries.some((e) => e.target === probe);
+        if (root.clientWidth > 0 && (this.metricsPending || (probeResized && this.scaleOf(root)))) this.refreshMetrics();
       });
       observer.observe(root);
+      if (probe) observer.observe(probe);
       const visibility = new IntersectionObserver(([entry]) => {
         this.inViewport = entry.isIntersecting;
         this.syncRendering();
@@ -474,6 +525,7 @@ export class WTermAdapter {
   resize(cols: number, rows: number) {
     const t = this.native;
     if (!t || (cols === t.cols && rows === t.rows)) return;
+    this.keepTailOnShrink();
     const oldCols = t.cols,
       oldRows = t.rows;
     t.resize(cols, rows);

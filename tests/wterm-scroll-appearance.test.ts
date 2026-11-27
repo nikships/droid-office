@@ -207,6 +207,124 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     assert.ok(Math.abs(sample.pitch - 8.4) < 0.02);
     for (const c of sample.comparisons) assert.deepEqual(c.fit, c.expected, JSON.stringify(c));
   });
+  await t.test('opening a scaled dashboard pane with history keeps following streamed output during and after the animation', async () => {
+    const sample = await page.evaluate(async () => {
+      const { createWebTerminal } = await import('/term-engine/web-terminal.ts');
+      const { openTerminalRenderer } = await import('/ui/terminal-renderer.ts');
+      const pane = document.createElement('section');
+      pane.className = 'dash-pane';
+      pane.style.cssText = 'width:566px;height:769px;border:0;transition:none;animation:none';
+      const modal = document.createElement('div');
+      modal.className = 'modal term inline';
+      const host = document.createElement('div');
+      host.className = 'term-host';
+      modal.append(host);
+      pane.append(modal);
+      document.body.append(pane);
+      const scale = pane.animate([{ transform: 'scale(.97)' }, { transform: 'none' }], { duration: 10000 });
+      scale.pause();
+      const { term } = createWebTerminal({ fontFamily: (window as any).a.options.fontFamily, fontSize: 14, lineHeight: 1.1, scrollback: 5000 });
+      const frames = async (n = 3) => {
+        for (let i = 0; i < n; i++) await new Promise(requestAnimationFrame);
+      };
+      const gapOf = (el: HTMLElement) => el.scrollHeight - el.clientHeight - el.scrollTop;
+      try {
+        await openTerminalRenderer(term, host, () => true);
+        const fit = term.proposeDimensions();
+        term.resize(fit.cols, fit.rows);
+        const lines = Array.from({ length: 260 }, (_, i) => `hist ${i + 1}`).join('\r\n');
+        await new Promise<void>((r) => term.write(lines, r));
+        term.scrollToBottom();
+        await frames(3);
+        const root = term.native.element as HTMLElement;
+        const duringSnapshot = gapOf(root);
+        for (let i = 0; i < 6; i++) {
+          await new Promise<void>((r) => term.write(`\r\nlive ${i + 1}`, r));
+          await frames(2);
+        }
+        const spacerBefore = parseFloat(root.querySelector<HTMLElement>('.term-scrollback-spacer')?.style.height ?? '0');
+        const duringStream = gapOf(root);
+        scale.finish();
+        await frames(4);
+        const spacerAfter = parseFloat(root.querySelector<HTMLElement>('.term-scrollback-spacer')?.style.height ?? '0');
+        const afterSettle = gapOf(root);
+        for (let i = 0; i < 8; i++) {
+          await new Promise<void>((r) => term.write(`\r\nsettled ${i + 1}`, r));
+          await frames(2);
+        }
+        const afterStream = gapOf(root);
+        return { duringSnapshot, duringStream, afterSettle, afterStream, spacerBefore, spacerAfter };
+      } finally {
+        scale.cancel();
+        term.dispose();
+        pane.remove();
+      }
+    });
+    assert.ok(sample.duringSnapshot < 1, `scaled snapshot gap=${sample.duringSnapshot}`);
+    assert.ok(sample.duringStream < 1, `scaled stream gap=${sample.duringStream}`);
+    assert.ok(sample.afterSettle < 1, `settled gap=${sample.afterSettle}`);
+    assert.ok(sample.afterStream < 1, `post-settle stream gap=${sample.afterStream}`);
+    assert.ok(Math.abs(sample.spacerAfter - sample.spacerBefore) < 1, `spacer jump ${sample.spacerBefore} -> ${sample.spacerAfter}`);
+  });
+  await t.test('shrinking a pane keeps a tail-following terminal pinned while leaving a scrolled-up reader in place', async () => {
+    const sample = await page.evaluate(async () => {
+      const { createWebTerminal } = await import('/term-engine/web-terminal.ts');
+      const { openTerminalRenderer } = await import('/ui/terminal-renderer.ts');
+      const frames = async (n = 3) => {
+        for (let i = 0; i < n; i++) await new Promise(requestAnimationFrame);
+      };
+      const gapOf = (el: HTMLElement) => el.scrollHeight - el.clientHeight - el.scrollTop;
+      const run = async (scrollUp: boolean) => {
+        const pane = document.createElement('section');
+        pane.className = 'dash-pane';
+        pane.style.cssText = 'width:800px;height:600px;border:0;transition:none;animation:none';
+        const modal = document.createElement('div');
+        modal.className = 'modal term inline';
+        const host = document.createElement('div');
+        host.className = 'term-host';
+        modal.append(host);
+        pane.append(modal);
+        document.body.append(pane);
+        const { term } = createWebTerminal({ fontFamily: (window as any).a.options.fontFamily, fontSize: 14, lineHeight: 1.1, scrollback: 5000 });
+        try {
+          await openTerminalRenderer(term, host, () => true);
+          const fit = term.proposeDimensions();
+          term.resize(fit.cols, fit.rows);
+          const lines = Array.from({ length: 180 }, (_, i) => `row ${i + 1} ${'x'.repeat(70)}`).join('\r\n');
+          await new Promise<void>((r) => term.write(lines, r));
+          term.scrollToBottom();
+          await frames(3);
+          const root = term.native.element as HTMLElement;
+          if (scrollUp) {
+            root.scrollTop = Math.max(0, root.scrollTop - 300);
+            await frames(2);
+          }
+          const topBefore = root.scrollTop;
+          // Simulate a multi-step shrink transition where both width and height contract.
+          for (const [w, h] of [
+            [700, 500],
+            [600, 420],
+            [500, 320],
+          ]) {
+            pane.style.width = `${w}px`;
+            pane.style.height = `${h}px`;
+            const next = term.proposeDimensions();
+            term.resize(next.cols, next.rows);
+            await frames(2);
+          }
+          await new Promise<void>((r) => term.write('\r\nafter shrink 1\r\nafter shrink 2', r));
+          await frames(3);
+          return { topBefore, topAfter: root.scrollTop, gap: gapOf(root) };
+        } finally {
+          term.dispose();
+          pane.remove();
+        }
+      };
+      return { following: await run(false), reading: await run(true) };
+    });
+    assert.ok(sample.following.gap < 1, `shrunk tail gap=${sample.following.gap}`);
+    assert.ok(sample.reading.gap > 200, `scrolled-up reader should stay unpinned: ${JSON.stringify(sample.reading)}`);
+  });
   await t.test('clicks during pane scale do not report a provisional cell; the first settled click reports the painted cell', async () => {
     const target = await page.evaluate(async () => {
       const renderer = '/ui/terminal-renderer.ts',
