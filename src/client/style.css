@@ -2948,8 +2948,9 @@ body.themed { background: transparent; }
 .dash-preview .b { font-weight: 600; }
 .dash-preview .d { opacity: .6; }
 .dash-preview .i { font-style: italic; }
-/* Clip the ink, not the inline-block's baseline. Decorations span cells, even blank ones. */
-.dash-preview-cell { display: inline-block; position: relative; clip-path: inset(0); }
+/* Decorations span cells, even blank ones. Only an explicit terminal width clips glyph overhang. */
+.dash-preview-cell { display: inline-block; position: relative; }
+.dash-preview-cell.fixed-width { clip-path: inset(0); }
 .dash-preview-cell.underline { --cell-bottom: currentColor; }
 .dash-preview-cell.overline { --cell-top: currentColor; }
 .dash-preview-cell.line-through { --cell-middle: currentColor; }

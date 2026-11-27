@@ -16,7 +16,7 @@ test('compact preview clips one-column ink at the baseline and decorates whole c
   t.after(() => term.dispose());
   term.loadAddon(new unicode11.Unicode11Addon());
   term.unicode.activeVersion = '11';
-  await new Promise<void>((done) => term.write('Screen\r\n\r\n\r\nA🖥️Z\r\nA Z\r\n\x1b[38;2;0;255;0;4m   \r\n👩‍💻\x1b[0m\r\n\x1b[38;2;0;255;0;9;53m   \x1b[0m', done));
+  await new Promise<void>((done) => term.write('Screen\r\n\r\n\r\nA🖥️Z\r\nA Z\r\n\x1b[38;2;0;255;0;4m   \r\n👩‍💻\x1b[0m\r\n\x1b[38;2;0;255;0;9;53m   \x1b[0m\r\nxx\x1b[3;4mf\x1b[0mZ', done));
   const frame = snapshotScreen(term, [])!;
   const browser = await launchBrowser();
   t.after(closeBrowser);
@@ -101,6 +101,27 @@ test('compact preview clips one-column ink at the baseline and decorates whole c
     'underline spans a four-column ZWJ',
   );
   assert.ok(both.filter((n) => Math.abs(n - 3 * box.width) <= 1).length >= 2, 'strike and overline span the blank run');
+
+  // Use the shipped font: a fallback monospace font need not have the same italic overhang.
+  const f = rows.nth(8).locator('span');
+  const font = readFileSync(new URL('../src/client/public/fonts/GeistMono-Variable.woff2', import.meta.url)).toString('base64');
+  await f.evaluate(async (el, data) => {
+    const face = await new FontFace('Preview Geist Mono', `url(data:font/woff2;base64,${data})`).load();
+    document.fonts.add(face);
+    el.parentElement!.style.fontFamily = "'Preview Geist Mono'";
+  }, font);
+  const actual = await pixels(8);
+  await f.evaluate((el) => ((el as HTMLElement).style.clipPath = 'inset(0)'));
+  const clipped = await pixels(8);
+  const edge = await f.evaluate((el) => {
+    (el as HTMLElement).style.clipPath = 'none';
+    return Math.floor(el.getBoundingClientRect().right - el.parentElement!.getBoundingClientRect().left);
+  });
+  const natural = await pixels(8);
+  const beyond = natural.filter((v, i) => i % 4 === 0 && (i / 4) % 100 >= edge && v > clipped[i] + 5).length;
+  t.diagnostic(`Geist Mono italic f retains ${beyond} right-edge pixels lost by the clipped control`);
+  assert.ok(beyond > 0, 'clipping removes right-edge ink from the italic f control');
+  assert.deepEqual(actual, natural, 'the decorated ASCII f keeps its natural ink before Z');
 });
 
 test('empty pane clicks hire in place without swallowing worker picks or allowing offline hires', { skip: status.installed ? false : `Chromium is not installed in ${status.path}` }, async (t) => {
