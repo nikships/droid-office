@@ -21,7 +21,7 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
   await server.listen();
   const port = server.httpServer!.address();
   assert.ok(port && typeof port === 'object');
-  for (const dpr of [1, 2, 1.8, 2.2]) {
+  for (const dpr of [0.8, 1, 2, 1.8, 2.2]) {
     const browser = await chromium.launch({ executablePath: status.executable, chromiumSandbox: true, args: [`--force-device-scale-factor=${dpr}`] });
     try {
       const pane = async (surface = 'window') => {
@@ -56,6 +56,32 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
         await frame(page);
         return page;
       };
+      if (dpr < 1) {
+        await t.test('below DPR 1 the tail tolerance is one device pixel, not one CSS pixel', async () => {
+          const page = await pane();
+          try {
+            const samples = await page.locator('.office-wterm').evaluate((el) => {
+              const t = (window as any).term;
+              const host = el.parentElement!;
+              host.style.flex = 'none';
+              const samples = [];
+              for (let height = 240; height < 250; height++) {
+                host.style.height = `${height}px`;
+                const range = el.scrollHeight - el.clientHeight;
+                el.scrollTop = range - 1;
+                samples.push({ gap: range - el.scrollTop, pinned: t.isAtTail(), tolerance: 1 / devicePixelRatio });
+              }
+              return samples;
+            });
+            assert.ok(samples.some((s) => s.gap >= 1 && s.gap < s.tolerance));
+            assert.ok(samples.some((s) => s.gap >= s.tolerance));
+            for (const s of samples) assert.equal(s.pinned, s.gap < s.tolerance);
+          } finally {
+            await page.close();
+          }
+        });
+        continue;
+      }
       if (dpr === 1) {
         for (const surface of ['window', 'dashboard'])
           await t.test(`Tab, click, paste and text insertion leave ${surface} at its visible tail`, async () => {
@@ -334,55 +360,71 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
         });
       }
       if (dpr === 2.2)
-        await t.test('one quantized Shift-wheel pixel stays in history at Retina 110%', async () => {
+        await t.test('a 0.9px Shift-wheel at Retina 110% stays at the tail for reporting and output', async () => {
           const page = await pane();
           try {
-            const el = page.locator('.office-wterm'),
-              samples = [];
-            // A wheel down at the end has nowhere to go. Its intent must not
-            // capture the next independent movement of the scrollbar.
-            const thumb = await el.evaluate((el) => {
-              (window as any).term.scrollToBottom();
-              el.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 8000 }));
-              el.scrollTop -= 1 / devicePixelRatio;
-              return el.scrollTop;
-            });
-            await frame(page);
-            assert.equal(await top(page), thumb);
+            const el = page.locator('.office-wterm');
             await page.evaluate(() => (window as any).term.write('\x1b[?1000;1006h'));
-            for (const height of [249, 250, 251, 252, 253, 254]) {
-              await page.locator('.modal').evaluate((el, h) => {
-                el.style.height = `${h}px`;
-              }, height);
-              await frame(page);
-              await page.evaluate(() => {
-                (window as any).term.scrollToBottom();
-                (window as any).sent.length = 0;
-              });
-              await frame(page);
-              const tail = await top(page);
-              await el.hover();
-              await page.keyboard.down('Shift');
-              await page.mouse.wheel(0, -1);
-              await page.keyboard.up('Shift');
-              await frame(page);
-              const reader = await top(page);
-              assert.ok(tail > reader && tail - reader < 1.1, `${tail} -> ${reader}`);
-              await page.evaluate(() => (window as any).term.write('\rstatus\r'));
-              await frame(page);
-              assert.equal(await top(page), reader, 'a status repaint must not swallow a subpixel reader');
-              await page.mouse.wheel(0, -30);
-              await frame(page);
-              samples.push({ tail, reader, after: await top(page), reports: await page.evaluate(() => (window as any).sent.length) });
-            }
-            assert.deepEqual(
-              samples.filter((s) => s.after >= s.reader || s.reports),
-              [],
-            );
+            await frame(page);
+            await el.hover();
+            const end = await top(page);
+            await page.keyboard.down('Shift');
+            await page.mouse.wheel(0, -1);
+            await page.keyboard.up('Shift');
+            await frame(page);
+            const offset = end - (await top(page));
+            assert.ok(offset > 0.89 && offset < 0.92, `Shift+wheel moved ${offset}px`);
+            await page.mouse.wheel(0, -30);
+            await frame(page);
+            assert.match(await page.evaluate(() => (window as any).sent.join('')), /^\x1b\[<64;/);
+            await page.evaluate(() => (window as any).term.write('next\r\n'));
+            await frame(page);
+            assert.ok((await top(page)) > end);
           } finally {
             await page.close();
           }
         });
+      if (dpr === 1.8) {
+        for (const action of ['wheel to end', 'close Find'])
+          await t.test(`one device pixel short at DPR 1.8 still follows the tail after ${action}`, async () => {
+            const page = await pane(action === 'close Find' ? 'log' : 'window');
+            try {
+              const el = page.locator('.office-wterm');
+              await page.evaluate(() => (window as any).term.write(`needle\r\n${'more\r\n'.repeat(50)}`));
+              await frame(page);
+              const end = await el.evaluate((el) => {
+                (window as any).term.scrollToBottom();
+                const end = el.scrollTop;
+                el.scrollTop -= 1 / devicePixelRatio;
+                return end;
+              });
+              await frame(page);
+              const start = await top(page);
+              assert.ok(end - start > 0.54 && end - start < 0.57, `${end} -> ${start}`);
+              if (action === 'close Find') {
+                await el.getByRole('button', { name: /Find in terminal/ }).click();
+                const field = page.getByRole('textbox', { name: 'Find in terminal' });
+                await field.fill('needle');
+                await page.getByText('1 of 1', { exact: true }).waitFor();
+                await frame(page);
+                assert.ok((await top(page)) < start - 100, 'Find revealed the earlier hit');
+                await field.press('Escape');
+                await frame(page);
+                assert.equal(await top(page), end);
+              } else {
+                await el.hover();
+                await page.mouse.wheel(0, 10000);
+                await frame(page);
+                assert.equal(await top(page), start, 'the compositor already considers this the end');
+                await page.evaluate(() => (window as any).term.write('more\r\n'));
+                await frame(page);
+                assert.ok((await top(page)) > end, `output did not follow from ${start}`);
+              }
+            } finally {
+              await page.close();
+            }
+          });
+      }
       await t.test(`a two-pixel reader holds through twenty streamed lines and resumes at the end at DPR ${dpr}`, async () => {
         const page = await pane();
         try {

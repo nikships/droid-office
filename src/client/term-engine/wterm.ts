@@ -47,7 +47,6 @@ export class WTermAdapter {
   private metricsPending = true;
   // History index including discarded rows, or undefined when following the tail.
   private readerRow?: number;
-  private tail?: { range: number; dpr: number; top: number };
   private holdReaderAfterPaint = false;
   private heldAlternate = false;
   private paintedDiscarded = 0;
@@ -103,21 +102,10 @@ export class WTermAdapter {
       mouseTrackingMode: c?.mouseTracking() === 1003 ? 'any' : c?.mouseTracking() === 1002 ? 'drag' : c?.mouseTracking() === 1000 ? 'vt200' : 'none',
     } as const;
   }
-  /** DOM extents are integer CSS pixels; scrollTop is quantized in device
-   * pixels. Only the ambiguous last pixel needs the browser's clamped end. */
+  /** Integer CSS extents and device-pixel scroll offsets can disagree at the end. */
   isAtTail(range?: number) {
     const el = this.root;
-    if (!el) return true;
-    range ??= el.scrollHeight - el.clientHeight;
-    const top = el.scrollTop;
-    if (range - top > 1) return false;
-    const dpr = window.devicePixelRatio;
-    if (this.tail?.range !== range || this.tail.dpr !== dpr) {
-      el.scrollTop = el.scrollHeight;
-      this.tail = { range, dpr, top: el.scrollTop };
-      if (top !== this.tail.top) el.scrollTop = top;
-    }
-    return top === this.tail.top;
+    return !el || (range ?? el.scrollHeight - el.clientHeight) - el.scrollTop < Math.max(1, 1 / window.devicePixelRatio);
   }
   private sampleReader(scrolled = false) {
     const el = this.root;
@@ -210,7 +198,6 @@ export class WTermAdapter {
   private fontAdvance = 0;
   private metricsContext?: CanvasRenderingContext2D | null;
   refreshMetrics() {
-    this.tail = undefined;
     const el = this.root;
     if (!el) return;
     if (this.native && !el.clientWidth) {
@@ -366,7 +353,6 @@ export class WTermAdapter {
       );
       this.syncRendering();
       const observer = new ResizeObserver(() => {
-        this.tail = undefined;
         if (root.clientWidth > 0 && this.metricsPending) this.refreshMetrics();
       });
       observer.observe(root);
@@ -486,7 +472,6 @@ export class WTermAdapter {
   resize(cols: number, rows: number) {
     const t = this.native;
     if (!t || (cols === t.cols && rows === t.rows)) return;
-    this.tail = undefined;
     const oldCols = t.cols,
       oldRows = t.rows;
     t.resize(cols, rows);
@@ -536,7 +521,6 @@ export class WTermAdapter {
     const el = this.root;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-    this.tail = { range: el.scrollHeight - el.clientHeight, dpr: window.devicePixelRatio, top: el.scrollTop };
     // Buffered output can lengthen the spacer after this immediate scroll.
     if (this.pendingRestore || this.paintPending || (this.native && this.metricsPending)) this.pendingRestore = { appliedTop: el.clientHeight ? el.scrollTop : undefined };
   }

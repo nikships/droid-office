@@ -21,18 +21,10 @@ export function attachWtermScroll(adapter: WTermAdapter) {
     let horizontalReport = false;
     let remainder = 0;
     let lastTop: number | undefined;
-    let wheelToEndFrom: number | undefined;
     const pixels = (e: WheelEvent, delta = e.deltaY) => delta * (e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? el.clientHeight : e.deltaMode === WheelEvent.DOM_DELTA_LINE ? height() : 1);
     const historyWheel = (e: WheelEvent) => {
       // At normal speed Chromium owns the gesture, including platform momentum.
       const speed = (adapter.options.scrollSensitivity ?? 1) * (e.altKey ? 5 : 1);
-      // On fractional displays the compositor can stop one device pixel
-      // short of the DOM clamp, even for a wheel well beyond the range.
-      if (speed === 1 && !e.ctrlKey && !e.shiftKey && !e.metaKey && e.deltaY > Math.abs(e.deltaX)) {
-        const range = el.scrollHeight - el.clientHeight;
-        const from = el.scrollTop;
-        if (pixels(e) > range - from + 1 && !adapter.isAtTail(range)) wheelToEndFrom = from;
-      }
       if (speed === 1 || !e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.ctrlKey || e.shiftKey || e.metaKey) {
         remainder = 0;
         return;
@@ -45,20 +37,8 @@ export function attachWtermScroll(adapter: WTermAdapter) {
       remainder = target > 0 && target < el.scrollHeight - el.clientHeight ? target - lastTop : 0;
     };
     el.addEventListener(
-      'scroll',
-      () => {
-        if (wheelToEndFrom === undefined) return;
-        const from = wheelToEndFrom;
-        wheelToEndFrom = undefined;
-        const range = el.scrollHeight - el.clientHeight;
-        if (el.scrollTop > from && Math.abs(range - el.scrollTop) <= 1 && !adapter.isAtTail(range)) adapter.scrollToBottom();
-      },
-      { passive: true, signal },
-    );
-    el.addEventListener(
       'wheel',
       (e) => {
-        wheelToEndFrom = undefined;
         const tracking = core.mouseTracking();
         if (!tracking) {
           reportTravel = 0;

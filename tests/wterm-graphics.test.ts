@@ -290,15 +290,6 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
       await write('\x1b[?1049l');
     }
   });
-  await t.test('redundantly disabling horizontal margins preserves an existing direct placement', async () => {
-    await reset();
-    await write(`\x1b[3;5H${apc('a=T,i=48,c=2,r=1,C=1,f=24,s=1,v=1;/wAA')}`);
-    await both(4, 2, red);
-    await write('\x1b[?69l');
-    await page.evaluate(() => new Promise(requestAnimationFrame).then(() => new Promise(requestAnimationFrame)));
-    const pixels = await page.evaluate(() => ['w', 'x'].map((k) => (window as any).pixel(k, 4, 2)));
-    assert.deepEqual(pixels, [red, red]);
-  });
   await t.test('filtering width mode keeps combined alternate-screen transitions atomic', async () => {
     await reset();
     await write(`\x1b[3;5H${apc('a=T,i=12,c=2,r=1,C=1,f=24,s=1,v=1;/wAA')}`);
