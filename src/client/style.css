@@ -842,14 +842,16 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 /* wterm#293: redraw targets an integer CSS offset; input uses the native end.
    At fractional zoom those can be one device pixel apart. Round the viewport,
    then let the last CSS pixel of inset absorb rounding, never a glyph or row. */
-.office-wterm.wterm { height: round(down, 100%, 1px) !important; }
-.changes-log .office-wterm { padding-bottom: 1px; }
-:is(.modal.term, .changes-log) .office-wterm > .term-grid { margin-bottom: -1px; }
+.office-wterm.wterm { height: round(nearest, 100%, 1px) !important; }
+.modal.term .office-wterm { --office-fit-bottom: 4px; }
+.changes-log .office-wterm { --office-fit-bottom: 0px; }
+:is(.modal.term, .changes-log) .office-wterm { --office-tail-allowance: 1px; padding-bottom: calc(var(--office-fit-bottom) + var(--office-tail-allowance)); }
+:is(.modal.term, .changes-log) .office-wterm > .term-grid { margin-bottom: calc(-1 * var(--office-tail-allowance)); }
 .office-wterm > textarea { min-height: 0; }
 /* The invisible input retains its last focused cursor position. After a history
    clear it must not extend the scrollport past the grid. The visible IME preedit
    and touch input still use wterm's cursor positioning. */
-.office-wterm > textarea[style*="opacity: 0;"] { top: 0 !important; }
+.office-wterm > textarea[style*="opacity: 0;"] { position: fixed !important; top: 0 !important; }
 .office-wterm.measuring-cells, .office-wterm.measuring-cells * { pointer-events: none !important; }
 .changes-log:focus-visible .office-wterm { outline: 2px solid var(--accent); outline-offset: -2px; }
 .office-wterm.term-kitty-clickable, .office-wterm.term-kitty-clickable .term-row { cursor: zoom-in; }

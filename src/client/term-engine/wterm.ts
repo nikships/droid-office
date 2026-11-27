@@ -359,7 +359,7 @@ export class WTermAdapter {
     const available = Math.min(el.clientWidth, inner - gutter) - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
     return {
       cols: Math.floor(available / width),
-      rows: Math.floor((el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / this.rowHeight),
+      rows: Math.floor((el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.getPropertyValue('--office-fit-bottom') || style.paddingBottom)) / this.rowHeight),
     };
   }
   attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean) {

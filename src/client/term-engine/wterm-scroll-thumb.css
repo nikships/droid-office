@@ -1,5 +1,7 @@
 /* Reserve the native thumb's space before history appears so the PTY grid doesn't resize. */
 .office-wterm.wterm {
+  /* A shared PTY grid can be taller than this pane even with no history. */
+  overflow-y: auto;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: auto;
