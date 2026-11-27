@@ -618,13 +618,14 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      # `gh` is what the release is published with, so this job checks for it specifically.
-      - name: Check the runner's toolchain
-        run: .github/scripts/runner-toolchain.sh gh
+      # Publish from the handover folder without checking out or running workspace code.
+      - name: Check the GitHub CLI
+        working-directory: ${{ runner.temp }}
+        run: |
+          gh --version || {
+            echo 'The Mac Mini runner needs the GitHub CLI (gh). See docs/guide/development.md, "CI on the Mac Mini".' >&2
+            exit 1
+          }
 
       # Staged in the runner's temp folder, which is emptied between jobs. A workspace `assets/`
       # would survive from an earlier run on this persistent runner, and an old APK next to the new
@@ -703,5 +704,6 @@ jobs:
       # Runs on the early exit too (an older run that found a newer release already published), so
       # nothing is left on the machine's disk waiting for the two-day sweep.
       - name: Clear this run's handover folder
+        working-directory: ${{ runner.temp }}
         if: always()
         run: rm -rf "$HOME/ci-artifacts/run-$GITHUB_RUN_ID"

@@ -97,6 +97,8 @@ The checked-in workflow runs the Node suite (`release`) on the owner's Mac Mini 
 
 Same-repository PRs from any author except Dependabot, including other GitHub Apps and bots, run their install scripts and tests under the login that signs releases when the workflow runs. Coverage and the checkout startup check use temporary home directories so test transcripts and bundled skills do not land in the signing login's home. The publishing steps stay off, but the processes are not isolated from that login or from `main` jobs on the Mini's three shared runner instances.
 
+On each instance, checkout removes untracked and ignored files and resets tracked files. It can reuse the repository's `.git` directory, including its config and hooks. A PR can therefore leave a hook that runs during a later `main` job's checkout on that instance. The `publish` job does not check out the repository or run workspace code.
+
 A fork can change the workflow, including its runner labels. The repository's fork pull-request approval setting (**Settings → Actions → General**) controls which runs need approval. Review workflow changes before approving a run: an approved or exempt run can target the Mac Mini.
 
 Pull requests run only the checks affected by their paths: the office build, lint, typecheck, coverage and checkout startup smoke test; the website build and checks; Mac source and native presenter compilation; and Android debug unit tests and lint. They never set release versions, download Electron, package an unsigned Mac app, build a release APK or upload release artifacts. Website lint and typecheck run only once when the repository-wide Node checks also run. Only the change-detection job fetches git history to compare the complete change and count commits for release versions. New pushes to a PR cancel its older run.
@@ -117,7 +119,7 @@ Because the jobs share one machine, the workflow is written so they can run side
 
 - An office the workflow starts listens on a free port picked at run time (`.github/scripts/free-port.mjs`), not on 4700.
 - Gradle's build cache in `~/.gradle` carries over between runs. Its daemon doesn't: the runner kills what it spawned when a job ends.
-- Every job, including `publish`, checks out the triggering revision before running repository scripts. The built app and APK go from the platform jobs to `publish` through `~/ci-artifacts/run-<run id>` on the machine's disk, instead of being uploaded to and downloaded from GitHub's artifact service. The last published set is kept in `~/ci-artifacts/latest-release`, so a release that rebuilt only one platform reuses the other's assets instead of downloading 400 MB. `publish` clears the run's folder in a final `always()` step, and the `changes` job sweeps folders older than two days.
+- The `publish` job runs from the runner's temp folder. The built app and APK go from the platform jobs to `publish` through `~/ci-artifacts/run-<run id>` on the machine's disk, instead of being uploaded to and downloaded from GitHub's artifact service. The last published set is kept in `~/ci-artifacts/latest-release`, so a release that rebuilt only one platform reuses the other's assets instead of downloading 400 MB. `publish` clears the run's folder in a final `always()` step, and the `changes` job sweeps folders older than two days.
 
 The machine, not the workflow, provides the toolchain. A job that needs another tool adds it here rather than to the workflow:
 
@@ -130,12 +132,12 @@ The machine, not the workflow, provides the toolchain. A job that needs another 
 | GitHub CLI | `/opt/homebrew/bin/gh`, which `publish` makes the release with |
 | Chromium for the Whiteboard tests | `~/Library/Caches/droid-office/ci-browsers`, downloaded by `droid-office browser install` |
 
-`.github/scripts/runner-toolchain.sh` checks them at the top of each job and names whatever is missing, so a machine that has drifted fails in seconds instead of halfway through a build. Each job asks only for the tools it uses (`runner-toolchain.sh node java android`, `runner-toolchain.sh gh`), so drift in one toolchain doesn't fail a job that never touches it.
+Jobs that check out code run `.github/scripts/runner-toolchain.sh` to check only the tools they use (for example, `runner-toolchain.sh node java android`). `publish` checks `gh --version` directly. A missing tool fails the job that needs it.
 
 Because the jobs run as the owner, in their session, on their Mac:
 
 - The signing keychain is temporary. The Mac job imports the Developer ID into a keychain under the runner's temp folder, and a final step marked `always()` puts the previous default keychain and search list back and deletes it, even when the run failed or was cancelled. A run killed outright can leave that temp keychain as the default, so the next Mac job puts the login keychain back before it builds.
-- The runner's temp folder is emptied between jobs, and `actions/checkout` empties the workspace. Anything a job wants to reuse goes in a folder outside it, like the Chromium folder above.
+- The runner empties its temp folder between jobs. Builds keep reusable artifacts outside both that folder and the checkout, like the persistent Chromium folder above.
 - Signing, notarizing and the app's startup check run against the real Mac, so they run exactly as they do for the owner.
 
 The machine is reachable only over the owner's tailnet, and the runner makes an outbound connection to GitHub, so nothing is exposed to the internet.

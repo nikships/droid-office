@@ -304,14 +304,23 @@ test('only change detection fetches history, and website checks are not repeated
   }
 });
 
-test('each job checks out the triggering revision before running workspace code', () => {
+test('jobs that use workspace code start with checkout; publish stays outside the workspace', () => {
+  // jobSteps splits on "- " at step indentation; a bare dash must not hide a step from the checks.
+  assert.doesNotMatch(workflow, /^ {6}-[ \t]*(?:#.*)?$/m);
   const jobs = [...workflow.split('\njobs:\n')[1].matchAll(/^ {2}([\w-]+):$/gm)].map((match) => match[1]);
   assert.ok(jobs.includes('publish'));
-  for (const job of jobs) {
+  for (const job of jobs.filter((name) => name !== 'publish')) {
     const first = jobSteps(job)[0];
     assert.match(first, /^ {6}- uses: actions\/checkout@v7\n/, job);
     assert.doesNotMatch(first, /^ {8}if:|^ {10}(?:ref|repository|path|sparse-checkout):/m, job);
   }
+  const publish = jobSteps('publish');
+  assert.ok(publish.length);
+  for (const step of publish) {
+    assert.match(step, /^ {8}working-directory: \$\{\{ runner\.temp \}\}$/m);
+    assert.doesNotMatch(step, /\buses:|\.github\/|\.\.?\/|\b(?:bin|tools)\/|\b(?:GITHUB_WORKSPACE|git|npm|npx|node)\b|github\.workspace/);
+  }
+  assert.match(publish[0], /gh --version \|\| \{[\s\S]*?docs\/guide\/development\.md, "CI on the Mac Mini"[\s\S]*?exit 1/);
 });
 
 test('website-only checks initialize npm-locked Bun after the scripts-disabled install', () => {
@@ -392,7 +401,6 @@ test('other PR checks run on GitHub runners while main builds and releases on th
     website: 'node',
     mac: 'node xcode',
     android: 'node java android',
-    publish: 'gh',
   };
   for (const [job, tools] of Object.entries(wanted)) {
     const step = jobSteps(job).find((candidate) => candidate.includes("name: Check the runner's toolchain"));
@@ -400,7 +408,7 @@ test('other PR checks run on GitHub runners while main builds and releases on th
     assert.match(step, new RegExp(`runner-toolchain\\.sh ${tools}\\n`), job);
     if (job === 'release') {
       assert.match(step, /^ {8}if: runner\.environment == 'self-hosted'$/m);
-    } else if (job !== 'publish') {
+    } else {
       assert.match(step, /if: github\.event_name != 'pull_request'/);
     }
   }
@@ -414,6 +422,7 @@ test('CI caches hosted Chromium, isolates Mac Mini PR installs and checks render
   const useTempFolder = /^ {8}run: echo "DROID_OFFICE_BROWSERS_PATH=\$RUNNER_TEMP\/browsers" >> "\$GITHUB_ENV"$/m;
   assert.match(miniPrFolder, useTempFolder);
   assert.ok(steps.indexOf(miniPrFolder) < steps.findIndex((step) => step.includes("name: Check the runner's toolchain")));
+  assert.ok(steps.indexOf(miniPrFolder) < steps.findIndex((step) => step.includes('name: Install and build')));
   const folder = steps.find((step) => step.includes('name: Choose the shared Chromium folder'));
   assert.ok(folder);
   assert.match(folder, useTempFolder);
@@ -475,7 +484,7 @@ test("a run's artifacts go between jobs on the machine's disk, not through the a
   assert.match(publish, /rm -rf assets\n\s+mkdir -p assets/);
   // The handover folder is cleared whatever happened, including the "newer release already
   // published" early exit, which used to leave 400 MB behind until the sweep.
-  assert.match(publish, /name: Clear this run's handover folder\n\s+if: always\(\)\n\s+run: rm -rf "\$HOME\/ci-artifacts\/run-\$GITHUB_RUN_ID"/);
+  assert.match(publish, /name: Clear this run's handover folder\n\s+working-directory: \$\{\{ runner\.temp \}\}\n\s+if: always\(\)\n\s+run: rm -rf "\$HOME\/ci-artifacts\/run-\$GITHUB_RUN_ID"/);
   assert.doesNotMatch(publish, /gh release edit "\$TAG" --draft=false --latest\n\s+rm -rf "\$HOME/);
   // A rerun of an older run leaves its folder behind; the change job sweeps the stale ones.
   assert.match(jobSteps('changes').join('\n'), /find "\$HOME\/ci-artifacts" -maxdepth 1 -type d -name 'run-\*' -mtime \+2/);
