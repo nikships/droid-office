@@ -1,0 +1,33 @@
+.wterm-shell-tools {
+  position: sticky;
+  top: 0;
+  height: 0;
+  z-index: 4;
+  pointer-events: none;
+  user-select: none;
+  font: 12px/1.4 system-ui, sans-serif;
+  color: var(--text, #eee);
+}
+.wterm-prompt-chip {
+  position: absolute;
+  pointer-events: auto;
+  background: var(--surface, #202024);
+  border: 1px solid var(--border, #555);
+  border-radius: 4px;
+  top: 4px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  padding-left: 8px;
+  gap: 3px;
+}
+.wterm-prompt-chip[hidden] { display: none; }
+.wterm-prompt-chip[data-state="error"] span { color: var(--danger, #ff9f99); }
+.wterm-prompt-chip button {
+  padding: 3px 6px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.wterm-prompt-chip button:hover { background: var(--border, #555); }

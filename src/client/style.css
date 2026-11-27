@@ -2,6 +2,7 @@
 @import './term-engine/wterm-links.css';
 @import './term-engine/wterm-scroll-thumb.css';
 @import './term-engine/wterm-search.css';
+@import './term-engine/wterm-prompts.css';
 
 /* Geist and Geist Mono, bundled locally (public/fonts, SIL OFL — see fonts/OFL-LICENSE.txt). */
 @font-face {
