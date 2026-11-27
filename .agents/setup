@@ -9,8 +9,8 @@ if ! command -v rsync >/dev/null; then
   time sudo -n apt-get install -y --no-install-recommends rsync
 fi
 
-# The orb already provides Node.js, npm and agent-browser. Match Linux CI by
-# installing the Electron package but not downloading its Mac-only app runtime.
+# The orb already provides Node.js, npm and agent-browser. It needs the
+# Electron package but not the desktop runtime.
 export ELECTRON_SKIP_BINARY_DOWNLOAD=1
 node_version=$(node --version)
 npm_version=$(npm --version)

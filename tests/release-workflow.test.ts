@@ -329,6 +329,7 @@ test('PR checks run on GitHub runners while main builds and releases on the Mac 
   for (const [job, hostedRunner] of Object.entries({ changes: 'ubuntu-latest', release: 'macos-26', website: 'ubuntu-latest', mac: 'macos-26', android: 'ubuntu-latest' })) {
     const expression = workflow.match(new RegExp(`^ {2}${job}:\\n(?: {4}[^\\n]*\\n)*? {4}runs-on: \\$\\{\\{ (.+) \\}\\}$`, 'm'))?.[1];
     assert.ok(expression, job);
+    assert.equal(expression, `github.event_name == 'pull_request' && '${hostedRunner}' || fromJSON('["self-hosted", "macOS", "ARM64", "droid-office"]')`, job);
     for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
       const runner = runInNewContext(expression, { github: { event_name: event }, fromJSON: JSON.parse });
       assert.deepEqual(runner, event === 'pull_request' ? hostedRunner : ['self-hosted', 'macOS', 'ARM64', 'droid-office'], `${job}: ${event}`);
@@ -365,11 +366,16 @@ test('PR checks run on GitHub runners while main builds and releases on the Mac 
 
 test('CI caches Chromium on PRs and proves the sandboxed browser can render before coverage on both Macs', () => {
   const steps = jobSteps('release');
+  const folder = steps.find((step) => step.includes('name: Choose the shared Chromium folder'));
+  assert.ok(folder);
+  assert.match(folder, /^ {8}run: echo "DROID_OFFICE_BROWSERS_PATH=\$RUNNER_TEMP\/browsers" >> "\$GITHUB_ENV"$/m);
   const cache = steps.find((step) => step.includes('name: Cache Chromium'));
   assert.ok(cache);
+  assert.ok(steps.indexOf(folder) < steps.indexOf(cache));
+  for (const step of [folder, cache]) assert.match(step, /^ {8}if: github\.event_name == 'pull_request'$/m);
   assert.match(cache, /uses: actions\/cache@/);
+  assert.match(cache, /^ {10}path: \$\{\{ runner\.temp \}\}\/browsers$/m);
   assert.match(cache, /key: chromium-\$\{\{ runner\.os \}\}/);
-  assert.equal(stepRuns(cache), true);
   const install = steps.find((step) => step.includes('name: Install Chromium\n'));
   assert.ok(install);
   assert.match(install, /node bin\/droid-office\.js browser install/);

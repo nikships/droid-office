@@ -93,9 +93,11 @@ Rules for changing the code are in [`AGENTS.md`](../../AGENTS.md). A directory w
 
 Every change to the app that lands on `main` is published as a GitHub release by [`.github/workflows/release.yml`](../../.github/workflows/release.yml). The Mac app is the only supported production installation; there is no standalone server tarball or npm publication, and `package.json` marks the package private.
 
-Pull requests run only on GitHub-hosted runners: `macos-26` for the Node suite (`release`) and native Mac presenter checks, and `ubuntu-latest` for change detection, website and Android checks. Pushes to `main` and manual runs use the owner's Mac Mini, registered as the self-hosted `droid-office` runner. See [CI on the Mac Mini](#ci-on-the-mac-mini) for its toolchain and repair instructions.
+The checked-in workflow routes every pull-request job to GitHub-hosted runners: `macos-26` for the Node suite (`release`) and native Mac presenter checks, and `ubuntu-latest` for change detection, website and Android checks. Pushes to `main` and manual runs use the owner's Mac Mini, registered as the self-hosted `droid-office` runner. See [CI on the Mac Mini](#ci-on-the-mac-mini) for its toolchain and repair instructions.
 
-Pull requests run only the checks affected by their paths: the office build, lint, typecheck, coverage and checkout startup smoke test; the website build and checks; Mac source and native presenter compilation; and Android debug unit tests and lint. They never set release versions, download Electron, package an unsigned Mac app, build a release APK or upload release artifacts. Website lint and typecheck run only once when the repository-wide Node checks also run. Only the change-detection job fetches git history to compare the complete change and count commits for release versions. New pushes to a PR cancel its older run. Pull requests from forks run safely in GitHub-hosted cloud runners without accessing the self-hosted runner.
+A fork can change the workflow, including its runner labels. The repository's fork pull-request approval setting (**Settings → Actions → General**) controls which runs need approval. Review workflow changes before approving a run: an approved or exempt run can target the Mac Mini.
+
+Pull requests run only the checks affected by their paths: the office build, lint, typecheck, coverage and checkout startup smoke test; the website build and checks; Mac source and native presenter compilation; and Android debug unit tests and lint. They never set release versions, download Electron, package an unsigned Mac app, build a release APK or upload release artifacts. Website lint and typecheck run only once when the repository-wide Node checks also run. Only the change-detection job fetches git history to compare the complete change and count commits for release versions. New pushes to a PR cancel its older run.
 
 The Node job caches the pinned Chromium headless shell with GitHub Actions on pull requests and in a persistent folder on the Mac Mini. On both runners, the job installs the browser if needed, launches it with the sandbox enabled and renders a page before coverage. A failed render or a smoke check that exceeds one minute fails the job.
 
@@ -120,7 +122,7 @@ The machine, not the workflow, provides the toolchain. A job that needs another 
 | Tool | Where |
 | --- | --- |
 | Node 22 or later | `/opt/homebrew/bin/node`, on the runner's `PATH` (26 today; a newer major passes the check, an older one fails it) |
-| Xcode and the macOS SDK | `/Volumes/NVMe/Xcode.app`, through `DEVELOPER_DIR` in the launch agent (unused by the Node and website jobs) |
+| Xcode and the macOS SDK | `/Volumes/NVMe/Xcode.app`, through `DEVELOPER_DIR` in the launch agent. The Node job compiles the native presenter during `npm ci`; the Mac job also uses Xcode to build the app. |
 | JDK 21 | `/opt/homebrew/opt/openjdk@21`, through `JAVA_HOME` |
 | Android SDK | `~/Library/Android/sdk`, through `ANDROID_HOME` and `ANDROID_SDK_ROOT` |
 | GitHub CLI | `/opt/homebrew/bin/gh`, which `publish` makes the release with |

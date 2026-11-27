@@ -1,6 +1,5 @@
 // Builds the native Metal presenter (native/presenter) into native/presenter/build/Release/presenter.node.
-// `npm run build` runs it. It is a no-op anywhere but macOS: the presenter is Objective-C++ for the Mac app,
-// and the Linux CI job, a developer checkout on Linux and the Cursor image only need the office itself.
+// `npm run build` compiles the presenter on macOS and skips it elsewhere.
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
