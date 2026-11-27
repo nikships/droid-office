@@ -17,12 +17,15 @@ export function hasNativeSearchControls(adapter: WTermAdapter) {
 export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: AbortSignal, callbacks: { onChange?(state: SearchState): void; onClose?(): void } = {}) {
   const el = native.element;
   let opened = false;
+  let awaitingMatch = false;
+  let revealed = false;
   let restore: (() => void) | undefined;
   const close = (restorePosition: boolean) => {
     if (!opened) return;
     opened = false;
+    awaitingMatch = false;
     native.clearSearch();
-    if (restorePosition && restore) {
+    if (restorePosition && revealed && restore) {
       adapter.cancelReaderRestore();
       restore();
     }
@@ -32,7 +35,16 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
   const release = () => close(false);
   el.addEventListener(searchStarting, release, { signal });
   const reset = adapter.onReset(release);
-  native.onSearchChange = callbacks.onChange ?? null;
+  native.onSearchChange = (state) => {
+    // Search can finish in a later paint. An empty or unsuccessful query
+    // never took the viewport away from a stationary reader.
+    if (awaitingMatch && state.count) {
+      awaitingMatch = false;
+      revealed = true;
+      adapter.cancelReaderRestore();
+    }
+    callbacks.onChange?.(state);
+  };
   signal.addEventListener(
     'abort',
     () => {
@@ -47,24 +59,28 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
     open() {
       if (opened || signal.aborted) return;
       el.dispatchEvent(new Event(searchStarting));
-      const pinned = el.scrollHeight - el.clientHeight - el.scrollTop < 1;
+      const pinned = adapter.isAtTail();
       restore = pinned ? () => adapter.scrollToBottom() : adapter.saveReader({ explicit: true });
       opened = true;
+      revealed = false;
     },
     setQuery(query: string, options?: SearchOptions) {
       if (!opened) return;
-      adapter.cancelReaderRestore();
+      adapter.cancelReaderRestore(false);
+      awaitingMatch = !!query;
       native.search(query, options);
     },
     next() {
       if (!opened) return false;
-      adapter.cancelReaderRestore();
-      return native.findNext();
+      const moved = native.findNext();
+      adapter.cancelReaderRestore(moved);
+      return moved;
     },
     previous() {
       if (!opened) return false;
-      adapter.cancelReaderRestore();
-      return native.findPrevious();
+      const moved = native.findPrevious();
+      adapter.cancelReaderRestore(moved);
+      return moved;
     },
     close: () => close(true),
     getState: () => native.getSearchState(),

@@ -16,13 +16,23 @@ export function attachWtermScroll(adapter: WTermAdapter) {
 
     let partialRow = 0;
     let reportTravel = 0;
+    let reportAlt = false;
+    let reportTracking = 0;
     let horizontalReport = false;
     let remainder = 0;
     let lastTop: number | undefined;
+    let wheelToEndFrom: number | undefined;
     const pixels = (e: WheelEvent, delta = e.deltaY) => delta * (e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? el.clientHeight : e.deltaMode === WheelEvent.DOM_DELTA_LINE ? height() : 1);
     const historyWheel = (e: WheelEvent) => {
       // At normal speed Chromium owns the gesture, including platform momentum.
       const speed = (adapter.options.scrollSensitivity ?? 1) * (e.altKey ? 5 : 1);
+      // On fractional displays the compositor can stop one device pixel
+      // short of the DOM clamp, even for a wheel well beyond the range.
+      if (speed === 1 && !e.ctrlKey && !e.shiftKey && !e.metaKey && e.deltaY > Math.abs(e.deltaX)) {
+        const range = el.scrollHeight - el.clientHeight;
+        const from = el.scrollTop;
+        if (pixels(e) > range - from + 1 && !adapter.isAtTail(range)) wheelToEndFrom = from;
+      }
       if (speed === 1 || !e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.ctrlKey || e.shiftKey || e.metaKey) {
         remainder = 0;
         return;
@@ -35,14 +45,27 @@ export function attachWtermScroll(adapter: WTermAdapter) {
       remainder = target > 0 && target < el.scrollHeight - el.clientHeight ? target - lastTop : 0;
     };
     el.addEventListener(
+      'scroll',
+      () => {
+        if (wheelToEndFrom === undefined) return;
+        const from = wheelToEndFrom;
+        wheelToEndFrom = undefined;
+        const range = el.scrollHeight - el.clientHeight;
+        if (el.scrollTop > from && Math.abs(range - el.scrollTop) <= 1 && !adapter.isAtTail(range)) adapter.scrollToBottom();
+      },
+      { passive: true, signal },
+    );
+    el.addEventListener(
       'wheel',
       (e) => {
-        if (!core.mouseTracking()) {
+        wheelToEndFrom = undefined;
+        const tracking = core.mouseTracking();
+        if (!tracking) {
           reportTravel = 0;
           return;
         }
         const max = el.scrollHeight - el.clientHeight;
-        if (adapter.options.disableStdin || (!core.usingAltScreen() && !e.shiftKey && max - el.scrollTop >= 1)) {
+        if (adapter.options.disableStdin || (!core.usingAltScreen() && !e.shiftKey && !adapter.isAtTail(max))) {
           // Don't send reports from a read-only mirror or a reader even just
           // two pixels from the tail. Native scrolling owns history.
           reportTravel = 0;
@@ -59,6 +82,8 @@ export function attachWtermScroll(adapter: WTermAdapter) {
         const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
         if (horizontal !== horizontalReport) reportTravel = 0;
         horizontalReport = horizontal;
+        reportAlt = core.usingAltScreen();
+        reportTracking = tracking;
         reportTravel += pixels(e, horizontal ? e.deltaX : e.deltaY);
         if (Math.abs(reportTravel) >= row) {
           reportTravel %= row;
@@ -76,9 +101,9 @@ export function attachWtermScroll(adapter: WTermAdapter) {
         // the live grid but leaves the wheel alone while reading history.
         if (e.defaultPrevented) return;
         if (!core.usingAltScreen()) return historyWheel(e);
-        if (e.ctrlKey) return;
+        if (e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
         e.preventDefault();
-        if (core.mouseTracking() || adapter.options.disableStdin || e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+        if (core.mouseTracking() || adapter.options.disableStdin || e.shiftKey) return;
         partialRow += pixels(e) / height();
         const rows = Math.trunc(partialRow);
         partialRow -= rows;
@@ -86,6 +111,12 @@ export function attachWtermScroll(adapter: WTermAdapter) {
       },
       { passive: false, signal },
     );
+    // The VT scanner flushes mode changes in order, including two programs
+    // switching screens in one PTY write with no intervening wheel event.
+    adapter.onNativeParsed(() => {
+      if (reportTravel && (reportAlt !== core.usingAltScreen() || reportTracking !== core.mouseTracking())) reportTravel = 0;
+      if (partialRow && (!core.usingAltScreen() || core.mouseTracking())) partialRow = 0;
+    });
     adapter.onReset(() => {
       partialRow = remainder = reportTravel = 0;
     });

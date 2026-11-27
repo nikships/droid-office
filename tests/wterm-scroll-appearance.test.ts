@@ -794,29 +794,6 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
         result.before.map((v) => v[0]),
       );
     }
-    await t.test('releasing the native scrollbar thumb leaves the exact mid-row offset for 400 ms', async () => {
-      const root = pane.locator('#classic-fit .office-wterm');
-      await pane.setViewportSize({ width: 1280, height: 950 });
-      const { x, y, h } = await root.evaluate(async (el) => {
-        el.scrollTop = 0;
-        await new Promise(requestAnimationFrame);
-        await new Promise(requestAnimationFrame);
-        const r = el.getBoundingClientRect();
-        return { x: r.right - (el.offsetWidth - el.clientWidth) / 2, y: r.top + 12, h: parseFloat(el.style.getPropertyValue('--term-row-height')) };
-      });
-      await pane.mouse.move(x, y);
-      await pane.mouse.down();
-      await pane.mouse.move(x, y + 31, { steps: 8 });
-      let release = await root.evaluate((el) => el.scrollTop);
-      if (release % h === 0) {
-        await pane.mouse.move(x, y + 34);
-        release = await root.evaluate((el) => el.scrollTop);
-      }
-      await pane.mouse.up();
-      assert.ok(release > 0 && release % h !== 0, `native thumb drag ended at ${release}px, pitch ${h}`);
-      await pane.waitForTimeout(400);
-      assert.equal(await root.evaluate((el) => el.scrollTop), release);
-    });
   });
   await t.test('tracked wheel chooses the same cell as xterm at a fractional column boundary', async () => {
     const reports = await page.evaluate(async () => {

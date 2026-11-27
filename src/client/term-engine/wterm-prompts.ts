@@ -12,8 +12,12 @@ export function attachWtermPrompts(adapter: WTermAdapter) {
     const label = h('span', { role: 'status' });
     const jump = (direction: -1 | 1) => {
       root.dispatchEvent(new Event(searchStarting));
-      adapter.cancelReaderRestore();
-      return native.scrollToPrompt(direction);
+      adapter.cancelReaderRestore(false);
+      const moved = native.scrollToPrompt(direction);
+      // Even a failed jump can synchronously paint. Keep its protective
+      // reader restore in that case; a real move supersedes it.
+      if (moved) adapter.cancelReaderRestore();
+      return moved;
     };
     const arrow = (direction: -1 | 1) => {
       const name = direction === -1 ? 'Previous prompt' : 'Next prompt';

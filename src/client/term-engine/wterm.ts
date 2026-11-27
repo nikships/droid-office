@@ -47,7 +47,9 @@ export class WTermAdapter {
   private metricsPending = true;
   // History index including discarded rows, or undefined when following the tail.
   private readerRow?: number;
+  private tail?: { range: number; dpr: number; top: number };
   private holdReaderAfterPaint = false;
+  private heldAlternate = false;
   private paintedDiscarded = 0;
   private paintPending = false;
   private pendingRestore?: { appliedTop?: number };
@@ -101,6 +103,22 @@ export class WTermAdapter {
       mouseTrackingMode: c?.mouseTracking() === 1003 ? 'any' : c?.mouseTracking() === 1002 ? 'drag' : c?.mouseTracking() === 1000 ? 'vt200' : 'none',
     } as const;
   }
+  /** DOM extents are integer CSS pixels; scrollTop is quantized in device
+   * pixels. Only the ambiguous last pixel needs the browser's clamped end. */
+  isAtTail(range?: number) {
+    const el = this.root;
+    if (!el) return true;
+    range ??= el.scrollHeight - el.clientHeight;
+    const top = el.scrollTop;
+    if (range - top > 1) return false;
+    const dpr = window.devicePixelRatio;
+    if (this.tail?.range !== range || this.tail.dpr !== dpr) {
+      el.scrollTop = el.scrollHeight;
+      this.tail = { range, dpr, top: el.scrollTop };
+      if (top !== this.tail.top) el.scrollTop = top;
+    }
+    return top === this.tail.top;
+  }
   private sampleReader(scrolled = false) {
     const el = this.root;
     // display:none collapses every DOM scroll metric to zero. Keep the last visible
@@ -115,18 +133,22 @@ export class WTermAdapter {
       // Shrinking the scroll range can force a formerly valid offset down to
       // its new maximum. Ordinary navigation to the bottom approaches from below.
       const max = el.scrollHeight - el.clientHeight;
-      if (applied !== undefined && applied > max && el.scrollTop < applied && Math.abs(max - el.scrollTop) < 1) return;
+      if (applied !== undefined && applied > max && el.scrollTop < applied && this.isAtTail(max)) return;
       this.readerRevision++;
     }
-    const remaining = el.scrollHeight - el.clientHeight - el.scrollTop;
-    this.readerRow = remaining < 1 ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;
+    const range = el.scrollHeight - el.clientHeight;
+    const remaining = range - el.scrollTop;
+    this.readerRow = this.isAtTail(range) ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;
     // wterm 0.6 follows within 5px of the end, and resets to zero when a
     // clipped shared grid has no history. Don't let either paint move a reader.
-    if (scrolled) this.holdReaderAfterPaint = this.readerRow !== undefined && (remaining < 5 || (el.scrollTop > 0 && this.core?.getScrollbackCount() === 0)) && !this.core?.usingAltScreen();
+    if (scrolled) {
+      this.heldAlternate = !!this.core?.usingAltScreen();
+      this.holdReaderAfterPaint = this.readerRow !== undefined && ((!this.heldAlternate && remaining < 5) || (el.scrollTop > 0 && this.core?.getScrollbackCount() === 0));
+    }
   }
   /** An explicit navigation supersedes both a metric restore and an older saved reader. */
-  cancelReaderRestore() {
-    this.holdReaderAfterPaint = false;
+  cancelReaderRestore(revealed = true) {
+    if (revealed) this.holdReaderAfterPaint = false;
     this.readerRevision++;
     this.pendingRestore = undefined;
   }
@@ -188,6 +210,7 @@ export class WTermAdapter {
   private fontAdvance = 0;
   private metricsContext?: CanvasRenderingContext2D | null;
   refreshMetrics() {
+    this.tail = undefined;
     const el = this.root;
     if (!el) return;
     if (this.native && !el.clientWidth) {
@@ -288,7 +311,7 @@ export class WTermAdapter {
         (discarded) => {
           this.paintPending = false;
           this.paintedDiscarded = discarded;
-          if (!this.pendingRestore && this.holdReaderAfterPaint && !this.core?.usingAltScreen()) this.pendingRestore = { appliedTop: root.scrollTop };
+          if (!this.pendingRestore && this.holdReaderAfterPaint && this.heldAlternate === this.core?.usingAltScreen()) this.pendingRestore = { appliedTop: root.scrollTop };
           const restore = this.pendingRestore;
           if (restore)
             queueMicrotask(() => {
@@ -343,6 +366,7 @@ export class WTermAdapter {
       );
       this.syncRendering();
       const observer = new ResizeObserver(() => {
+        this.tail = undefined;
         if (root.clientWidth > 0 && this.metricsPending) this.refreshMetrics();
       });
       observer.observe(root);
@@ -462,6 +486,7 @@ export class WTermAdapter {
   resize(cols: number, rows: number) {
     const t = this.native;
     if (!t || (cols === t.cols && rows === t.rows)) return;
+    this.tail = undefined;
     const oldCols = t.cols,
       oldRows = t.rows;
     t.resize(cols, rows);
@@ -511,6 +536,7 @@ export class WTermAdapter {
     const el = this.root;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
+    this.tail = { range: el.scrollHeight - el.clientHeight, dpr: window.devicePixelRatio, top: el.scrollTop };
     // Buffered output can lengthen the spacer after this immediate scroll.
     if (this.pendingRestore || this.paintPending || (this.native && this.metricsPending)) this.pendingRestore = { appliedTop: el.clientHeight ? el.scrollTop : undefined };
   }

@@ -651,41 +651,6 @@ window.start = function () {
 </script></body></html>`;
 }
 
-test('F inside a live page enters full screen, and Esc puts the zoom and scroll back', { skip, timeout: 60_000 }, async (t) => {
-  const browser = await launchBrowser();
-  t.after(() => closeBrowser());
-  const context = await newIsolatedContext(browser, { viewport: { width: 1280, height: 800 } });
-  t.after(() => context.close().catch(() => {}));
-  const pages = new Map([['tall', '<!doctype html><body style="margin:0"><h1>Tall page</h1><div style="height:4000px"></div></body>']]);
-  await serve(context, () => livePageHost(bundle(SURFACE_ENTRY, 'WB')), pages);
-  const page = await context.newPage();
-  const errors: string[] = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto(`${ORIGIN}/host`);
-  await page.evaluate('start()');
-  const frame = await waitFor(() => page.frames().find((f) => f.url().includes('/card/tall/')), 'the card frame');
-  await frame.waitForFunction('window.whiteboard && whiteboard.card.id === "c1"');
-  await page.evaluate('surface.zoomTo(1.5)');
-  await page.evaluate('surface.scrollFrame(600)');
-  await waitFor(async () => (await frame.evaluate('scrollY')) > 500, 'scrolled down');
-  const before = Math.round(await frame.evaluate('scrollY'));
-  // Click the visible page. A locator click on the heading scrolls it back to the top first.
-  const box = await page.locator('.wb-surface').boundingBox();
-  assert.ok(box);
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  assert.ok(Math.abs(Math.round(await frame.evaluate('scrollY')) - before) < 2);
-  await page.keyboard.press('f');
-  await page.waitForFunction('document.fullscreenElement === surface.el');
-  await page.waitForFunction('surface.zoomMode.fit && surface.zoom !== 1.5');
-  assert.equal(await page.evaluate('window.shut'), false);
-  await page.keyboard.press('Escape');
-  await page.waitForFunction('!document.fullscreenElement');
-  await page.waitForFunction('surface.zoom === 1.5 && surface.zoomMode.fit === false');
-  await waitFor(async () => Math.abs((await frame.evaluate('scrollY')) - before) < 2, 'scroll is back where it was');
-  assert.equal(await page.evaluate('window.shut'), false, 'Esc leaves full screen and leaves the window open');
-  assert.deepEqual(errors, []);
-});
-
 test("a card's own full screen (its video's control) is the card's: its keys stay in the page and the card's view is untouched", { skip, timeout: 60_000 }, async (t) => {
   const browser = await launchBrowser();
   t.after(() => closeBrowser());

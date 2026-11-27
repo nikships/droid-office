@@ -21,7 +21,7 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
   await server.listen();
   const port = server.httpServer!.address();
   assert.ok(port && typeof port === 'object');
-  for (const dpr of [1, 2, 1.8]) {
+  for (const dpr of [1, 2, 1.8, 2.2]) {
     const browser = await chromium.launch({ executablePath: status.executable, chromiumSandbox: true, args: [`--force-device-scale-factor=${dpr}`] });
     try {
       const pane = async (surface = 'window') => {
@@ -193,7 +193,7 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
                     t.options.scrollSensitivity = speed;
                     cancelled.push(wheel(80, 2, { altKey: speed === 1 }));
                   }
-                if (kind === 'alternate pinch') cancelled.push(wheel(0, -120, { ctrlKey: true }));
+                if (kind === 'alternate pinch') cancelled.push(wheel(0, -120, { ctrlKey: true }), wheel(80, 2));
                 if (kind === 'tracked near-tail reader') cancelled.push(wheel(0, -30));
                 if (kind === 'tracked travel') {
                   for (const axis of ['y', 'x']) {
@@ -233,6 +233,156 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
             }
           });
         }
+      if (dpr === 1) {
+        for (const action of ['empty Find', 'close empty Find', 'Find without a match', 'Next prompt without a target'])
+          await t.test(`${action} keeps a near-tail reader during output`, async () => {
+            const page = await pane();
+            try {
+              await page.evaluate(() => (window as any).term.write('\x1b]133;A\x07'));
+              await frame(page);
+              const root = page.locator('.office-wterm');
+              await root.hover();
+              await page.mouse.wheel(0, -2);
+              await frame(page);
+              const before = await top(page);
+              if (action.startsWith('Next')) {
+                await page.getByRole('button', { name: 'Next prompt', exact: true }).evaluate((b) => b.click());
+              } else {
+                await root.getByRole('button', { name: /Find in terminal/ }).click();
+                const field = page.getByRole('textbox', { name: 'Find in terminal' });
+                if (action.startsWith('close')) await field.press('Escape');
+                if (action.includes('without')) {
+                  await field.fill('absent phrase');
+                  await page.getByText('No matches', { exact: true }).waitFor();
+                }
+              }
+              await page.evaluate(() => (window as any).term.write('stream\r\n'));
+              await frame(page);
+              assert.equal(await top(page), before);
+            } finally {
+              await page.close();
+            }
+          });
+        for (const surface of ['window', 'log'])
+          await t.test(`a clipped alternate ${surface} retains its thumb offset through paint`, async () => {
+            const page = await pane(surface);
+            try {
+              await page.evaluate(() => {
+                const { term } = window as any;
+                term.write('\x1b[3J\x1b[?1049h');
+              });
+              await frame(page);
+              const root = page.locator('.office-wterm');
+              const requested = await root.evaluate((e) => {
+                e.scrollTop = 53;
+                return e.scrollTop;
+              });
+              assert.equal(requested, 53);
+              await frame(page);
+              await page.evaluate(() => (window as any).term.write('updated'));
+              await frame(page);
+              assert.equal(await top(page), requested);
+            } finally {
+              await page.close();
+            }
+          });
+        await t.test('wheel fractions belong to the program and tracking mode that received them', async () => {
+          const page = await pane();
+          try {
+            const results = await page.evaluate(async () => {
+              const { term, sent } = window as any,
+                el = term.native.element;
+              const frame = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+              const row = () => el.querySelector('.term-row:not(.term-scrollback-row)');
+              const wheel = (y: number) => {
+                const rect = row().getBoundingClientRect();
+                row().dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -y, clientX: rect.left + 2, clientY: rect.top + 2 }));
+              };
+              const height = parseFloat(el.style.getPropertyValue('--term-row-height')),
+                results = [];
+              term.resize(40, 8);
+              for (const [initial, transition] of [
+                ['\x1b[?1049;1000;1006h', '\x1b[?1000;1049l\x1b[?1049;1000h'],
+                ['\x1b[?1049;1000;1006h', '\x1b[?1000l\x1b[?1002h'],
+                ['\x1b[?1049h', '\x1b[?1049l\x1b[?1049h'],
+              ]) {
+                term.reset();
+                term.write(initial);
+                await frame();
+                sent.length = 0;
+                wheel(height - 1);
+                term.write(transition);
+                await frame();
+                wheel(1);
+                results.push({ after: sent.splice(0) });
+                wheel(height - 1);
+                results.at(-1).whole = sent.splice(0);
+              }
+              return results;
+            });
+            assert.deepEqual(
+              results.map((r) => r.after),
+              [[], [], []],
+            );
+            assert.deepEqual(
+              results.map((r) => r.whole.length),
+              [1, 1, 1],
+            );
+          } finally {
+            await page.close();
+          }
+        });
+      }
+      if (dpr === 2.2)
+        await t.test('one quantized Shift-wheel pixel stays in history at Retina 110%', async () => {
+          const page = await pane();
+          try {
+            const el = page.locator('.office-wterm'),
+              samples = [];
+            // A wheel down at the end has nowhere to go. Its intent must not
+            // capture the next independent movement of the scrollbar.
+            const thumb = await el.evaluate((el) => {
+              (window as any).term.scrollToBottom();
+              el.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 8000 }));
+              el.scrollTop -= 1 / devicePixelRatio;
+              return el.scrollTop;
+            });
+            await frame(page);
+            assert.equal(await top(page), thumb);
+            await page.evaluate(() => (window as any).term.write('\x1b[?1000;1006h'));
+            for (const height of [249, 250, 251, 252, 253, 254]) {
+              await page.locator('.modal').evaluate((el, h) => {
+                el.style.height = `${h}px`;
+              }, height);
+              await frame(page);
+              await page.evaluate(() => {
+                (window as any).term.scrollToBottom();
+                (window as any).sent.length = 0;
+              });
+              await frame(page);
+              const tail = await top(page);
+              await el.hover();
+              await page.keyboard.down('Shift');
+              await page.mouse.wheel(0, -1);
+              await page.keyboard.up('Shift');
+              await frame(page);
+              const reader = await top(page);
+              assert.ok(tail > reader && tail - reader < 1.1, `${tail} -> ${reader}`);
+              await page.evaluate(() => (window as any).term.write('\rstatus\r'));
+              await frame(page);
+              assert.equal(await top(page), reader, 'a status repaint must not swallow a subpixel reader');
+              await page.mouse.wheel(0, -30);
+              await frame(page);
+              samples.push({ tail, reader, after: await top(page), reports: await page.evaluate(() => (window as any).sent.length) });
+            }
+            assert.deepEqual(
+              samples.filter((s) => s.after >= s.reader || s.reports),
+              [],
+            );
+          } finally {
+            await page.close();
+          }
+        });
       await t.test(`a two-pixel reader holds through twenty streamed lines and resumes at the end at DPR ${dpr}`, async () => {
         const page = await pane();
         try {
