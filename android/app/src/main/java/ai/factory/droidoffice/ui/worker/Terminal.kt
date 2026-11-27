@@ -144,10 +144,10 @@ internal fun Terminal(
                     }
                     PageMsg.Drawn -> {
                         drawn = true
-                        if (navigation.finding && navigation.query.isNotEmpty()) navigation.find(navigation.query)
+                        navigation.onDrawn()
                     }
                     is PageMsg.Matches -> if (navigation.page === p) navigation.accept(msg)
-                    is PageMsg.SearchClosed -> if (navigation.page === p && msg.request == navigation.matches.request) navigation.closed()
+                    is PageMsg.SearchClosed -> if (navigation.page === p) navigation.closed(msg.request)
                     is PageMsg.ClipboardWrite -> if (p.ready && p.view.isAttachedToWindow && p.clipboardWritable()) {
                         runCatching {
                             val clip = ClipData.newPlainText("Terminal", msg.text)

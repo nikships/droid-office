@@ -244,6 +244,25 @@ test('native Find navigates retained hits and restores the historical reader whe
   await send({ t: 'searchClose' });
   await page.waitForFunction((top) => Math.abs(document.querySelector('.wterm')!.scrollTop - top) < 1, before);
   assert.equal(await page.evaluate(() => (window as any).posted.some((m: any) => m.t === 'input')), false);
+
+  await t.test('replacement snapshot closes the current Find before drawn and keeps its reading position', async () => {
+    await send({ t: 'search', query: 'needle', request: 8 });
+    await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'matches' && m.request === 8 && m.count === 4 && !m.searching));
+    await send({ t: 'match', direction: 1 });
+    const settled = () => page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+    await settled();
+    const reader = () => page.locator('.wterm').evaluate((el) => Math.floor(el.scrollTop / parseFloat(getComputedStyle(el).getPropertyValue('--term-row-height'))));
+    const row = await reader();
+    assert.ok(row > 0);
+    await page.evaluate(() => {
+      (window as any).posted.length = 0;
+    });
+    await send({ t: 'snapshot', data: history, cols: 50, rows: 20 });
+    await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'drawn'));
+    assert.deepEqual(await page.evaluate(() => (window as any).posted.filter((m: any) => m.t === 'searchClosed' || m.t === 'drawn')), [{ t: 'searchClosed', request: 8 }, { t: 'drawn' }]);
+    await settled();
+    assert.equal(await reader(), row);
+  });
 });
 
 test('the native clipboard accepts only whole live writes and never answers queries', browserTest, async (t) => {

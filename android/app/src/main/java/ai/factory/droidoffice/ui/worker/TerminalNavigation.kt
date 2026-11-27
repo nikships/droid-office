@@ -63,7 +63,12 @@ internal class TerminalNavigation {
         closed()
     }
 
-    fun closed() {
+    fun onDrawn() {
+        if (finding && query.isNotEmpty()) find(query)
+    }
+
+    fun closed(request: Int = matches.request) {
+        if (request != matches.request) return
         finding = false
         query = ""
         invalidateMatches()

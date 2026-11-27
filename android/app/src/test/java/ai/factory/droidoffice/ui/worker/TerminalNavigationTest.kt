@@ -6,6 +6,22 @@ import org.junit.Test
 
 class TerminalNavigationTest {
     @Test
+    fun snapshotCloseBeforeDrawnDoesNotReissueTheSearch() {
+        val nav = TerminalNavigation()
+        nav.open()
+        nav.find("needle")
+        val active = nav.matches.request
+        nav.closed(active - 1)
+        assertEquals(true, nav.finding)
+        nav.closed(active)
+        val closed = nav.matches.request
+        nav.onDrawn()
+        assertEquals(false, nav.finding)
+        assertEquals("", nav.query)
+        assertEquals(closed, nav.matches.request) // Reissuing Find would start a new request.
+    }
+
+    @Test
     fun editingOrClearingFindDropsThePreviousCountImmediately() {
         val nav = TerminalNavigation()
         nav.open()
