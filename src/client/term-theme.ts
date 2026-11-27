@@ -38,8 +38,9 @@ let colors: TermThemeColors | null = null;
 const listeners = new Set<() => void>();
 
 /**
- * The theme terminals open with and follow. TERM_THEME until a companion theme retints it; then the
- * cells' ground is transparent, so the pane's themed glass shows behind the text.
+ * Terminals open with TERM_THEME and follow the companion theme. In #rrggbb00 the RGB is
+ * the opaque ground used as ink for reverse video and block cursors. Zero alpha makes
+ * only the renderer surface transparent so the pane supplies the glass.
  */
 export function termTheme() {
   return colors ? { ...TERM_THEME, ...colors, background: `${colors.background}00` } : TERM_THEME;

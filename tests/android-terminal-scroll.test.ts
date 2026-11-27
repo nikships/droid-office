@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import test, { type TestContext } from 'node:test';
 import { browserStatus, closeBrowser, launchBrowser } from '../src/server/whiteboard-browser.js';
 import { COMPANION_THEMES } from '../src/shared/companion-themes.js';
+import { blockRow, checkBlockPixels, glassTheme } from './wterm-block-pixels.js';
 
 const status = browserStatus();
 const assets = fileURLToPath(new URL('../android/app/src/main/assets/', import.meta.url));
@@ -67,6 +68,20 @@ test('Raw TTY keeps program colors, opaque reverse-video ink and inert links on 
     assert.equal(colors[2], theme.id === 'og' ? `rgb(${rgb})` : `rgba(${rgb}, 0)`, theme.id);
     assert.equal(await root.locator('a').count(), 0);
   }
+});
+
+test('partial blocks and shades expose the unframed Android pane', browserTest, async (t) => {
+  const { page } = await openPhone(t);
+  await page.evaluate(
+    ({ data, theme }) => {
+      const office = (window as any).office;
+      office.receive({ t: 'colors', theme });
+      office.receive({ t: 'snapshot', cols: 40, rows: 8, data });
+      document.body.style.backgroundColor = '#346088';
+    },
+    { data: blockRow, theme: glassTheme },
+  );
+  await checkBlockPixels(page.locator('.office-wterm'));
 });
 
 test('the touch input does not extend the Raw TTY below its last row and fitted padding', browserTest, async (t) => {

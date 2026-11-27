@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { createServer } from 'vite';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
+import { blockRow, checkBlockPixels, glassTheme } from './wterm-block-pixels.js';
 
 const status = browserStatus();
 test('wterm scroll and appearance against xterm in Chromium', { skip: !status.installed && `No Chromium in ${status.path}` }, async (t) => {
@@ -986,6 +987,20 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       assert.match(paint, /rgb\(238, 96, 24\)/);
       assert.equal(animation === 'none', i < 3);
     }
+  });
+  await t.test('partial blocks and shades expose the web pane', async () => {
+    await page.evaluate(
+      async ({ data, theme }) => {
+        const { a, frame } = window as any;
+        const host = document.querySelector<HTMLElement>('#w')!;
+        host.style.backgroundColor = '#346088';
+        a.options.theme = { ...a.options.theme, ...theme };
+        a.write(`\x1bc${data}`);
+        await frame();
+      },
+      { data: blockRow, theme: glassTheme },
+    );
+    await checkBlockPixels(page.locator('#w .office-wterm'));
   });
   await t.test('native steady and blinking block cursors keep opaque glyph ink on glass', async () => {
     const colors = await page.evaluate(

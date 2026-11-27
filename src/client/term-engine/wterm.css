@@ -13,6 +13,12 @@
   box-shadow: none;
 }
 .modal.term .office-wterm { padding: 8px 4px 4px 10px; }
+/* wterm 0.6 paints blocks with inline gradients and shades with color-mix. Explicit
+   cell backgrounds don't use --term-bg. When reverse video uses it as ink, the
+   renderer emits color:var(--term-app-bg, var(--term-bg)); leave that fallback opaque. */
+.office-wterm .term-block:not(.term-cursor, [style*="color:var(--term-app-bg"]) {
+  --term-bg: var(--office-pane-bg);
+}
 .office-wterm ::selection { background: var(--term-selection-bg); }
 .wterm-kitty-screen .term-kitty-expand { position: absolute; z-index: 3; width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border: 1px solid var(--border-strong); border-radius: var(--radius); background: rgba(14, 14, 16, .86); backdrop-filter: blur(6px); color: var(--text-secondary); cursor: pointer; pointer-events: auto; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); transition: background 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out; }
 .wterm-kitty-screen .term-kitty-expand:hover { background: var(--surface-hover); border-color: var(--accent); color: var(--text); }

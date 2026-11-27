@@ -16,7 +16,7 @@ A companion app for your phone. Pair it with your office once over Tailscale HTT
 
 ## What it does
 
-With artwork selected on a compact phone, the worker header, Thread and Raw TTY tabs, terminal, quick keys and reply field share the wallpaper's tint. Raw TTY has no separate frame. It keeps the colors the program draws; reverse video uses the theme’s opaque ground as glyph ink. Original and wider windows keep their existing layout.
+With artwork selected on a compact phone, the worker header, Thread and Raw TTY tabs, terminal, quick keys and reply field share the wallpaper's tint. Raw TTY has no separate frame. Charts drawn with partial blocks and shades show the pane through them unless the program sets a background. Reverse video uses the theme’s opaque ground as glyph ink. Original and wider windows keep their existing layout.
 
 On phones held upright, a theme can show artwork composed for a tall screen. Tablets and landscape windows continue to show the widescreen composition.
 
