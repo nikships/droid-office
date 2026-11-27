@@ -49,7 +49,7 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
     const modules = ['/oracle/terminal.ts', '/term-engine/wterm-graphics.ts', '/oracle/kitty.ts'];
     const [{ comparisonTerminal }, { attachWtermGraphics }, { attachKittyTerminal }] = await Promise.all(modules.map((m) => import(m)));
     const win = window as any;
-    const opts = { fontSize: 16, fontFamily: 'monospace', scrollback: 100, allowProposedApi: true };
+    const opts = { fontSize: 16, fontFamily: 'monospace', lineHeight: 1.1, scrollback: 100, allowProposedApi: true };
     const w = (win.wt = comparisonTerminal(opts, 'ghostty'));
     const x = (win.xt = comparisonTerminal(opts, 'xterm'));
     win.expandImage = async (img: { imageId: number; blob: Blob }) => {
@@ -60,6 +60,8 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
     attachWtermGraphics(w, { onExpandImage: win.expandImage });
     attachKittyTerminal(x, { onExpandImage: win.expandImage });
     x.open(document.querySelector('#x'));
+    const pitch = x.element.querySelector('.xterm-rows > div').getBoundingClientRect().height;
+    for (const host of document.querySelectorAll<HTMLElement>('.host')) host.style.height = `${8 * pitch}px`;
     await w.open(document.querySelector('#w'));
     x.resize(40, 8);
     w.resize(40, 8);
@@ -333,11 +335,14 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
       return [root.scrollTop, a - screen.getBoundingClientRect().top];
     });
     assert.deepEqual(measured, [5, 5], 'canvas scrolls synchronously even before the scroll event');
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const { wt, xt } = window as any;
       wt.options.fontSize = xt.options.fontSize = 18;
       wt.resize(32, 7);
       xt.resize(32, 7);
+      // Let the resized grid and history spacer paint before scrolling to the new origin.
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
       wt.native.element.scrollTop = 0;
       xt.scrollToTop();
     });

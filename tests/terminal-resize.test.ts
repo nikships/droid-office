@@ -393,7 +393,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     const page = await rig();
     for (const [width, height, expected] of [
       [100, 50, [20, 5]],
-      [5000, 5000, [400, 200]],
+      [8000, 8000, [400, 200]],
     ] as const) {
       await page.evaluate(([width, height]) => (window as any).resize(width, height), [width, height]);
       await page.evaluate(() => (window as any).frames());
@@ -401,7 +401,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       await page.evaluate((size) => (window as any).update(...size), expected);
     }
     const count = await page.evaluate(() => (window as any).sizes().length);
-    await page.evaluate(() => (window as any).resize(5500, 5500));
+    await page.evaluate(() => (window as any).resize(8500, 8500));
     await page.evaluate(() => (window as any).frames());
     assert.equal(await page.evaluate(() => (window as any).sizes().length), count);
   });
