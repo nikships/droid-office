@@ -235,7 +235,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       })();
   const disconnected = h('p.note.warn.hidden', { role: 'status' }, 'Disconnected. Terminal input is disabled until a fresh snapshot arrives.');
   const host = h('div.term-host', readOnly ? {} : { 'data-drop': 'Drop screenshots or files to put them in the terminal' });
-  host.dataset.workerId = workerId;
   const threadHost = canThread ? h('div.term-thread-host', { hidden: true }) : null;
   // A lead's subagents, or a subagent's lead and teammates: one click to the next terminal.
   const team = h('div.term-team.chips.hidden', { role: 'group', 'aria-label': 'Team' });

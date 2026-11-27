@@ -8,7 +8,7 @@ interface Snapshot {
 }
 type Sink = Pick<WTermAdapter, 'reset' | 'resize' | 'write'>;
 
-/** Async xterm writes stay ordered across snapshots, reconnects and disposal. Never retain an
+/** Terminal writes stay ordered across snapshots, reconnects and disposal. Never retain an
  * unbounded stream while a snapshot is parsing; request a newer snapshot instead. */
 export class TerminalMirror {
   ready = false;

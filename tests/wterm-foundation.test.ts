@@ -145,6 +145,7 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
         );
       });
       await pane.locator('.office-wterm textarea').waitFor({ state: 'attached' });
+      assert.equal(await pane.locator('.term-host').getAttribute('data-worker-id'), null);
       const raw = pane.getByRole('button', { name: 'Raw TTY', exact: true });
       await raw.click();
       await pane.waitForFunction(() => document.querySelector('.wterm.has-scrollback'));
