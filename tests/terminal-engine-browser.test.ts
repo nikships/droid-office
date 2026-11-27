@@ -57,7 +57,7 @@ test('real wterm dev asset, same-view retry and WASM disposal', { skip: status.i
       const url = '/ui/terminal.ts',
         w = window as any;
       w.messages = [];
-      (await import(url)).openOfficeShell({ up: true, send: (msg: unknown) => w.messages.push(msg) });
+      (await import(url)).openOfficeShell({ up: true, send: (msg: unknown) => w.messages.push(msg), onStatus: () => () => {} });
       w.shell = document.querySelector('.modal.term');
     });
     const retry = p.getByRole('button', { name: 'Retry' });

@@ -22,11 +22,13 @@ export class TerminalMirror {
     private term: Sink,
     private onReady: (snapshot: Snapshot) => void,
     private resnapshot: () => void,
+    private inputReady?: (ready: boolean) => void,
   ) {}
 
   disconnect() {
     this.generation++;
     this.ready = false;
+    this.inputReady?.(false);
     this.waiting = true;
     this.pending = [];
     this.bytes = 0;
@@ -63,6 +65,7 @@ export class TerminalMirror {
             return;
           }
           this.ready = true;
+          this.inputReady?.(true);
           this.onReady(snapshot);
         };
         flush();

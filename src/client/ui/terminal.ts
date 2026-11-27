@@ -4,7 +4,7 @@ import { createWebTerminal } from '../term-engine/web-terminal';
 import { TerminalPaths } from './terminal-path-links';
 import type { Net } from '../net';
 import { store } from '../state';
-import { withToken } from '../token';
+import { guestTokenOn, withToken } from '../token';
 import { onTermTheme, termTheme } from '../term-theme';
 import { focusReports, suppressMirrorQueries, TerminalMirror } from '../term-mirror';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
@@ -154,7 +154,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   // An external bot runs elsewhere and has no terminal here: its card in Mission Control stands in.
   if (!info || info.remote) return;
   const canThread = !inline && info.kind === 'agent' && !info.cloud;
-  const readOnly = !!inline?.readOnly;
+  const readOnly = !!inline?.readOnly || guestTokenOn();
   let thread: WorkerThread | undefined;
   let threadView = false;
   let setThreadView = (_next: 'thread' | 'raw', _focus = true) => {};
@@ -396,10 +396,9 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     (snapshot) => {
       adoptSharedSize = snapshot.shared ?? adoptSharedSize;
       const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
-      if (focusIn && !readOnly) net.send({ t: 'term.input', workerId, data: focusIn });
+      if (focusIn && !term.options.disableStdin) net.send({ t: 'term.input', workerId, data: focusIn });
       lastSentSize = '';
       pendingSizes.length = 0;
-      term.options.disableStdin = readOnly || !net.up;
       disconnected.classList.add('hidden');
       sendSize();
       if (restoreReader && !pendingFind) restoreReader();
@@ -410,6 +409,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       pendingFind = undefined;
     },
     () => net.send({ t: 'worker.attach', workerId }),
+    (ready) => (term.options.disableStdin = !ready || readOnly || !net.up),
   );
   const offPrefs = followTerminalPrefs(term, {
     resized: () => {
@@ -455,16 +455,14 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       const changed = mirror.setVisible(!document.hidden);
       if (document.hidden && changed) net.send({ t: 'worker.detach', workerId });
       else if (!document.hidden && !changed && !mirror.ready) net.send({ t: 'worker.attach', workerId });
-      term.options.disableStdin = readOnly || !net.up || !mirror.ready;
     }
   };
   if (inline) document.addEventListener('visibilitychange', visibility);
   if (document.hidden) visibility();
   const onMsg = (msg: ServerMsg) => {
-    if (!opened) return;
+    if (!opened || threadView) return;
     if (msg.t === 'term.data' && msg.workerId === workerId) mirror.data(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === workerId) {
-      term.options.disableStdin = true;
       mirror.snapshot(msg);
     }
   };
@@ -493,7 +491,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     thread?.update(store.worker(workerId) ?? info, up);
     if (up) return; // The welcome handler reattaches only after the authoritative worker snapshot.
     mirror.disconnect();
-    term.options.disableStdin = true;
     disconnected.classList.remove('hidden');
   });
 
@@ -605,11 +602,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       if (threadView) {
         mirror.disconnect();
         thread.activate(true);
-        term.options.disableStdin = true;
       } else {
         thread.activate(false);
+        mirror.disconnect();
         net.send({ t: 'worker.attach', workerId });
-        term.options.disableStdin = readOnly || !net.up;
         sendSize();
         if (focus) setTimeout(() => alive && term.focus(), 0);
       }
@@ -748,6 +744,7 @@ export function openOfficeShell(net: Net) {
       theme: termTheme(),
       minimumContrastRatio: 4.5,
       scrollback: 5000,
+      disableStdin: true,
     },
     {
       onExpandImage: (img) =>
@@ -774,7 +771,7 @@ export function openOfficeShell(net: Net) {
   const focus = focusReports();
 
   const sendSize = (typing = false) => {
-    if (!mirror?.ready || !opened || !net.up || !host.clientWidth || !host.clientHeight) return;
+    if (term.options.disableStdin || !mirror?.ready || !opened || !net.up || !host.clientWidth || !host.clientHeight) return;
     if (typing || boxChanged) shared = false;
     boxChanged = false;
     if (!typing && shared) {
@@ -803,7 +800,7 @@ export function openOfficeShell(net: Net) {
     (snapshot) => {
       shared = snapshot.shared === true;
       const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
-      if (focusIn) net.send({ t: 'shell.input', data: focusIn });
+      if (focusIn && !term.options.disableStdin) net.send({ t: 'shell.input', data: focusIn });
       ptyCols = snapshot.cols;
       ptyRows = snapshot.rows;
       lastSentSize = '';
@@ -812,6 +809,7 @@ export function openOfficeShell(net: Net) {
       features.scrollAtOnce(() => term.scrollToBottom());
     },
     () => net.send({ t: 'shell.attach' }),
+    (ready) => (term.options.disableStdin = !ready || !net.up || guestTokenOn()),
   );
   const offPrefs = followTerminalPrefs(term, {
     resized: () => {
@@ -834,13 +832,17 @@ export function openOfficeShell(net: Net) {
     return false;
   });
   term.onData((data) => {
-    if (!mirror?.ready || !net.up) return;
+    if (term.options.disableStdin || !mirror?.ready || !net.up) return;
     const kind = focus.classify(data);
     if (kind === 'repeat') return;
     if (kind === 'input') sendSize(true);
     net.send({ t: 'shell.input', data });
   });
+  const offStatus = net.onStatus((up) => {
+    if (!up) mirror.disconnect();
+  });
   const unbind = () => {
+    offStatus();
     offQueries();
     offPrefs();
     mirror.disconnect();

@@ -114,6 +114,37 @@ test('inline terminals follow pane geometry without focus or stale size rollback
   }
 
   for (const mode of ['inline', 'shell']) {
+    await t.test(`${mode} enables clipboard and input only after snapshot and pending output drain`, async () => {
+      const page = await rig(true, true, false, mode);
+      const result = await page.evaluate(async (mode) => {
+        const w = window as any;
+        const writes: string[] = [];
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (value: string) => writes.push(value) } });
+        const data = (value: string) => w.TerminalUI.routeTerminalMessage({ t: 'term.data', workerId: mode === 'shell' ? w.TerminalUI.OFFICE_SHELL_ID : 'pixel', data: value });
+        const marker = '\x1b]52;c;cHJvb2Y=\x07\x1b[6n';
+        const initial = !!w.term.options.disableStdin;
+        w.snapshot(marker);
+        data(marker);
+        await w.frames();
+        const afterDrain = writes.length;
+        data(marker);
+        const live = writes.length;
+        w.net.up = false;
+        w.connectionStatus?.(false);
+        data(marker);
+        w.net.up = true;
+        w.connectionStatus?.(true);
+        data(marker);
+        w.snapshot(marker);
+        data(marker);
+        await w.frames();
+        const reattached = writes.length;
+        data(marker);
+        return { initial, afterDrain, live, reattached, total: writes.length, ptyInput: w.messages.filter((m: any) => m.t.endsWith('.input')) };
+      }, mode);
+      assert.deepEqual(result, { initial: true, afterDrain: 0, live: 1, reattached: 1, total: 2, ptyInput: [] });
+    });
+
     await t.test(`${mode} forwards focus changes once and never claims size for them`, async () => {
       const page = await rig(true, false, false, mode);
       // The Boss Shell focuses itself shortly after opening; let that land before taking focus away.
