@@ -31,11 +31,25 @@ class TermPageTest {
             """{"t":"fit","cols":0,"rows":3}""",
             """{"t":"fit","cols":"x"}""",
             """{"t":"bottom"}""",
+            """{"t":"matches","count":3,"active":3}""",
+            """{"t":"matches","count":10001,"active":-1}""",
+            """{"t":"prompts","available":"yes"}""",
             """{"t":"image","width":0,"height":10,"data":"abc"}""",
             """{"t":"image","width":10,"height":10,"data":""}""",
         )) {
             assertNull(bad, TermPage.decode(bad))
         }
+    }
+
+    @Test
+    fun localNavigationNeverTypesIntoThePty() {
+        assertEquals(PageMsg.Unavailable, TermPage.decode("""{"t":"unavailable"}"""))
+        assertEquals(PageMsg.Matches(-1, 0, true, false), TermPage.decode("""{"t":"matches","count":0,"active":-1,"searching":true}"""))
+        assertEquals(PageMsg.Matches(2, 10_000, false, true), TermPage.decode("""{"t":"matches","count":10000,"active":2,"limited":true}"""))
+        assertEquals(PageMsg.Prompts(false), TermPage.decode("""{"t":"prompts","available":false}"""))
+        assertEquals(Json.parseToJsonElement("""{"t":"search","query":"a\"b"}"""), message(TermPage.search("a\"b")))
+        assertEquals(Json.parseToJsonElement("""{"t":"match","direction":1}"""), message(TermPage.navigate(false, true)))
+        assertEquals(Json.parseToJsonElement("""{"t":"prompt","direction":-1}"""), message(TermPage.navigate(true, false)))
     }
 
     @Test

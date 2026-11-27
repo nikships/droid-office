@@ -7,15 +7,16 @@ import { browserStatus, closeBrowser, launchBrowser } from '../src/server/whiteb
 
 const status = browserStatus();
 const assets = fileURLToPath(new URL('../android/app/src/main/assets/', import.meta.url));
-const TYPES: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css' };
+const TYPES: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm', '.ttf': 'font/ttf' };
 
-test("the phone's Raw TTY follows a finger pixel for pixel and settles on a whole row", { skip: status.installed ? false : `Chromium is not installed in ${status.path}` }, async (t) => {
+test("the phone's Raw TTY follows a finger pixel for pixel with native scrolling and holds a historical reader", { skip: status.installed ? false : `Chromium is not installed in ${status.path}` }, async (t) => {
   const browser = await launchBrowser();
   t.after(closeBrowser);
   const context = await browser.newContext({ hasTouch: true, viewport: { width: 400, height: 700 }, deviceScaleFactor: 2 });
   t.after(() => context.close());
   await context.route('http://phone.test/**', async (route) => {
-    const file = path.join(assets, new URL(route.request().url()).pathname);
+    const url = new URL(route.request().url());
+    const file = url.pathname.startsWith('/fonts/') ? path.join(assets, '../res/font', path.basename(url.pathname)) : path.join(assets, url.pathname);
     try {
       await route.fulfill({ body: await readFile(file), contentType: TYPES[path.extname(file)] ?? 'application/octet-stream' });
     } catch {
@@ -49,38 +50,25 @@ test("the phone's Raw TTY follows a finger pixel for pixel and settles on a whol
   /** Where the row showing `line N` is drawn, in page pixels. */
   const rowTop = (n: number) =>
     page.evaluate((n) => {
-      for (const row of document.querySelectorAll('.xterm-rows > div')) if (row.textContent?.trimEnd() === `line ${n}`) return row.getBoundingClientRect().top;
+      for (const row of document.querySelectorAll('.term-row')) if (row.textContent?.trimEnd() === `line ${n}`) return row.getBoundingClientRect().top;
       return null;
     }, n);
-  const transform = () => page.evaluate(() => document.querySelector<HTMLElement>('.xterm-screen')!.style.transform);
-
-  // xterm draws its rows in an animation frame after the page reports the snapshot drawn.
-  await page.waitForFunction(() => [...document.querySelectorAll('.xterm-rows > div')].some((row) => row.textContent?.trimEnd() === 'line 190'));
+  await page.waitForFunction(() => [...document.querySelectorAll('.term-row')].some((row) => row.textContent?.trimEnd() === 'line 190'));
   const before = await rowTop(190);
-  assert.ok(before !== null);
-  // Drag down (toward older lines) by a distance that is not a whole number of rows, and keep the finger there.
-  await touch('touchStart', 200, 300);
-  let y = 300;
-  for (let i = 0; i < 12; i++) {
-    y += 7.25;
-    await touch('touchMove', 200, y);
+  assert.notEqual(before, null);
+  await touch('touchStart', 200, 180);
+  for (let i = 1; i <= 7; i++) {
+    await touch('touchMove', 200, 180 + i * 8);
     await page.evaluate(() => new Promise(requestAnimationFrame));
   }
-  await page.evaluate(async () => {
-    for (let i = 0; i < 3; i++) await new Promise(requestAnimationFrame);
-  });
   const moved = await rowTop(190);
-  // Moves within the 8 px tap slop do nothing, and the first past it only starts the drag.
-  const dragged = y - 300 - 2 * 7.25;
-  assert.ok(moved !== null && Math.abs(moved - before - dragged) < 1, `the text moved with the finger: ${before} → ${moved}, finger ${dragged}`);
-  assert.match(await transform(), /translate3d/, 'mid-row, the screen is drawn part way between rows');
-  // Resting, the finger holds it there.
-  await page.waitForTimeout(400);
-  assert.equal(await rowTop(190), moved);
-  await touch('touchEnd', 200, y);
-  await page.waitForFunction(() => document.querySelector<HTMLElement>('.xterm-screen')!.style.transform === '', undefined, { timeout: 2000 });
-  const settled = await rowTop(190);
-  const cell = await page.evaluate(() => document.querySelector('.xterm-rows > div')!.getBoundingClientRect().height);
-  assert.ok(settled !== null && Math.abs(settled - before - Math.round((settled - before) / cell) * cell) < 0.5, `settled on a whole row: ${settled}`);
-  assert.ok(Math.abs(settled - moved) <= cell / 2 + 0.5, 'settling moves less than half a row');
+  assert.ok(moved !== null && moved > before! + 15 && moved <= before! + 60, 'text moves with the native pan after browser touch slop');
+  await page.waitForTimeout(300);
+  assert.equal(await rowTop(190), moved, 'holding the finger holds the reader');
+  await touch('touchEnd', 200, 236);
+  await page.evaluate(() => (window as any).office.receive({ t: 'data', data: 'new output\r\n' }));
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'bottom' && !m.at));
+  assert.equal(await rowTop(190), moved, 'new output does not pull a reader down');
+  await page.evaluate(() => (window as any).office.receive({ t: 'bottom' }));
+  await page.waitForFunction(() => (window as any).posted.at(-1)?.at === true);
 });

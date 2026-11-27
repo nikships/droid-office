@@ -64,7 +64,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 private val TermBg = Color(TermPalette.BACKGROUND)
 
 /**
- * A worker's terminal: the office's own stream in xterm.js (see [TerminalPage]), with its history.
+ * A worker's terminal: the office's own stream in wterm (see [TerminalPage]), with its history.
  * A swipe scrolls back through it, or scrolls a full-screen program. In [TermView.Desktop] the
  * PTY's grid is scaled to fit; in [TermView.Phone] the text stays readable and [onFit] reports the
  * grid that fits, for the PTY to adopt. The view follows new output while it's at the bottom.
@@ -72,12 +72,13 @@ private val TermBg = Color(TermPalette.BACKGROUND)
  * [screen] is the office's `screen` frame of it, the text a `uiautomator dump` and TalkBack read.
  */
 @Composable
-fun Terminal(
+internal fun Terminal(
     workerId: String,
     screen: ScreenState?,
     view: TermView,
     live: Boolean,
     modifier: Modifier = Modifier,
+    navigation: TerminalNavigation,
     onFit: (TermSize) -> Unit = {},
     directInput: Boolean = false,
     csiEnter: Boolean = false,
@@ -90,6 +91,7 @@ fun Terminal(
     // A new page whenever the WebView's renderer goes away; it starts from a fresh snapshot.
     var generation by remember(workerId) { mutableIntStateOf(0) }
     var drawn by remember(workerId, generation) { mutableStateOf(false) }
+    var unavailable by remember(workerId, generation) { mutableStateOf(false) }
     var atBottom by remember(workerId, generation) { mutableStateOf(true) }
     var viewingImage by remember(workerId) { mutableStateOf<PageMsg.Image?>(null) }
     val latestView by rememberUpdatedState(view)
@@ -100,7 +102,7 @@ fun Terminal(
     val unframed = themedPhoneWorker
     val colors = remember(art, unframed) {
         val ink = art?.terminal
-        // Transparent pixels show the same pane as the controls. Give xterm the RGB of its
+        // Transparent pixels show the same pane as the controls. Give wterm the RGB of its
         // brightest possible backdrop for its ANSI contrast adjustment, not transparent black.
         val ground = if (unframed && art != null) {
             val brightest = art.tint.copy(alpha = art.glass).compositeOver(Color.White).toArgb()
@@ -123,12 +125,19 @@ fun Terminal(
             onMessage = { msg ->
                 when (msg) {
                     PageMsg.Ready -> {
+                        navigation.page = p
                         p.send(latestColors)
                         p.send(TermPage.config(latestScale, latestView))
                         val feed = connection.feed(workerId)
                         if (feed == null || !feed.listen(p.listener)) connection.resnapshot(workerId)
                     }
-                    PageMsg.Drawn -> drawn = true
+                    PageMsg.Drawn -> {
+                        drawn = true
+                        if (navigation.finding && navigation.query.isNotEmpty()) navigation.find(navigation.query)
+                    }
+                    is PageMsg.Matches -> navigation.matches = msg
+                    is PageMsg.Prompts -> navigation.prompts = msg.available
+                    PageMsg.Unavailable -> unavailable = true
                     is PageMsg.Bottom -> atBottom = msg.at
                     is PageMsg.Fit -> latestFit(msg.size)
                     is PageMsg.Kitty -> latestKittyFlags(msg.flags)
@@ -142,6 +151,10 @@ fun Terminal(
     }
     DisposableEffect(page) {
         onDispose {
+            if (navigation.page === page) {
+                navigation.page = null
+                navigation.prompts = false
+            }
             connection.feed(workerId)?.unlisten(page.listener)
             page.destroy()
         }
@@ -168,7 +181,9 @@ fun Terminal(
                 it.alpha = if (unframed && !drawn) 0f else 1f
             })
         }
-        if (!drawn) {
+        if (unavailable) {
+            Text("Could not open the terminal. Check for an Android System WebView update.", Modifier.align(Alignment.Center).padding(16.dp))
+        } else if (!drawn) {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spinner(Modifier.size(22.dp))
                 Spacer(Modifier.height(10.dp))

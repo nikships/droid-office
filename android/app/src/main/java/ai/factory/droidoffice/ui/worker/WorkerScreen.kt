@@ -389,6 +389,7 @@ fun WorkerScreen(
             if (!worker.isCloud) ttyChoice = true
         }
         val tty = !cloud && (ttyChoice ?: if (threadable && store.settings.threadView) false else (link.phase != Phase.Connected || !Asks.canAnswer(worker, screen)))
+        val terminalNav = remember(workerId, tty) { TerminalNavigation() }
         LaunchedEffect(workerId, screen, store.loaded) {
             if (ttyChoice == null && screen != null && store.loaded) ttyChoice = tty
         }
@@ -409,6 +410,7 @@ fun WorkerScreen(
                     ) {
                         Icon(OfficeIcons.Search, "Search session", Modifier.size(16.dp), tint = if (threadSearch) Palette.Accent else Palette.TextSecondary)
                     }
+                    if (tty) TerminalNavActions(terminalNav)
                     InlineViewToggle(tty, pickView)
                 }
             }, resumable = !mission)
@@ -418,7 +420,9 @@ fun WorkerScreen(
                 Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.Border))
             }
         }
+        else if (tty) Actions(worker, lead = { TerminalNavActions(terminalNav) })
         else Actions(worker)
+        if (tty && terminalNav.finding) TerminalFindBar(terminalNav)
         Offline(link.phase, thread = !tty, composing = composing && !(!tty && worker.state == WorkerStatus.NeedsInput))
         if (tty) NeedsYou(worker, screen, live && link.phase == Phase.Connected)
         var phoneSize by remember(workerId) { mutableStateOf<TermSize?>(null) }
@@ -510,8 +514,9 @@ fun WorkerScreen(
             Terminal(
                 workerId, screen, if (phone) TermView.Phone else TermView.Desktop, live && link.phase == Phase.Connected,
                 Modifier.fillMaxSize(),
+                navigation = terminalNav,
                 onFit = { phoneSize = it },
-                directInput = directInput && !worker.isCloud,
+                directInput = directInput && !worker.isCloud && !terminalNav.finding,
                 csiEnter = !worker.isShell && !worker.isCloud,
                 onKittyFlags = { kittyFlags = it },
             )

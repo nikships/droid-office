@@ -20,11 +20,11 @@ import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
 
 /**
- * The WebView running the terminal page (assets/terminal/): xterm.js, the same emulator as the
+ * The WebView running the terminal page (assets/terminal/): wterm, the same emulator as the
  * office's own terminal window, fed the office's stream so it keeps the scrollback. The page and
  * its fonts load from the app itself, and every other request is refused: the page never reaches
  * the office, and never sees its address or a token. Direct typing uses a native input connection;
- * xterm's own replies to terminal queries stay in the page, so the phone
+ * the renderer's own replies to terminal queries stay in the page, so the phone
  * never answers the program alongside the desktop.
  */
 class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, private val onGone: () -> Unit) {
@@ -46,7 +46,7 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
             allowFileAccess = false
             allowContentAccess = false
             // The page lays text out at the phone's font scale itself (TermPage.config); the system
-            // scaling it again would grow the glyphs past the cells xterm measured.
+            // scaling it again would grow the glyphs past the measured cells.
             textZoom = 100
             setSupportZoom(false)
             builtInZoomControls = false
@@ -60,7 +60,7 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
         // Touching the terminal leaves the composer's focus, and its keyboard, alone.
         view.isFocusable = false
         view.isFocusableInTouchMode = false
-        // The terminal's text is read from the screen frames (Tags.Worker.TERMINAL), not xterm's DOM.
+        // The terminal's text is read from the screen frames (Tags.Worker.TERMINAL).
         view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
         view.webViewClient = Client(loader)
         view.addJavascriptInterface(Bridge(), "OfficeBridge")
@@ -84,7 +84,13 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
 
     private inner class Client(private val loader: WebViewAssetLoader) : WebViewClient() {
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse =
-            loader.shouldInterceptRequest(request.url) ?: refused()
+            loader.shouldInterceptRequest(request.url)?.apply {
+                // Do not depend on the Android release's MIME extension table.
+                if (request.url.path == "/assets/terminal/vendor/ghostty-vt.wasm") {
+                    mimeType = "application/wasm"
+                    encoding = null
+                }
+            } ?: refused()
 
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
 

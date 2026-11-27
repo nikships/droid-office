@@ -43,7 +43,10 @@ internal fun ThreadSearchBar(
     onQuery: (String) -> Unit,
     onStep: (Int) -> Unit,
     onClose: () -> Unit,
+    terminal: Boolean = false,
+    status: String? = null,
 ) {
+    val label = if (terminal) "Find in terminal" else "Search session"
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     Row(
@@ -52,24 +55,25 @@ internal fun ThreadSearchBar(
     ) {
         Icon(OfficeIcons.Search, null, Modifier.size(16.dp), tint = ThreadPalette.TextSecondary)
         Box(Modifier.weight(1f).padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
-            if (query.isEmpty()) Text("Search session", style = MaterialTheme.typography.bodyMedium, color = ThreadPalette.TextTertiary)
+            if (query.isEmpty()) Text(label, style = MaterialTheme.typography.bodyMedium, color = ThreadPalette.TextTertiary)
             BasicTextField(
                 value = query,
                 onValueChange = onQuery,
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, color = ThreadPalette.Text),
                 cursorBrush = SolidColor(ThreadPalette.Accent),
-                modifier = Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = "Search session" }.tagged(Tags.Worker.THREAD_SEARCH_FIELD),
+                modifier = Modifier.fillMaxWidth().focusRequester(focus).semantics { contentDescription = label }.tagged(if (terminal) Tags.Worker.TERM_FIND_FIELD else Tags.Worker.THREAD_SEARCH_FIELD),
             )
         }
         Text(
-            if (count == 0) "No results" else "${active + 1} of $count",
+            status ?: if (count == 0) "No results" else "${active + 1} of $count",
             style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, color = ThreadPalette.TextSecondary),
-            modifier = Modifier.tagged(Tags.Worker.THREAD_SEARCH_COUNT),
+            modifier = Modifier.tagged(if (terminal) Tags.Worker.TERM_FIND_COUNT else Tags.Worker.THREAD_SEARCH_COUNT),
         )
-        SearchAction(OfficeIcons.ArrowUp, "Previous chat search match", Tags.Worker.THREAD_SEARCH_PREV, count > 0) { onStep(-1) }
-        SearchAction(OfficeIcons.ArrowDown, "Next chat search match", Tags.Worker.THREAD_SEARCH_NEXT, count > 0) { onStep(1) }
-        SearchAction(Icons.Default.Close, "Close chat search", Tags.Worker.THREAD_SEARCH_CLOSE, true, onClose)
+        val target = if (terminal) "terminal" else "chat"
+        SearchAction(OfficeIcons.ArrowUp, "Previous $target search match", if (terminal) Tags.Worker.TERM_FIND_PREV else Tags.Worker.THREAD_SEARCH_PREV, count > 0) { onStep(-1) }
+        SearchAction(OfficeIcons.ArrowDown, "Next $target search match", if (terminal) Tags.Worker.TERM_FIND_NEXT else Tags.Worker.THREAD_SEARCH_NEXT, count > 0) { onStep(1) }
+        SearchAction(Icons.Default.Close, "Close $target search", if (terminal) Tags.Worker.TERM_FIND_CLOSE else Tags.Worker.THREAD_SEARCH_CLOSE, true, onClose)
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(ThreadPalette.Border))
 }

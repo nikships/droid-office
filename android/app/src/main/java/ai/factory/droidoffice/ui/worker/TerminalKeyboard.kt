@@ -18,7 +18,7 @@ import android.view.inputmethod.InputMethodManager
 import android.webkit.WebView
 
 /**
- * The native keyboard goes straight to term.input, never through xterm.onData (which also emits
+ * The native keyboard goes straight to term.input, never through WebView output callbacks (which also emits
  * terminal-query replies). The WebView remains a read-only renderer and keeps its swipe handling.
  */
 internal class TerminalKeyboard(context: Context, private val onInput: (String) -> Unit) : WebView(context) {

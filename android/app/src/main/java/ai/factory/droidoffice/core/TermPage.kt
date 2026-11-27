@@ -20,6 +20,9 @@ enum class TermView(val wire: String) {
 /** What the terminal page (assets/terminal/terminal.js) tells the app. */
 sealed interface PageMsg {
     data object Ready : PageMsg
+    data object Unavailable : PageMsg
+    data class Matches(val active: Int, val count: Int, val searching: Boolean, val limited: Boolean) : PageMsg
+    data class Prompts(val available: Boolean) : PageMsg
     /** A snapshot has been written: the terminal shows something. */
     data object Drawn : PageMsg
     /** Bytes for the program: a swipe over a full-screen program, as wheel events or arrow keys. */
@@ -92,8 +95,16 @@ object TermPage {
         val o = runCatching { OfficeJson.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return null
         fun str(k: String) = (o[k] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
         fun int(k: String) = (o[k] as? JsonPrimitive)?.intOrNull
+        fun bool(k: String) = (o[k] as? JsonPrimitive)?.booleanOrNull
         return when (str("t")) {
             "ready" -> PageMsg.Ready
+            "unavailable" -> PageMsg.Unavailable
+            "matches" -> {
+                val count = int("count")?.takeIf { it in 0..10_000 } ?: return null
+                val active = int("active")?.takeIf { it in -1 until count } ?: return null
+                PageMsg.Matches(active, count, bool("searching") == true, bool("limited") == true)
+            }
+            "prompts" -> bool("available")?.let { PageMsg.Prompts(it) }
             "drawn" -> PageMsg.Drawn
             "input" -> str("data")?.takeIf { it.isNotEmpty() }?.let { PageMsg.Input(it) }
             "fit" -> {
@@ -119,6 +130,9 @@ object TermPage {
     }
 
     fun view(view: TermView) = call("view") { put("view", view.wire) }
+
+    fun search(query: String) = call("search") { put("query", query.take(1024)) }
+    fun navigate(prompt: Boolean, forward: Boolean) = call(if (prompt) "prompt" else "match") { put("direction", if (forward) 1 else -1) }
 
     fun colors(foreground: String?, cursor: String?, background: String?, selection: String?, cursorAccent: String? = background) = call("colors") {
         if (foreground != null && cursor != null && background != null && selection != null) {

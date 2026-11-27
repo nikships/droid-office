@@ -33,14 +33,6 @@ export function fitScale(view, viewW, viewH, gridW, gridH, maxScale) {
 }
 
 /**
- * Whether a vertical swipe goes to the program instead of scrolling the terminal's own history: a
- * full-screen program (the alternate screen) or one that asked for mouse reports.
- */
-export function swipeGoesToProgram(state) {
-  return state.alternate || state.mouse !== 'none';
-}
-
-/**
  * The bytes for scrolling a program by `rows` (negative is up, toward older lines), at cell
  * `col`, `row` (1-based): wheel events in the program's mouse encoding when it reports the mouse,
  * otherwise arrow keys, as xterm.js itself does for a wheel over the alternate screen.
@@ -65,18 +57,6 @@ export function swipeInput(rows, state, col, row) {
   return one.repeat(n);
 }
 
-/** The mouse encoding after a DECSET (`set`) or DECRST of `params`, starting from `encoding`. */
-export function nextEncoding(encoding, params, set) {
-  let e = encoding;
-  for (const p of params) {
-    const mode = Array.isArray(p) ? p[0] : p;
-    if (mode !== UTF8 && mode !== SGR && mode !== URXVT) continue;
-    if (set) e = mode;
-    else if (e === mode) e = 0;
-  }
-  return e;
-}
-
 /** Turns pixels dragged into whole rows, keeping the remainder for the next move. */
 export class RowAccumulator {
   constructor() {
@@ -95,47 +75,4 @@ export class RowAccumulator {
   reset() {
     this.px = 0;
   }
-}
-
-/** Per millisecond, how much of a flick's speed is left: about a second to come to rest. */
-const FRICTION = 0.996;
-/** Below this many pixels per millisecond, a flick has stopped. */
-const MIN_SPEED = 0.02;
-
-/** Maximum pointer movement (in CSS pixels) and duration (ms) for a stationary single-finger tap. */
-export const TAP_SLOP_PX = 8;
-const TAP_MAX_MS = 350;
-
-/** The speed left after `ms` of coasting from `speed` (px/ms). */
-export function coast(speed, ms) {
-  const v = speed * FRICTION ** ms;
-  return Math.abs(v) < MIN_SPEED ? 0 : v;
-}
-
-/** Whether a completed touch gesture is a clean single-finger tap rather than a scroll, multi-touch or flick stop. */
-export function isKittyTap({ movedPx, durationMs, wasFlicking, multiTouch }) {
-  return !multiTouch && !wasFlicking && movedPx >= 0 && movedPx <= TAP_SLOP_PX && durationMs >= 0 && durationMs <= TAP_MAX_MS;
-}
-
-/**
- * Hit-tests a page tap `(clientX, clientY)` against visible Kitty image cell rects inside `gridRect`
- * (`host.getBoundingClientRect()`, which already includes any `Desktop` view CSS `scale(...)`).
- * Picks the topmost rect: highest `z`, breaking ties by later draw order. `extraRows` rows past each
- * edge also count, for the part-shown row a pixel scroll draws above or below the grid.
- */
-export function hitTestKittyTap(rects, gridRect, cols, rows, clientX, clientY, extraRows = 0) {
-  if (!rects?.length || !(gridRect?.width > 0 && gridRect?.height > 0 && cols > 0 && rows > 0)) return null;
-  const rx = clientX - gridRect.left;
-  const ry = clientY - gridRect.top;
-  const pad = (extraRows * gridRect.height) / rows;
-  if (rx < 0 || ry < -pad || rx >= gridRect.width || ry >= gridRect.height + pad) return null;
-  const fx = (rx / gridRect.width) * cols;
-  const fy = (ry / gridRect.height) * rows;
-  let hit = null;
-  for (const r of rects) {
-    if (fx >= r.x && fx < r.x + r.cols && fy >= r.y && fy < r.y + r.rows) {
-      if (!hit || r.z >= hit.z) hit = r;
-    }
-  }
-  return hit;
 }
