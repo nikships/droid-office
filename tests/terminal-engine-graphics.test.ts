@@ -118,6 +118,56 @@ test('Unicode prompts and output keep direct image rows at the bottom and mid-sc
   }
 });
 
+test('tabular output and horizontal command edits keep the bottom-row image marker like xterm', async (t) => {
+  const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
+  // Captured from an 80×24 macOS PTY: /bin/ls src/client/term-engine and /bin/zsh -dfi
+  // with bindkey -e. Up recalls the command, Ctrl-A/Meta-f move inside it, X inserts.
+  const listing =
+    'features.ts\t\t\tghostty-runtime.ts\r\nghostty-graphics-rows.ts\tghostty-scroll-wheel.ts\r\nghostty-graphics.ts\t\tghostty-scroll.ts\r\nghostty-keys.ts\t\t\tghostty.ts\r\nghostty-links-appearance.ts\tindex.ts\r\nghostty-links-find.ts\t\ttypes.ts\r\nghostty-links-lines.ts\t\txterm-find.ts\r\nghostty-links.ts\r\n';
+  const recall = 'print alpha beta gamma delta epsilon zeta eta theta';
+  const edit = ['\x1b[51D', '\x1b[6C', 'Xalpha beta gamma delta epsilon zeta eta theta\x1b[45D', '\x1b[1C', '\x1b[44C'];
+  const cases: [string, string[], boolean][] = [
+    ['printf', Array<string>(3).fill('a\tb\tc\r\n'), true],
+    ['ls', [listing], true],
+    ['recall', [recall], true],
+    ['edit', [recall, ...edit], true],
+    ['progress', Array.from({ length: 10 }, (_, i) => `\rprogress ${i + 1}/10\x1b[K`), true],
+    ['CUF/CUB/CHA/HPA', ['\x1b[30Cfoo\x1b[3Dbar\x1b[31Gbaz\x1b[31`foo'], true],
+    ['cursor up', ['\x1b[Aline repaint\x1b[K'], false],
+    ['absolute position', ['\x1b[18;1Hline repaint\x1b[K'], false],
+    ['existing continuation', ['x'.repeat(81), 'é'], false],
+    ['reverse CUB', ['\x1b[3Dpaint'], false],
+  ];
+  const results = [];
+  for (const [name, chunks] of cases) {
+    const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(80, 24, { scrollbackLimit: 5000 });
+    const xt = new headless.Terminal({ cols: 80, rows: 24, scrollback: 5000, allowProposedApi: true });
+    const rows = new GraphicsRows(core);
+    const write = async (s: string) => {
+      rows.begin(s);
+      core.write(s);
+      rows.end();
+      await new Promise<void>((r) => xt.write(s, r));
+    };
+    if (name === 'reverse CUB') await write('\x1b[?1045h');
+    await write('\r\n'.repeat(18));
+    const image = rows.anchor()!,
+      marker = xt.registerMarker(0)!;
+    await write('\r\n'.repeat(5));
+    if (name === 'edit' || name === 'recall') await write('% ');
+    for (const chunk of chunks) await write(chunk);
+    results.push({ name, ghostty: image.line, xterm: marker.line });
+    assert.equal(marker.line, 18);
+    xt.dispose();
+    core.free();
+  }
+  t.diagnostic(JSON.stringify(results));
+  assert.deepEqual(
+    results.map((r) => r.ghostty),
+    cases.map((c) => (c[2] ? 18 : -1)),
+  );
+});
+
 test('a Unicode line crossing the native trim boundary keeps only the correct numbered row', async (t) => {
   const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
   const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(80, 24, { scrollbackLimit: 5000 });
@@ -153,16 +203,21 @@ test('a Unicode line crossing the native trim boundary keeps only the correct nu
       .join(''),
     'UNIQUE',
   );
-  // At the next eviction a wide glyph wraps from the last cell instead of a newline.
-  // The native flag is on the continuation (last) row. Never treat that as zero wraps.
-  const uncertain = rows.anchor()!;
-  for (let i = 0; i < 6000 && core.getScrollbackLength() < previous; i++) write('fill\r\n');
-  assert.equal(core.getScrollbackLength(), previous);
-  write('x'.repeat(79));
-  write('日');
-  assert.ok(core.getScrollbackLength() < previous);
-  assert.ok(core.isRowWrapped(23));
-  assert.ok(uncertain.isDisposed);
+  // At eviction, a wide glyph wraps from the last cell. The following five hard
+  // breaks put that wrap at the farthest row the tab-aware proof needs to inspect.
+  for (const [data, continuation] of [
+    ['日', 23],
+    [`\t日${'\r\n'.repeat(5)}`, 18],
+  ] as const) {
+    const uncertain = rows.anchor()!;
+    for (let i = 0; i < 6000 && core.getScrollbackLength() < previous; i++) write('fill\r\n');
+    assert.equal(core.getScrollbackLength(), previous);
+    write('x'.repeat(79));
+    write(data);
+    assert.ok(core.getScrollbackLength() < previous);
+    assert.ok(core.isRowWrapped(continuation));
+    assert.ok(uncertain.isDisposed);
+  }
 });
 
 test('ED2 and ED3 handle screen and history image markers like xterm clear', async (t) => {

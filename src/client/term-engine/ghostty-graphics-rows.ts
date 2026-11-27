@@ -279,15 +279,21 @@ export class GraphicsRows {
       const cursorMotion = /\x1b(?:[78]|\[[\d;]*[GKCDHfABsu])/g;
       // zsh can echo a Unicode command after backing up over its first character. A
       // leading BS inside the row cannot reverse-wrap; do not assume that at the margin.
-      const plain = styled.replace(/\x1b\[\?7[hl]/g, '').replace(/^\x08+/, (bs) => (this.horizontalMargins ? bs : bs.slice(before.x)));
+      // For the bound, a tab and a horizontal CSI can both put the next glyph at the
+      // last column. CUB under reverse-wrap is not horizontal: it can cross a row.
+      const plain = styled
+        .replace(/\x1b\[\?7[hl]/g, '')
+        .replace(/^\x08+/, (bs) => (this.horizontalMargins ? bs : bs.slice(before.x)))
+        .replace(/\x1b\[\d*([CDG`])/g, (seq, final: string) => (final === 'D' && (this.core.getMode(45) || this.core.getMode(1045)) ? seq : '\t'));
       const rest = plain.replace(cursorMotion, '');
       const positions = rest !== plain;
       const pieces = plain.split(cursorMotion).flatMap((s) => s.split(/[\r\n]/));
       const wraps = pieces.reduce((sum, piece) => sum + (piece ? Math.ceil((2 * piece.length) / Math.max(1, this.core.cols - 1)) : 0), 0);
       const breaks = rest.match(/\n/g)?.length ?? 0;
-      const max = breaks + wraps;
+      const tabs = rest.match(/\t/g)?.length ?? 0;
+      const max = breaks + wraps + tabs;
       const appended = positions ? max : Math.max(0, before.y + max - this.core.rows + 1);
-      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\t]/.test(rest)) {
+      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(rest) || (tabs && (positions || this.region || this.horizontalMargins))) {
         this.invalidate();
         return;
       }
@@ -296,8 +302,11 @@ export class GraphicsRows {
         // The pinned WASM flags the continuation row, including the current cursor row.
         // If all possible destination rows remain on-screen and none is flagged, only
         // the literal newlines advanced. A pre-existing flag is ambiguous, never count it.
-        if (positions || this.region || this.horizontalMargins || max > after.y) return this.invalidate();
-        for (let row = after.y - max + 1; row <= after.y; row++) if (this.core.isRowWrapped(row)) return this.invalidate();
+        // Tab-heavy listings can have a bound larger than a screen. If any soft wrap
+        // occurred, the last one has at most `breaks` literal newlines after it.
+        const check = tabs ? Math.min(max, breaks + 1) : max;
+        if (positions || this.region || this.horizontalMargins || check > after.y + 1) return this.invalidate();
+        for (let row = after.y - check + 1; row <= after.y; row++) if (this.core.isRowWrapped(row)) return this.invalidate();
         trimmed = before.y + breaks - after.y - delta;
       }
     }
