@@ -75,7 +75,9 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
                 await page.keyboard.press('Tab');
                 assert.equal(await page.locator(':focus').evaluate((el) => el.tagName), 'TEXTAREA');
                 assert.equal(await top(page), end, `${surface} Tab, ${scale}`);
+                await page.getByRole('button', { name: 'Header' }).focus();
                 await page.locator('.office-wterm').click({ position: { x: 60, y: 70 } });
+                assert.equal(await page.locator(':focus').evaluate((el) => el.tagName), 'TEXTAREA');
                 assert.equal(await top(page), end);
                 await page.keyboard.type('k');
                 // Text insertion without keydown also exercises the native editable path.
@@ -109,6 +111,19 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
             assert.equal(await page.evaluate(() => (window as any).term.core.getScrollbackCount()), 0);
             assert.ok((await top(page)) > 100);
             await page.locator('.office-wterm').hover();
+            const end = await top(page);
+            await page.mouse.wheel(0, -31);
+            await frame(page);
+            assert.equal(await top(page), end - 31);
+            const idleEvents = await page.locator('.office-wterm').evaluate(async (el) => {
+              let events = 0;
+              const life = new AbortController();
+              el.addEventListener('scroll', () => events++, { signal: life.signal });
+              for (let i = 0; i < 8; i++) await new Promise(requestAnimationFrame);
+              life.abort();
+              return events;
+            });
+            assert.ok(idleEvents <= 1, `idle scroll events: ${idleEvents}`);
             await page.mouse.wheel(0, -2000);
             await frame(page);
             assert.equal(await top(page), 0);
@@ -147,6 +162,110 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
             await page.close();
           }
         });
+      if (dpr === 1)
+        for (const kind of ['horizontal history', 'alternate pinch', 'tracked travel', 'tracked near-tail reader']) {
+          await t.test(kind, async () => {
+            const page = await pane();
+            try {
+              const state = await page.evaluate(async (kind) => {
+                const w = window as any,
+                  t = w.term,
+                  el = t.native.element;
+                const frame = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+                if (kind === 'alternate pinch') t.write('\x1b[?1049h');
+                if (kind.startsWith('tracked')) t.write('\x1b[?1000;1006h');
+                await frame();
+                t.scrollToBottom();
+                if (kind === 'horizontal history') el.scrollTop -= 60;
+                if (kind === 'tracked near-tail reader') el.scrollTop -= 2;
+                await frame();
+                const previous = el.scrollTop;
+                const row = el.querySelectorAll('.term-row:not(.term-scrollback-row)')[20];
+                const rect = row.getBoundingClientRect();
+                const pitch = parseFloat(el.style.getPropertyValue('--term-row-height'));
+                const wheel = (x: number, y: number, opts: WheelEventInit = {}) =>
+                  !row.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: rect.left + 2, clientY: rect.top + 2, deltaX: x, deltaY: y, ...opts }));
+                const cancelled = [],
+                  counts = [];
+                w.sent.length = 0;
+                if (kind === 'horizontal history')
+                  for (const speed of [0.5, 2, 1]) {
+                    t.options.scrollSensitivity = speed;
+                    cancelled.push(wheel(80, 2, { altKey: speed === 1 }));
+                  }
+                if (kind === 'alternate pinch') cancelled.push(wheel(0, -120, { ctrlKey: true }));
+                if (kind === 'tracked near-tail reader') cancelled.push(wheel(0, -30));
+                if (kind === 'tracked travel') {
+                  for (const axis of ['y', 'x']) {
+                    for (let i = 0; i < pitch; i++) {
+                      wheel(axis === 'x' ? -1 : 0, axis === 'y' ? -1 : 0);
+                      counts.push(w.sent.length);
+                    }
+                  }
+                }
+                return { previous, after: el.scrollTop, cancelled, sent: w.sent, counts, pitch };
+              }, kind);
+              if (kind === 'tracked travel') {
+                assert.deepEqual(
+                  state.counts,
+                  Array.from({ length: state.pitch * 2 }, (_, i) => Math.floor((i + 1) / state.pitch)),
+                );
+                assert.equal(state.sent.length, 2);
+                assert.match(state.sent[0], /^\x1b\[<64;/);
+                assert.match(state.sent[1], /^\x1b\[<66;/);
+              } else {
+                assert.equal(state.after, state.previous);
+                assert.ok(
+                  state.cancelled.every((v) => !v),
+                  JSON.stringify(state),
+                );
+                assert.deepEqual(state.sent, []);
+                if (kind === 'tracked near-tail reader') {
+                  await page.locator('.office-wterm').hover();
+                  await page.mouse.wheel(0, -2);
+                  await frame(page);
+                  assert.equal(await top(page), state.previous - 2);
+                  assert.deepEqual(await page.evaluate(() => (window as any).sent), []);
+                }
+              }
+            } finally {
+              await page.close();
+            }
+          });
+        }
+      await t.test(`a two-pixel reader holds through twenty streamed lines and resumes at the end at DPR ${dpr}`, async () => {
+        const page = await pane();
+        try {
+          const el = page.locator('.office-wterm');
+          const tail = await top(page);
+          await el.hover();
+          await page.mouse.wheel(0, -2);
+          await frame(page);
+          const reader = await top(page);
+          assert.ok(reader < tail && tail - reader < 4, `${tail} → ${reader}`);
+          for (let i = 0; i < 20; i++) {
+            await page.evaluate(() => (window as any).term.write('next\r\n'));
+            await frame(page);
+            assert.equal(await top(page), reader, `output ${i + 1}`);
+          }
+          await page.mouse.wheel(0, 8000);
+          await frame(page);
+          const following = await top(page);
+          assert.ok(following > tail);
+          await page.evaluate(() => (window as any).term.write('latest\r\n'));
+          await frame(page);
+          assert.ok((await top(page)) > following);
+          await page.mouse.wheel(0, -2);
+          await frame(page);
+          await page.locator('textarea').evaluate((el) => el.focus({ preventScroll: true }));
+          await page.keyboard.press('k');
+          await page.evaluate(() => (window as any).term.write('k\r\n'));
+          await frame(page);
+          assert.ok(await el.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop < 1));
+        } finally {
+          await page.close();
+        }
+      });
     } finally {
       await browser.close();
     }

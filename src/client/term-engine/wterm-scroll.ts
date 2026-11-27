@@ -15,13 +15,15 @@ export function attachWtermScroll(adapter: WTermAdapter) {
     };
 
     let partialRow = 0;
+    let reportTravel = 0;
+    let horizontalReport = false;
     let remainder = 0;
     let lastTop: number | undefined;
-    const pixels = (e: WheelEvent) => e.deltaY * (e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? el.clientHeight : e.deltaMode === WheelEvent.DOM_DELTA_LINE ? height() : 1);
+    const pixels = (e: WheelEvent, delta = e.deltaY) => delta * (e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? el.clientHeight : e.deltaMode === WheelEvent.DOM_DELTA_LINE ? height() : 1);
     const historyWheel = (e: WheelEvent) => {
       // At normal speed Chromium owns the gesture, including platform momentum.
       const speed = (adapter.options.scrollSensitivity ?? 1) * (e.altKey ? 5 : 1);
-      if (speed === 1 || !e.deltaY || e.ctrlKey || e.shiftKey || e.metaKey) {
+      if (speed === 1 || !e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.ctrlKey || e.shiftKey || e.metaKey) {
         remainder = 0;
         return;
       }
@@ -35,12 +37,35 @@ export function attachWtermScroll(adapter: WTermAdapter) {
     el.addEventListener(
       'wheel',
       (e) => {
-        // A read-only mirror must not let wterm consume a wheel for a mouse
-        // report it can't send. Its normal-screen history is always scrollable.
-        if (!adapter.options.disableStdin || !core.mouseTracking()) return;
+        if (!core.mouseTracking()) {
+          reportTravel = 0;
+          return;
+        }
+        const max = el.scrollHeight - el.clientHeight;
+        if (adapter.options.disableStdin || (!core.usingAltScreen() && !e.shiftKey && max - el.scrollTop >= 1)) {
+          // Don't send reports from a read-only mirror or a reader even just
+          // two pixels from the tail. Native scrolling owns history.
+          reportTravel = 0;
+          e.stopImmediatePropagation();
+          if (core.usingAltScreen()) e.preventDefault();
+          else historyWheel(e);
+          return;
+        }
+        if (e.shiftKey && max > 0) return; // wterm's explicit history override
+        const first = el.querySelector('.term-row:not(.term-scrollback-row)')?.getBoundingClientRect();
+        const row = height();
+        const width = parseFloat(el.style.getPropertyValue('--term-cell-width')) * adapter.cols;
+        if (!first || e.clientX < first.left || e.clientX >= first.left + width || e.clientY < first.top || e.clientY >= first.top + row * adapter.rows) return;
+        const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+        if (horizontal !== horizontalReport) reportTravel = 0;
+        horizontalReport = horizontal;
+        reportTravel += pixels(e, horizontal ? e.deltaX : e.deltaY);
+        if (Math.abs(reportTravel) >= row) {
+          reportTravel %= row;
+          return; // pass the original event to wterm's negotiated encoder
+        }
+        e.preventDefault();
         e.stopImmediatePropagation();
-        if (core.usingAltScreen()) e.preventDefault();
-        else historyWheel(e);
       },
       { capture: true, passive: false, signal },
     );
@@ -51,6 +76,7 @@ export function attachWtermScroll(adapter: WTermAdapter) {
         // the live grid but leaves the wheel alone while reading history.
         if (e.defaultPrevented) return;
         if (!core.usingAltScreen()) return historyWheel(e);
+        if (e.ctrlKey) return;
         e.preventDefault();
         if (core.mouseTracking() || adapter.options.disableStdin || e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
         partialRow += pixels(e) / height();
@@ -61,7 +87,7 @@ export function attachWtermScroll(adapter: WTermAdapter) {
       { passive: false, signal },
     );
     adapter.onReset(() => {
-      partialRow = remainder = 0;
+      partialRow = remainder = reportTravel = 0;
     });
   });
   return { handleKey: (e: KeyboardEvent) => handleKey(e) };

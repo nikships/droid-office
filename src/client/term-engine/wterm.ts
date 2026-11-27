@@ -47,6 +47,7 @@ export class WTermAdapter {
   private metricsPending = true;
   // History index including discarded rows, or undefined when following the tail.
   private readerRow?: number;
+  private holdReaderAfterPaint = false;
   private paintedDiscarded = 0;
   private paintPending = false;
   private pendingRestore?: { appliedTop?: number };
@@ -117,10 +118,15 @@ export class WTermAdapter {
       if (applied !== undefined && applied > max && el.scrollTop < applied && Math.abs(max - el.scrollTop) < 1) return;
       this.readerRevision++;
     }
-    this.readerRow = el.scrollHeight - el.clientHeight - el.scrollTop < 1 ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;
+    const remaining = el.scrollHeight - el.clientHeight - el.scrollTop;
+    this.readerRow = remaining < 1 ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;
+    // wterm 0.6 follows within 5px of the end, and resets to zero when a
+    // clipped shared grid has no history. Don't let either paint move a reader.
+    if (scrolled) this.holdReaderAfterPaint = this.readerRow !== undefined && (remaining < 5 || (el.scrollTop > 0 && this.core?.getScrollbackCount() === 0)) && !this.core?.usingAltScreen();
   }
   /** An explicit navigation supersedes both a metric restore and an older saved reader. */
   cancelReaderRestore() {
+    this.holdReaderAfterPaint = false;
     this.readerRevision++;
     this.pendingRestore = undefined;
   }
@@ -263,18 +269,26 @@ export class WTermAdapter {
     this.root = root;
     host.append(root);
     this.refreshMetrics();
+    let lastScrollTop: number | undefined;
+    let restoredSameTop = false;
     try {
       const { native, core, attachFeatures } = await loadWterm(
         this,
         root,
         (d) => {
           // WTerm synthesizes pixel-size replies inside write(), outside core.getResponse().
-          if (!this.displayWrite && !this.options.disableStdin && !signal.aborted) this.data.fire(d);
+          if (!this.displayWrite && !this.options.disableStdin && !signal.aborted) {
+            // Native input already scrolled to the tail; its scroll event may
+            // arrive after the PTY echo. Mouse reports leave the reader alone.
+            if (this.holdReaderAfterPaint) this.sampleReader(true);
+            this.data.fire(d);
+          }
         },
         features,
         (discarded) => {
           this.paintPending = false;
           this.paintedDiscarded = discarded;
+          if (!this.pendingRestore && this.holdReaderAfterPaint && !this.core?.usingAltScreen()) this.pendingRestore = { appliedTop: root.scrollTop };
           const restore = this.pendingRestore;
           if (restore)
             queueMicrotask(() => {
@@ -282,6 +296,10 @@ export class WTermAdapter {
               // adjustment. Only then is a logical row a usable pixel offset.
               if (restore !== this.pendingRestore || this.metricsPending || !root.clientHeight) return;
               root.scrollTop = this.readerRow === undefined ? root.scrollHeight : Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
+              // Chromium queues scroll even when two writes in one paint cancel
+              // out. Feeding that duplicate back to wterm would repaint forever
+              // on a clipped grid without history. Never hide a new coordinate.
+              restoredSameTop = this.holdReaderAfterPaint && this.core?.getScrollbackCount() === 0 && root.scrollTop === lastScrollTop;
               this.pendingRestore = undefined;
             });
         },
@@ -312,7 +330,17 @@ export class WTermAdapter {
           { capture: true, signal },
         );
 
-      root.addEventListener('scroll', () => this.sampleReader(true), { passive: true, signal });
+      root.addEventListener(
+        'scroll',
+        (e) => {
+          if (e.target !== root) return;
+          if (restoredSameTop && lastScrollTop === root.scrollTop) e.stopImmediatePropagation();
+          restoredSameTop = false;
+          lastScrollTop = root.scrollTop;
+          this.sampleReader(true);
+        },
+        { capture: true, passive: true, signal },
+      );
       this.syncRendering();
       const observer = new ResizeObserver(() => {
         if (root.clientWidth > 0 && this.metricsPending) this.refreshMetrics();
@@ -478,6 +506,7 @@ export class WTermAdapter {
     this.followTail();
   }
   private followTail() {
+    this.holdReaderAfterPaint = false;
     this.readerRow = undefined;
     const el = this.root;
     if (!el) return;
