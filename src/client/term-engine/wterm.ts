@@ -257,10 +257,8 @@ export class WTermAdapter {
       const colors = { ...TERM_THEME, ...this.options.theme };
       const rgb = (key: keyof typeof TERM_THEME) => Number.parseInt((/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(colors[key]) ? colors[key].slice(0, 7) : TERM_THEME[key]).slice(1), 16);
       t.setThemeColors({ foreground: rgb('foreground'), background: rgb('background'), cursor: rgb('cursor'), palette: palette.map(rgb) });
-      this.root.style.setProperty('--term-bg', colors.background);
+      this.root.style.setProperty('--office-pane-bg', colors.background);
       this.root.style.setProperty('--term-selection-bg', colors.selectionBackground);
-      this.root.classList.toggle('has-cursor-accent', !!colors.cursorAccent);
-      this.root.style.setProperty('--office-cursor-accent', colors.cursorAccent ?? '');
     }
     if (key === 'cursorBlink') {
       this.root.classList.toggle('cursor-blink', this.options.cursorBlink === true);
@@ -333,6 +331,7 @@ export class WTermAdapter {
         root.addEventListener(
           phase,
           (e) => {
+            if (e.target instanceof Element && e.target.closest('a.term-link')) return;
             if (this.keyHandler?.(e) !== false) return;
             e.preventDefault();
             e.stopImmediatePropagation();

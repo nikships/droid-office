@@ -16,5 +16,3 @@
   pointer-events: none;
 }
 .office-wterm.wterm-link-hover .term-row { cursor: pointer; }
-/* Native OSC 8 anchors must never be an alternative input route to the office policy. */
-.office-wterm .term-link { pointer-events: none; text-decoration: none; }

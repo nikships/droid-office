@@ -49,7 +49,6 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     const options = {
       allowProposedApi: true,
       allowTransparency: true,
-      minimumContrastRatio: 4.5,
       fontFamily: '"Geist Mono", "Droid Office Terminal Symbols", monospace',
       fontSize: 14,
       lineHeight: 1.1,
@@ -884,7 +883,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
         assert.equal(adapter, expected, label);
       }
   });
-  await t.test('minimum contrast in both directions and reverse video; retain existing ANSI, truecolor and glyph styling', async () => {
+  await t.test('keeps application RGB values including low contrast and reverse video', async () => {
     const rows = await page.evaluate(async () => {
       const { a, x, write } = window as any;
       a.reset();
@@ -901,7 +900,10 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
         }),
       );
     });
-    for (let i = 0; i < 4; i++) assert.equal(rows[0][i][0], rows[1][i][0]);
+    assert.deepEqual(
+      rows[0].slice(0, 4).map((r) => r[0]),
+      ['rgb(40, 40, 40)', 'rgb(210, 210, 210)', 'rgb(30, 30, 30)', 'rgb(188, 220, 188)'],
+    );
     assert.equal(rows[0][4][1], rows[1][4][1]);
     assert.equal(rows[0][5][2], rows[1][5][2]);
     assert.equal(rows[0][6][3], '0.5');
@@ -985,7 +987,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       assert.equal(animation === 'none', i < 3);
     }
   });
-  await t.test('steady and blinking block cursors paint the artwork theme accent glyph on a transparent pane', async () => {
+  await t.test('native steady and blinking block cursors keep opaque glyph ink on glass', async () => {
     const colors = await page.evaluate(
       async (themes) => {
         const engine = '/term-engine/web-terminal.ts',
@@ -1048,55 +1050,13 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
             for (let i = 0; i < pixels.length; i += 4) if (Math.abs(pixels[i] - (rgb >> 16)) < 12 && Math.abs(pixels[i + 1] - ((rgb >> 8) & 255)) < 12 && Math.abs(pixels[i + 2] - (rgb & 255)) < 12) count++;
             return count;
           },
-          { data, color: colors.cursorAccent },
+          { data, color: colors.background.slice(0, 7) },
         );
-        assert.ok(ink >= 3, `blink=${blink}: ${ink} accent pixels`);
+        assert.ok(ink >= 3, `blink=${blink}: ${ink} glyph pixels`);
       }
     } finally {
       await page.evaluate(() => (window as any).cursorProbe.close());
     }
-  });
-  await t.test('full-screen true-color repaint measurement', async () => {
-    const times = await page.evaluate(async () => {
-      const { a, el, frame } = window as any;
-      const cols = 120,
-        rows = 40;
-      a.resize(cols, rows);
-      el.parentElement.style.height = `${(window as any).pitch() * rows}px`;
-      el.parentElement.style.width = '1100px';
-      await frame();
-      const samples: { off: number[]; on: number[] } = { off: [], on: [] };
-      for (let j = 0; j < 24; j++) {
-        const on = j % 4 === 1 || j % 4 === 2;
-        a.options.minimumContrastRatio = on ? 4.5 : 1;
-        // Distinct, mostly low-contrast pairs, different from the preceding repaint.
-        const screen = `\x1b[H${Array.from({ length: rows }, (_, y) => Array.from({ length: cols }, (_, x) => `\x1b[38;2;${x};${y + j};${x + y};48;2;${x + j};${y};${x}m${j % 2 ? 'x' : 'z'}`).join('')).join('\r\n')}`;
-        let start = 0;
-        requestAnimationFrame(() => {
-          start = performance.now();
-        });
-        a.write(screen);
-        await new Promise<void>((resolve) =>
-          requestAnimationFrame(() => {
-            el.getBoundingClientRect(); // include synchronous DOM layout
-            samples[on ? 'on' : 'off'].push(performance.now() - start);
-            resolve();
-          }),
-        );
-      }
-      const reads = [];
-      let checksum = 0;
-      for (const ratio of [1, 4.5, 4.5, 1]) {
-        a.options.minimumContrastRatio = ratio;
-        const start = performance.now();
-        for (let pass = 0; pass < 10; pass++) for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) checksum += a.native.bridge.getCell(y, x).fgRgb ?? 0;
-        reads.push((performance.now() - start) / 10);
-      }
-      return { samples, reads, checksum, painted: el.querySelectorAll('.term-row:not(.term-scrollback-row)').length };
-    });
-    assert.equal(times.painted, 40);
-    assert.ok(times.checksum > 0);
-    t.diagnostic(`120x40 distinct true-color cells, render + layout ms: ${JSON.stringify(times.samples)}; full-screen cell reads, ABBA (off/on/on/off) ms: ${JSON.stringify(times.reads)}`);
   });
   await page.evaluate(() => {
     const { a, x } = window as any;

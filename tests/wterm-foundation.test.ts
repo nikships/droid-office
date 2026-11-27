@@ -447,14 +447,14 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
         a.core.writeString('\x1b[31mR\x1b]10;?\x07\x1b]11;?\x07');
         let replies = '';
         for (let reply = a.core.getResponse(); reply !== null; reply = a.core.getResponse()) replies += reply;
-        return { attached, replies, red: a.core.getCell(0, 0).fgRgb, background: a.native.element.style.getPropertyValue('--term-bg'), cursor: a.native.element.style.getPropertyValue('--term-cursor') };
+        return { attached, replies, red: a.core.getCell(0, 0).fgRgb, background: getComputedStyle(a.native.element).backgroundColor, cursor: a.native.element.style.getPropertyValue('--term-cursor') };
       } finally {
         a.dispose();
       }
     });
     assert.deepEqual(result.attached, ['first', 'second']);
     assert.equal(result.red, 0x334455);
-    assert.equal(result.background, '#12345680');
+    assert.equal(result.background, 'rgba(18, 52, 86, 0.5)');
     assert.equal(result.cursor, '#fedcba');
     for (const rgb of ['a1a1/b2b2/c3c3', '1212/3434/5656']) assert.match(result.replies, new RegExp(`rgb:${rgb}`, 'i'));
   });

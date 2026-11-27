@@ -1,5 +1,4 @@
 import { fitFont, fitGrid, fitScale, RowAccumulator, SGR, swipeInput, URXVT, UTF8 } from './input.js';
-import { minimumContrast } from './theme.js';
 
 const READABLE_PX = 12.5;
 const PAD = 8;
@@ -227,7 +226,6 @@ export async function start() {
         case 'colors': {
           const theme = { ...TERM_THEME, ...msg.theme };
           term.options.theme = theme;
-          term.options.minimumContrastRatio = minimumContrast(theme.background);
           document.documentElement.style.setProperty('--terminal-ground', theme.background);
           break;
         }

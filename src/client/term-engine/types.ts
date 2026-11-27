@@ -6,12 +6,11 @@ export interface ClientTerminalOptions {
   disableStdin?: boolean;
   fontFamily?: string;
   fontSize?: number;
-  theme?: Partial<typeof TERM_THEME> & { cursorAccent?: string };
+  theme?: Partial<typeof TERM_THEME>;
   scrollback?: number;
   lineHeight?: number;
   scrollSensitivity?: number;
   macOptionIsMeta?: boolean;
-  minimumContrastRatio?: number;
 }
 
 /** A line to scroll to once the terminal has loaded: a search hit (see search.ts). */

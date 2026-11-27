@@ -55,8 +55,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.compositeOver
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -107,13 +105,8 @@ internal fun Terminal(
     val unframed = themedPhoneWorker
     val colors = remember(art, unframed) {
         val ink = art?.terminal
-        // Transparent pixels show the same pane as the controls. Give wterm the RGB of its
-        // brightest possible backdrop for its ANSI contrast adjustment, not transparent black.
-        val ground = if (unframed && art != null) {
-            val brightest = art.tint.copy(alpha = art.glass).compositeOver(Color.White).toArgb()
-            "#%06x00".format(brightest and 0xffffff)
-        } else ink?.background
-        TermPage.colors(ink?.foreground, ink?.cursor, ground, ink?.selection, cursorAccent = ink?.background)
+        val ground = ink?.background?.let { if (unframed) "${it}00" else it }
+        TermPage.colors(ink?.foreground, ink?.cursor, ground, ink?.selection)
     }
     val latestColors by rememberUpdatedState(colors)
     val latestKittyFlags by rememberUpdatedState(onKittyFlags)

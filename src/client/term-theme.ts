@@ -30,7 +30,7 @@ export const TERM_THEME = {
 export interface TermThemeColors {
   foreground: string;
   cursor: string;
-  cursorAccent: string;
+  background: string;
   selectionBackground: string;
 }
 
@@ -42,7 +42,7 @@ const listeners = new Set<() => void>();
  * cells' ground is transparent, so the pane's themed glass shows behind the text.
  */
 export function termTheme() {
-  return colors ? { ...TERM_THEME, ...colors, background: 'rgba(0, 0, 0, 0)' } : TERM_THEME;
+  return colors ? { ...TERM_THEME, ...colors, background: `${colors.background}00` } : TERM_THEME;
 }
 
 /** Retints every terminal on this page (null: back to TERM_THEME) and lets later ones open transparent. */

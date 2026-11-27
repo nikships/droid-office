@@ -150,13 +150,12 @@ object TermPage {
     fun closeSearch() = call("searchClose") {}
     fun navigate(prompt: Boolean, forward: Boolean) = call(if (prompt) "prompt" else "match") { put("direction", if (forward) 1 else -1) }
 
-    fun colors(foreground: String?, cursor: String?, background: String?, selection: String?, cursorAccent: String? = background) = call("colors") {
+    fun colors(foreground: String?, cursor: String?, background: String?, selection: String?) = call("colors") {
         if (foreground != null && cursor != null && background != null && selection != null) {
             put("theme", buildJsonObject {
                 put("foreground", foreground)
                 put("cursor", cursor)
                 put("background", background)
-                put("cursorAccent", cursorAccent)
                 put("selectionBackground", selection)
             })
         }

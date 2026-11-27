@@ -128,7 +128,7 @@ test('glass levels: monotonic opacity from Crystal to Solid, Crystal and Solid h
     assert.equal(companionThemeVars(t, 'solid')['--th-blur'], '0px');
     assert.ok(GLASS_SPECS.clear.blur < GLASS_SPECS.tinted.blur && GLASS_SPECS.tinted.blur < GLASS_SPECS.frosted.blur && GLASS_SPECS.frosted.blur < GLASS_SPECS.smoked.blur);
   }
-  assert.deepEqual(companionTerminalColors(companionTheme('carbons-copy')), { foreground: '#f2f0ed', cursor: '#ff6a1f', cursorAccent: '#050507', selectionBackground: '#3a2418' });
+  assert.deepEqual(companionTerminalColors(companionTheme('carbons-copy')), { foreground: '#f2f0ed', cursor: '#ff6a1f', background: '#050507', selectionBackground: '#3a2418' });
 });
 
 test('immersive treatments are additive, independently optional and do not change glass or terminal colors', () => {
@@ -274,7 +274,7 @@ test('terminals keep TERM_THEME until a theme retints them over a transparent gr
   const off = onTermTheme(() => heard++);
   const colors = companionTerminalColors(companionTheme('nightly-orbit'));
   setTermThemeColors(colors);
-  assert.deepEqual(termTheme(), { ...TERM_THEME, ...colors, background: 'rgba(0, 0, 0, 0)' });
+  assert.deepEqual(termTheme(), { ...TERM_THEME, ...colors, background: '#05031a00' });
   assert.equal(termTheme().red, TERM_THEME.red, 'agents keep their ANSI colors');
   setTermThemeColors(null);
   assert.equal(termTheme(), TERM_THEME);

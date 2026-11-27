@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fitFont, fitGrid, fitScale, MAX_STEPS, RowAccumulator, SGR, swipeInput, URXVT, UTF8 } from '../android/app/src/main/assets/terminal/input.js';
-import { minimumContrast } from '../android/app/src/main/assets/terminal/theme.js';
 import { builtFiles, vendoredPaths } from '../tools/android-terminal.mjs';
 
 test("the phone's vendored Ghostty core matches the installed packages (node tools/android-terminal.mjs)", () => {
@@ -11,14 +10,6 @@ test("the phone's vendored Ghostty core matches the installed packages (node too
 
 test("the phone's WebView renderer is built from the shared wterm adapter (node tools/android-terminal.mjs)", () => {
   for (const [to, text] of builtFiles()) assert.equal(readFileSync(to, 'utf8'), text, `${to} is stale: run node tools/android-terminal.mjs`);
-});
-
-test('dim ANSI cannot pass contrast by darkening to black on the transparent Carbon pane', () => {
-  // White behind the Carbon tint yields RGB(74,74,77). Black on that reference is 2.38:1,
-  // but nearly invisible over the artwork's dark areas. xterm uses half the target for dim.
-  assert.ok(minimumContrast('#4a4a4d00') / 2 > 2.38);
-  assert.equal(minimumContrast('#000000'), 4.5);
-  assert.equal(minimumContrast('#050507'), 4.5);
 });
 
 test('fitGrid counts whole cells within the PTY limits', () => {

@@ -202,7 +202,6 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       fontFamily: TERM_FONT,
       fontSize: termFontSize(),
       theme: termTheme(),
-      minimumContrastRatio: 4.5,
       disableStdin: true,
       scrollback: 5000,
     });

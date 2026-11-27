@@ -104,10 +104,9 @@ class TermPageTest {
     }
 
     @Test
-    fun transparentTerminalStillHasAnOpaqueCursorAccent() {
-        val theme = message(TermPage.colors("#ffffff", "#ffaa22", "#50505000", "#444444", "#121212"))["theme"]!!.jsonObject
-        assertEquals("\"#50505000\"", theme["background"].toString())
-        assertEquals("\"#121212\"", theme["cursorAccent"].toString())
+    fun glassPreservesThemeRgbAlongsidePaneAlpha() {
+        val theme = message(TermPage.colors("#ffffff", "#ffaa22", "#12121200", "#444444"))["theme"]!!.jsonObject
+        assertEquals("\"#12121200\"", theme["background"].toString())
         assertNull(message(TermPage.colors(null, null, null, null))["theme"])
     }
 

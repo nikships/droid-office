@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test, { type TestContext } from 'node:test';
 import { browserStatus, closeBrowser, launchBrowser } from '../src/server/whiteboard-browser.js';
+import { COMPANION_THEMES } from '../src/shared/companion-themes.js';
 
 const status = browserStatus();
 const assets = fileURLToPath(new URL('../android/app/src/main/assets/', import.meta.url));
@@ -42,6 +43,31 @@ async function openPhone(t: TestContext, missing?: 'fonts' | 'renderer', deviceS
   await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'ready' || m.t === 'unavailable'));
   return { context, page };
 }
+
+test('Raw TTY keeps program colors, opaque reverse-video ink and inert links on every artwork ground', browserTest, async (t) => {
+  const { page } = await openPhone(t);
+  const send = (msg: Record<string, unknown>) => page.evaluate((m) => (window as any).office.receive(m), msg);
+  await send({ t: 'snapshot', cols: 60, rows: 12, data: '\x1b[38;2;36;40;42mink\x1b[0;7mrev\x1b[0m\x1b]8;;https://example.org\x07link\x1b]8;;\x07' });
+  const root = page.locator('.office-wterm');
+  for (const theme of COMPANION_THEMES) {
+    const ground = theme.terminal.background;
+    await send({ t: 'colors', theme: { background: theme.id === 'og' ? ground : `${ground}00` } });
+    const colors = await root.evaluate(async (el) => {
+      await new Promise(requestAnimationFrame);
+      const spans = Array.from(el.querySelectorAll('.term-row span'));
+      return [...['ink', 'rev'].map((text) => getComputedStyle(spans.find((s) => s.textContent === text)!).color), getComputedStyle(el).backgroundColor];
+    });
+    const rgb = ground
+      .slice(1)
+      .match(/../g)!
+      .map((v) => parseInt(v, 16))
+      .join(', ');
+    assert.equal(colors[0], 'rgb(36, 40, 42)', theme.id);
+    assert.equal(colors[1], `rgb(${rgb})`, theme.id);
+    assert.equal(colors[2], theme.id === 'og' ? `rgb(${rgb})` : `rgba(${rgb}, 0)`, theme.id);
+    assert.equal(await root.locator('a').count(), 0);
+  }
+});
 
 test('the touch input does not extend the Raw TTY below its last row and fitted padding', browserTest, async (t) => {
   const { page } = await openPhone(t);

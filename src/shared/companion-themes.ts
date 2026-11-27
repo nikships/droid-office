@@ -562,6 +562,6 @@ export function companionThemeVars(theme: CompanionTheme, level: GlassLevel = 'f
 }
 
 /** The colors the terminal draws with in a theme, over the ANSI palette it keeps. */
-export function companionTerminalColors(theme: CompanionTheme): { foreground: string; cursor: string; cursorAccent: string; selectionBackground: string } {
-  return { foreground: theme.terminal.foreground, cursor: theme.terminal.cursor, cursorAccent: theme.terminal.background, selectionBackground: theme.terminal.selection };
+export function companionTerminalColors(theme: CompanionTheme): { foreground: string; cursor: string; background: string; selectionBackground: string } {
+  return { foreground: theme.terminal.foreground, cursor: theme.terminal.cursor, background: theme.terminal.background, selectionBackground: theme.terminal.selection };
 }

@@ -15,7 +15,6 @@ export function createAndroidTerminal(images: KittyTerminalOptions) {
       fontSize: 12.5,
       lineHeight: 1.1,
       theme: TERM_THEME,
-      minimumContrastRatio: 4.5,
       scrollback: 5000,
       cursorBlink: false,
       disableStdin: true,
