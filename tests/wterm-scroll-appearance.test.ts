@@ -91,6 +91,45 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       node.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: rect.left + 1, clientY: rect.top + 1, deltaY, ...opts }));
     };
   });
+  await t.test('opening an animated dashboard pane preserves the previous 566×769 PTY grid', async () => {
+    const sample = await page.evaluate(async () => {
+      const path = '/term-engine/web-terminal.ts',
+        renderer = '/ui/terminal-renderer.ts';
+      const { createWebTerminal } = await import(path),
+        { openTerminalRenderer } = await import(renderer);
+      const pane = document.createElement('section');
+      pane.className = 'dash-pane';
+      pane.style.cssText = 'width:566px;height:769px;border:0';
+      const modal = document.createElement('div');
+      modal.className = 'modal term inline';
+      const host = document.createElement('div');
+      host.className = 'term-host';
+      modal.append(host);
+      pane.append(modal);
+      document.body.append(pane);
+      const scale = pane.animate([{ transform: 'scale(.97)' }, { transform: 'none' }], { duration: 10000 });
+      scale.pause();
+      const { term } = createWebTerminal({ fontFamily: (window as any).a.options.fontFamily, fontSize: 14, lineHeight: 1.1, scrollback: 5000 });
+      try {
+        const open = openTerminalRenderer(term, host, () => true);
+        // A pane can mount under a transformed ancestor; the terminal probes the DOM in viewport pixels.
+        await new Promise((r) => setTimeout(r, 120));
+        const premature = !!term.native;
+        scale.finish();
+        await open;
+        return { premature, box: [host.clientWidth, host.clientHeight], pitch: parseFloat(term.native.element.style.getPropertyValue('--term-cell-width')), fit: term.proposeDimensions() };
+      } finally {
+        scale.cancel();
+        term.dispose();
+        pane.remove();
+      }
+    });
+    t.diagnostic(JSON.stringify(sample));
+    assert.deepEqual(sample.box, [566, 769]);
+    assert.equal(sample.premature, false);
+    assert.ok(Math.abs(sample.pitch - 8.4) < 0.02);
+    assert.deepEqual(sample.fit, { cols: 64, rows: 39 });
+  });
   await t.test('painted row pitch and usable rows match the previous renderer across fonts, sizes and line spacing', async () => {
     const samples = await page.evaluate(async () => {
       const { a, x, el, frame } = window as any;
