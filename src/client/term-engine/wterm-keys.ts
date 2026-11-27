@@ -15,6 +15,7 @@ function optionBase(e: KeyboardEvent) {
 
 export function deskKeyExceptions(adapter: WTermAdapter) {
   let tabTraversalArmed = false;
+  let heldSelectionEscape: string | undefined;
   let selecting: Promise<boolean> | undefined;
   let composing = false;
   const delivered = new Set<string>();
@@ -43,6 +44,7 @@ export function deskKeyExceptions(adapter: WTermAdapter) {
       'blur',
       () => {
         disarm();
+        heldSelectionEscape = undefined;
         composing = false;
         delivered.clear();
         pressed.clear();
@@ -67,11 +69,17 @@ export function deskKeyExceptions(adapter: WTermAdapter) {
     if (forwarded.has(e)) return false;
     if ((e.type !== 'keydown' && e.type !== 'keyup') || e.target !== adapter.textarea) return false;
     const down = e.type === 'keydown';
-    if (!down) delivered.delete(e.code || e.key);
+    const keyId = e.code || e.key;
+    if (!down) delivered.delete(keyId);
     const heldKey = !down || e.repeat ? pressed.get(e.code) : undefined;
     // End the old pairing even when the IME owns this event or its last release was lost.
     if (!down || !e.repeat) pressed.delete(e.code);
-    if (e.isComposing || e.keyCode === 229) return false;
+    if (heldSelectionEscape === keyId) {
+      if (down && e.repeat) return true;
+      heldSelectionEscape = undefined;
+      if (!down) return true;
+    }
+    if (composing || e.isComposing || e.keyCode === 229) return false;
     const unmodified = !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
     if (down && tabTraversalArmed && e.key !== 'Shift') {
       disarm();
@@ -81,15 +89,7 @@ export function deskKeyExceptions(adapter: WTermAdapter) {
       }
     }
     let key: string | undefined;
-    if (
-      down &&
-      e.key.toLowerCase() === 'a' &&
-      !composing &&
-      !e.altKey &&
-      ((e.metaKey && !e.ctrlKey && !e.shiftKey) || (e.ctrlKey && e.shiftKey && !e.metaKey && !e.getModifierState('AltGraph'))) &&
-      !delivered.has(e.code || e.key) &&
-      adapter.native
-    ) {
+    if (down && e.key.toLowerCase() === 'a' && !e.altKey && ((e.metaKey && !e.ctrlKey && !e.shiftKey) || (e.ctrlKey && e.shiftKey && !e.metaKey && !e.getModifierState('AltGraph'))) && !delivered.has(keyId) && adapter.native) {
       if (!selecting) {
         // Native's shortcut discards this promise; keep it so Escape can cancel before the first row is available.
         const scan = (selecting = adapter.native.selectAll());
@@ -106,6 +106,7 @@ export function deskKeyExceptions(adapter: WTermAdapter) {
         const selection = root.ownerDocument.getSelection();
         if (selecting || adapter.native.getSelectionText() !== null || (selection && !selection.isCollapsed && root.contains(selection.anchorNode) && root.contains(selection.focusNode))) {
           clearSelection();
+          heldSelectionEscape = keyId;
           tabTraversalArmed = true;
           return true;
         }

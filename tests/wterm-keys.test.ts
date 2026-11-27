@@ -147,6 +147,55 @@ test('wterm owns desktop keyboard negotiation, selection and text input', { skip
             ['', true],
           ]);
         });
+        await sub.test('holding Escape after clearing a selection keeps repeats, release and the next Tab out of the PTY', async () => {
+          for (const [flags, plainEscape] of [
+            [0, '\x1b'],
+            [1, '\x1b[27u'],
+            [3, '\x1b[27u\x1b[27;1:3u'],
+          ] as const) {
+            for (const pending of [false, true]) {
+              await reset(flags, flags !== 0);
+              await page.evaluate((paused) => (window as any).term.native.setRenderingPaused(paused), pending);
+              try {
+                if (pending) assert.equal(await key('Meta+a'), '');
+                else assert.ok(await page.evaluate(() => (window as any).term.native.selectAll()));
+                for (let i = 0; i < 3; i++) await page.keyboard.down('Escape');
+                await page.keyboard.up('Escape');
+                assert.equal(await sent(), '', `flags ${flags}, pending ${pending}`);
+                assert.equal(await page.evaluate(() => (window as any).term.native.getSelectionText()), null);
+                assert.equal(await key('Tab'), '');
+                assert.equal(await page.evaluate(() => document.activeElement?.id), 'next');
+                await page.locator('#host textarea').focus();
+                assert.equal(await key('Escape'), plainEscape);
+              } finally {
+                await page.evaluate(() => (window as any).term.native.setRenderingPaused(false));
+              }
+            }
+          }
+          await reset(0, false);
+          assert.ok(await page.evaluate(() => (window as any).term.native.selectAll()));
+          await page.keyboard.down('Escape');
+          await page.locator('#next').focus();
+          await page.locator('#host textarea').focus();
+          await page.keyboard.down('Escape');
+          await page.keyboard.up('Escape');
+          assert.equal(await sent(), '\x1b', 'blur releases ownership of the held key');
+        });
+        await sub.test('an active IME owns unflagged Escape and Ctrl+Enter until composition ends', async () => {
+          await reset(0);
+          await cdp.send('Input.imeSetComposition', { text: 'に', selectionStart: 1, selectionEnd: 1 });
+          for (const props of [
+            { key: 'Escape', code: 'Escape' },
+            { key: 'Enter', code: 'Enter', ctrlKey: true },
+          ])
+            for (const type of ['keydown', 'keyup']) await event(type, props);
+          const during = await sent();
+          await cdp.send('Input.insertText', { text: '日' });
+          assert.equal(during, '');
+          assert.equal(await sent(), '日');
+          assert.equal(await key('Escape'), '\x1b');
+          assert.equal(await key('Control+Enter'), '\x1b[13;5u');
+        });
         await sub.test('Select All leaves Kitty-owned repeats and composing keys alone', async () => {
           await reset(11);
           const held = { key: 'a', code: 'KeyA' };
