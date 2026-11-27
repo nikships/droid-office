@@ -27,7 +27,7 @@ The Orchestrator and external Tailscale bots are building agents, visible in Mis
 Preconditions:
 
 - The baseline launch and doctor checks pass. Use a clone of the owner's office.
-- Live prompts require the owner's credit approval and a signed-in clone; follow office-clone's sign-in instructions. Use short, local-only tasks and a cheap available model.
+- Live prompts require the owner's credit approval and a signed-in clone; follow office-clone's sign-in instructions. Use short, local-only tasks and native Factory Haiku 5.5 (`claude-haiku-5-5`, 0.04x) or DroidProxy Luna 6 / Haiku 5.5 (never legacy Haiku 4.5 at 0.4x).
 - Bots must be real provisioned identities. Record a missing bot path as skipped rather than inserting fake state.
 
 - **Entry and shared settings.** Run `scripts/drive.sh "$RUN" .agents/skills/verify-droid-office/scripts/steps/mission-control.mjs mission-control`. It captures the room, the E window, the M/menu entry, Settings, the companion and a floor change. It turns the Orchestrator off and on through Settings, checks that both pages agree, and restores the original setting. The drive never sends an agent prompt.

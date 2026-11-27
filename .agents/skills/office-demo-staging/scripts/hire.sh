@@ -2,7 +2,7 @@
 # hire.sh <desk-id> <model label|""> <prompt>  — hires a worker at a free desk through its P dialog,
 # always in its own worktree, and logs it to $CAPTURE_DIR/stage.log for cleanup.sh.
 #
-# The model label is the text in the dialog's Droid model list (e.g. "Haiku 4.5", "Opus 5.5");
+# The model label is the text in the dialog's Droid model list (e.g. "Haiku 5.5", "Opus 5.5");
 # "" keeps the default. Buttons are clicked from script, not with a real click, so the tab does not
 # grab pointer lock (which would stop the camera rig turning).
 set -e

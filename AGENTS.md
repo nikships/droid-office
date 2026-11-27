@@ -69,6 +69,8 @@ Scale verification to risk: focused unit tests settle bounded logic changes; exe
 
 Use real account state. When an item to show does not exist yet, create it through the product or API (with owner approval if it costs money or writes externally) and delete it afterwards; never substitute mocked, seeded or empty `git init` data. Unit-test stubs follow [tests/AGENTS.md](tests/AGENTS.md).
 
+When spawning real Droid CLI workers for repros, verification or live checks, use native Factory Haiku 5.5 (`claude-haiku-5-5`, 0.04x) or DroidProxy Luna 6 / Haiku 5.5 (when available in the office's model list) unless the check specifically requires another model. Never pick legacy Haiku 4.5 (`claude-haiku-4-5-20251001`, 0.4x — 10× the credit multiplier).
+
 Test the Mac app only with a properly signed build (using `--user-data-dir`; see [src/desktop/AGENTS.md](src/desktop/AGENTS.md)) or an isolated browser. Never modify an `.app` bundle or copy, which breaks its signature and triggers macOS "app is damaged" warnings; report when neither option is available.
 
 ## Pushing and pull requests

@@ -35,7 +35,7 @@ Preconditions:
 
 ## Gotchas
 
-- A Droid hire in a clone or a fresh office runs `droid` under the scratch `HOME`, with no Droid sign-in. Open the window freely. Finish a Droid hire only when the owner asks, and send it home afterwards.
+- A Droid hire in a clone or a fresh office runs `droid` under the scratch `HOME`, with no Droid sign-in. Open the window freely. Finish a Droid hire only when the owner asks, use native Factory Haiku 5.5 (`claude-haiku-5-5`, 0.04x) or DroidProxy Luna 6 / Haiku 5.5 (never legacy Haiku 4.5 at 0.4x), and send it home afterwards.
 - A worker with a worktree gets the send-home sheet with cleanup choices, not the `Send <name> home?` confirm. A Shell never has a worktree.
 - The office refuses a hire at its worker limit with a toast. The steps file then times out waiting for the worker. Read `02-shell-hired.png`.
 - Names are random (`Pixel 🐚`). Always look the worker up by desk or id, never by a fixed name.

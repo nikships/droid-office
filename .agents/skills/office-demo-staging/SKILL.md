@@ -25,11 +25,11 @@ Each TSV row is `title<TAB>labels<TAB>body` using existing repo labels (`bug`, `
 ## 2. Hire workers at desks
 
 ```bash
-$D/hire.sh desk-4 "Haiku 4.5" "Work on GitHub issue #160 in nikships/droid-office (read it with gh issue view 160). Implement it inside this worktree, run lint and relevant tests, then commit and open a pull request closing #160."
+$D/hire.sh desk-4 "Haiku 5.5" "Work on GitHub issue #160 in nikships/droid-office (read it with gh issue view 160). Implement it inside this worktree, run lint and relevant tests, then commit and open a pull request closing #160."
 $D/hire.sh desk-1 "Opus 5.5"  "Work on GitHub issue #157 …"
 ```
 
-Pick adjacent free desks (`office.list()`, `office.state().workers`) with distinct models so one camera angle shows varied desk badges. Space hires ~20s apart so worktree setup (`npm ci`) does not thrash; inspect dialog mismatches with `agent-browser snapshot -i`.
+For cheap demo workers, prefer native Factory `"Haiku 5.5"` (`claude-haiku-5-5`, 0.04x) or DroidProxy Luna 6 / Haiku 5.5 rather than legacy `"Haiku 4.5"` (0.4x). Pick adjacent free desks (`office.list()`, `office.state().workers`) with distinct models so one camera angle shows varied desk badges. Space hires ~20s apart so worktree setup (`npm ci`) does not thrash; inspect dialog mismatches with `agent-browser snapshot -i`.
 
 ## 3. Cue states on camera
 
