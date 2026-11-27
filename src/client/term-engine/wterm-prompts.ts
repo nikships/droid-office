@@ -50,8 +50,16 @@ export function attachWtermPrompts(adapter: WTermAdapter) {
         { capture: true, signal },
       );
     }
+    let marked = false;
+    const updateVisibility = () => {
+      const hidden = !marked || !!adapter.core?.usingAltScreen();
+      if (chip.hidden !== hidden) chip.hidden = hidden;
+    };
+    // Entering or leaving a full-screen app need not emit another shell mark.
+    const parsed = adapter.onWriteParsed(updateVisibility);
     native.onShellIntegration = ({ phase, exitCode }) => {
-      chip.hidden = phase === 'unknown';
+      marked = phase !== 'unknown';
+      updateVisibility();
       label.textContent = phase === 'running' ? 'Running' : exitCode !== null ? `Exit ${exitCode}` : phase === 'complete' ? 'Finished' : 'Prompt';
       chip.dataset.state = phase === 'running' ? 'running' : exitCode ? 'error' : 'ready';
     };
@@ -59,6 +67,7 @@ export function attachWtermPrompts(adapter: WTermAdapter) {
     signal.addEventListener(
       'abort',
       () => {
+        parsed.dispose();
         native.onShellIntegration = null;
         overlay.remove();
       },

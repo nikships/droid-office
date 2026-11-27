@@ -70,6 +70,24 @@ test('OSC 133 state and navigation follow real marks, never a reconstructed prom
   await write(first + second);
   assert.equal(await status.textContent(), 'Exit 7');
 
+  await t.test('fullscreen applications own both bracket shortcuts until the normal screen returns', async () => {
+    await write('\x1b[?104');
+    assert.equal(await chip.isVisible(), true);
+    await write('9h');
+    assert.equal(await page.evaluate(() => (window as any).term.core.usingAltScreen()), true);
+    assert.equal(await chip.isVisible(), false);
+    assert.equal(await page.getByRole('button', { name: 'Previous prompt' }).count(), 0);
+    // Kitty disambiguation makes these physical shortcuts distinct application input.
+    await write('\x1b[>1u');
+    for (const code of ['BracketLeft', 'BracketRight']) {
+      await page.keyboard.press(`Control+Shift+${code}`);
+      assert.ok(await page.evaluate(() => (window as any).sent.splice(0).join('').length > 0), code);
+    }
+    await write('\x1b[<u\x1b[?1049l');
+    assert.equal(await chip.isVisible(), true);
+    assert.equal(await status.textContent(), 'Exit 7');
+  });
+
   const viewport = () => page.evaluate(() => (window as any).term.buffer.active.viewportY);
   await page.waitForFunction(() => (window as any).term.buffer.active.viewportY > 15);
   for (const code of ['BracketLeft', 'BracketLeft', 'BracketRight']) {
