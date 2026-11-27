@@ -4,7 +4,6 @@ import {
   countCtrlEnterInputs,
   decodeBase64,
   decodePlaceholderCell,
-  encodeKittyKey,
   isCancelInput,
   isClearQueueInput,
   isKittyPlaceholderCell,
@@ -18,20 +17,7 @@ import {
   kittyImageSignature,
   KittyKeyboardState,
   stripKittyPlaceholders,
-  type KittyKeyEvent,
 } from '../src/shared/kitty.js';
-
-function key(k: string, mods: Partial<KittyKeyEvent> = {}): KittyKeyEvent {
-  return {
-    type: 'keydown',
-    key: k,
-    ctrlKey: false,
-    shiftKey: false,
-    altKey: false,
-    metaKey: false,
-    ...mods,
-  };
-}
 
 test('KittyKeyboardState maintains independent main and alternate buffer stacks and serializes cleanly', () => {
   const kb = new KittyKeyboardState();
@@ -79,88 +65,6 @@ test('KittyKeyboardState maintains independent main and alternate buffer stacks 
   a.reset();
   assert.equal(a.flags, 0);
   assert.equal(a.serialize(), '');
-});
-
-test('encodeKittyKey handles progressive flags 0, 1, 2, 4, 8 and 16 while preserving host shortcuts', () => {
-  // Flag 0 falls back to Droid CSI u Enter only when csiEnter is true.
-  assert.deepEqual(encodeKittyKey(key('Enter', { ctrlKey: true }), 0, { csiEnter: true }), { do: 'send', data: '\x1b[13;5u' });
-  assert.deepEqual(encodeKittyKey(key('Enter', { ctrlKey: true }), 0, { csiEnter: false }), { do: 'default' });
-  assert.deepEqual(encodeKittyKey(key('Escape'), 0, { csiEnter: true }), { do: 'default' });
-
-  // Host / clipboard / IME shortcuts stay with browser/xterm even under full flags.
-  assert.deepEqual(encodeKittyKey(key('c', { metaKey: true }), KITTY_KB_ALL_FLAGS), { do: 'default' });
-  assert.deepEqual(encodeKittyKey(key('C', { ctrlKey: true, shiftKey: true }), KITTY_KB_ALL_FLAGS), { do: 'default' });
-  assert.deepEqual(encodeKittyKey(key('Insert', { shiftKey: true }), KITTY_KB_ALL_FLAGS), { do: 'default' });
-  assert.deepEqual(encodeKittyKey(key('a', { isComposing: true }), KITTY_KB_ALL_FLAGS), { do: 'default' });
-
-  // Flag 1 (DISAMBIGUATE): what Droid negotiates via `\x1b[>1u`.
-  const f1 = KITTY_KB_DISAMBIGUATE;
-  assert.deepEqual(encodeKittyKey(key('Escape'), f1), { do: 'send', data: '\x1b[27u' });
-  assert.deepEqual(encodeKittyKey(key('Enter'), f1), { do: 'send', data: '\r' });
-  assert.deepEqual(encodeKittyKey(key('Enter', { shiftKey: true }), f1), { do: 'send', data: '\x1b[13;2u' });
-  assert.deepEqual(encodeKittyKey(key('Enter', { ctrlKey: true }), f1), { do: 'send', data: '\x1b[13;5u' });
-  assert.deepEqual(encodeKittyKey(key('Tab'), f1), { do: 'send', data: '\t' });
-  assert.deepEqual(encodeKittyKey(key('Tab', { shiftKey: true }), f1), { do: 'send', data: '\x1b[9;2u' });
-  assert.deepEqual(encodeKittyKey(key('Backspace'), f1), { do: 'send', data: '\x7f' });
-  assert.deepEqual(encodeKittyKey(key('Backspace', { altKey: true }), f1), { do: 'send', data: '\x1b[127;3u' });
-  assert.deepEqual(encodeKittyKey(key('a'), f1), { do: 'default' });
-  assert.deepEqual(encodeKittyKey(key('A', { shiftKey: true, code: 'KeyA' }), f1), { do: 'default' });
-  assert.deepEqual(encodeKittyKey(key('a', { ctrlKey: true, code: 'KeyA' }), f1), { do: 'send', data: '\x1b[97;5u' });
-  assert.deepEqual(encodeKittyKey(key('A', { ctrlKey: true, shiftKey: true, code: 'KeyA' }), f1), { do: 'send', data: '\x1b[97;6u' });
-  assert.deepEqual(encodeKittyKey(key(' ', { shiftKey: true, code: 'Space' }), f1), { do: 'send', data: '\x1b[32;2u' });
-  assert.deepEqual(encodeKittyKey(key('ArrowUp'), f1), { do: 'send', data: '\x1b[A' });
-  assert.deepEqual(encodeKittyKey(key('ArrowUp'), f1, { appCursor: true }), { do: 'send', data: '\x1bOA' });
-  assert.deepEqual(encodeKittyKey(key('ArrowUp', { altKey: true }), f1), { do: 'send', data: '\x1b[1;3A' });
-  // Option as Meta (the default) sends Alt+key; Option typing characters lets xterm type what the layout makes.
-  assert.deepEqual(encodeKittyKey(key('@', { altKey: true, code: 'KeyL' }), f1), { do: 'send', data: '\x1b[108;3u' });
-  assert.deepEqual(encodeKittyKey(key('@', { altKey: true, code: 'KeyL' }), f1, { optionTypes: true }), { do: 'default' });
-  assert.deepEqual(encodeKittyKey(key('@', { altKey: true, code: 'KeyL' }), KITTY_KB_ALL_FLAGS, { optionTypes: true }), { do: 'send', data: '\x1b[64;1;64u' });
-  assert.deepEqual(encodeKittyKey(key('ArrowLeft', { altKey: true }), f1, { optionTypes: true }), { do: 'send', data: '\x1b[1;3D' }, 'Option+Arrow still jumps by word');
-  assert.deepEqual(encodeKittyKey(key('Backspace', { altKey: true }), f1, { optionTypes: true }), { do: 'send', data: '\x1b[127;3u' }, 'Option+Delete still deletes a word');
-  assert.deepEqual(encodeKittyKey(key('a', { altKey: true, ctrlKey: true, code: 'KeyA' }), f1, { optionTypes: true }), { do: 'send', data: '\x1b[97;7u' });
-  // A DOM KeyboardEvent keeps its fields in prototype getters.
-  class DomKey {
-    get type() {
-      return 'keydown';
-    }
-    get key() {
-      return '@';
-    }
-    get code() {
-      return 'KeyL';
-    }
-    get altKey() {
-      return true;
-    }
-    get ctrlKey() {
-      return false;
-    }
-    get shiftKey() {
-      return false;
-    }
-    get metaKey() {
-      return false;
-    }
-  }
-  assert.deepEqual(encodeKittyKey(new DomKey(), KITTY_KB_ALL_FLAGS, { optionTypes: true }), { do: 'send', data: '\x1b[64;1;64u' });
-  assert.deepEqual(encodeKittyKey(key('Delete', { ctrlKey: true }), f1), { do: 'send', data: '\x1b[3;5~' });
-  assert.deepEqual(encodeKittyKey(key('Shift', { code: 'ShiftLeft', shiftKey: true }), f1), { do: 'default' });
-  assert.deepEqual(encodeKittyKey(key('Escape', { type: 'keyup' }), f1), { do: 'default' });
-  // xterm types Space and Shift+A..Z on keypress, so a keypress whose keydown sent nothing must reach xterm.
-  assert.deepEqual(encodeKittyKey(key(' ', { type: 'keypress', code: 'Space', keyCode: 32 }), f1), { do: 'default' });
-  assert.deepEqual(encodeKittyKey(key('A', { type: 'keypress', shiftKey: true, code: 'KeyA', keyCode: 65 }), f1), { do: 'default' });
-  assert.deepEqual(encodeKittyKey(key(' ', { type: 'keypress', shiftKey: true, code: 'Space', keyCode: 32 }), f1), { do: 'swallow' });
-  assert.deepEqual(encodeKittyKey(key('Enter', { type: 'keypress', code: 'Enter', keyCode: 13 }), f1), { do: 'swallow' });
-  assert.deepEqual(encodeKittyKey(key(' ', { type: 'keypress', code: 'Space', keyCode: 32 }), KITTY_KB_DISAMBIGUATE | KITTY_KB_REPORT_EVENTS), { do: 'default' });
-  assert.deepEqual(encodeKittyKey(key(' ', { type: 'keypress', code: 'Space', keyCode: 32 }), KITTY_KB_ALL_FLAGS), { do: 'swallow' });
-
-  // Flags 1 | 2 | 4 | 8 | 16 (full progressive enhancement; C0 control keys omit associated text per Kitty spec).
-  const full = KITTY_KB_ALL_FLAGS;
-  assert.deepEqual(encodeKittyKey(key('Enter'), full), { do: 'send', data: '\x1b[13u' });
-  assert.deepEqual(encodeKittyKey(key('A', { shiftKey: true, code: 'KeyA' }), full), { do: 'send', data: '\x1b[97:65;2;65u' });
-  assert.deepEqual(encodeKittyKey(key('a', { repeat: true, code: 'KeyA' }), full), { do: 'send', data: '\x1b[97;1:2;97u' });
-  assert.deepEqual(encodeKittyKey(key('a', { type: 'keyup', code: 'KeyA' }), full), { do: 'send', data: '\x1b[97;1:3u' });
-  assert.deepEqual(encodeKittyKey(key('Shift', { code: 'ShiftLeft', shiftKey: true }), full), { do: 'send', data: '\x1b[57441;2u' });
 });
 
 test('worker input counters recognize both legacy and Kitty CSI u queue, clear and cancel keys', () => {

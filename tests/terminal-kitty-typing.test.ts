@@ -58,7 +58,7 @@ test('worker terminals type Space and Shift+letters once Droid enables Kitty key
   };
 
   assert.equal(await typed(['h', 'i', 'Space', 'Shift+T', 'h', 'e', 'r', 'e']), 'hi There', 'plain Space and Shift+letters reach the PTY exactly once');
-  assert.equal(await typed(['Shift+Space']), '\x1b[32;2u', 'modified Space stays a disambiguated CSI u key');
+  assert.equal(await typed(['Shift+Space']), ' ', 'unambiguous text uses the layout character under Kitty flag 1');
   assert.equal(await typed(['Enter']), '\r', 'Enter is sent once, not again on its keypress');
   assert.equal(await typed(['Shift+Enter']), '\x1b[13;2u');
   assert.equal(await typed(['Control+a']), '\x1b[97;5u');

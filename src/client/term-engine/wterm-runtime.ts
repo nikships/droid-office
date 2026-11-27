@@ -5,7 +5,7 @@ import type { TerminalPaths } from '../ui/terminal-path-links';
 import type { WebTerminalFeatures } from './web-terminal';
 import type { WTermFeature } from './wterm';
 import { attachWtermGraphics } from './wterm-graphics';
-import { attachWtermKeys } from './wterm-keys';
+import { deskKeyExceptions } from './wterm-keys';
 import { attachWtermLinks } from './wterm-links';
 import { attachWtermScroll } from './wterm-scroll';
 
@@ -15,7 +15,7 @@ export function webFeatures(hooks: WebTerminalFeatures, images?: KittyTerminalOp
     attachWtermPrompts,
     (adapter) => attachWtermSearch(adapter, paths),
     (adapter) => {
-      hooks.keyAction = attachWtermKeys(adapter).keyAction;
+      hooks.keyException = deskKeyExceptions(adapter);
     },
     (adapter) => {
       hooks.handleKey = attachWtermScroll(adapter).handleKey;

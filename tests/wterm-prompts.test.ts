@@ -41,11 +41,7 @@ test('OSC 133 state and navigation follow real marks, never a reconstructed prom
     const w = window as any;
     const { term: a, features: keys } = createWebTerminal({ scrollback: 50, fontSize: 14, macOptionIsMeta: true });
     w.term = a;
-    a.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-      const action = keys.keyAction(e, false);
-      if (action.do === 'send') a.input(action.data);
-      return action.do === 'default';
-    });
+    a.attachCustomKeyEventHandler((e: KeyboardEvent) => !keys.keyException(e, false));
     w.sent = [];
     a.onData((s: string) => w.sent.push(s));
     await a.open(document.querySelector('#host'));

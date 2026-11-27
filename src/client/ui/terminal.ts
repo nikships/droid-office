@@ -425,13 +425,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       return false;
     }
     if (!inline && e.key === 'Escape' && e.shiftKey) return false;
-    const action = features.keyAction(e, csiEnter());
-    if (action.do === 'default') return !features.handleKey(e);
-    if (action.do === 'send') {
-      e.preventDefault();
-      term.input(action.data);
-    }
-    return false;
+    return !features.keyException(e, csiEnter()) && !features.handleKey(e);
   });
   term.onData((data) => {
     if (readOnly || !mirror.ready || !net.up) return;
@@ -821,13 +815,7 @@ export function openOfficeShell(net: Net) {
       return false;
     }
     if (e.key === 'Escape' && e.shiftKey) return false;
-    const action = features.keyAction(e, false);
-    if (action.do === 'default') return !features.handleKey(e);
-    if (action.do === 'send') {
-      e.preventDefault();
-      term.input(action.data);
-    }
-    return false;
+    return !features.keyException(e, false) && !features.handleKey(e);
   });
   term.onData((data) => {
     if (term.options.disableStdin || !mirror?.ready || !net.up) return;

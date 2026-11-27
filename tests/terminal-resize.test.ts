@@ -179,6 +179,8 @@ test('inline terminals follow pane geometry without focus or stale size rollback
         w.term.focus();
         w.messages = [];
         await new Promise<void>((resolve) => w.term.write('\x1b[?1004h', resolve));
+        document.getElementById('focus')!.focus();
+        w.term.focus();
         // A fresh snapshot loads, and focus leaves while it does: that focus-out never reaches the program.
         w.snapshot();
         document.getElementById('focus')!.focus();
@@ -190,6 +192,9 @@ test('inline terminals follow pane geometry without focus or stale size rollback
         w.term.focus();
         await new Promise<void>((resolve) => w.term.write('\x1b[?1004h', resolve));
       });
+      assert.deepEqual(await sent(), ['\x1b[I'], 'enabling focus mode on an already-focused terminal is not a focus transition');
+      await page.locator('#focus').focus();
+      await page.evaluate(() => (window as any).term.focus());
       assert.deepEqual(await sent(), ['\x1b[I', '\x1b[I'], 'the returning focus-in is not mistaken for a repeat');
     });
 

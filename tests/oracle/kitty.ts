@@ -1,17 +1,5 @@
 import type { Terminal } from '@xterm/xterm';
-import {
-  cellUnderlineId,
-  decodePlaceholderCell,
-  encodeKittyKey,
-  isKittyPlaceholderCell,
-  KITTY_PLACEHOLDER_CHAR,
-  KittyApcSplitter,
-  type KittyGraphicsStore,
-  KittyKeyboardState,
-  type DecodedPlaceholder,
-  type KittyKeyEvent,
-} from '../../src/shared/kitty';
-import type { KeyAction } from '../../src/shared/csi-enter';
+import { cellUnderlineId, decodePlaceholderCell, isKittyPlaceholderCell, KITTY_PLACEHOLDER_CHAR, KittyApcSplitter, type KittyGraphicsStore, type DecodedPlaceholder } from '../../src/shared/kitty';
 import { pixelScrollOf } from './pixel-scroll';
 import { createKittyOverlay, type KittyTerminalOptions } from '../../src/client/term-kitty-overlay';
 export {
@@ -28,8 +16,6 @@ export {
   type ExpandedKittyImage,
   type KittyTerminalOptions,
 } from '../../src/client/term-kitty-overlay';
-const ALT_BUFFER_MODES = [47, 1047, 1049];
-const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 /** Width-1 plain ASCII `' '` content word in xterm's `BufferLine._data`, avoiding DOM-renderer negative letter-spacing on `U+10EEEE`. */
 const XTERM_SPACE_CONTENT = 0x20 | (1 << 22);
 /** Bit 30 (`FgFlags.INVISIBLE`) marks converted placeholder spaces so overwriting a cell invalidates its cached placeholder. */
@@ -74,10 +60,7 @@ interface XtermInternal {
 }
 
 export interface KittyTerminalAttachment {
-  readonly keyboard: KittyKeyboardState;
   readonly graphics: KittyGraphicsStore;
-  /** Encodes a DOM `KeyboardEvent` according to negotiated Kitty `CSI u` flags (or fallback `csiEnter`). */
-  keyAction(e: KittyKeyEvent, csiEnter: boolean): KeyAction;
   dispose(): void;
 }
 
@@ -156,11 +139,10 @@ function hideBufferPlaceholders(term: Terminal, fromY: number, toY: number, cach
 }
 
 /**
- * Attaches Kitty keyboard (`CSI u`) and Kitty graphics (`APC G` + `U=1` Unicode placeholders +
+ * Attaches Kitty graphics (`APC G` + `U=1` Unicode placeholders +
  * direct placements + GIF animation) to a browser `@xterm/xterm` instance.
  */
 export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions = {}): KittyTerminalAttachment {
-  const keyboard = new KittyKeyboardState();
   const splitter = new KittyApcSplitter();
   const linePlaceholders = new WeakMap<RawBufferLine, Map<number, DecodedPlaceholder>>();
   let scannedLength = 0;
@@ -284,7 +266,6 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
   // Wrap `term.reset` so snapshots (`TerminalMirror.snapshot`, `changes.ts`) cleanly reset Kitty state.
   const origReset = term.reset.bind(term);
   term.reset = () => {
-    keyboard.reset();
     graphics.reset();
     splitter.reset();
     clearPlacements();
@@ -302,30 +283,8 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
     const clip = screenEl.parentElement;
     overlay.mount(screenEl, clip?.classList.contains('xterm-scrollable-element') ? clip : screenEl);
   };
-  // Register parser hooks for Kitty keyboard mode & RIS reset.
   const parserDisposables = [
-    term.parser.registerCsiHandler({ prefix: '?', final: 'h' }, (params) => {
-      for (const p of params) if (typeof p === 'number' && ALT_BUFFER_MODES.includes(p)) keyboard.setAlternate(true);
-      return false;
-    }),
-    term.parser.registerCsiHandler({ prefix: '?', final: 'l' }, (params) => {
-      for (const p of params) if (typeof p === 'number' && ALT_BUFFER_MODES.includes(p)) keyboard.setAlternate(false);
-      return false;
-    }),
-    term.parser.registerCsiHandler({ prefix: '=', final: 'u' }, (params) => {
-      keyboard.set(typeof params[0] === 'number' ? params[0] : 0, typeof params[1] === 'number' ? params[1] : 1);
-      return true;
-    }),
-    term.parser.registerCsiHandler({ prefix: '>', final: 'u' }, (params) => {
-      keyboard.push(typeof params[0] === 'number' ? params[0] : 0);
-      return true;
-    }),
-    term.parser.registerCsiHandler({ prefix: '<', final: 'u' }, (params) => {
-      keyboard.pop(typeof params[0] === 'number' ? params[0] : 1);
-      return true;
-    }),
     term.parser.registerEscHandler({ final: 'c' }, () => {
-      keyboard.reset();
       graphics.reset();
       splitter.reset();
       clearPlacements();
@@ -362,15 +321,7 @@ export function attachKittyTerminal(term: Terminal, opts: KittyTerminalOptions =
   };
 
   return {
-    keyboard,
     graphics,
-    keyAction(e: KittyKeyEvent, csiEnter: boolean): KeyAction {
-      return encodeKittyKey(e, keyboard.flags, {
-        csiEnter,
-        appCursor: term.modes.applicationCursorKeysMode,
-        optionTypes: IS_MAC && term.options.macOptionIsMeta === false,
-      });
-    },
     dispose,
   };
 }
