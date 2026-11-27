@@ -367,6 +367,111 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     assert.ok(s.before?.startsWith('line '));
     assert.ok(s.tail <= 1, `${s.tail}px short of the bottom`);
   });
+  await t.test('scrolling during a zoom supersedes the pending reader restore when paint resumes', async () => {
+    const samples = [];
+    for (const held of ['synchronized', 'paused']) {
+      const original = await page.evaluate(async (held) => {
+        const engine = '/term-engine/web-terminal.ts';
+        const { createWebTerminal } = await import(engine);
+        const host = document.createElement('div');
+        host.id = 'held-reader';
+        host.style.cssText = 'position:fixed;inset:0;width:500px;height:152px;z-index:50';
+        document.body.append(host);
+        const { term } = createWebTerminal({ fontSize: 14, fontFamily: 'monospace', lineHeight: 1.1, scrollback: 1100, smoothScrollDuration: 0 });
+        const w = window as any;
+        w.heldReader = term;
+        await term.open(host);
+        term.resize(40, 8);
+        term.write(Array.from({ length: 1000 }, (_, i) => `line ${i}\r\n`).join(''));
+        await w.frame();
+        const el = term.native.element;
+        el.scrollTop = 600 * parseFloat(el.style.getPropertyValue('--term-row-height'));
+        await w.frame();
+        if (held === 'synchronized') term.write('\x1b[?2026h');
+        else term.setRenderingPaused(true);
+        term.options.fontSize = 18;
+        await w.frame();
+        return el.scrollTop;
+      }, held);
+      try {
+        const root = page.locator('#held-reader .office-wterm');
+        if (held === 'synchronized') {
+          await root.hover();
+          await page.mouse.wheel(0, -50);
+          await page.waitForFunction((old) => (window as any).heldReader.native.element.scrollTop < old, original);
+        } else {
+          // A scrollbar drag or a Find/prompt reveal changes the scrollport
+          // directly, without going through the terminal wheel handler.
+          await root.evaluate((el) => {
+            el.scrollTop -= 75;
+          });
+        }
+        const sample = await page.evaluate(async (held) => {
+          const w = window as any,
+            term = w.heldReader,
+            el = term.native.element;
+          const requested = el.scrollTop;
+          if (held === 'synchronized') term.write('\x1b[?2026l');
+          else term.setRenderingPaused(false);
+          await w.frame();
+          await w.frame();
+          return { held, requested, actual: el.scrollTop };
+        }, held);
+        samples.push({ original, ...sample });
+      } finally {
+        await page.evaluate(() => {
+          (window as any).heldReader.dispose();
+          document.getElementById('held-reader')!.remove();
+        });
+      }
+    }
+    t.diagnostic(JSON.stringify(samples));
+    for (const { original, requested, actual } of samples) {
+      assert.ok(requested < original);
+      assert.equal(actual, requested);
+    }
+  });
+  await t.test('an explicit reveal or Latest supersedes saved reader callbacks from an older layout', async () => {
+    const result = await page.evaluate(async () => {
+      const engine = '/term-engine/web-terminal.ts';
+      const { createWebTerminal } = await import(engine);
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;inset:0;width:500px;height:152px';
+      document.body.append(host);
+      const { term } = createWebTerminal({ fontSize: 14, lineHeight: 1.1, scrollback: 128 });
+      try {
+        await term.open(host);
+        term.resize(40, 8);
+        term.write(Array.from({ length: 80 }, (_, i) => `row ${i}\r\n`).join(''));
+        const frame = (window as any).frame,
+          el = term.native.element;
+        await frame();
+        const samples = [];
+        for (const scheduled of [false, true]) {
+          el.scrollTop = 350;
+          await frame();
+          const restore = term.saveReader();
+          if (!restore) throw Error('missing historical reader');
+          if (scheduled) restore();
+          term.cancelReaderRestore();
+          el.scrollTop = 120;
+          if (!scheduled) restore();
+          await frame();
+          samples.push(el.scrollTop);
+        }
+        const restore = term.saveReader();
+        if (!restore) throw Error('missing reader before Latest');
+        restore();
+        term.scrollToBottom();
+        await frame();
+        return { samples, gap: el.scrollHeight - el.clientHeight - el.scrollTop };
+      } finally {
+        term.dispose();
+        host.remove();
+      }
+    });
+    assert.deepEqual(result, { samples: [120, 120], gap: 0 });
+  });
   await t.test('holds retained content through cap, resize and new output; typing and paste follow again', async () => {
     const result = await page.evaluate(async () => {
       const { a, x, write, frame, el } = window as any;

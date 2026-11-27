@@ -18,6 +18,7 @@ export function installFind(adapter: WTermAdapter, core: GhosttyCore, grid: HTML
     clear?.();
     const marker = core.trackPosition({ row, col: 0 });
     if (!marker) return missingLine;
+    adapter.cancelReaderRestore();
     const text = rows.logical(row)!.text;
     let previousSize = '',
       scrolled = false;

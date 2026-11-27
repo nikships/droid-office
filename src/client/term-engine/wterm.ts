@@ -47,7 +47,8 @@ export class WTermAdapter {
   // History index including discarded rows, or undefined when following the tail.
   private readerRow?: number;
   private paintedDiscarded = 0;
-  private restoreAfterPaint = false;
+  private pendingRestore?: { appliedTop?: number };
+  private readerRevision = 0;
   private keyHandler?: (e: KeyboardEvent) => boolean;
 
   constructor(
@@ -97,11 +98,24 @@ export class WTermAdapter {
       mouseTrackingMode: c?.mouseTracking() === 1003 ? 'any' : c?.mouseTracking() === 1002 ? 'drag' : c?.mouseTracking() === 1000 ? 'vt200' : 'none',
     } as const;
   }
-  private sampleReader() {
+  private sampleReader(scrolled = false) {
     const el = this.root;
     // display:none collapses every DOM scroll metric to zero. Keep the last visible
     // position and subtract history evicted while painting was paused.
-    if (el?.clientHeight && !this.restoreAfterPaint) this.readerRow = el.scrollHeight - el.clientHeight - el.scrollTop < 1 ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;
+    if (!el?.clientHeight) return;
+    if (this.pendingRestore) {
+      // Do not sample our own (possibly clamped) metric compensation as a new
+      // reader. A later wheel, thumb drag or reveal is a new scroll position.
+      if (el.scrollTop === this.pendingRestore.appliedTop || (this.pendingRestore.appliedTop === undefined && !scrolled)) return;
+      this.pendingRestore.appliedTop = el.scrollTop;
+      this.readerRevision++;
+    }
+    this.readerRow = el.scrollHeight - el.clientHeight - el.scrollTop < 1 ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;
+  }
+  /** An explicit navigation supersedes both a metric restore and an older saved reader. */
+  cancelReaderRestore() {
+    this.readerRevision++;
+    this.pendingRestore = undefined;
   }
   get buffer() {
     const baseY = this.core?.getScrollbackCount() ?? 0;
@@ -116,6 +130,7 @@ export class WTermAdapter {
     const { baseY, viewportY } = this.buffer.active;
     const c = this.core;
     if (!c || viewportY >= baseY) return;
+    const revision = this.readerRevision;
     const fraction = (this.readerRow ?? 0) % 1;
     const rowText = (row: number, base: number, expected?: string) => {
       const offset = base - 1 - row;
@@ -133,7 +148,7 @@ export class WTermAdapter {
     const next = viewportY + 1 < baseY ? rowText(viewportY + 1, baseY) : undefined;
     return () => {
       const el = this.root;
-      if (!el || this.core !== c) return;
+      if (!el || this.core !== c || revision !== this.readerRevision) return;
       const base = c.getScrollbackCount();
       const start = Math.min(viewportY, base - 1);
       let row: number | undefined;
@@ -150,7 +165,7 @@ export class WTermAdapter {
       const target = row ?? start;
       // The DOM spacer and native pin-to-bottom policy update in wterm's render frame.
       requestAnimationFrame(() => {
-        if (this.root === el && el.clientHeight && target >= 0) el.scrollTop = (target + fraction) * this.rowHeight;
+        if (this.root === el && revision === this.readerRevision && el.clientHeight && target >= 0) el.scrollTop = (target + fraction) * this.rowHeight;
       });
     };
   }
@@ -204,8 +219,8 @@ export class WTermAdapter {
         el.style.width = width;
       }
       if (previousHeight !== this.rowHeight) {
-        this.restoreAfterPaint = true;
         if (this.readerRow !== undefined) el.scrollTop = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
+        this.pendingRestore = { appliedTop: el.scrollTop };
       }
     }
   }
@@ -250,13 +265,14 @@ export class WTermAdapter {
         features,
         (discarded) => {
           this.paintedDiscarded = discarded;
-          if (this.restoreAfterPaint)
+          const restore = this.pendingRestore;
+          if (restore)
             queueMicrotask(() => {
               // Native paint commits both the virtual spacer and its own scroll
               // adjustment. Only then is a logical row a usable pixel offset.
-              if (!this.restoreAfterPaint || this.metricsPending || !root.clientHeight) return;
+              if (restore !== this.pendingRestore || this.metricsPending || !root.clientHeight) return;
               root.scrollTop = this.readerRow === undefined ? root.scrollHeight : Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
-              this.restoreAfterPaint = false;
+              this.pendingRestore = undefined;
             });
         },
       );
@@ -286,7 +302,7 @@ export class WTermAdapter {
           { capture: true, signal },
         );
 
-      root.addEventListener('scroll', () => this.sampleReader(), { passive: true, signal });
+      root.addEventListener('scroll', () => this.sampleReader(true), { passive: true, signal });
       native.setRenderingPaused(this.paused);
       const observer = new ResizeObserver(() => {
         if (root.clientWidth > 0 && this.metricsPending) this.refreshMetrics();
@@ -399,7 +415,7 @@ export class WTermAdapter {
     this.native?.clearSearch();
     this.native?.write(`\x1bc\x1b[3J${widths}`);
     this.applyOption('cursorStyle');
-    this.scrollToBottom();
+    this.followTail();
   }
   resize(cols: number, rows: number) {
     const t = this.native;
@@ -428,14 +444,20 @@ export class WTermAdapter {
     this.native?.setRenderingPaused(paused || !this.inViewport);
   }
   scrollToBottom() {
+    this.readerRevision++;
+    this.followTail();
+  }
+  private followTail() {
     this.readerRow = undefined;
-    if (this.native && this.metricsPending) this.restoreAfterPaint = true;
-    if (this.root) this.root.scrollTop = this.root.scrollHeight;
+    const el = this.root;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    if (this.pendingRestore || (this.native && this.metricsPending)) this.pendingRestore = { appliedTop: el.clientHeight ? el.scrollTop : undefined };
   }
   dispose() {
     if (this.lifetime.signal.aborted) return;
     this.lifetime.abort();
-    this.restoreAfterPaint = false;
+    this.pendingRestore = undefined;
     this.native?.destroy();
     this.core?.dispose();
     this.root?.remove();
