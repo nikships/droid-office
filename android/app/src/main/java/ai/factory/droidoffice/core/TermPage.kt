@@ -21,9 +21,9 @@ enum class TermView(val wire: String) {
 sealed interface PageMsg {
     data object Ready : PageMsg
     data object Unavailable : PageMsg
-    data object SearchClosed : PageMsg
+    data class SearchClosed(val request: Int) : PageMsg
     data class ClipboardWrite(val text: String) : PageMsg
-    data class Matches(val active: Int, val count: Int, val searching: Boolean, val limited: Boolean) : PageMsg
+    data class Matches(val active: Int, val count: Int, val searching: Boolean, val limited: Boolean, val request: Int) : PageMsg
     data class Prompts(val available: Boolean) : PageMsg
     /** A snapshot has been written: the terminal shows something. */
     data object Drawn : PageMsg
@@ -107,12 +107,12 @@ object TermPage {
         return when (str("t")) {
             "ready" -> PageMsg.Ready
             "unavailable" -> PageMsg.Unavailable
-            "searchClosed" -> PageMsg.SearchClosed
+            "searchClosed" -> int("request")?.let(PageMsg::SearchClosed)
             "clipboardWrite" -> str("text")?.takeIf { it.length <= 65536 && it.encodeToByteArray().size <= 65536 }?.let(PageMsg::ClipboardWrite)
             "matches" -> {
                 val count = int("count")?.takeIf { it in 0..10_000 } ?: return null
                 val active = int("active")?.takeIf { it in -1 until count } ?: return null
-                PageMsg.Matches(active, count, bool("searching") == true, bool("limited") == true)
+                PageMsg.Matches(active, count, bool("searching") == true, bool("limited") == true, int("request") ?: return null)
             }
             "prompts" -> bool("available")?.let { PageMsg.Prompts(it) }
             "drawn" -> PageMsg.Drawn
@@ -143,7 +143,10 @@ object TermPage {
 
     fun view(view: TermView) = call("view") { put("view", view.wire) }
 
-    fun search(query: String) = call("search") { put("query", query.take(1024)) }
+    fun search(query: String, request: Int) = call("search") {
+        put("query", query.take(1024))
+        put("request", request)
+    }
     fun closeSearch() = call("searchClose") {}
     fun navigate(prompt: Boolean, forward: Boolean) = call(if (prompt) "prompt" else "match") { put("direction", if (forward) 1 else -1) }
 

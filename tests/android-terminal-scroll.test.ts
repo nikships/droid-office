@@ -108,13 +108,13 @@ test('a reveal after fitting owns the viewport when the next frame paints', brow
   const data = Array.from({ length: 220 }, (_, row) => `${row % 60 === 20 ? '\x1b]133;A\x07hit' : 'line'} ${row}\r\n`).join('');
   await send({ t: 'snapshot', cols: 40, rows: 16, data });
   await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'drawn'));
-  await send({ t: 'search', query: 'hit' });
-  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'matches' && m.count === 4 && !m.searching));
+  await send({ t: 'search', query: 'hit', request: 1 });
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'matches' && m.request === 1 && m.count === 4 && !m.searching));
   await send({ t: 'match', direction: 1 });
   for (const [label, msg, target, active] of [
     ['Find Next', { t: 'match', direction: 1 }, 'hit 140', 2],
     ['Find Previous', { t: 'match', direction: -1 }, 'hit 80', 1],
-    ['Find query', { t: 'search', query: 'line 211' }, 'line 211', 0],
+    ['Find query', { t: 'search', query: 'line 211', request: 2 }, 'line 211', 0],
     ['previous prompt', { t: 'prompt', direction: -1 }, 'hit 20', null],
     ['next prompt', { t: 'prompt', direction: 1 }, 'hit 80', null],
     ['Latest', { t: 'bottom' }, 'line 219', null],
@@ -228,7 +228,7 @@ test('native Find navigates retained hits and restores the historical reader whe
     el.scrollTop = 610;
     return el.scrollTop;
   });
-  await send({ t: 'search', query: 'needle' });
+  await send({ t: 'search', query: 'needle', request: 7 });
   for (const [direction, active] of [
     [0, 0],
     [1, 1],
@@ -237,7 +237,7 @@ test('native Find navigates retained hits and restores the historical reader whe
     if (direction) await send({ t: 'match', direction });
     await page.waitForFunction((active) => {
       const msg = (window as any).posted.filter((m: any) => m.t === 'matches').at(-1);
-      return msg?.active === active && msg.count === 4;
+      return msg?.active === active && msg.count === 4 && msg.request === 7;
     }, active);
   }
   assert.notEqual(await page.locator('.wterm').evaluate((el) => el.scrollTop), before);

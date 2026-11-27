@@ -32,6 +32,7 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
     val view: WebView = keyboard
     var ready = false
         private set
+    private var ended = false
 
     var clipboardWritable: () -> Boolean = { false }
     private var hasSnapshot = false
@@ -84,6 +85,7 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
     fun setCsiEnter(enabled: Boolean) { keyboard.csiEnter = enabled }
 
     fun destroy() {
+        ended = true
         clipboardWritable = { false }
         typeDirectly(false)
         ready = false
@@ -104,6 +106,8 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            if (ended) return true
+            ended = true
             ready = false
             onGone()
             return true
@@ -116,6 +120,7 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
         fun post(json: String) {
             val msg = TermPage.decode(json) ?: return
             view.post {
+                if (ended) return@post
                 if (msg == PageMsg.Ready) ready = true
                 if (msg is PageMsg.Kitty) keyboard.kittyFlags = msg.flags
                 onMessage(msg)

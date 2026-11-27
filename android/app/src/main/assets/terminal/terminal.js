@@ -35,14 +35,18 @@ export async function start() {
   const host = document.querySelector('#term');
   const { term, expandAtClient } = createAndroidTerminal({ onExpandImage: expandImage });
   let search;
+  let find;
   let closingSearch = false;
   let clipboardWritable = false;
   useNativeSearchControls(term);
   term.onOpen((native, signal) => {
     search = createWtermSearch(term, native, signal, {
-      onChange: ({ activeIndex, count, searching, limited }) => post({ t: 'matches', active: activeIndex, count, searching, limited }),
+      onChange: ({ query, activeIndex, count, searching, limited }) => {
+        if (find && query === find.query) post({ t: 'matches', active: activeIndex, count, searching, limited, request: find.request });
+      },
       onClose: () => {
-        if (!closingSearch) post({ t: 'searchClosed' });
+        if (!closingSearch && find) post({ t: 'searchClosed', request: find.request });
+        find = undefined;
       },
     });
     attachWtermClipboard(
@@ -202,6 +206,7 @@ export async function start() {
     receive(msg) {
       switch (msg.t) {
         case 'search':
+          find = msg;
           search.open();
           search.setQuery(msg.query);
           break;

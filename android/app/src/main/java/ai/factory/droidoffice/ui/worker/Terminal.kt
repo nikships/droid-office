@@ -130,7 +130,7 @@ internal fun Terminal(
             onMessage = { msg ->
                 when (msg) {
                     PageMsg.Ready -> {
-                        navigation.page = p
+                        navigation.setRenderer(p)
                         p.send(latestColors)
                         p.send(TermPage.config(latestScale, latestView))
                         val feed = connection.feed(workerId)
@@ -146,8 +146,8 @@ internal fun Terminal(
                         drawn = true
                         if (navigation.finding && navigation.query.isNotEmpty()) navigation.find(navigation.query)
                     }
-                    is PageMsg.Matches -> navigation.matches = msg
-                    PageMsg.SearchClosed -> navigation.closed()
+                    is PageMsg.Matches -> if (navigation.page === p) navigation.accept(msg)
+                    is PageMsg.SearchClosed -> if (navigation.page === p && msg.request == navigation.matches.request) navigation.closed()
                     is PageMsg.ClipboardWrite -> if (p.ready && p.view.isAttachedToWindow && p.clipboardWritable()) {
                         runCatching {
                             val clip = ClipData.newPlainText("Terminal", msg.text)
@@ -167,16 +167,13 @@ internal fun Terminal(
                     is PageMsg.Input -> if (TermPage.acceptsInput(latestLive, drawn, unavailable)) connection.send(ClientMsg.termInput(workerId, msg.data))
                 }
             },
-            onGone = { generation++ },
+            onGone = { navigation.detach(p); generation++ },
         )
         p
     }
     DisposableEffect(page) {
         onDispose {
-            if (navigation.page === page) {
-                navigation.page = null
-                navigation.prompts = false
-            }
+            navigation.detach(page)
             connection.feed(workerId)?.unlisten(page.listener)
             page.destroy()
         }

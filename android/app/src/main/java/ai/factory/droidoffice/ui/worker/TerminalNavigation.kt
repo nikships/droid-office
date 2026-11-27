@@ -23,8 +23,10 @@ internal class TerminalNavigation {
     var finding by mutableStateOf(false)
     var query by mutableStateOf("")
     var prompts by mutableStateOf(false)
-    var matches by mutableStateOf(PageMsg.Matches(-1, 0, false, false))
+    var matches by mutableStateOf(PageMsg.Matches(-1, 0, false, false, 0))
+        private set
     var page by mutableStateOf<TerminalPage?>(null)
+        private set
 
     fun open() {
         finding = true
@@ -33,7 +35,27 @@ internal class TerminalNavigation {
 
     fun find(text: String) {
         query = text.take(1024)
-        page?.send(TermPage.search(query))
+        invalidateMatches()
+        page?.send(TermPage.search(query, matches.request))
+    }
+
+    fun invalidateMatches() {
+        matches = PageMsg.Matches(-1, 0, finding && query.isNotEmpty(), false, matches.request + 1)
+    }
+
+    fun accept(result: PageMsg.Matches) {
+        if (finding && query.isNotEmpty() && result.request == matches.request) matches = result
+    }
+
+    fun setRenderer(next: TerminalPage?) {
+        if (page === next) return
+        page = next
+        prompts = false
+        invalidateMatches()
+    }
+
+    fun detach(current: TerminalPage) {
+        if (page === current) setRenderer(null)
     }
 
     fun close() {
@@ -44,7 +66,7 @@ internal class TerminalNavigation {
     fun closed() {
         finding = false
         query = ""
-        matches = PageMsg.Matches(-1, 0, false, false)
+        invalidateMatches()
     }
 }
 
