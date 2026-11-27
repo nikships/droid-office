@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
 import { build } from 'vite';
+import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { loadConfig } from '../src/server/config.js';
 import { leaveFloorTerminals, startServer } from '../src/server/server.js';
@@ -594,6 +595,46 @@ test('floor moves from a companion update every client and the next welcome, wit
   mobile.ws.send(JSON.stringify({ t: 'floor.reorder', floor: added.floor, before: 12, requestId: 'bad-floor' }));
   assert.equal((await mobile.wait('action.result', (m) => m.requestId === 'bad-floor')).ok, false);
   assert.equal(JSON.parse(readFileSync(path.join(dir, '.droid-office/floors.json'), 'utf8'))[0].id, added.floor);
+});
+
+test('production terminal Retry recovers rendering and styles after a failed asset load', { skip: !browserStatus().installed }, async (t) => {
+  const { base } = await office(t);
+  const ws = socket(t, base, 'client=dashboard');
+  const { floor } = await ws.wait('welcome');
+  ws.send({ t: 'worker.spawn', deskId: 'auto', kind: 'shell', requestId: 'shell', requestFloor: floor });
+  const { workerId } = await ws.wait('action.result', (msg) => msg.requestId === 'shell');
+  assert.ok(workerId);
+  const browser = await launchBrowser();
+  t.after(closeBrowser);
+  const context = await newIsolatedContext(browser);
+  t.after(() => context.close());
+  const page = await context.newPage();
+  // The page stylesheet remains available. If a terminal-specific stylesheet
+  // is fetched lazily, fail its first request as well as the first WASM load.
+  await page.route(/\/assets\/wterm[^/]*\.css$/, (route) => route.abort(), { times: 1 });
+  let blocked = 0;
+  const wasm = /\/assets\/ghostty-vt-[^/]+\.wasm$/;
+  await page.route(wasm, (route) => {
+    blocked++;
+    return route.abort();
+  });
+  await page.goto(`${base}/dashboard#${new URLSearchParams({ worker: workerId, floor: floor! })}`);
+  const retry = page.getByRole('button', { name: 'Retry', exact: true });
+  await retry.waitFor();
+  if (!blocked) {
+    await Promise.all([page.waitForRequest(wasm), retry.click()]);
+    await retry.waitFor();
+  }
+  assert.ok(blocked);
+  await page.unroute(wasm);
+  await retry.click();
+  const root = page.locator('.term-host .office-wterm:not([inert])');
+  await root.locator('textarea').waitFor({ state: 'attached' });
+  const style = await root.evaluate((el) => {
+    const css = getComputedStyle(el);
+    return [css.position, css.boxSizing, getComputedStyle(el.querySelector('.term-grid')!).whiteSpace, css.overflowX];
+  });
+  assert.deepEqual(style, ['relative', 'border-box', 'pre', 'hidden']);
 });
 
 test('production dashboard has a public data-free bootstrap, gated APIs and no 3D office in its bundle', async (t) => {

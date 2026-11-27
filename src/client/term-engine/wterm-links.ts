@@ -5,7 +5,6 @@ import type { WTermAdapter } from './wterm';
 import { installFind, missingLine } from './wterm-links-find';
 import type { Point } from './wterm-links-lines';
 import { type Target, targetAt } from './wterm-links-target';
-import './wterm-links.css';
 
 type Action = (e: MouseEvent) => void;
 type XY = Pick<MouseEvent, 'clientX' | 'clientY'>;

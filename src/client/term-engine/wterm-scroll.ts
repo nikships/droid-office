@@ -8,7 +8,6 @@ export function attachWtermScroll(adapter: WTermAdapter) {
   let handleKey = (_event: KeyboardEvent) => false;
   let snap = () => {};
   adapter.onOpen(({ element: el }, signal) => {
-    void import('./wterm-scroll-thumb.css');
     const core = adapter.core!;
     // In short panes the initial 80x24 grid can overflow before the first fit.
     // Start following it, or wterm mistakes the first resize for a scrolled reader.

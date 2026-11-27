@@ -1,4 +1,3 @@
-import './wterm.css';
 import type { KittyTerminalOptions } from '../term-kitty-overlay';
 import type { TerminalPaths } from '../ui/terminal-path-links';
 import { scrollAtOnce } from '../ui/terminal-prefs';

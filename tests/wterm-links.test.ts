@@ -38,7 +38,7 @@ test('wterm links and find against the xterm pane', { skip: !browserStatus().ins
   await page.route('**/fixture', (r) =>
     r.fulfill({
       contentType: 'text/html',
-      body: `<link rel="stylesheet" href="/@fs/${root}../../node_modules/@xterm/xterm/css/xterm.css"><style>.pane{width:380px;height:128px;margin:16px}body{background:#111}</style><div class="pane" id="x"></div><div class="pane" id="w"></div><div class="pane" id="policy"></div><div id="modal-root"></div><div id="toasts"></div>`,
+      body: `<link rel="stylesheet" href="/term-engine/wterm-links.css"><link rel="stylesheet" href="/@fs/${root}../../node_modules/@xterm/xterm/css/xterm.css"><style>.pane{width:380px;height:128px;margin:16px}body{background:#111}</style><div class="pane" id="x"></div><div class="pane" id="w"></div><div class="pane" id="policy"></div><div id="modal-root"></div><div id="toasts"></div>`,
     }),
   );
   const opens: string[] = [];
