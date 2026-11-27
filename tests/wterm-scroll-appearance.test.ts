@@ -14,10 +14,11 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     root: fileURLToPath(new URL('../src/client', import.meta.url)),
     cacheDir,
     configFile: false,
+    resolve: { alias: { '/oracle': fileURLToPath(new URL('./oracle', import.meta.url)) } },
     logLevel: 'error',
     appType: 'custom',
     server: { host: '127.0.0.1', port: 0, hmr: false },
-    optimizeDeps: { noDiscovery: true, include: ['@xterm/xterm', '@xterm/addon-fit'] },
+    optimizeDeps: { noDiscovery: true, include: ['@xterm/xterm'] },
   });
   t.after(async () => {
     await server.close();
@@ -39,11 +40,11 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
   await page.goto(`http://127.0.0.1:${address.port}/fixture`);
   await page.evaluate(async () => {
     const w = window as any;
-    const path = '/term-engine/index.ts',
+    const path = '/oracle/terminal.ts',
       scrolling = '/term-engine/wterm-scroll.ts',
       pixel = '/term-pixel-scroll.ts',
       theme = '/term-theme.ts';
-    const { createTerminalEngine } = await import(path);
+    const { comparisonTerminal } = await import(path);
     const options = {
       allowProposedApi: true,
       allowTransparency: true,
@@ -56,11 +57,13 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       theme: (await import(theme)).TERM_THEME,
     };
     await Promise.all([document.fonts.load('14px "Geist Mono"'), document.fonts.load('14px "Droid Office Terminal Symbols"', '\ue0b0')]);
-    const a = (w.a = createTerminalEngine(options, 'ghostty').term);
-    const x = (w.x = createTerminalEngine(options, 'xterm').term);
+    const a = (w.a = comparisonTerminal(options, 'ghostty'));
+    const x = (w.x = comparisonTerminal(options, 'xterm'));
     w.scrollApi = (await import(scrolling)).attachWtermScroll(a);
     await a.open(document.querySelector('#w'));
     x.open(document.querySelector('#x'));
+    w.pitch = () => x.element.querySelector('.xterm-rows > div').getBoundingClientRect().height;
+    a.native.element.parentElement.style.height = `${8 * w.pitch()}px`;
     const xp = (await import(pixel)).attachPixelScroll(x);
     for (const [term, controls] of [
       [a, w.scrollApi],
@@ -75,6 +78,8 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       await new Promise(requestAnimationFrame);
       await new Promise(requestAnimationFrame);
     };
+    // Both grids must have painted the initial resize before testing the visible reader.
+    await w.frame();
     w.write = async (s: string) => {
       await Promise.all([a, x].map((term) => new Promise((resolve) => term.write(s, resolve))));
       await w.frame();
@@ -86,6 +91,38 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       node.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: rect.left + 1, clientY: rect.top + 1, deltaY, ...opts }));
     };
   });
+  await t.test('painted row pitch and usable rows match the previous renderer across fonts, sizes and line spacing', async () => {
+    const samples = await page.evaluate(async () => {
+      const { a, x, el, frame } = window as any;
+      const original = { fontFamily: a.options.fontFamily, fontSize: a.options.fontSize, lineHeight: a.options.lineHeight };
+      const samples = [];
+      try {
+        for (const fontFamily of [original.fontFamily, 'monospace', 'Georgia, serif']) {
+          for (const [fontSize, lineHeight] of [
+            [12, 1],
+            [14, 1.1],
+            [17, 1.25],
+            [21, 1.5],
+          ]) {
+            for (const term of [a, x]) Object.assign(term.options, { fontFamily, fontSize, lineHeight });
+            await frame();
+            const old = x.element.querySelector('.xterm-rows > div').getBoundingClientRect().height;
+            const pitch = el.querySelector('.term-row').getBoundingClientRect().height;
+            samples.push({ fontFamily, fontSize, lineHeight, old, pitch, rows: a.proposeDimensions().rows, expectedRows: Math.floor(el.clientHeight / old) });
+          }
+        }
+      } finally {
+        for (const term of [a, x]) Object.assign(term.options, original);
+        await frame();
+      }
+      return samples;
+    });
+    t.diagnostic(JSON.stringify(samples));
+    for (const sample of samples) {
+      assert.equal(sample.pitch, sample.old, JSON.stringify(sample));
+      assert.equal(sample.rows, sample.expectedRows, JSON.stringify(sample));
+    }
+  });
   await t.test('holds retained content through cap, resize and new output; typing and paste follow again', async () => {
     const result = await page.evaluate(async () => {
       const { a, x, write, frame, el } = window as any;
@@ -93,7 +130,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       await write(Array.from({ length: 55 }, (_, i) => `row ${i}\r\n`).join(''));
       const bottom = positions();
       const top = 36;
-      el.scrollTop = top * 16;
+      el.scrollTop = top * (window as any).pitch();
       x.options.smoothScrollDuration = 0;
       x.scrollToLine(top);
       await frame();
@@ -109,7 +146,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       await write('another\r\n'.repeat(22));
       const capped = positions(),
         after = rowText();
-      el.parentElement.style.height = '160px';
+      el.parentElement.style.height = `${10 * (window as any).pitch()}px`;
       for (const term of [a, x]) term.resize(40, 10);
       await frame();
       const resized = rowText();
@@ -185,7 +222,10 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     assert.equal(await page.evaluate(() => (window as any).el.scrollTop), gestures.bottom);
     await page.locator('#w').hover();
     await page.mouse.wheel(0, -540);
-    await page.waitForFunction((before) => before - (window as any).el.scrollTop === 96, gestures.bottom); // 2×50 px, settled to 16px rows
+    await page.waitForFunction((before) => {
+      const { pitch, el } = window as any;
+      return before - el.scrollTop === Math.round(100 / pitch()) * pitch();
+    }, gestures.bottom); // 2×50 px, settled to the nearest row
   });
   await t.test('alternate arrows and SGR wheel bytes, including sub-line and horizontal swipes', async () => {
     const output = await page.evaluate(async () => {
@@ -197,7 +237,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       await write('\x1b[?1049h');
       input.forEach((d: string[]) => (d.length = 0));
       for (const t of [a, x]) {
-        const h = t === a ? 16 : x.element.querySelector('.xterm-rows > div').getBoundingClientRect().height;
+        const h = (window as any).pitch();
         for (let i = 0; i < 4; i++) wheel(t, -h);
       }
       await write('\x1b[?1h');
@@ -378,7 +418,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       const cols = 120,
         rows = 40;
       a.resize(cols, rows);
-      el.parentElement.style.height = `${16 * rows}px`;
+      el.parentElement.style.height = `${(window as any).pitch() * rows}px`;
       el.parentElement.style.width = '1100px';
       await frame();
       const samples: { off: number[]; on: number[] } = { off: [], on: [] };

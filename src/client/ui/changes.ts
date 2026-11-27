@@ -1,7 +1,6 @@
 import { openTerminalRenderer } from './terminal-renderer';
-import { createTerminalEngine, type TerminalEngine } from '../term-engine';
-import { attachEngineFeatures } from '../term-engine/features';
-import type { ClientTerminal } from '../term-engine';
+import type { WTermAdapter } from '../term-engine/wterm';
+import { createWebTerminal } from '../term-engine/web-terminal';
 import { changedImageType, type ChangedFile, type ChangesState, type ServerMsg } from '../../shared/protocol';
 import { shipPromptVars } from '../../shared/prompts';
 import { isAsleep } from '../../shared/status';
@@ -9,13 +8,13 @@ import { loadFonts, TERM_FONT } from '../fonts';
 import type { Net } from '../net';
 import { store, words } from '../state';
 import { withToken } from '../token';
-import { onTermTheme, termTheme, termThemeTransparent } from '../term-theme';
+import { onTermTheme, termTheme } from '../term-theme';
 import { h, openModal, toast, type Modal } from './dom';
 import { colorDot, emptyState } from './kit';
 import { confirmDialog, openPrompt } from './prompt';
 import { officePrompt } from './prompts';
 import { onTermFontSize, termFontSize } from './term-font';
-import { followTerminalPrefs, terminalOptions, terminalPrefs } from './terminal-prefs';
+import { followTerminalPrefs, terminalOptions } from './terminal-prefs';
 
 // The Changes window at a desk: the files a worker changed and their diff against the branch the
 // office was opened on, refreshed while the worker works, with commit / discard / open-a-PR, and
@@ -189,64 +188,43 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
   );
 
   /** The worker's terminal, read-only, made the first time T shows it and attached until the window closes. */
-  let term: ClientTerminal | null = null;
+  let term: WTermAdapter | null = null;
   let scrollToBottom = () => {};
   let unfollow = () => {};
   let attached = false;
   let view: 'diff' | 'log' = 'diff';
 
   const openLog = () => {
-    if (term) {
-      if (!term.saveReader) scrollToBottom();
-      return;
-    }
+    if (term) return;
     const fixed = { cursorBlink: false };
-    const engine = createTerminalEngine(
-      {
-        ...terminalOptions(),
-        ...fixed,
-        fontFamily: TERM_FONT,
-        fontSize: termFontSize(),
-        theme: termTheme(),
-        allowTransparency: termThemeTransparent(),
-        minimumContrastRatio: 4.5,
-        disableStdin: true,
-        scrollback: 5000,
-        allowProposedApi: true,
-      },
-      terminalPrefs().engine,
-    );
-    const bind = (next: TerminalEngine) => {
-      const { term: t } = next;
-      const offPrefs = followTerminalPrefs(t, { fixed });
-      // The log keeps its PTY's rows and columns; only its cells grow or shrink.
-      const offFont = onTermFontSize((px) => (t.options.fontSize = px));
-      const offTheme = onTermTheme(() => (t.options.theme = termTheme()));
-      unfollow = () => {
-        offPrefs();
-        offFont();
-        offTheme();
-      };
-      const features = attachEngineFeatures(next);
-      scrollToBottom = () => features.scrollAtOnce(() => t.scrollToBottom());
-      // Keys belong to the window (T, Esc), never to the program in the terminal.
-      t.attachCustomKeyEventHandler(() => false);
-      term = t;
-      return t;
+    const { term: t, features } = createWebTerminal({
+      ...terminalOptions(),
+      ...fixed,
+      fontFamily: TERM_FONT,
+      fontSize: termFontSize(),
+      theme: termTheme(),
+      minimumContrastRatio: 4.5,
+      disableStdin: true,
+      scrollback: 5000,
+    });
+    const offPrefs = followTerminalPrefs(t, { fixed });
+    // The log keeps its PTY's rows and columns; only its cells grow or shrink.
+    const offFont = onTermFontSize((px) => (t.options.fontSize = px));
+    const offTheme = onTermTheme(() => (t.options.theme = termTheme()));
+    unfollow = () => {
+      offPrefs();
+      offFont();
+      offTheme();
     };
-    let t = bind(engine);
+    scrollToBottom = () => features.scrollAtOnce(() => t.scrollToBottom());
+    // Keys belong to the window (T, Esc), never to the program in the terminal.
+    t.attachCustomKeyEventHandler(() => false);
+    term = t;
+
     void loadFonts()
       .then(async () => {
         if (current?.modal !== modal || term !== t) return;
-        await openTerminalRenderer(
-          engine,
-          logHost,
-          () => current?.modal === modal && term === t,
-          (replacement) => {
-            unfollow();
-            t = bind(replacement);
-          },
-        );
+        await openTerminalRenderer(t, logHost, () => current?.modal === modal && term === t);
         if (current?.modal !== modal || term !== t) return;
         // The PTY is shared and sized by whoever types to it, so this view takes its size rather than fitting.
         const w = store.workers.get(workerId);
@@ -274,7 +252,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     }
     changesBody.classList.toggle('hidden', next === 'log');
     logHost.classList.toggle('hidden', next !== 'log');
-    term?.setRenderingPaused?.(next !== 'log');
+    term?.setRenderingPaused(next !== 'log');
     if (next === 'log') openLog();
     el.focus();
   };

@@ -2,9 +2,8 @@
 // browser and applied live to every open terminal. Text size keeps its own key (term-font.ts),
 // which the A− / A+ buttons share.
 
-import type { ITerminalOptions } from '@xterm/xterm';
-import type { ClientTerminal, TerminalEngineName } from '../term-engine/types';
-import { pixelScrollOf } from '../term-pixel-scroll';
+import type { WTermAdapter } from '../term-engine/wterm';
+import type { ClientTerminalOptions } from '../term-engine/types';
 import { savedPrefs, type PrefOptions } from './saved-prefs';
 
 export const TERM_LINE_HEIGHTS = ['compact', 'default', 'relaxed'] as const;
@@ -12,7 +11,6 @@ export const TERM_CURSOR_STYLES = ['block', 'bar', 'underline'] as const;
 export const TERM_SCROLL_SPEEDS = ['slow', 'default', 'fast'] as const;
 
 export interface TerminalPrefs {
-  engine: TerminalEngineName;
   lineHeight: (typeof TERM_LINE_HEIGHTS)[number];
   cursorStyle: (typeof TERM_CURSOR_STYLES)[number];
   cursorBlink: boolean;
@@ -21,11 +19,10 @@ export interface TerminalPrefs {
   optionIsMeta: boolean;
 }
 
-export const TERMINAL_DEFAULTS: Readonly<TerminalPrefs> = Object.freeze({ engine: 'xterm', lineHeight: 'default', cursorStyle: 'block', cursorBlink: true, scrollSpeed: 'default', optionIsMeta: true });
+export const TERMINAL_DEFAULTS: Readonly<TerminalPrefs> = Object.freeze({ lineHeight: 'default', cursorStyle: 'block', cursorBlink: true, scrollSpeed: 'default', optionIsMeta: true });
 
 const BOTH = [true, false] as const;
 const OPTIONS: PrefOptions<TerminalPrefs> = {
-  engine: ['xterm', 'ghostty'],
   lineHeight: TERM_LINE_HEIGHTS,
   cursorStyle: TERM_CURSOR_STYLES,
   cursorBlink: BOTH,
@@ -47,9 +44,9 @@ const SCROLL_SPEED: Record<TerminalPrefs['scrollSpeed'], number> = { slow: 0.5, 
 /** Long enough to follow by eye, short enough that a held key never lags behind. */
 export const SMOOTH_SCROLL_MS = 125;
 
-export type TerminalPrefOptions = Required<Pick<ITerminalOptions, 'lineHeight' | 'cursorStyle' | 'cursorBlink' | 'smoothScrollDuration' | 'scrollSensitivity' | 'macOptionIsMeta'>>;
+export type TerminalPrefOptions = Required<Pick<ClientTerminalOptions, 'lineHeight' | 'cursorStyle' | 'cursorBlink' | 'smoothScrollDuration' | 'scrollSensitivity' | 'macOptionIsMeta'>>;
 
-/** The xterm options these choices come to. */
+/** The concrete terminal settings for these preferences. */
 export function terminalOptions(p: TerminalPrefs = terminalPrefs()): TerminalPrefOptions {
   return {
     lineHeight: LINE_HEIGHT[p.lineHeight],
@@ -65,21 +62,16 @@ export function terminalOptions(p: TerminalPrefs = terminalPrefs()): TerminalPre
  * Keeps `term` on the saved choices until the returned unlisten. `fixed` options win over the
  * choices (a read-only log never blinks); `resized` runs when its cells change height.
  */
-export function followTerminalPrefs(term: Pick<ClientTerminal, 'options' | 'supportsLineHeight'>, opts: { fixed?: Partial<TerminalPrefOptions>; resized?: () => void } = {}): () => void {
+export function followTerminalPrefs(term: Pick<WTermAdapter, 'options'>, opts: { fixed?: Partial<TerminalPrefOptions>; resized?: () => void } = {}): () => void {
   return onTerminalPrefs((next) => {
     const before = term.options.lineHeight;
     Object.assign(term.options, terminalOptions(next), opts.fixed);
-    if (term.supportsLineHeight !== false && term.options.lineHeight !== before) opts.resized?.();
+    if (term.options.lineHeight !== before) opts.resized?.();
   });
 }
 
-/**
- * Runs `scroll` with smooth scrolling off, landing on a whole row. xterm's scrollLines starts from
- * where the scrollbar is, not where a glide is headed (nor from a whole row, part way through a pixel
- * scroll), so scrolls that build on one another (or that should land at once, like a fresh
- * snapshot's) must not glide.
- */
-export function scrollAtOnce(term: Pick<ClientTerminal, 'options'>, scroll: () => void, snap = () => pixelScrollOf(term)?.snap()) {
+/** Snap a snapshot or search jump immediately, then restore the user's scroll settings. */
+export function scrollAtOnce(term: Pick<WTermAdapter, 'options'>, scroll: () => void, snap?: () => void) {
   const glide = term.options.smoothScrollDuration ?? 0;
   if (!glide) return scroll();
   term.options.smoothScrollDuration = 0;
@@ -87,6 +79,6 @@ export function scrollAtOnce(term: Pick<ClientTerminal, 'options'>, scroll: () =
     scroll();
   } finally {
     term.options.smoothScrollDuration = glide;
-    snap();
+    snap?.();
   }
 }

@@ -14,10 +14,11 @@ test('wterm links and find against the xterm pane', { skip: !browserStatus().ins
     root,
     cacheDir,
     configFile: false,
+    resolve: { alias: { '/oracle': fileURLToPath(new URL('./oracle', import.meta.url)) } },
     logLevel: 'error',
     appType: 'custom',
     server: { host: '127.0.0.1', port: 0, hmr: false },
-    optimizeDeps: { noDiscovery: true, include: ['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-web-links', '@xterm/addon-unicode11'] },
+    optimizeDeps: { noDiscovery: true, include: ['@xterm/xterm', '@xterm/addon-web-links', '@xterm/addon-unicode11'] },
   });
   t.after(async () => {
     await vite.close();
@@ -68,11 +69,12 @@ test('wterm links and find against the xterm pane', { skip: !browserStatus().ins
   await page.addScriptTag({ content: 'window.__name = fn => fn;' });
   await page.evaluate(async () => {
     const load = (s: string) => import(s);
-    const [{ createTerminalEngine }, { attachWtermLinks }, { findInXterm }, { TerminalPathLinksAddon }, { WebLinksAddon }, { Unicode11Addon }] = await Promise.all([
-      load('/term-engine/index.ts'),
+    const [{ comparisonTerminal }, { attachWtermLinks }, { findInXterm }, { TerminalPaths }, { TerminalPathLinksAddon }, { WebLinksAddon }, { Unicode11Addon }] = await Promise.all([
+      load('/oracle/terminal.ts'),
       load('/term-engine/wterm-links.ts'),
-      load('/term-engine/xterm-find.ts'),
+      load('/oracle/find.ts'),
       load('/ui/terminal-path-links.ts'),
+      load('/oracle/paths.ts'),
       load('/@id/@xterm/addon-web-links'),
       load('/@id/@xterm/addon-unicode11'),
     ]);
@@ -83,10 +85,9 @@ test('wterm links and find against the xterm pane', { skip: !browserStatus().ins
       return null;
     };
     rig.mount = async (id: string, name: string, policy: string) => {
-      const paths = policy === 'changes' ? undefined : new TerminalPathLinksAddon({ floor: 'f', workerId: 'w', inert: policy === 'guest' });
-      const engine = createTerminalEngine({ allowProposedApi: true, fontSize: 14, fontFamily: 'monospace', lineHeight: 1.1, scrollback: 100, linkHandler: paths?.linkHandler }, name);
-      const term = engine.term;
-      if (engine.xterm) {
+      const paths = policy === 'changes' ? undefined : new (name === 'xterm' ? TerminalPathLinksAddon : TerminalPaths)({ floor: 'f', workerId: 'w', inert: policy === 'guest' });
+      const term = comparisonTerminal({ allowProposedApi: true, fontSize: 14, fontFamily: 'monospace', lineHeight: 1.1, scrollback: 100, linkHandler: paths?.linkHandler }, name);
+      if (name === 'xterm') {
         term.loadAddon(paths);
         term.loadAddon(
           new WebLinksAddon((e: MouseEvent, text: string) => {

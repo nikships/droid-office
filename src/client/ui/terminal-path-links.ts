@@ -1,73 +1,17 @@
-import type { IBuffer, ILink, ILinkHandler, ITerminalAddon, Terminal } from '@xterm/xterm';
-import { parseTerminalPathRefs, terminalPathRef, type WorkspacePathMatch, type WorkspacePathRef } from '../../shared/path-links';
+import { terminalPathRef, type WorkspacePathRef } from '../../shared/path-links';
 import { guestTokenOn, withToken } from '../token';
 import { toast } from './dom';
 import { openFilePreviewModal } from './file-preview';
-
-interface Position {
-  x: number;
-  y: number;
-}
 
 interface LookupResult {
   paths: (WorkspacePathRef | null)[];
   local: boolean;
 }
 
-/** Read a soft-wrapped logical line, mapping UTF-16 offsets back to xterm's actual cell widths. */
-export function terminalLogicalLine(buffer: IBuffer, row: number, cols: number): { text: string; cells: Position[] } {
-  let first = row - 1;
-  while (first > 0 && row - first < 16 && buffer.getLine(first)?.isWrapped) first--;
-  let text = '';
-  const cells: Position[] = [];
-  const reusableCell = typeof buffer.getNullCell === 'function' ? buffer.getNullCell() : undefined;
-  for (let y = first; y < buffer.length && y < first + 16; y++) {
-    const line = buffer.getLine(y);
-    if (!line || (y > first && !line.isWrapped)) break;
-    const wrappedNext = buffer.getLine(y + 1)?.isWrapped;
-    const length = wrappedNext ? Number.POSITIVE_INFINITY : line.translateToString(true).length;
-    let offset = 0;
-    for (let x = 0; x < cols && offset < length; x++) {
-      const cell = line.getCell(x, reusableCell);
-      if (!cell || cell.getWidth() === 0) continue;
-      const chars = cell.getChars() || ' ';
-      text += chars;
-      for (let i = 0; i < chars.length; i++) cells.push({ x: x + 1, y: y + 1 });
-      offset += chars.length;
-    }
-  }
-  return { text, cells };
-}
-
-export class TerminalPathLinksAddon implements ITerminalAddon {
+export class TerminalPaths {
   private readonly controller = new AbortController();
-  private provider?: { dispose(): void };
-  private readonly cache = new Map<string, { at: number; value?: LookupResult; pending: Promise<LookupResult> }>();
+  private readonly cache = new Map<string, { at: number; pending: Promise<LookupResult> }>();
 
-  /** Unifies OSC 8 hyperlinks (`file://` and `http(s)://`) with modifier-gated terminal links. */
-  readonly linkHandler: ILinkHandler = {
-    allowNonHttpProtocols: true,
-    activate: (event, text) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (/^https?:\/\//i.test(text)) {
-        event.preventDefault();
-        window.open(text, '_blank', 'noopener,noreferrer');
-        return;
-      }
-      if (this.context.inert || !terminalPathRef(text)) return;
-      event.preventDefault();
-      void this.lookup(`${this.floor()}\0osc8\0${text}`, [text])
-        .then(({ paths, local }) => {
-          const resolved = paths[0];
-          if (resolved) this.openResolved(text, resolved, local);
-        })
-        .catch((error: unknown) => {
-          if (!this.controller.signal.aborted) toast(error instanceof Error ? error.message : 'Could not open file.', 'error');
-        });
-    },
-  };
-
-  /** `inert`: file paths aren't links (a view-only share link can't read the worker's files); web links still open. */
   constructor(private readonly context: { floor: string | (() => string); workerId: string; workerName?: string; inert?: boolean }) {}
 
   private floor(): string {
@@ -122,7 +66,7 @@ export class TerminalPathLinksAddon implements ITerminalAddon {
   private lookup(key: string, paths: string[]): Promise<LookupResult> {
     const hit = this.cache.get(key);
     if (hit && Date.now() - hit.at < 5000) return hit.pending;
-    const entry: { at: number; value?: LookupResult; pending: Promise<LookupResult> } = {
+    const entry: { at: number; pending: Promise<LookupResult> } = {
       at: Date.now(),
       pending: fetch(this.url('/api/term/paths'), {
         method: 'POST',
@@ -134,7 +78,6 @@ export class TerminalPathLinksAddon implements ITerminalAddon {
           if (!response.ok) throw new Error('Could not resolve terminal paths.');
           const value = (await response.json()) as LookupResult;
           if (!value || !Array.isArray(value.paths) || value.paths.length !== paths.length) throw new Error('Could not resolve terminal paths.');
-          entry.value = value;
           return value;
         })
         .catch((error: unknown) => {
@@ -150,69 +93,8 @@ export class TerminalPathLinksAddon implements ITerminalAddon {
     return entry.pending;
   }
 
-  private buildLinks(row: number, line: { cells: Position[] }, candidates: WorkspacePathMatch[], { paths, local }: LookupResult): ILink[] {
-    const links: ILink[] = [];
-    candidates.forEach((candidate, index) => {
-      const resolved = paths[index];
-      const start = line.cells[candidate.start];
-      const end = line.cells[candidate.end - 1];
-      if (!resolved || !start || !end || row < start.y || row > end.y) return;
-      links.push({
-        text: candidate.raw,
-        range: { start, end },
-        activate: (event) => {
-          if (!(event.metaKey || event.ctrlKey)) return;
-          event.preventDefault();
-          this.openResolved(candidate.raw, resolved, local);
-        },
-      });
-    });
-    return links;
-  }
-
-  /** Resolve the same logical line for either engine. Re-read after an async lookup: the
-   * buffer may have switched or the line may have scrolled away. Coordinates are one-based. */
-  providePathLinks(row: number, readLine: () => { text: string; cells: Position[] } | undefined, callback: (links: ILink[] | undefined) => void): void {
-    const line = readLine();
-    if (this.context.inert || !line) {
-      callback(undefined);
-      return;
-    }
-    const candidates = parseTerminalPathRefs(line.text).slice(0, 64);
-    if (!candidates.length) {
-      callback(undefined);
-      return;
-    }
-    const key = `${this.floor()}\n${line.text}`;
-    const hit = this.cache.get(key);
-    if (hit && Date.now() - hit.at < 5000 && hit.value) {
-      callback(this.buildLinks(row, line, candidates, hit.value));
-      return;
-    }
-    void this.lookup(
-      key,
-      candidates.map((candidate) => candidate.raw),
-    )
-      .then((result) => {
-        if (this.controller.signal.aborted || readLine()?.text !== line.text) return callback(undefined);
-        callback(this.buildLinks(row, line, candidates, result));
-      })
-      .catch(() => callback(undefined));
-  }
-
-  activate(term: Terminal): void {
-    if (this.context.inert) return;
-    this.provider = term.registerLinkProvider({
-      provideLinks: (row, callback) => {
-        const buffer = term.buffer.active;
-        this.providePathLinks(row, () => (buffer === term.buffer.active ? terminalLogicalLine(buffer, row, term.cols) : undefined), callback);
-      },
-    });
-  }
-
   dispose(): void {
     this.controller.abort();
-    this.provider?.dispose();
     this.cache.clear();
   }
 }

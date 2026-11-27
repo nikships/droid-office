@@ -15,10 +15,11 @@ test('Chromium sends identical keyboard bytes from xterm and wterm', { skip: !st
     root: fileURLToPath(new URL('../src/client', import.meta.url)),
     cacheDir,
     configFile: false,
+    resolve: { alias: { '/oracle': fileURLToPath(new URL('./oracle', import.meta.url)) } },
     logLevel: 'error',
     appType: 'custom',
     server: { host: '127.0.0.1', port: 0, hmr: false },
-    optimizeDeps: { noDiscovery: true, include: ['@xterm/xterm', '@xterm/addon-fit', '@wterm/dom', '@wterm/ghostty'] },
+    optimizeDeps: { noDiscovery: true, include: ['@xterm/xterm', '@wterm/dom', '@wterm/ghostty'] },
   });
   t.after(async () => {
     await server.close();
@@ -43,12 +44,11 @@ test('Chromium sends identical keyboard bytes from xterm and wterm', { skip: !st
 
     const run = async (name: string) => {
       await page.evaluate(async (name) => {
-        const modules = ['/term-engine/index.ts', '/term-engine/wterm-keys.ts', '/term-kitty.ts', '/term-mirror.ts'];
-        const [{ createTerminalEngine }, { attachWtermKeys }, { attachKittyTerminal }, { suppressMirrorQueries }] = await Promise.all(modules.map((url) => import(url)));
+        const modules = ['/oracle/terminal.ts', '/term-engine/wterm-keys.ts', '/oracle/kitty.ts', '/term-mirror.ts'];
+        const [{ comparisonTerminal }, { attachWtermKeys }, { attachKittyTerminal }, { suppressMirrorQueries }] = await Promise.all(modules.map((url) => import(url)));
         const w = window as any;
-        const engine = createTerminalEngine({ allowProposedApi: true, macOptionIsMeta: true }, name);
-        const term = engine.term;
-        const { keyAction } = engine.ghostty ? attachWtermKeys(term) : attachKittyTerminal(term);
+        const term = comparisonTerminal({ allowProposedApi: true, macOptionIsMeta: true }, name);
+        const { keyAction } = name !== 'xterm' ? attachWtermKeys(term) : attachKittyTerminal(term);
         w.term = term;
         w.csiEnter = false;
         w.bytes = '';

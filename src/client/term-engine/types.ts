@@ -1,42 +1,18 @@
-import type { ITerminalOptions, Terminal } from '@xterm/xterm';
-import type { VtScanner } from '../../shared/vt-scanner';
+import type { TERM_THEME } from '../term-theme';
 
-export type TerminalEngineName = 'xterm' | 'ghostty';
-export type TerminalParser = Pick<VtScanner, 'registerCsiHandler' | 'registerDcsHandler' | 'registerEscHandler' | 'registerOscHandler'>;
-export type ClientTerminalOptions = Pick<
-  ITerminalOptions,
-  | 'cursorBlink'
-  | 'cursorStyle'
-  | 'disableStdin'
-  | 'fontSize'
-  | 'fontFamily'
-  | 'theme'
-  | 'scrollback'
-  | 'smoothScrollDuration'
-  | 'lineHeight'
-  | 'scrollSensitivity'
-  | 'macOptionIsMeta'
-  | 'allowTransparency'
-  | 'allowProposedApi'
-  | 'minimumContrastRatio'
-  | 'linkHandler'
->;
-
-/** Shared mirror, input, settings and lifecycle contract. Engine-specific features use the
- * discriminated native handle instead of pretending to implement an unsupported xterm API. */
-export interface ClientTerminal extends Pick<Terminal, 'cols' | 'rows' | 'focus' | 'paste' | 'input' | 'resize' | 'reset' | 'dispose' | 'scrollToBottom' | 'attachCustomKeyEventHandler'> {
-  readonly options: ClientTerminalOptions;
-  readonly supportsLineHeight?: boolean;
-  readonly parser: TerminalParser;
-  readonly modes: Pick<Terminal['modes'], 'sendFocusMode' | 'applicationCursorKeysMode' | 'bracketedPasteMode' | 'mouseTrackingMode'>;
-  readonly buffer: { readonly active: { readonly viewportY: number; readonly baseY: number } };
-  readonly textarea?: HTMLTextAreaElement;
-  setRenderingPaused?(paused: boolean): void;
-  saveReader?(): (() => void) | undefined;
-  open(host: HTMLElement): void | Promise<void>;
-  write(data: string, done?: () => void): void;
-  onData(fn: (data: string) => void): { dispose(): void };
-  onWriteParsed(fn: () => void): { dispose(): void };
+export interface ClientTerminalOptions {
+  cursorBlink?: boolean;
+  cursorStyle?: 'block' | 'underline' | 'bar';
+  disableStdin?: boolean;
+  fontFamily?: string;
+  fontSize?: number;
+  theme?: Partial<typeof TERM_THEME>;
+  scrollback?: number;
+  smoothScrollDuration?: number;
+  lineHeight?: number;
+  scrollSensitivity?: number;
+  macOptionIsMeta?: boolean;
+  minimumContrastRatio?: number;
 }
 
 /** A line to scroll to once the terminal has loaded: a search hit (see search.ts). */

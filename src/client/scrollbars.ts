@@ -15,12 +15,12 @@ function showScrollbar(element: Element) {
 }
 
 function input(event: Event) {
-  if (event.target instanceof Element && event.target.closest('.xterm')) return;
+  if (event.target instanceof Element && event.target.closest('.office-wterm')) return;
   lastInput = performance.now();
 }
 
 function isEditable(target: EventTarget | null): boolean {
-  return target instanceof Element && !!target.closest('input, textarea, select, [contenteditable], .xterm');
+  return target instanceof Element && !!target.closest('input, textarea, select, [contenteditable], .office-wterm');
 }
 
 document.addEventListener('wheel', input, { capture: true, passive: true });
@@ -37,8 +37,8 @@ document.addEventListener(
 document.addEventListener(
   'scroll',
   (event) => {
-    // xterm terminals manage their own minimal scrollbar in term-scrollbar.ts.
-    if (performance.now() - lastInput < 1000 && event.target instanceof Element && !event.target.closest('.xterm')) showScrollbar(event.target);
+    // Terminals handle their own scroll gestures.
+    if (performance.now() - lastInput < 1000 && event.target instanceof Element && !event.target.closest('.office-wterm')) showScrollbar(event.target);
   },
   true,
 );

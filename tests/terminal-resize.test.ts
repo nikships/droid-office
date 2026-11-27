@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { buildSync } from 'esbuild';
+import { terminalFixture } from './helpers/terminal-fixture.js';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 
 const status = browserStatus();
@@ -12,21 +10,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
   t.after(closeBrowser);
   const context = await newIsolatedContext(browser);
   t.after(() => context.close());
-  const bundle = buildSync({
-    stdin: {
-      contents:
-        "export { openTerminal, openOfficeShell, routeTerminalMessage } from './src/client/ui/terminal'; export { setTermFontSize } from './src/client/ui/term-font'; export { store } from './src/client/state'; export { OFFICE_SHELL_ID } from './src/shared/office-shell'; export { Terminal } from '@xterm/xterm';",
-      resolveDir: fileURLToPath(new URL('..', import.meta.url)),
-    },
-    bundle: true,
-    external: ['*/wterm-runtime'], // This stand-alone xterm fixture has no Vite asset server.
-    format: 'iife',
-    globalName: 'TerminalUI',
-    write: false,
-    target: 'es2022',
-  }).outputFiles[0].text;
-  const css = await readFile(new URL('../src/client/style.css', import.meta.url), 'utf8');
-  const xtermCss = await readFile(new URL('../node_modules/@xterm/xterm/css/xterm.css', import.meta.url), 'utf8');
+  const mountFixture = await terminalFixture(t);
   const rig = async (shared = true, delaySnapshot = false, hidden = false, mode = 'inline', pageHidden = false) => {
     const page = await context.newPage();
     const errors: string[] = [];
@@ -35,9 +19,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       await page.close();
       assert.deepEqual(errors, []);
     });
-    await page.setContent('<!doctype html><button id="focus">Keep focus here</button><div id="mount"></div><div id="modal-root"></div>');
-    await page.addStyleTag({ content: css + xtermCss });
-    await page.addScriptTag({ content: bundle });
+    await mountFixture(page, '<button id="focus">Keep focus here</button><div id="mount"></div><div id="modal-root"></div>');
     await page.evaluate(
       ({ shared, delaySnapshot, hidden, mode, pageHidden }) => {
         const w = window as any;
@@ -50,7 +32,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
         const open = Terminal.prototype.open;
         Terminal.prototype.open = function (host: HTMLElement) {
           w.term = this;
-          open.call(this, host);
+          return open.call(this, host);
         };
         const mount = document.getElementById('mount')!;
         mount.style.width = '600px';
@@ -97,7 +79,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       },
       { shared, delaySnapshot, hidden, mode, pageHidden },
     );
-    await page.waitForFunction(() => !!(window as any).term?.element);
+    await page.waitForFunction(() => !!(window as any).term?.native?.element);
     if (!delaySnapshot && !pageHidden) await page.waitForFunction(() => !(window as any).term.options.disableStdin);
     await page.evaluate(() => (window as any).frames());
     return page;
@@ -114,7 +96,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       const fits = () =>
         page.evaluate(() => {
           const host = document.querySelector('.term-host')!.getBoundingClientRect();
-          const screen = document.querySelector('.xterm-screen')!.getBoundingClientRect();
+          const screen = document.querySelector('.term-grid')!.getBoundingClientRect();
           return screen.right <= host.right - 4 && screen.bottom <= host.bottom - 4 ? true : { host: host.toJSON(), screen: screen.toJSON() };
         });
       assert.equal(await fits(), true, 'last row and column must stay inside the padded host');
@@ -333,7 +315,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       const w = window as any;
       await new Promise<void>((resolve) => w.term.write(Array.from({ length: 100 }, (_, i) => `history ${i}\r\n`).join(''), resolve));
       await new Promise(requestAnimationFrame);
-      w.term.scrollToTop();
+      w.term.native.element.scrollTop = 0;
     });
     await page.waitForFunction(() => {
       const b = (window as any).term.buffer.active;

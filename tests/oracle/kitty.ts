@@ -10,10 +10,10 @@ import {
   KittyKeyboardState,
   type DecodedPlaceholder,
   type KittyKeyEvent,
-} from '../shared/kitty';
-import type { KeyAction } from '../shared/csi-enter';
-import { pixelScrollOf } from './term-pixel-scroll';
-import { createKittyOverlay, type KittyTerminalOptions } from './term-kitty-overlay';
+} from '../../src/shared/kitty';
+import type { KeyAction } from '../../src/shared/csi-enter';
+import { pixelScrollOf } from '../../src/client/term-pixel-scroll';
+import { createKittyOverlay, type KittyTerminalOptions } from '../../src/client/term-kitty-overlay';
 export {
   decodeScreenBitmap,
   hitTestKittyRect,
@@ -27,7 +27,7 @@ export {
   type KittyShellState,
   type ExpandedKittyImage,
   type KittyTerminalOptions,
-} from './term-kitty-overlay';
+} from '../../src/client/term-kitty-overlay';
 const ALT_BUFFER_MODES = [47, 1047, 1049];
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 /** Width-1 plain ASCII `' '` content word in xterm's `BufferLine._data`, avoiding DOM-renderer negative letter-spacing on `U+10EEEE`. */

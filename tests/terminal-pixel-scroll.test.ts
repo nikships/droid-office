@@ -7,7 +7,7 @@ import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '
 
 const status = browserStatus();
 
-test('terminal scrollback moves by pixels with everything drawn on it lined up', { skip: status.installed ? false : `Chromium is not installed in ${status.path}` }, async (t) => {
+test('the Android xterm pixel scroller keeps rendered rows, selection, links and images aligned', { skip: status.installed ? false : `Chromium is not installed in ${status.path}` }, async (t) => {
   const browser = await launchBrowser();
   t.after(closeBrowser);
   const context = await newIsolatedContext(browser);
@@ -15,11 +15,10 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
   const bundle = buildSync({
     stdin: {
       contents:
-        "export { openTerminal, routeTerminalMessage } from './src/client/ui/terminal'; export { pixelScrollOf, SETTLE_DELAY_MS, SETTLE_MS } from './src/client/term-pixel-scroll'; export { store } from './src/client/state'; export { Terminal } from '@xterm/xterm';",
+        "export { attachKittyTerminal } from './tests/oracle/kitty'; export { TerminalPathLinksAddon } from './tests/oracle/paths'; export { attachPixelScroll, pixelScrollOf, SETTLE_DELAY_MS, SETTLE_MS } from './src/client/term-pixel-scroll'; export { Terminal } from '@xterm/xterm';",
       resolveDir: fileURLToPath(new URL('..', import.meta.url)),
     },
     bundle: true,
-    external: ['*/wterm-runtime'], // This stand-alone xterm fixture has no Vite asset server.
     format: 'iife',
     globalName: 'TerminalUI',
     write: false,
@@ -38,22 +37,14 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
       assert.deepEqual(errors, []);
     });
     await page.setContent('<!doctype html><div id="mount"></div><div id="modal-root"></div>');
-    await page.addStyleTag({ content: `${css}${xtermCss} body { margin: 0 }` });
+    await page.addStyleTag({ content: `${css}${xtermCss} body { margin: 0 } .term-kitty-layer {position:absolute;inset:0;pointer-events:none}` });
     await page.addScriptTag({ content: bundle });
     await page.evaluate(() => {
       const w = window as any;
-      const { Terminal, store, openTerminal, routeTerminalMessage } = w.TerminalUI;
-      const open = Terminal.prototype.open;
-      Terminal.prototype.open = function (host: HTMLElement) {
-        w.term = this;
-        open.call(this, host);
-      };
+      const { Terminal, attachKittyTerminal, TerminalPathLinksAddon, attachPixelScroll } = w.TerminalUI;
       const mount = document.getElementById('mount')!;
       mount.style.width = '800px';
       mount.style.height = '420px';
-      const worker = { id: 'pixel', name: 'Pixel', kind: 'agent', color: '#89d9ed', status: 'idle', cols: 100, rows: 20, open: false };
-      store.floor = 'floor';
-      store.workers.set(worker.id, worker);
       w.messages = [];
       w.opened = [];
       // Every path the terminal asks about exists, as itself.
@@ -67,21 +58,6 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
         }
         return realFetch(url, init);
       }) as typeof fetch;
-      w.net = {
-        up: true,
-        send(msg: any) {
-          w.messages.push(msg);
-          if (msg.t === 'worker.attach') queueMicrotask(() => routeTerminalMessage({ t: 'term.snapshot', workerId: worker.id, data: '', cols: worker.cols, rows: worker.rows, shared: false }));
-          if (msg.t === 'term.resize') queueMicrotask(() => store.apply({ t: 'worker.update', worker: { ...worker, cols: msg.cols, rows: msg.rows } }));
-          return true;
-        },
-        async request() {
-          return { ok: true };
-        },
-        onStatus() {
-          return () => {};
-        },
-      };
       w.feed = (data: string) => new Promise<void>((resolve) => w.term.write(data, resolve));
       w.lines = (from: number, count: number) => Array.from({ length: count }, (_, i) => `line ${from + i} src/file-${from + i}.ts`).join('\r\n');
       // An opaque red picture, for a Kitty image the test can find by its pixels.
@@ -114,7 +90,14 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
         return null;
       };
       w.expected = (line: number) => w.term.buffer.active.getLine(line)?.translateToString(true) ?? null;
-      w.handle = openTerminal(w.net, worker.id, undefined, undefined, { mount, focus: false, hideTeam: true });
+      const term = (w.term = new Terminal({ allowProposedApi: true, smoothScrollDuration: 125, fontSize: 14, lineHeight: 1.1, cols: 80, rows: 20 }));
+      attachKittyTerminal(term, { onExpandImage() {} });
+      term.loadAddon(new TerminalPathLinksAddon({ floor: 'floor', workerId: 'pixel' }));
+      term.open(mount);
+      const scroll = attachPixelScroll(term);
+      term.attachCustomKeyEventHandler((e: KeyboardEvent) => !scroll.handleKey(e));
+      term.onData((data: string) => w.messages.push({ t: 'term.input', data }));
+      new ResizeObserver(() => term.resize(80, Math.max(2, Math.floor(mount.clientHeight / w.cellH())))).observe(mount);
     });
     await page.waitForFunction(() => !!(window as any).term?.element && !(window as any).term.options.disableStdin);
     await page.evaluate(async () => {

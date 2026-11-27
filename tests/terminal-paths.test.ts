@@ -8,7 +8,7 @@ import { test, type TestContext } from 'node:test';
 import headless from '@xterm/headless';
 import unicode11 from '@xterm/addon-unicode11';
 import type { IBuffer, ILink, ILinkProvider, Terminal } from '@xterm/xterm';
-import { TerminalPathLinksAddon, terminalLogicalLine } from '../src/client/ui/terminal-path-links.js';
+import { TerminalPathLinksAddon, terminalLogicalLine } from './oracle/paths.js';
 import { threadFileImageUrl, threadFilePreviewUrl } from '../src/client/ui/file-preview.js';
 import { createFloorHttp, isFloorHttpPath } from '../src/server/server-runtime/floor-http.js';
 import { openTerminalFile, REVEAL_ONLY_EXTENSIONS, revealOnly, TerminalPaths } from '../src/server/terminal-paths.js';

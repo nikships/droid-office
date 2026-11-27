@@ -1,3 +1,4 @@
+import './term-engine/warm';
 import './scrollbars';
 import type { ClientMsg, WorkerInfo } from '../shared/protocol';
 import { cardsNewestFirst, cardChanged, OWNER } from '../shared/whiteboard';
@@ -2165,7 +2166,7 @@ window.addEventListener(
 function sideKeys(e: KeyboardEvent) {
   if (!authorized || modalOpen() || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   const t = e.target as HTMLElement | null;
-  if (t?.closest('input, textarea, select, [contenteditable], .xterm, [role=separator], [role=radiogroup]')) return;
+  if (t?.closest('input, textarea, select, [contenteditable], .office-wterm, [role=separator], [role=radiogroup]')) return;
   const rows = [...missionRoster.visible(), ...roster.visible().map((w) => ({ id: w.id, button: roster.button(w.id), opens: true }))];
   const go = (direction: -1 | 1) => {
     const row = sideStep(rows, t, focusedWorker(ws) ?? '', direction);

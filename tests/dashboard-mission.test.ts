@@ -278,7 +278,7 @@ test('Mission Control pins the building’s agents in the sidebar and opens the 
   await page.evaluate(() => (window as any).paintPane('bot-claw', 'terminal'));
   assert.equal(await pane.getAttribute('data-mode'), 'info');
   assert.match(await pane.locator('.dash-bot').innerText(), /runs externally[\s\S]*Last used[\s\S]*2m ago[\s\S]*Nibble/);
-  assert.equal(await pane.locator('.xterm').count(), 0);
+  assert.equal(await pane.locator('.office-wterm').count(), 0);
   await pane.locator('.dash-bot-member').click();
   assert.ok((await page.evaluate(() => (window as any).calls)).some((c: any) => c[0] === 'across' && c[1] === 'w-nib' && c[2] === 'f-api'));
   assert.equal(

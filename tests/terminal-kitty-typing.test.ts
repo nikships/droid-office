@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { buildSync } from 'esbuild';
+import { terminalFixture } from './helpers/terminal-fixture.js';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 
 const status = browserStatus();
@@ -11,30 +10,18 @@ test('worker terminals type Space and Shift+letters once Droid enables Kitty key
   t.after(closeBrowser);
   const context = await newIsolatedContext(browser);
   t.after(() => context.close());
-  const bundle = buildSync({
-    stdin: {
-      contents: "export { openTerminal, routeTerminalMessage } from './src/client/ui/terminal'; export { store } from './src/client/state'; export { Terminal } from '@xterm/xterm';",
-      resolveDir: fileURLToPath(new URL('..', import.meta.url)),
-    },
-    bundle: true,
-    external: ['*/wterm-runtime'], // This stand-alone xterm fixture has no Vite asset server.
-    format: 'iife',
-    globalName: 'TerminalUI',
-    write: false,
-    target: 'es2022',
-  }).outputFiles[0].text;
+  const mountFixture = await terminalFixture(t);
   const page = await context.newPage();
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.setContent('<!doctype html><div id="mount" style="width:600px;height:350px"></div><div id="modal-root"></div>');
-  await page.addScriptTag({ content: bundle });
+  await mountFixture(page, '<div id="mount" style="width:600px;height:350px"></div><div id="modal-root"></div>');
   await page.evaluate(() => {
     const w = window as any;
     const { Terminal, store, openTerminal, routeTerminalMessage } = w.TerminalUI;
     const open = Terminal.prototype.open;
     Terminal.prototype.open = function (host: HTMLElement) {
       w.term = this;
-      open.call(this, host);
+      return open.call(this, host);
     };
     const worker = { id: 'pixel', name: 'Pixel', kind: 'agent', color: '#89d9ed', status: 'idle', cols: 80, rows: 20, open: true };
     store.workers.set(worker.id, worker);
@@ -58,7 +45,7 @@ test('worker terminals type Space and Shift+letters once Droid enables Kitty key
         .join('');
     w.handle = openTerminal(w.net, worker.id, undefined, undefined, { mount: document.getElementById('mount'), focus: true });
   });
-  await page.waitForFunction(() => !!(window as any).term?.element && !(window as any).term.options.disableStdin);
+  await page.waitForFunction(() => !!(window as any).term?.native?.element && !(window as any).term.options.disableStdin);
   await page.evaluate(() => (window as any).term.focus());
   await page.waitForFunction(() => (window as any).term.textarea === document.activeElement);
 

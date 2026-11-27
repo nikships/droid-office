@@ -651,15 +651,14 @@ test('production dashboard has a public data-free bootstrap, gated APIs and no 3
     modules.filter((id) => /\/node_modules\/three\/|\/client\/(?:office-map|main|automation|shader-warmup)\.ts|\/client\/world\/(?!glyph\.ts)/.test(id)),
     [],
   );
-  const cold = new Set<string>();
-  const initial = (name: string) => {
-    if (cold.has(name)) return;
-    cold.add(name);
-    for (const next of chunks.get(name)?.imports ?? []) initial(next);
-  };
-  initial(entry.fileName);
-  const coldModules = [...cold].flatMap((name) => Object.keys(chunks.get(name)?.modules ?? {}));
-  assert.ok(!coldModules.some((id) => id.includes('/node_modules/@xterm/xterm/')));
+  // Check every chunk: neither entry nor any lazy feature may ship xterm.
+  const allModules = [...chunks.values()].flatMap((chunk) => Object.keys(chunk.modules));
+  assert.ok(allModules.some((id) => id.includes('/@wterm/dom/')));
+  assert.ok(allModules.some((id) => id.includes('/@wterm/ghostty/')));
+  assert.deepEqual(
+    allModules.filter((id) => id.includes('/@xterm/') || id.endsWith('/term-pixel-scroll.ts')),
+    [],
+  );
 });
 
 test('browser pairing preserves phone flow, refuses foreign origins and local management, survives restart and revokes active sockets', async (t) => {

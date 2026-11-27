@@ -1,6 +1,8 @@
-import { SETTLE_DELAY_MS, SETTLE_MS } from '../term-pixel-scroll';
-import { SCROLLBAR_HIDE_MS } from '../term-scrollbar';
 import type { WTermAdapter } from './wterm';
+
+const SETTLE_DELAY_MS = 160;
+const SETTLE_MS = 120;
+const SCROLLBAR_HIDE_MS = 700;
 
 export function attachWtermScroll(adapter: WTermAdapter) {
   let handleKey = (_event: KeyboardEvent) => false;

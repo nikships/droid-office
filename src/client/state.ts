@@ -602,7 +602,7 @@ export class Store {
             const wid = msg.workerId;
             const pendingKey = `${wid}:${id}`;
             this.pendingImageSigs.set(pendingKey, sig);
-            import('./term-kitty')
+            import('./term-kitty-overlay')
               .then(({ decodeScreenBitmap }) => decodeScreenBitmap(img))
               .then((bmp) => {
                 if (!bmp) return;

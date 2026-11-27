@@ -27,7 +27,7 @@ import {
   themePreview,
 } from '../src/shared/companion-themes.js';
 import { APPEARANCE_DEFAULTS, backdropPicture, normalizeAppearancePrefs } from '../src/client/ui/companion-theme.js';
-import { TERM_THEME, onTermTheme, setTermThemeColors, termTheme, termThemeTransparent } from '../src/client/term-theme.js';
+import { TERM_THEME, onTermTheme, setTermThemeColors, termTheme } from '../src/client/term-theme.js';
 
 const PUBLIC = new URL('../src/client/public/', import.meta.url);
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -274,7 +274,6 @@ test('terminals keep TERM_THEME until a theme retints them over a transparent gr
   const off = onTermTheme(() => heard++);
   const colors = companionTerminalColors(companionTheme('nightly-orbit'));
   setTermThemeColors(colors);
-  assert.equal(termThemeTransparent(), true);
   assert.deepEqual(termTheme(), { ...TERM_THEME, ...colors, background: 'rgba(0, 0, 0, 0)' });
   assert.equal(termTheme().red, TERM_THEME.red, 'agents keep their ANSI colors');
   setTermThemeColors(null);

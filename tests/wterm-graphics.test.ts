@@ -20,11 +20,12 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
   const server = await createServer({
     root: fileURLToPath(new URL('../src/client', import.meta.url)),
     configFile: false,
+    resolve: { alias: { '/oracle': fileURLToPath(new URL('./oracle', import.meta.url)) } },
     cacheDir,
     logLevel: 'error',
     appType: 'custom',
     server: { host: '127.0.0.1', port: 0, hmr: false },
-    optimizeDeps: { noDiscovery: true, include: ['@wterm/dom', '@wterm/ghostty', '@xterm/xterm', '@xterm/addon-fit'] },
+    optimizeDeps: { noDiscovery: true, include: ['@wterm/dom', '@wterm/ghostty', '@xterm/xterm'] },
   });
   t.after(async () => {
     await server.close();
@@ -45,12 +46,12 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
   await page.goto(`http://127.0.0.1:${addr.port}/fixture`);
   await page.addStyleTag({ url: '/style.css?direct' });
   await page.evaluate(async () => {
-    const modules = ['/term-engine/index.ts', '/term-engine/wterm-graphics.ts', '/term-kitty.ts'];
-    const [{ createTerminalEngine }, { attachWtermGraphics }, { attachKittyTerminal }] = await Promise.all(modules.map((m) => import(m)));
+    const modules = ['/oracle/terminal.ts', '/term-engine/wterm-graphics.ts', '/oracle/kitty.ts'];
+    const [{ comparisonTerminal }, { attachWtermGraphics }, { attachKittyTerminal }] = await Promise.all(modules.map((m) => import(m)));
     const win = window as any;
     const opts = { fontSize: 16, fontFamily: 'monospace', scrollback: 100, allowProposedApi: true };
-    const w = (win.wt = createTerminalEngine(opts, 'ghostty').term);
-    const x = (win.xt = createTerminalEngine(opts, 'xterm').term);
+    const w = (win.wt = comparisonTerminal(opts, 'ghostty'));
+    const x = (win.xt = comparisonTerminal(opts, 'xterm'));
     win.expandImage = async (img: { imageId: number; blob: Blob }) => {
       const bmp = await createImageBitmap(img.blob);
       win.expanded = [img.imageId, bmp.width, bmp.height];
@@ -342,6 +343,7 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
     });
     await both(1, 1, red);
     const row = page.locator('#w .term-row').filter({ hasText: 'START' }).first();
+    await row.waitFor({ state: 'visible' });
     const rect = await row.boundingBox();
     assert.ok(rect);
     await page.mouse.move(rect.x + 1, rect.y + rect.height / 2);

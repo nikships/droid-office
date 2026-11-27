@@ -40,7 +40,7 @@ export default async (helpers) => {
 
   const opened = await js(() => window.office.interact('E'));
   if (opened.terminal?.workerId !== worker.id) throw new Error(`E opened ${JSON.stringify(opened.terminal)}, not ${worker.name}'s terminal`);
-  await waitFor((m) => (document.querySelector('.xterm-rows')?.textContent ?? '').includes(m), marker, 15_000);
+  await waitFor((m) => (document.querySelector('.office-wterm .term-grid')?.textContent ?? '').includes(m), marker, 15_000);
   step('terminal shows output', { terminal: opened.terminal, modals: opened.modals });
   await shot('04-terminal');
   await js(() => window.office.closeAll());

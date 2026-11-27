@@ -25,7 +25,7 @@ export default async (helpers) => {
   const code = await waitForProbe(status, (value) => /^\d{3}$/.test(value));
   log(`step shell MCP call answered ${code || 'nothing'}`);
   await js(() => window.office.interact('E'));
-  await waitFor(() => (document.querySelector('.xterm-rows')?.textContent ?? '').includes('/office/mcp'), undefined, 10_000);
+  await waitFor(() => (document.querySelector('.office-wterm .term-grid')?.textContent ?? '').includes('/office/mcp'), undefined, 10_000);
   await shot('01-shell-mcp-call');
 
   await sendShellHome(helpers, worker);

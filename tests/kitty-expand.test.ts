@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { buildSync } from 'esbuild';
+import { terminalFixture } from './helpers/terminal-fixture.js';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
-import { hitTestKittyRect, isKittyModClick, isKittyPlainPress, isNormalKittyShell, kittyPlacementBounds, shouldExpandKittyClick, type DrawnKittyRect } from '../src/client/term-kitty.js';
+import { hitTestKittyRect, isKittyModClick, isKittyPlainPress, isNormalKittyShell, kittyPlacementBounds, shouldExpandKittyClick, type DrawnKittyRect } from '../src/client/term-kitty-overlay.js';
 import { KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
 
 test('pure Kitty image hit-testing, placement bounds and click rules', () => {
@@ -85,27 +84,13 @@ test('Kitty terminal images expand on hover button, Cmd/Ctrl+click, and normal-s
   const context = await newIsolatedContext(browser);
   t.after(() => context.close());
 
-  const bundle = buildSync({
-    stdin: {
-      contents: "export { openTerminal, openOfficeShell, routeTerminalMessage } from './src/client/ui/terminal'; export { store } from './src/client/state'; export { Terminal } from '@xterm/xterm';",
-      resolveDir: fileURLToPath(new URL('..', import.meta.url)),
-    },
-    bundle: true,
-    external: ['*/wterm-runtime'], // This stand-alone xterm fixture has no Vite asset server.
-    format: 'iife',
-    globalName: 'TerminalUI',
-    write: false,
-    target: 'es2022',
-  }).outputFiles[0].text;
+  const mountFixture = await terminalFixture(t);
 
   const page = await context.newPage();
   await page.setViewportSize({ width: 960, height: 640 });
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.addStyleTag({ path: fileURLToPath(new URL('../src/client/style.css', import.meta.url)) });
-  await page.setContent('<!doctype html><div id="mount" style="width:720px;height:420px"></div><div id="toasts" data-single></div><div id="modal-root"></div>');
-  await page.addStyleTag({ path: fileURLToPath(new URL('../src/client/style.css', import.meta.url)) });
-  await page.addScriptTag({ content: bundle });
+  await mountFixture(page, '<div id="mount" style="width:720px;height:420px"></div><div id="toasts" data-single></div><div id="modal-root"></div>');
 
   // 2x2 red RGBA frame 0 (`#ff0000ff`) and 2x2 blue RGBA frame 1 (`#0000ffff`).
   const redRgba = Buffer.from([255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255]).toString('base64');
@@ -120,7 +105,7 @@ test('Kitty terminal images expand on hover button, Cmd/Ctrl+click, and normal-s
     const open = Terminal.prototype.open;
     Terminal.prototype.open = function (host: HTMLElement) {
       w.term = this;
-      open.call(this, host);
+      return open.call(this, host);
     };
     const worker = { id: 'sprocket', name: 'Sprocket', kind: 'shell', color: '#89d9ed', status: 'idle', cols: 80, rows: 24, open: true };
     store.workers.set(worker.id, worker);
@@ -163,7 +148,7 @@ test('Kitty terminal images expand on hover button, Cmd/Ctrl+click, and normal-s
   });
 
   const imgCenter = await page.evaluate(() => {
-    const screen = document.querySelector('.xterm-screen')!.getBoundingClientRect();
+    const screen = document.querySelector('.wterm-kitty-screen')!.getBoundingClientRect();
     return { x: screen.left + 20, y: screen.top + 20 };
   });
 
@@ -171,7 +156,7 @@ test('Kitty terminal images expand on hover button, Cmd/Ctrl+click, and normal-s
   await page.mouse.move(imgCenter.x, imgCenter.y);
   const hoverState = await page.evaluate(() => {
     const btn = document.querySelector<HTMLButtonElement>('.term-kitty-expand');
-    const screen = document.querySelector('.xterm-screen')!;
+    const screen = document.querySelector('.wterm-kitty-screen')!;
     return {
       visible: !!btn && !btn.hidden,
       title: btn?.title ?? '',

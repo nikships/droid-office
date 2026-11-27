@@ -1,4 +1,3 @@
-@import '@xterm/xterm/css/xterm.css';
 
 /* Geist and Geist Mono, bundled locally (public/fonts, SIL OFL — see fonts/OFL-LICENSE.txt). */
 @font-face {
@@ -130,31 +129,6 @@ input[type=checkbox]:disabled, input[type=radio]:disabled { cursor: default; }
 @supports not selector(::-webkit-scrollbar) {
   * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
   .user-scrolling { scrollbar-color: var(--accent) transparent; }
-}
-
-/* Terminal scrollbar (term-scrollbar.ts): keep xterm's right-edge hit area,
-   hide it immediately whenever there is no scrollback, and paint a minimal
-   neutral hairline pill only on actual user scroll or direct rail hover/drag. */
-.xterm .xterm-viewport { scrollbar-width: none; }
-.xterm .xterm-viewport::-webkit-scrollbar { display: none; }
-.xterm .xterm-scrollable-element > .scrollbar,
-.xterm .xterm-scrollable-element > .scrollbar.vertical { opacity: 0; pointer-events: none; background: transparent; transition: none; }
-.xterm.term-scrollable .xterm-scrollable-element > .scrollbar.vertical { pointer-events: auto; z-index: 11; transition: opacity 280ms var(--ease); }
-.xterm.term-scrollable.term-scrollbar-quiet .xterm-scrollable-element > .scrollbar.vertical { transition: none; }
-.xterm.term-scrollable.term-scrolling .xterm-scrollable-element > .scrollbar.vertical,
-.xterm.term-scrollable.term-scrollbar-drag .xterm-scrollable-element > .scrollbar.vertical,
-.xterm.term-scrollable .xterm-scrollable-element > .scrollbar.vertical:hover { opacity: 1; transition: opacity 120ms ease-out; }
-.xterm .xterm-scrollable-element > .scrollbar > .slider { background: transparent !important; cursor: pointer; }
-.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider::before { content: ''; position: absolute; inset: 2px 3px 2px auto; width: 3px; border-radius: 999px; background: rgba(255, 255, 255, .22); transition: width 140ms var(--ease), background-color 140ms var(--ease); }
-.xterm.term-scrollable .xterm-scrollable-element > .scrollbar.vertical:hover > .slider::before { width: 5px; background: rgba(255, 255, 255, .42); }
-.xterm.term-scrollable.term-scrollbar-drag .xterm-scrollable-element > .scrollbar.vertical > .slider::before,
-.xterm.term-scrollable .xterm-scrollable-element > .scrollbar.vertical > .slider.active::before { width: 5px; background: rgba(255, 255, 255, .58); }
-@media (prefers-reduced-motion: reduce) {
-  .xterm.term-scrollable .xterm-scrollable-element > .scrollbar.vertical,
-  .xterm.term-scrollable.term-scrolling .xterm-scrollable-element > .scrollbar.vertical,
-  .xterm.term-scrollable.term-scrollbar-drag .xterm-scrollable-element > .scrollbar.vertical,
-  .xterm.term-scrollable .xterm-scrollable-element > .scrollbar.vertical:hover,
-  .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider::before { transition: none; }
 }
 
 #app { position: fixed; inset: 0; }
@@ -858,13 +832,6 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .modal.term.inline { width: 100%; height: 100%; max-height: none; flex: 1; min-height: 0; border: 0; border-radius: 0; box-shadow: none; animation: none; }
 .modal.term header { background: var(--surface); }
 .modal.term .term-host { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: #000000; }
-.modal.term .term-host .xterm { height: 100%; padding: 8px 4px 4px 10px; }
-.xterm .xterm-screen canvas.term-kitty-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
-.xterm .xterm-screen.term-kitty-clickable, .xterm .xterm-scrollable-element.term-kitty-clickable { cursor: zoom-in; }
-.xterm .xterm-screen .term-kitty-expand { position: absolute; z-index: 3; width: 26px; height: 26px; padding: 0; display: grid; place-items: center; border: 1px solid var(--border-strong); border-radius: var(--radius); background: rgba(14, 14, 16, .86); backdrop-filter: blur(6px); color: var(--text-secondary); cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); transition: background 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out; }
-.xterm .xterm-screen .term-kitty-expand:hover { background: var(--surface-hover); border-color: var(--accent); color: var(--text); }
-.xterm .xterm-screen .term-kitty-expand:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
-.xterm .xterm-screen .term-kitty-expand[hidden] { display: none; }
 .modal.term .term-team { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
 /* A cloud worker's window (ui/factory-cloud.ts): the terminal window's frame around its Factory session */
 .modal.term.cloud-win { width: min(900px, 100%); height: min(640px, calc(100vh - 32px)); background: var(--surface); }
@@ -2423,9 +2390,8 @@ body.themed { background: transparent; }
 .themed .dash-pane[data-mode=terminal] { background: var(--th-term); }
 /* A pane's terminal is an inline .modal.term: the pane's glass is its ground, so nothing under the text paints over it. */
 .themed .modal.term.inline { background: transparent; backdrop-filter: none; }
-.themed .modal.term .term-host, .themed .xterm .xterm-viewport { background: transparent; }
+.themed .modal.term .term-host { background: transparent; }
 .themed .changes-log { background: transparent; }
-.themed .xterm .composition-view { background: var(--bg); }
 .themed .dash-pane-drop { background: color-mix(in srgb, var(--bg) 82%, transparent); }
 .themed .dash-empty > .btn:not(.accent) { border-color: var(--border-strong); color: var(--text); }
 .themed .dash-pick { background: var(--th-hover); }

@@ -147,7 +147,6 @@ export const SETTINGS_CARDS = [
   { pane: 'thread', title: 'Tool calls', keywords: 'thread tool calls commands edits diffs expand open folded collapse conversation chat' },
   { pane: 'thread', title: 'Thinking', keywords: 'thread thinking thoughts reasoning hide hidden show expand open folded collapse conversation chat' },
   { pane: 'thread', title: 'Restore Thread defaults', keywords: 'thread reset restore defaults text font spacing width tools thinking' },
-  { pane: 'terminal', title: 'Terminal engine', keywords: 'terminal tty raw emulator xterm ghostty wasm' },
   { pane: 'terminal', title: 'Terminal text size', keywords: 'terminal tty raw text size font bigger smaller larger zoom px' },
   { pane: 'terminal', title: 'Line spacing', keywords: 'terminal tty line height spacing leading compact relaxed rows' },
   { pane: 'terminal', title: 'Cursor shape', keywords: 'terminal tty cursor style shape block bar beam underline caret' },

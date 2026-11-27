@@ -16,7 +16,7 @@ async function wasmBytes(cdp: CDPSession) {
   await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'measurement' });
   return Number(mem.result.value);
 }
-test('real wterm dev asset, same-view fallback and WASM disposal', { skip: status.installed ? false : `No Chromium in ${status.path}` }, async (t) => {
+test('real wterm dev asset, same-view retry and WASM disposal', { skip: status.installed ? false : `No Chromium in ${status.path}` }, async (t) => {
   const cacheDir = await mkdtemp(join(tmpdir(), 'office-ghostty-vite-'));
   const server = await createServer({
     root: fileURLToPath(new URL('../src/client', import.meta.url)),
@@ -43,9 +43,10 @@ test('real wterm dev asset, same-view fallback and WASM disposal', { skip: statu
   page.on('pageerror', (e) => errors.push(e.message));
   await page.route('**/fixture', (route) => route.fulfill({ contentType: 'text/html', body: '<button id="elsewhere">Other pane</button><div id="host"></div>' }));
   await page.goto(`http://127.0.0.1:${address.port}/fixture`);
-  await t.test('a failed Ghostty WASM request keeps the shell window and opens xterm once', async () => {
+  await t.test('blocked WASM leaves an inert shell and one toast; Retry opens the same window', async () => {
     const p = await context.newPage();
     await p.route('**/fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<div id="modal-root"></div><div id="toasts"></div>' }));
+    await p.addInitScript('window.__name = fn => fn');
     let blocked = 0;
     await p.route('**/*.wasm*', (r) => {
       blocked++;
@@ -53,57 +54,28 @@ test('real wterm dev asset, same-view fallback and WASM disposal', { skip: statu
     });
     await p.goto(page.url());
     await p.evaluate(async () => {
-      localStorage.setItem('droid-office.terminal', JSON.stringify({ engine: 'ghostty' }));
-      const url = '/ui/terminal.ts';
-      const { openOfficeShell } = await import(url);
-      openOfficeShell({ up: true, send: Boolean });
-      (window as any).shell = document.querySelector('.modal.term');
+      const url = '/ui/terminal.ts',
+        w = window as any;
+      w.messages = [];
+      (await import(url)).openOfficeShell({ up: true, send: (msg: unknown) => w.messages.push(msg) });
+      w.shell = document.querySelector('.modal.term');
     });
-    await p.locator('#toasts .toast').waitFor({ timeout: 8000 });
-    assert.ok(blocked);
-    assert.deepEqual(
-      await p.evaluate(() => [
-        (window as any).shell === document.querySelector('.modal.term'),
-        !!document.querySelector('.modal.term .xterm textarea'),
-        document.querySelectorAll('#toasts .toast').length,
-        document.querySelector('#toasts')?.textContent,
-      ]),
-      [true, true, 1, 'Ghostty could not load. Using xterm for this terminal.'],
-    );
-    await p.locator('.modal.term .close').click();
+    const retry = p.getByRole('button', { name: 'Retry' });
+    await retry.waitFor();
+    assert.equal(await p.locator('#toasts .toast').count(), 1);
+    assert.equal(await p.locator('.term-host textarea').count(), 0);
+    const requests = blocked;
+    assert.ok(requests);
+    await p.keyboard.type('not sent');
+    assert.equal(blocked, requests);
+    assert.deepEqual(await p.evaluate(() => (window as any).messages.filter((m: any) => m.t === 'shell.input' || m.t === 'shell.attach')), []);
     await p.unroute('**/*.wasm*');
-    await p.evaluate(async () => {
-      const url = '/ui/terminal.ts';
-      (await import(url)).openOfficeShell({ up: true, send: Boolean });
-    });
-    await p.locator('.modal.term .office-wterm textarea').waitFor();
-    assert.equal(await p.locator('.modal.term .xterm').count(), 0);
+    await retry.click();
+    await p.locator('.term-host .wterm textarea').waitFor({ state: 'attached' });
+    await p.waitForFunction(() => (window as any).messages.some((m: any) => m.t === 'shell.attach'));
+    assert.equal(await p.evaluate(() => (window as any).shell === document.querySelector('.modal.term')), true);
+    assert.equal(await retry.count(), 0);
     await p.close();
-  });
-  await t.test('a throw inside native open removes its root and falls back in the same shell', async () => {
-    const p = await context.newPage();
-    await p.route('**/fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<div id="modal-root"></div><div id="toasts"></div>' }));
-    await p.goto(page.url());
-    try {
-      await p.evaluate(async () => {
-        localStorage.setItem('droid-office.terminal', JSON.stringify({ engine: 'ghostty' }));
-        const get = HTMLCanvasElement.prototype.getContext;
-        HTMLCanvasElement.prototype.getContext = function (...args: Parameters<typeof get>) {
-          if (document.querySelector('.office-wterm')) {
-            HTMLCanvasElement.prototype.getContext = get;
-            throw Error('Canvas unavailable');
-          }
-          return get.apply(this, args);
-        } as typeof get;
-        const url = '/ui/terminal.ts';
-        (await import(url)).openOfficeShell({ up: true, send: Boolean });
-        (window as any).shell = document.querySelector('.modal.term');
-      });
-      await p.locator('.term-host .xterm textarea').waitFor({ state: 'attached', timeout: 3000 });
-      assert.deepEqual(await p.evaluate(() => [(window as any).shell === document.querySelector('.modal.term'), document.querySelectorAll('.office-wterm').length, document.querySelectorAll('#toasts .toast').length]), [true, 0, 1]);
-    } finally {
-      await p.close();
-    }
   });
   await t.test('display writes never forward a native DA reply as user input', async () => {
     assert.deepEqual(
@@ -122,6 +94,34 @@ test('real wterm dev asset, same-view fallback and WASM disposal', { skip: statu
       ['user'],
     );
   });
+  await t.test('idle warmup and concurrent panes share a single WASM request but not memory', async () => {
+    const p = await context.newPage();
+    await p.route('**/fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<div id="a"></div><div id="b"></div>' }));
+    let requests = 0;
+    p.on('response', (r) => {
+      if (r.headers()['content-type']?.startsWith('application/wasm')) requests++;
+    });
+    await p.goto(page.url());
+    const independent = await p.evaluate(async () => {
+      const runtime = '/term-engine/wterm-core.ts',
+        adapter = '/term-engine/wterm.ts';
+      const [{ warmWterm }, { WTermAdapter }] = await Promise.all([import(runtime), import(adapter)]);
+      const a = new WTermAdapter({}),
+        b = new WTermAdapter({});
+      try {
+        await Promise.all([warmWterm(), a.open(document.getElementById('a')), b.open(document.getElementById('b'))]);
+        a.write('A');
+        b.write('B');
+        return [a.core.getCell(0, 0).char, b.core.getCell(0, 0).char];
+      } finally {
+        a.dispose();
+        b.dispose();
+      }
+    });
+    assert.equal(requests, 1);
+    assert.deepEqual(independent, [65, 66]);
+    await p.close();
+  });
   await t.test('closing 30 panes releases every adapter and all pane WASM memory', async () => {
     const p = await context.newPage();
     await p.route('**/fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<div id="host"></div>' }));
@@ -136,14 +136,11 @@ test('real wterm dev asset, same-view fallback and WASM disposal', { skip: statu
     };
     const cycle = (n: number) =>
       p.evaluate(async (n) => {
-        const mod = '/term-engine/wterm.ts',
-          features = '/term-engine/features.ts';
-        const { WTermAdapter } = await import(mod),
-          { attachEngineFeatures } = await import(features);
+        const mod = '/term-engine/web-terminal.ts',
+          { createWebTerminal } = await import(mod);
         const refs = ((window as any).refs = [] as WeakRef<object>[][]);
         for (let i = 0; i < n; i++) {
-          const a = new WTermAdapter({ allowProposedApi: true });
-          attachEngineFeatures({ term: a, ghostty: a });
+          const { term: a } = createWebTerminal({});
           await a.open(document.getElementById('host'));
           refs.push([new WeakRef(a), new WeakRef(a.native)]);
           a.dispose();

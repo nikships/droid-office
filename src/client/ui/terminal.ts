@@ -1,12 +1,11 @@
 import type { TerminalFind } from '../term-engine/types';
 import { openTerminalRenderer } from './terminal-renderer';
-import { createTerminalEngine } from '../term-engine';
-import { attachEngineFeatures } from '../term-engine/features';
-import { TerminalPathLinksAddon } from './terminal-path-links';
+import { createWebTerminal } from '../term-engine/web-terminal';
+import { TerminalPaths } from './terminal-path-links';
 import type { Net } from '../net';
 import { store } from '../state';
 import { withToken } from '../token';
-import { onTermTheme, termTheme, termThemeTransparent } from '../term-theme';
+import { onTermTheme, termTheme } from '../term-theme';
 import { focusReports, suppressMirrorQueries, TerminalMirror } from '../term-mirror';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { orchestratorIcon } from './icons';
@@ -22,11 +21,11 @@ import { openForkWorker } from './fork-worker';
 import { creditsNote } from '../../shared/factory-sessions';
 import { DROP_MAX_BYTES, droppedPaths } from '../../shared/drops';
 import { loadFonts, TERM_FONT } from '../fonts';
-import type { ExpandedKittyImage } from '../term-kitty';
+import type { ExpandedKittyImage } from '../term-kitty-overlay';
 import { wantsCsiEnter } from '../term-keys';
 import { viewPicture } from './picture-viewer';
 import { onTermFontSize, setTermFontSize, stepTermFont, termFontSize, TERM_FONT_MAX, TERM_FONT_MIN } from './term-font';
-import { followTerminalPrefs, terminalOptions, terminalPrefs } from './terminal-prefs';
+import { followTerminalPrefs, terminalOptions } from './terminal-prefs';
 import { mountWorkerThread, type WorkerThread } from './worker-thread';
 
 function openKittyPicture(img: ExpandedKittyImage, about: string, isAlive: () => boolean, focusTerm: () => void, state: { modal: Modal | null }) {
@@ -236,6 +235,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       })();
   const disconnected = h('p.note.warn.hidden', { role: 'status' }, 'Disconnected. Terminal input is disabled until a fresh snapshot arrives.');
   const host = h('div.term-host', readOnly ? {} : { 'data-drop': 'Drop screenshots or files to put them in the terminal' });
+  host.dataset.workerId = workerId;
   const threadHost = canThread ? h('div.term-thread-host', { hidden: true }) : null;
   // A lead's subagents, or a subagent's lead and teammates: one click to the next terminal.
   const team = h('div.term-team.chips.hidden', { role: 'group', 'aria-label': 'Team' });
@@ -269,23 +269,29 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     else team.replaceChildren(h('span.term-team-label', {}, summary ?? ''), ...mates.map(chip));
   };
 
-  const pathLinks = new TerminalPathLinksAddon({ floor: () => store.floor ?? '', workerId, workerName: info.name, inert: readOnly });
-  let engine = createTerminalEngine(
+  const pathLinks = new TerminalPaths({ floor: () => store.floor ?? '', workerId, workerName: info.name, inert: readOnly });
+  const { term, features } = createWebTerminal(
     {
       ...terminalOptions(),
       fontFamily: TERM_FONT,
       fontSize: termFontSize(),
       theme: termTheme(),
-      allowTransparency: termThemeTransparent(),
       minimumContrastRatio: 4.5,
       disableStdin: true,
       scrollback: 5000,
-      allowProposedApi: true,
-      linkHandler: pathLinks.linkHandler,
     },
-    terminalPrefs().engine,
+    {
+      onExpandImage: (img) =>
+        openKittyPicture(
+          img,
+          store.worker(workerId)?.name ?? info.name,
+          () => alive,
+          () => term.focus(),
+          expanded,
+        ),
+    },
+    pathLinks,
   );
-  let { term } = engine;
   let opened = false;
   let alive = true;
   const expanded = { modal: null as Modal | null };
@@ -318,7 +324,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       return;
     }
     try {
-      const size = engine.proposeDimensions();
+      const size = term.proposeDimensions();
       if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
       // Match WorkerManager.resize's limits so the server can acknowledge the exact request.
       term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
@@ -384,84 +390,63 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   let pendingFind = find;
   let restoreReader: (() => void) | undefined;
 
-  const bindRenderer = () => {
-    const features = attachEngineFeatures(
-      engine,
-      {
-        onExpandImage: (img) =>
-          openKittyPicture(
-            img,
-            store.worker(workerId)?.name ?? info.name,
-            () => alive,
-            () => term.focus(),
-            expanded,
-          ),
-      },
-      pathLinks,
-    );
-    const offQueries = suppressMirrorQueries(term);
-    const mirror = new TerminalMirror(
-      term,
-      (snapshot) => {
-        adoptSharedSize = snapshot.shared ?? adoptSharedSize;
-        const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
-        if (focusIn && !readOnly) net.send({ t: 'term.input', workerId, data: focusIn });
-        lastSentSize = '';
-        pendingSizes.length = 0;
-        term.options.disableStdin = readOnly || !net.up;
-        disconnected.classList.add('hidden');
-        sendSize();
-        if (restoreReader && !pendingFind) restoreReader();
-        else features.scrollAtOnce(() => term.scrollToBottom());
-        restoreReader = undefined;
-        refresh();
-        if (pendingFind) jumpTo(pendingFind);
-        pendingFind = undefined;
-      },
-      () => net.send({ t: 'worker.attach', workerId }),
-    );
-    const offPrefs = followTerminalPrefs(term, {
-      resized: () => {
-        paneSizeChanged = true;
-        sendSize();
-      },
-    });
-    term.attachCustomKeyEventHandler((e) => {
-      if (e.ctrlKey && e.key === ']' && (!inline || inline.onLeave)) {
-        if (e.type === 'keydown') {
-          if (inline) inline.onLeave?.();
-          else modal.close();
-        }
-        return false;
-      }
-      if (!inline && e.key === 'Escape' && e.shiftKey) return false;
-      const action = features.keyAction(e, csiEnter());
-      if (action.do === 'default') return !features.handleKey(e);
-      if (action.do === 'send') {
-        e.preventDefault();
-        term.input(action.data);
+  const offQueries = suppressMirrorQueries(term);
+  const mirror = new TerminalMirror(
+    term,
+    (snapshot) => {
+      adoptSharedSize = snapshot.shared ?? adoptSharedSize;
+      const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
+      if (focusIn && !readOnly) net.send({ t: 'term.input', workerId, data: focusIn });
+      lastSentSize = '';
+      pendingSizes.length = 0;
+      term.options.disableStdin = readOnly || !net.up;
+      disconnected.classList.add('hidden');
+      sendSize();
+      if (restoreReader && !pendingFind) restoreReader();
+      else features.scrollAtOnce(() => term.scrollToBottom());
+      restoreReader = undefined;
+      refresh();
+      if (pendingFind) jumpTo(pendingFind);
+      pendingFind = undefined;
+    },
+    () => net.send({ t: 'worker.attach', workerId }),
+  );
+  const offPrefs = followTerminalPrefs(term, {
+    resized: () => {
+      paneSizeChanged = true;
+      sendSize();
+    },
+  });
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.ctrlKey && e.key === ']' && (!inline || inline.onLeave)) {
+      if (e.type === 'keydown') {
+        if (inline) inline.onLeave?.();
+        else modal.close();
       }
       return false;
-    });
-    term.onData((data) => {
-      if (readOnly || !mirror.ready || !net.up) return;
-      const kind = focus.classify(data);
-      if (kind === 'repeat') return;
-      // Focus moving is not typing, so it leaves the shared PTY at its size.
-      if (kind === 'input') sendSize(true);
-      net.send({ t: 'term.input', workerId, data });
-    });
-    return {
-      features,
-      mirror,
-      unbind() {
-        offQueries();
-        offPrefs();
-        mirror.disconnect();
-      },
-    };
+    }
+    if (!inline && e.key === 'Escape' && e.shiftKey) return false;
+    const action = features.keyAction(e, csiEnter());
+    if (action.do === 'default') return !features.handleKey(e);
+    if (action.do === 'send') {
+      e.preventDefault();
+      term.input(action.data);
+    }
+    return false;
+  });
+  term.onData((data) => {
+    if (readOnly || !mirror.ready || !net.up) return;
+    const kind = focus.classify(data);
+    if (kind === 'repeat') return;
+    // Focus moving is not typing, so it leaves the shared PTY at its size.
+    if (kind === 'input') sendSize(true);
+    net.send({ t: 'term.input', workerId, data });
+  });
+  const unbind = () => {
+    offQueries();
+    offPrefs();
+    mirror.disconnect();
   };
-  let { features, mirror, unbind } = bindRenderer();
   // Keep a scrolled-up reader's exact history. Only a following companion terminal can discard
   // invisible output and return to the latest snapshot, without retaining an unbounded backlog.
   const visibility = () => {
@@ -476,7 +461,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   if (inline) document.addEventListener('visibilitychange', visibility);
   if (document.hidden) visibility();
   const onMsg = (msg: ServerMsg) => {
-    if (engine.ghostty && !opened) return;
+    if (!opened) return;
     if (msg.t === 'term.data' && msg.workerId === workerId) mirror.data(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === workerId) {
       term.options.disableStdin = true;
@@ -605,11 +590,11 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     } catch {}
     setThreadView = (next, focus = true) => {
       if (!thread || !threadHost) return;
-      if (!threadView && next === 'thread') restoreReader = term.saveReader?.();
+      if (!threadView && next === 'thread') restoreReader = term.saveReader();
       threadView = next === 'thread';
       threadHost.hidden = !threadView;
       host.hidden = threadView;
-      term.setRenderingPaused?.(threadView);
+      term.setRenderingPaused(threadView);
       threadButton?.classList.toggle('on', threadView);
       rawButton?.classList.toggle('on', !threadView);
       threadButton?.setAttribute('aria-pressed', String(threadView));
@@ -689,7 +674,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     void insertFiles([...e.dataTransfer!.files]);
   });
   // A picture on the clipboard with no text (a screenshot) pastes like a dropped file. Caught on the
-  // way down, before xterm would paste it as nothing.
+  // way down, before the renderer treats it as an empty text paste.
   host.addEventListener(
     'paste',
     (e) => {
@@ -703,22 +688,12 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   );
 
   refresh();
-  // xterm caches glyph widths when it opens. Opening after the shared font load prevents a
+  // The terminal measures glyphs when it opens. Opening after the shared font load prevents a
   // slow first visit from retaining fallback measurements even after the icons arrive.
   void loadFonts()
     .then(async () => {
       if (!alive) return;
-      await openTerminalRenderer(
-        engine,
-        host,
-        () => alive,
-        (replacement) => {
-          unbind();
-          engine = replacement;
-          term = engine.term;
-          ({ features, mirror, unbind } = bindRenderer());
-        },
-      );
+      await openTerminalRenderer(term, host, () => alive);
       if (!alive) return;
       opened = true;
       ro.observe(host);
@@ -764,22 +739,28 @@ export function openOfficeShell(net: Net) {
   const host = h('div.term-host', { 'data-drop': 'Drop screenshots or files to put them in the shell' });
   const el = h('div.modal.full.term', { role: 'dialog', 'aria-label': 'Shell' }, h('header', {}, colorDot('#8d99ae'), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom), closeBtn), host);
 
-  const pathLinks = new TerminalPathLinksAddon({ floor: () => store.floor ?? '', workerId: OFFICE_SHELL_ID });
-  let engine = createTerminalEngine(
+  const pathLinks = new TerminalPaths({ floor: () => store.floor ?? '', workerId: OFFICE_SHELL_ID });
+  const { term, features } = createWebTerminal(
     {
       ...terminalOptions(),
       fontFamily: TERM_FONT,
       fontSize: termFontSize(),
       theme: termTheme(),
-      allowTransparency: termThemeTransparent(),
       minimumContrastRatio: 4.5,
       scrollback: 5000,
-      allowProposedApi: true,
-      linkHandler: pathLinks.linkHandler,
     },
-    terminalPrefs().engine,
+    {
+      onExpandImage: (img) =>
+        openKittyPicture(
+          img,
+          'Shell',
+          () => shellAlive,
+          () => term.focus(),
+          expanded,
+        ),
+    },
+    pathLinks,
   );
-  let { term } = engine;
   let shellAlive = true;
   const expanded = { modal: null as Modal | null };
   let opened = false;
@@ -801,7 +782,7 @@ export function openOfficeShell(net: Net) {
       return;
     }
     try {
-      const size = engine.proposeDimensions();
+      const size = term.proposeDimensions();
       if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
       term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
     } catch {
@@ -816,76 +797,56 @@ export function openOfficeShell(net: Net) {
     }
   };
 
-  function bindRenderer() {
-    const features = attachEngineFeatures(
-      engine,
-      {
-        onExpandImage: (img) =>
-          openKittyPicture(
-            img,
-            'Shell',
-            () => shellAlive,
-            () => term.focus(),
-            expanded,
-          ),
-      },
-      pathLinks,
-    );
-    const offQueries = suppressMirrorQueries(term);
-    const mirror = new TerminalMirror(
-      term,
-      (snapshot) => {
-        shared = snapshot.shared === true;
-        const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
-        if (focusIn) net.send({ t: 'shell.input', data: focusIn });
-        ptyCols = snapshot.cols;
-        ptyRows = snapshot.rows;
-        lastSentSize = '';
-        pendingSizes.length = 0;
-        sendSize();
-        features.scrollAtOnce(() => term.scrollToBottom());
-      },
-      () => net.send({ t: 'shell.attach' }),
-    );
-    const offPrefs = followTerminalPrefs(term, {
-      resized: () => {
-        boxChanged = true;
-        sendSize();
-      },
-    });
-    term.attachCustomKeyEventHandler((e) => {
-      if (e.ctrlKey && e.key === ']') {
-        if (e.type === 'keydown') modal.close();
-        return false;
-      }
-      if (e.key === 'Escape' && e.shiftKey) return false;
-      const action = features.keyAction(e, false);
-      if (action.do === 'default') return !features.handleKey(e);
-      if (action.do === 'send') {
-        e.preventDefault();
-        term.input(action.data);
-      }
+  const offQueries = suppressMirrorQueries(term);
+  const mirror = new TerminalMirror(
+    term,
+    (snapshot) => {
+      shared = snapshot.shared === true;
+      const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
+      if (focusIn) net.send({ t: 'shell.input', data: focusIn });
+      ptyCols = snapshot.cols;
+      ptyRows = snapshot.rows;
+      lastSentSize = '';
+      pendingSizes.length = 0;
+      sendSize();
+      features.scrollAtOnce(() => term.scrollToBottom());
+    },
+    () => net.send({ t: 'shell.attach' }),
+  );
+  const offPrefs = followTerminalPrefs(term, {
+    resized: () => {
+      boxChanged = true;
+      sendSize();
+    },
+  });
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.ctrlKey && e.key === ']') {
+      if (e.type === 'keydown') modal.close();
       return false;
-    });
-    term.onData((data) => {
-      if (!mirror?.ready || !net.up) return;
-      const kind = focus.classify(data);
-      if (kind === 'repeat') return;
-      if (kind === 'input') sendSize(true);
-      net.send({ t: 'shell.input', data });
-    });
-    return {
-      mirror,
-      unbind() {
-        offQueries();
-        offPrefs();
-        mirror.disconnect();
-      },
-    };
-  }
-  let { mirror, unbind } = bindRenderer();
+    }
+    if (e.key === 'Escape' && e.shiftKey) return false;
+    const action = features.keyAction(e, false);
+    if (action.do === 'default') return !features.handleKey(e);
+    if (action.do === 'send') {
+      e.preventDefault();
+      term.input(action.data);
+    }
+    return false;
+  });
+  term.onData((data) => {
+    if (!mirror?.ready || !net.up) return;
+    const kind = focus.classify(data);
+    if (kind === 'repeat') return;
+    if (kind === 'input') sendSize(true);
+    net.send({ t: 'shell.input', data });
+  });
+  const unbind = () => {
+    offQueries();
+    offPrefs();
+    mirror.disconnect();
+  };
   const onMsg = (msg: ServerMsg) => {
-    if (engine.ghostty && !opened) return;
+    if (!opened) return;
     if (msg.t === 'term.data' && msg.workerId === OFFICE_SHELL_ID) mirror?.data(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === OFFICE_SHELL_ID) {
       shared = msg.shared === true;
@@ -971,7 +932,7 @@ export function openOfficeShell(net: Net) {
 
   let uploading = 0;
   const insertFiles = async (files: File[]) => {
-    if (!files.length) return;
+    if (!opened || !files.length) return;
     el.classList.toggle('uploading', ++uploading > 0);
     try {
       const paths = await Promise.all(files.map((f) => uploadDrop(OFFICE_SHELL_ID, f)));
@@ -1026,17 +987,7 @@ export function openOfficeShell(net: Net) {
   void loadFonts()
     .then(async () => {
       if (current?.modal !== modal) return;
-      await openTerminalRenderer(
-        engine,
-        host,
-        () => shellAlive,
-        (replacement) => {
-          unbind();
-          engine = replacement;
-          term = engine.term;
-          ({ mirror, unbind } = bindRenderer());
-        },
-      );
+      await openTerminalRenderer(term, host, () => shellAlive);
       if (!shellAlive) return;
       opened = true;
       ro.observe(host);

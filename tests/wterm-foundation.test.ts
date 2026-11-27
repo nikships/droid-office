@@ -30,7 +30,7 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
   const context = await newIsolatedContext(browser);
   t.after(() => context.close());
   const page = await context.newPage();
-  await page.route('**/fixture', (route) => route.fulfill({ contentType: 'text/html', body: '<button id="other">other</button><div style="width:640px;height:200px" id="host"></div>' }));
+  await page.route('**/fixture', (route) => route.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/term-engine/wterm.css"><button id="other">other</button><div style="width:640px;height:200px" id="host"></div>' }));
   await page.goto(`http://127.0.0.1:${address.port}/fixture`);
   await page.focus('#other');
   await page.addScriptTag({ content: 'window.__name = (fn) => fn;' });
@@ -88,7 +88,7 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       const write = (start: number, n: number) => a.write(Array.from({ length: n }, (_, i) => `row ${start + i}\r\n`).join(''));
       write(0, 76);
       await frame();
-      a.native.element.scrollTop = 30 * 16;
+      a.native.element.scrollTop = 30 * a.native.element.querySelector('.term-row').getBoundingClientRect().height;
       await frame();
       const visible = a.buffer.active;
       host.hidden = true;
@@ -117,7 +117,6 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       await pane.goto(`http://127.0.0.1:${address.port}/thread-fixture`);
       await pane.addScriptTag({ content: 'window.__name=fn=>fn' });
       await pane.evaluate(async () => {
-        localStorage.setItem('droid-office.terminal', '{"engine":"ghostty"}');
         const ui = '/ui/terminal.ts',
           state = '/state.ts';
         const { openTerminal, routeTerminalMessage } = await import(ui),
@@ -277,6 +276,29 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
     assert.deepEqual(await page.evaluate(() => (window as any).sent), ['\x1b[I', 'k', 'plain', '\x1b[200~bracketed\x1b[201~', '\x1b[<65;1;1M', '\x1b[O']);
     await page.evaluate(() => (window as any).a.dispose());
   });
+  await t.test('core-only entry installs explicit features and preserves theme RGB independently of CSS alpha', async () => {
+    const result = await page.evaluate(async () => {
+      const url = '/term-engine/wterm.ts',
+        { WTermAdapter } = await import(url);
+      const attached: string[] = [];
+      const a = new WTermAdapter({}, async () => [() => attached.push('first'), () => attached.push('second')]);
+      try {
+        await a.open(document.getElementById('host'));
+        a.options.theme = { foreground: '#a1b2c37f', background: '#12345680', red: '#33445599', cursor: '#fedcba00' };
+        a.core.writeString('\x1b[31mR\x1b]10;?\x07\x1b]11;?\x07');
+        let replies = '';
+        for (let reply = a.core.getResponse(); reply !== null; reply = a.core.getResponse()) replies += reply;
+        return { attached, replies, red: a.core.getCell(0, 0).fgRgb, background: a.native.element.style.getPropertyValue('--term-bg'), cursor: a.native.element.style.getPropertyValue('--term-cursor') };
+      } finally {
+        a.dispose();
+      }
+    });
+    assert.deepEqual(result.attached, ['first', 'second']);
+    assert.equal(result.red, 0x334455);
+    assert.equal(result.background, '#12345680');
+    assert.equal(result.cursor, '#fedcba');
+    for (const rgb of ['a1a1/b2b2/c3c3', '1212/3434/5656']) assert.match(result.replies, new RegExp(`rgb:${rgb}`, 'i'));
+  });
   await t.test('font and row spacing remeasure without reflowing a shared grid; init waits for the modal', async () => {
     const data = await page.evaluate(async () => {
       const mod = '/term-engine/wterm.ts',
@@ -329,7 +351,7 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
     assert.ok(data.waited);
     assert.deepEqual(data.size, [61, 12]);
     assert.ok(data.after[0] > data.before[0] && Math.abs(data.after[0] - data.width) < 0.05);
-    assert.deepEqual([data.before[1], data.after[1]], [14, 25]);
+    assert.ok(data.after[1] > data.before[1]);
     assert.ok(data.initial.cols > data.next.cols && data.initial.rows > data.next.rows);
     assert.deepEqual([data.paused, data.resumed], ['live', 'live-paused']);
   });

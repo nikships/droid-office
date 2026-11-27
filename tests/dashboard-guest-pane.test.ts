@@ -133,7 +133,7 @@ test('a share link’s view-only pane watches its worker without offering any wo
     assert.equal(await pane.getAttribute('data-mode'), 'thread');
     assert.equal(await pane.locator('.dash-pane-views:visible, .dash-pane-flip:visible').count(), 0);
     assert.equal(await pane.locator('button:has-text("Raw TTY"):visible, button:has-text("TTY"):visible').count(), 0);
-    assert.equal(await pane.locator('.xterm').count(), 0);
+    assert.equal(await pane.locator('.office-wterm').count(), 0);
   }
 
   // A question: the view-only pane says so and offers no way to answer; the write pane offers its answer button.

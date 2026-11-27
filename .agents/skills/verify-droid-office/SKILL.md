@@ -50,7 +50,7 @@ Verifies port != `4600`, process-group listener ownership, HTTP `200` on `/` and
 | Surface | Canonical selectors |
 | --- | --- |
 | 3D scene | `window.office.goTo(desk)`, `.interact('B' \| 'P' \| 'E' \| 'X')`, `.state().workers`, `.state().terminal`, `.state().modals` |
-| Office modals & terminal | `[role=dialog][aria-label="<title>"]`, `[role=alertdialog][aria-label="Send <name> home?"]`, `textarea[aria-label=Prompt]`, `button[type=submit]`, `.xterm-rows` |
+| Office modals & terminal | `[role=dialog][aria-label="<title>"]`, `[role=alertdialog][aria-label="Send <name> home?"]`, `textarea[aria-label=Prompt]`, `button[type=submit]`, `.office-wterm .term-grid` |
 | Web companion | `button.dash-row-open[data-worker="<worker id>"]` (`aria-label` carries name, status and task) |
 | Android (`uiautomator dump`) | `resource-id` tags from `android/app/src/main/java/ai/factory/droidoffice/core/Tags.kt` |
 | Marketing website | `section#top`, `#play`, `#tour`, `#agents`, `#pocket`, `#why`, `#workers`, `#install` + `#<id>-title` |

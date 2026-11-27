@@ -1,65 +1,28 @@
-import { WTerm } from '@wterm/dom';
 import './wterm.css';
-import { GhosttyCore } from '@wterm/ghostty';
-import wasmPath from '@wterm/ghostty/ghostty-vt.wasm?url';
-import { wtermAppearance } from './wterm-appearance';
-import { wtermHooks } from './wterm-hooks';
-import { attachWtermKeys } from './wterm-keys';
-import { attachWtermScroll } from './wterm-scroll';
-import { attachWtermGraphics } from './wterm-graphics';
-import { attachWtermLinks } from './wterm-links';
+import type { KittyTerminalOptions } from '../term-kitty-overlay';
+import type { TerminalPaths } from '../ui/terminal-path-links';
 import { scrollAtOnce } from '../ui/terminal-prefs';
-import type { WTermAdapter } from './wterm';
+import type { WebTerminalFeatures } from './web-terminal';
+import type { WTermFeature } from './wterm';
+import { attachWtermGraphics } from './wterm-graphics';
+import { attachWtermKeys } from './wterm-keys';
+import { attachWtermLinks } from './wterm-links';
+import { attachWtermScroll } from './wterm-scroll';
 
-/** Only the opted-in path imports this module. Each core owns independent memory. */
-export async function loadWterm(adapter: WTermAdapter, element: HTMLElement, onData: (data: string) => void) {
-  const core = await GhosttyCore.load({ wasmPath, scrollbackLines: adapter.options.scrollback, imageStorageLimit: 0 });
-  try {
-    const binding = wtermHooks.get(adapter);
-    if (binding) {
-      const keys = attachWtermKeys(adapter);
+/** The web/Mac feature list. Other surfaces supply their own list to the same core. */
+export function webFeatures(hooks: WebTerminalFeatures, images?: KittyTerminalOptions, paths?: TerminalPaths): WTermFeature[] {
+  return [
+    (adapter) => {
+      hooks.keyAction = attachWtermKeys(adapter).keyAction;
+    },
+    (adapter) => {
       const scroll = attachWtermScroll(adapter);
-      const links = attachWtermLinks(adapter, binding.paths);
-      attachWtermGraphics(adapter, binding.images);
-      Object.assign(binding.hooks, { keyAction: keys.keyAction, handleKey: scroll.handleKey, find: links.find, scrollAtOnce: (move: () => void) => scrollAtOnce(adapter, move, scroll.snap) });
-      wtermHooks.delete(adapter);
-    }
-    const display = wtermAppearance(core, adapter);
-    // Always drain (not just hide) pending replies, including asynchronous paint/theme drains.
-    const bound = new Map<PropertyKey, unknown>();
-    const mirror = new Proxy(display, {
-      get(target, key) {
-        if (key === 'getResponse')
-          return () => {
-            while (core.getResponse() !== null) {
-              /* The PTY host already answered. */
-            }
-            return null;
-          };
-        if (bound.has(key)) return bound.get(key);
-        const v = Reflect.get(target, key);
-        if (typeof v !== 'function') return v;
-        const method = v.bind(target);
-        bound.set(key, method);
-        return method;
-      },
-    });
-    const native = new WTerm(element, {
-      core: mirror,
-      cols: 80,
-      rows: 24,
-      autoResize: false,
-      cursorBlink: adapter.options.cursorBlink,
-      onData,
-      onBinary: (bytes) => {
-        // Our PTY transport encodes strings as UTF-8. A high-bit byte would be
-        // expanded to two bytes and the trailing byte interpreted as fresh input.
-        if (bytes.every((byte) => byte < 0x80)) onData(String.fromCharCode(...bytes));
-      },
-    });
-    return { native, core };
-  } catch (error) {
-    core.dispose();
-    throw error;
-  }
+      hooks.handleKey = scroll.handleKey;
+      hooks.scrollAtOnce = (move) => scrollAtOnce(adapter, move, scroll.snap);
+    },
+    (adapter) => {
+      hooks.find = attachWtermLinks(adapter, paths).find;
+    },
+    (adapter) => attachWtermGraphics(adapter, images),
+  ];
 }

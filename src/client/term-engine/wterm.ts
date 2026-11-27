@@ -2,7 +2,7 @@ import type { WTerm } from '@wterm/dom';
 import type { GhosttyCore } from '@wterm/ghostty';
 import { VtScanner } from '../../shared/vt-scanner';
 import { TERM_THEME } from '../term-theme';
-import type { ClientTerminal, ClientTerminalOptions } from './types';
+import type { ClientTerminalOptions } from './types';
 
 const widths = '\x1b[?2027l';
 const palette = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', 'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'] as const;
@@ -23,8 +23,9 @@ function event<T>() {
   };
 }
 
-export class WTermAdapter implements ClientTerminal {
-  readonly supportsLineHeight = true;
+export type WTermFeature = (adapter: WTermAdapter) => void;
+
+export class WTermAdapter {
   readonly options: ClientTerminalOptions;
   readonly parser = new VtScanner();
   native?: WTerm;
@@ -47,7 +48,10 @@ export class WTermAdapter implements ClientTerminal {
   private readerRow?: number;
   private keyHandler?: (e: KeyboardEvent) => boolean;
 
-  constructor(options: ClientTerminalOptions) {
+  constructor(
+    options: ClientTerminalOptions,
+    private readonly loadFeatures?: () => Promise<readonly WTermFeature[]>,
+  ) {
     this.options = new Proxy(
       { ...options },
       {
@@ -81,14 +85,14 @@ export class WTermAdapter implements ClientTerminal {
   get textarea() {
     return this.root?.querySelector('textarea') ?? undefined;
   }
-  get modes(): ClientTerminal['modes'] {
+  get modes() {
     const c = this.core;
     return {
       sendFocusMode: !!c?.focusEvents(),
       applicationCursorKeysMode: !!c?.cursorKeysApp(),
       bracketedPasteMode: !!c?.bracketedPaste(),
       mouseTrackingMode: c?.mouseTracking() === 1003 ? 'any' : c?.mouseTracking() === 1002 ? 'drag' : c?.mouseTracking() === 1000 ? 'vt200' : 'none',
-    };
+    } as const;
   }
   private sampleReader(discarded = this.core?.getScrollbackDiscardedCount() ?? 0) {
     const el = this.root;
@@ -147,14 +151,34 @@ export class WTermAdapter implements ClientTerminal {
       });
     };
   }
-  private get rowHeight() {
-    return Math.ceil((this.options.fontSize ?? 14) * (this.options.lineHeight ?? 1.1));
-  }
+  private rowHeight = 1;
+  private metricsContext?: CanvasRenderingContext2D | null;
   private typography() {
     const el = this.root;
     if (!el) return;
     if (this.options.fontFamily) el.style.setProperty('--term-font-family', this.options.fontFamily);
-    el.style.setProperty('--term-font-size', `${this.options.fontSize ?? 14}px`);
+    const size = this.options.fontSize ?? 14;
+    el.style.setProperty('--term-font-size', `${size}px`);
+    const font = `${size}px ${this.options.fontFamily ?? getComputedStyle(el).fontFamily}`;
+    this.metricsContext ??= document.createElement('canvas').getContext('2d');
+    let fontHeight = 0;
+    if (this.metricsContext) {
+      this.metricsContext.font = font;
+      const metrics = this.metricsContext.measureText('W');
+      fontHeight = metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent;
+    }
+    if (!(fontHeight > 0)) {
+      const probe = document.createElement('span');
+      probe.style.cssText = 'position:absolute;visibility:hidden;line-height:normal';
+      probe.style.font = font;
+      probe.textContent = 'W';
+      el.append(probe);
+      fontHeight = probe.offsetHeight;
+      probe.remove();
+    }
+    // Preserve the previous renderer's device-pixel rounding, including on Retina displays.
+    const dpr = window.devicePixelRatio;
+    if (fontHeight > 0) this.rowHeight = Math.floor(Math.ceil(fontHeight * dpr) * (this.options.lineHeight ?? 1.1)) / dpr;
     el.style.setProperty('--term-row-height', `${this.rowHeight}px`);
     this.metricsPending = true;
     if (this.native && el.clientWidth) {
@@ -176,7 +200,7 @@ export class WTermAdapter implements ClientTerminal {
     if (key === 'fontSize' || key === 'fontFamily' || key === 'lineHeight') this.typography();
     if (key === 'theme') {
       const colors = { ...TERM_THEME, ...this.options.theme };
-      const rgb = (key: keyof typeof TERM_THEME) => Number.parseInt((/^#[0-9a-f]{6}$/i.test(colors[key]) ? colors[key] : TERM_THEME[key]).slice(1), 16);
+      const rgb = (key: keyof typeof TERM_THEME) => Number.parseInt((/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(colors[key]) ? colors[key].slice(0, 7) : TERM_THEME[key]).slice(1), 16);
       t.setThemeColors({ foreground: rgb('foreground'), background: rgb('background'), cursor: rgb('cursor'), palette: palette.map(rgb) });
       this.root.style.setProperty('--term-bg', colors.background);
       this.root.style.setProperty('--term-selection-bg', colors.selectionBackground);
@@ -192,7 +216,7 @@ export class WTermAdapter implements ClientTerminal {
     const { signal } = this.lifetime;
     const modal = host.closest('.modal');
     const animations = modal?.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity) ?? [];
-    const [{ loadWterm }] = await Promise.all([import('./wterm-runtime'), Promise.allSettled(animations.map((a) => a.finished))]);
+    const [{ loadWterm }, features] = await Promise.all([import('./wterm-core'), this.loadFeatures?.() ?? [], Promise.allSettled(animations.map((a) => a.finished))]);
     if (signal.aborted) return;
     const root = document.createElement('div');
     root.className = 'office-wterm wterm';
@@ -200,56 +224,71 @@ export class WTermAdapter implements ClientTerminal {
     this.root = root;
     host.append(root);
     this.typography();
-    for (const phase of ['keydown', 'keyup', 'keypress'] as const)
-      root.addEventListener(
-        phase,
-        (e) => {
-          if (this.keyHandler?.(e) !== false) return;
-          e.preventDefault();
-          e.stopImmediatePropagation();
+    try {
+      const { native, core, attachFeatures } = await loadWterm(
+        this,
+        root,
+        (d) => {
+          // WTerm synthesizes pixel-size replies inside write(), outside core.getResponse().
+          if (!this.displayWrite && !this.options.disableStdin && !signal.aborted) this.data.fire(d);
         },
-        { capture: true, signal },
+        features,
       );
-    const { native, core } = await loadWterm(this, root, (d) => {
-      // WTerm synthesizes pixel-size replies inside write(), outside core.getResponse().
-      if (!this.displayWrite && !this.options.disableStdin && !signal.aborted) this.data.fire(d);
-    });
-    if (signal.aborted) {
-      native.destroy();
-      core.dispose();
-      return;
+      if (signal.aborted) {
+        native.destroy();
+        core.dispose();
+        return;
+      }
+      this.native = native;
+      this.core = core;
+      await native.init();
+      if (signal.aborted) return;
+      // Preferences can change while the core download is outstanding.
+      this.typography();
+      this.applyOption('theme');
+      this.applyOption('cursorBlink');
+      this.applyOption('cursorStyle');
+      native.write(widths);
+      for (const phase of ['keydown', 'keyup', 'keypress'] as const)
+        root.addEventListener(
+          phase,
+          (e) => {
+            if (this.keyHandler?.(e) !== false) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          },
+          { capture: true, signal },
+        );
+
+      root.addEventListener('scroll', () => this.sampleReader(), { passive: true, signal });
+      native.setRenderingPaused(this.paused);
+      const observer = new ResizeObserver(() => {
+        if (root.clientWidth > 0 && this.metricsPending) this.typography();
+      });
+      observer.observe(root);
+      const visibility = new IntersectionObserver(([entry]) => {
+        this.inViewport = entry.isIntersecting;
+        native.setRenderingPaused(this.paused || !this.inViewport);
+      });
+      visibility.observe(root);
+      signal.addEventListener(
+        'abort',
+        () => {
+          observer.disconnect();
+          visibility.disconnect();
+        },
+        { once: true },
+      );
+      attachFeatures();
+      root.inert = false;
+      this.opened.fire(native);
+    } catch (error) {
+      this.native?.destroy();
+      this.core?.dispose();
+      root.remove();
+      this.root = this.native = this.core = undefined;
+      throw error;
     }
-    this.native = native;
-    this.core = core;
-    await native.init();
-    if (signal.aborted) return;
-    // Preferences can change while the core download is outstanding.
-    this.typography();
-    this.applyOption('theme');
-    this.applyOption('cursorBlink');
-    this.applyOption('cursorStyle');
-    native.write(widths);
-    root.inert = false;
-    root.addEventListener('scroll', () => this.sampleReader(), { passive: true, signal });
-    native.setRenderingPaused(this.paused);
-    const observer = new ResizeObserver(() => {
-      if (root.clientWidth > 0 && this.metricsPending) this.typography();
-    });
-    observer.observe(root);
-    const visibility = new IntersectionObserver(([entry]) => {
-      this.inViewport = entry.isIntersecting;
-      native.setRenderingPaused(this.paused || !this.inViewport);
-    });
-    visibility.observe(root);
-    signal.addEventListener(
-      'abort',
-      () => {
-        observer.disconnect();
-        visibility.disconnect();
-      },
-      { once: true },
-    );
-    this.opened.fire(native);
   }
   proposeDimensions() {
     const el = this.root;

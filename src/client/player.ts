@@ -766,5 +766,5 @@ export function isTyping(e?: Event): boolean {
   const el = (e?.target as HTMLElement | null) ?? (document.activeElement as HTMLElement | null);
   if (!el) return false;
   const tag = el.tagName;
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable || !!el.closest?.('.xterm, .cm-editor');
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable || !!el.closest?.('.office-wterm, .cm-editor');
 }

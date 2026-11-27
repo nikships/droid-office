@@ -1,5 +1,4 @@
 import type { GhosttyCore } from '@wterm/ghostty';
-import type { ILink } from '@xterm/xterm';
 import { parseTerminalPathRefs } from '../../shared/path-links';
 import { type Point, retainedRows } from './wterm-links-lines';
 
@@ -7,7 +6,7 @@ export interface Target {
   kind: 'osc8' | 'web' | 'path';
   text: string;
   label: string;
-  range: ILink['range'];
+  range: { start: Point; end: Point };
 }
 
 // Same boundaries and URL canonicalization check as @xterm/addon-web-links.

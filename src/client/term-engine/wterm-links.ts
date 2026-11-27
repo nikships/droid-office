@@ -1,5 +1,5 @@
 import type { GhosttyCore } from '@wterm/ghostty';
-import type { TerminalPathLinksAddon } from '../ui/terminal-path-links';
+import type { TerminalPaths } from '../ui/terminal-path-links';
 import type { TerminalFind } from './types';
 import type { WTermAdapter } from './wterm';
 import { installFind, missingLine } from './wterm-links-find';
@@ -12,7 +12,7 @@ type XY = Pick<MouseEvent, 'clientX' | 'clientY'>;
 const modified = (e: MouseEvent | KeyboardEvent) => e.ctrlKey || e.metaKey;
 const same = (a: Target, b: Target | undefined) => a.kind === b?.kind && a.label === b.label && a.text === b.text;
 
-function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElement, signal: AbortSignal, paths: TerminalPathLinksAddon) {
+function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElement, signal: AbortSignal, paths: TerminalPaths) {
   const root = grid.parentElement!;
   const options = { signal, capture: true };
   const point = (e: XY): Point => {
@@ -22,17 +22,13 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
   };
   // HTTP(S) activation stays synchronous for the browser's popup/user gesture policy.
   function resolve(target: Target, ready: (action?: Action) => void) {
-    const { kind, text, range } = target;
-    if (kind === 'web')
+    const { kind, text } = target;
+    if (kind === 'web' || (kind === 'osc8' && /^https?:\/\//i.test(text)))
       return ready(() => {
         window.open(text, '_blank', 'noopener,noreferrer');
       });
-    const handler = adapter.options.linkHandler ?? paths.linkHandler;
-    const activate: Action = (event) => handler.activate(event, text, range);
-    if (kind === 'osc8' && /^https?:\/\//i.test(text)) return ready(activate);
-    if (kind === 'osc8' && !handler.allowNonHttpProtocols) return ready();
     void paths.resolveTarget(text, kind === 'osc8').then(
-      (open) => ready(open && (kind === 'osc8' ? activate : open)),
+      (open) => ready(open),
       () => ready(),
     );
   }
@@ -159,7 +155,7 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
   signal.addEventListener('abort', () => paths.dispose(), { once: true });
 }
 
-export function attachWtermLinks(adapter: WTermAdapter, paths?: TerminalPathLinksAddon) {
+export function attachWtermLinks(adapter: WTermAdapter, paths?: TerminalPaths) {
   let find: (hit: TerminalFind) => string | undefined = () => missingLine;
   adapter.onOpen((native, signal) => {
     const grid = native.element.querySelector<HTMLElement>('.term-grid')!;

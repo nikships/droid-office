@@ -1,8 +1,8 @@
 import type { Terminal } from '@xterm/xterm';
-import { findLine } from '../../shared/search';
-import { TERM_THEME } from '../term-theme';
-import { scrollAtOnce } from '../ui/terminal-prefs';
-import type { TerminalFind } from './types';
+import { findLine } from '../../src/shared/search';
+import { TERM_THEME } from '../../src/client/term-theme';
+import { scrollAtOnce } from '../../src/client/ui/terminal-prefs';
+import type { TerminalFind } from '../../src/client/term-engine/types';
 
 export function findInXterm(term: Terminal, f: TerminalFind): string | undefined {
   const buf = term.buffer.active;
