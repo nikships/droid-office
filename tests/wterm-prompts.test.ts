@@ -92,9 +92,19 @@ test('OSC 133 state and navigation follow real marks, never a reconstructed prom
   await page.waitForFunction(() => (window as any).term.buffer.active.viewportY > 15);
   for (const code of ['BracketLeft', 'BracketLeft', 'BracketRight']) {
     const before = await viewport();
+    await page.evaluate(() => {
+      const w = window as any;
+      w.stale = w.term.saveReader();
+    });
     await page.keyboard.press(`Control+Shift+${code}`);
     await page.waitForFunction((prev) => (window as any).term.buffer.active.viewportY !== prev, before);
-    assert.ok(code === 'BracketLeft' ? (await viewport()) < before : (await viewport()) > before);
+    const target = await viewport();
+    assert.ok(code === 'BracketLeft' ? target < before : target > before);
+    await page.evaluate(async () => {
+      (window as any).stale?.();
+      await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+    });
+    assert.equal(await viewport(), target);
   }
   const beforeResize = await viewport();
   // The shortcut's release belongs to the UI even if both modifiers were released first.

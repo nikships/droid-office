@@ -34,7 +34,7 @@ test('native terminal search, working directory and read-only snapshots in Chrom
   await page.route('**/fixture', (r) =>
     r.fulfill({
       contentType: 'text/html',
-      body: `<style>.host{height:80px;width:400px}</style><div id="host" data-worker-id="w" class="host"></div><div class="modal" tabindex="0"><div id="log" class="host"></div></div><div id="modal-root"></div>`,
+      body: `<!doctype html><link rel="stylesheet" href="/style.css"><style>.host{height:80px;width:400px}</style><div id="host" data-worker-id="w" class="host"></div><div class="modal" tabindex="0"><div id="log" class="host"></div></div><div id="modal-root"></div>`,
     }),
   );
   await page.goto(`http://127.0.0.1:${addr.port}/fixture`);
@@ -113,6 +113,8 @@ test('native terminal search, working directory and read-only snapshots in Chrom
     await page.keyboard.press(shortcut);
     await find.fill('漢e\u0301ab');
     await frame();
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Shift+Enter');
     await page.keyboard.press('Escape');
     await frame();
     assert.equal(await page.locator('#host .wterm').evaluate((e) => e.scrollTop), top);
@@ -129,10 +131,41 @@ test('native terminal search, working directory and read-only snapshots in Chrom
     await page.keyboard.press('Escape');
     assert.deepEqual(await page.evaluate(() => (window as any).sent), []);
   });
+  await t.test('stepping between matches supersedes a queued reader restore', async () => {
+    await page.evaluate(() => {
+      const { term } = (window as any).hostRig;
+      term.reset();
+      term.resize(24, 5);
+      term.write(`first match\r\n${'between\r\n'.repeat(12)}second match\r\n${'after\r\n'.repeat(12)}`);
+      term.focus();
+    });
+    await frame();
+    await page.keyboard.press(shortcut);
+    await find.fill('match');
+    await frame();
+    const position = () => page.locator('#host .wterm').evaluate((e) => e.scrollTop);
+    for (const key of ['Enter', 'Shift+Enter']) {
+      const before = await position();
+      await page.evaluate(() => {
+        const w = window as any;
+        w.stale = w.hostRig.term.saveReader();
+        if (!w.stale) throw Error('expected historical reader');
+      });
+      await page.keyboard.press(key);
+      await frame();
+      const target = await position();
+      assert.notEqual(target, before);
+      await page.evaluate(() => (window as any).stale());
+      await frame();
+      assert.equal(await position(), target);
+    }
+    await page.keyboard.press('Escape');
+  });
   await t.test('an in-pane search releases a global jump; a later jump owns the highlight and the viewport through reflow', async () => {
     const jump = () => page.evaluate(() => (window as any).hostRig.hooks.find({ needle: 'beginning', fromEnd: 40 }));
     await page.evaluate(() => {
       const { term } = (window as any).hostRig;
+      term.reset();
       term.resize(24, 5);
       term.write(`beginning of search example\r\n${'between\r\n'.repeat(32)}end of example`);
       term.focus();
