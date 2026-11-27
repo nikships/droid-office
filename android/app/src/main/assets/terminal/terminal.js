@@ -33,7 +33,7 @@ export async function start() {
     document.fonts.load(`400 ${READABLE_PX}px 'Droid Office Terminal Symbols'`, '\ue0b0'),
   ]);
   const host = document.querySelector('#term');
-  const term = createAndroidTerminal({ onExpandImage: expandImage });
+  const { term, expandAtClient } = createAndroidTerminal({ onExpandImage: expandImage });
   await term.open(host);
   const { core, native } = term;
   const root = native.element;
@@ -43,11 +43,11 @@ export async function start() {
   let view = 'desktop';
   let baseFont = READABLE_PX;
   let baseW = parseFloat(root.style.getPropertyValue('--term-cell-width'));
+  let baseH = parseFloat(root.style.getPropertyValue('--term-row-height'));
   let lastFit = '';
   let cellW = 0;
   let cellH = 0;
   function layout() {
-    const baseH = Math.ceil(baseFont * 1.1);
     const availW = innerWidth - PAD * 2;
     const availH = innerHeight - PAD * 2;
     if (!(baseW > 0 && availW > 0 && availH > 0)) return;
@@ -55,11 +55,17 @@ export async function start() {
     // a rendered glyph in viewport pixels for its cursor, hit targets and rows.
     const scale = fitScale(view, availW, availH, term.cols * baseW, term.rows * baseH, 24 / READABLE_PX);
     const font = baseFont * scale;
-    const row = Math.max(1, Math.min(Math.round(scale * baseH), Math.floor(availH / term.rows)));
     term.options.fontSize = font;
-    term.options.lineHeight = (row - 0.001) / font;
     cellW = parseFloat(root.style.getPropertyValue('--term-cell-width'));
     cellH = parseFloat(root.style.getPropertyValue('--term-row-height'));
+    // Font metrics round to device pixels. If the rounded grid overflows,
+    // shrink the font by its measured excess, not the scrollable viewport.
+    if (cellW * term.cols > availW || cellH * term.rows > availH) {
+      const correction = Math.min(availW / (cellW * term.cols), availH / (cellH * term.rows));
+      term.options.fontSize = Math.max(1, Math.floor(font * correction * 10) / 10);
+      cellW = parseFloat(root.style.getPropertyValue('--term-cell-width'));
+      cellH = parseFloat(root.style.getPropertyValue('--term-row-height'));
+    }
     host.style.width = `${term.cols * cellW}px`;
     host.style.height = `${term.rows * cellH}px`;
     const fit = fitGrid(availW, availH, baseW, baseH);
@@ -96,10 +102,21 @@ export async function start() {
   // swipes takes a gesture away from the browser. Do not send simulated inertia to a TUI.
   const accumulator = new RowAccumulator();
   let touch;
+  let tap;
+  let lastScroll = -Infinity;
+  root.addEventListener(
+    'scroll',
+    () => {
+      lastScroll = performance.now();
+    },
+    { passive: true },
+  );
   root.addEventListener(
     'touchstart',
     (e) => {
       accumulator.reset();
+      const p = e.touches[0];
+      tap = e.touches.length === 1 && performance.now() - lastScroll > 80 ? { x: p.clientX, y: p.clientY, time: e.timeStamp } : null;
       touch = e.touches.length === 1 && root.classList.contains('program-swipe') ? e.touches[0] : null;
     },
     { passive: true },
@@ -107,6 +124,8 @@ export async function start() {
   root.addEventListener(
     'touchmove',
     (e) => {
+      const pos = e.touches[0];
+      if (tap && (e.touches.length !== 1 || Math.hypot(pos.clientX - tap.x, pos.clientY - tap.y) > 8)) tap = null;
       if (!touch || e.touches.length !== 1) {
         touch = null;
         return;
@@ -131,10 +150,15 @@ export async function start() {
   for (const name of ['touchend', 'touchcancel'])
     root.addEventListener(
       name,
-      () => {
+      (e) => {
+        if (name === 'touchend' && tap && e.changedTouches.length === 1 && e.timeStamp - tap.time <= 350 && expandAtClient(tap.x, tap.y)) {
+          // Suppress the emulated mouse click after expanding by touch.
+          e.preventDefault();
+        }
+        tap = null;
         touch = null;
       },
-      { passive: true },
+      { passive: false },
     );
   window.addEventListener('resize', layout);
   term.onResize(layout);
@@ -166,6 +190,7 @@ export async function start() {
           baseFont = READABLE_PX * (msg.fontScale > 0 ? msg.fontScale : 1);
           term.options.fontSize = baseFont;
           baseW = parseFloat(root.style.getPropertyValue('--term-cell-width'));
+          baseH = parseFloat(root.style.getPropertyValue('--term-row-height'));
           view = msg.view;
           layout();
           break;
