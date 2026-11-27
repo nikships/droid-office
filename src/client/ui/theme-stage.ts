@@ -1,12 +1,12 @@
 // The moving layer of a companion theme's backdrop: one full-window WebGL2 canvas running the
 // theme's ambient light shader over the artwork. Drawn at the display's full pixel ratio and frame rate;
-// it stops only while the page is hidden, or when motion is off (then it holds one still frame).
+// Live holds the last frame while the page is hidden or unfocused. Still holds a composed frame.
 
 import { parseHex, type ThemeShader, type ThemeStageSpec } from '../../shared/companion-themes';
 import { THEME_FRAGMENT_SHADERS, THEME_VERTEX_SHADER } from './theme-shaders';
 
 export interface ThemeStage {
-  /** Shows `spec` (null clears to transparent), animating while `animate` and the page is visible; a still stage draws one frame. */
+  /** Shows `spec` (null clears to transparent), animating while `animate` and the page is visible and focused. */
   show(spec: ThemeStageSpec | null, animate: boolean): void;
   /** Stops drawing and releases the GL context. */
   destroy(): void;
@@ -173,7 +173,7 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
-  const running = () => animate && !!spec && !lost && !destroyed && !document.hidden;
+  const running = () => animate && !!spec && !lost && !destroyed && !document.hidden && document.hasFocus();
 
   function frame(now: number) {
     raf = 0;
@@ -206,7 +206,7 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
     canvas.width = width;
     canvas.height = height;
     bound = null;
-    // A resized canvas comes back blank; a still one needs its frame again, a moving one gets it next frame.
+    // A resized canvas comes back blank; repaint the held frame if the loop isn't scheduled.
     if (!raf) draw();
   }
 
@@ -226,9 +226,9 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
     observer.observe(canvas);
   }
 
-  const onVisibility = () => {
-    if (document.hidden) stop();
-    else sync();
+  const onActivity = () => {
+    if (!running()) stop();
+    else if (!raf) raf = requestAnimationFrame(frame);
   };
   const onLost = (e: Event) => {
     e.preventDefault();
@@ -244,7 +244,9 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
     setup();
     sync();
   };
-  document.addEventListener('visibilitychange', onVisibility);
+  document.addEventListener('visibilitychange', onActivity);
+  window.addEventListener('focus', onActivity);
+  window.addEventListener('blur', onActivity);
   canvas.addEventListener('webglcontextlost', onLost);
   canvas.addEventListener('webglcontextrestored', onRestored);
   setup();
@@ -275,7 +277,9 @@ export function createThemeStage(canvas: HTMLCanvasElement): ThemeStage | null {
       stop();
       destroyed = true;
       observer.disconnect();
-      document.removeEventListener('visibilitychange', onVisibility);
+      document.removeEventListener('visibilitychange', onActivity);
+      window.removeEventListener('focus', onActivity);
+      window.removeEventListener('blur', onActivity);
       canvas.removeEventListener('webglcontextlost', onLost);
       canvas.removeEventListener('webglcontextrestored', onRestored);
       if (!gl.isContextLost()) {

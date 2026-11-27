@@ -21,7 +21,7 @@ The eight `family: 'artwork'` entries in [`companion-themes.ts`](../src/shared/c
 
 **OG** is the Classic theme and the default for new or unrecognized saved theme IDs. It paints no overrides. For artwork themes, **Glass** offers six optical levels from sharpest to opaque (`Crystal`, `Clear`, `Tinted`, `Frosted`, `Smoked`, `Solid`; default `Frosted`) and **Motion** controls whether ambient light moves (Live) or holds one frame (Still).
 
-Live keeps the full device-pixel buffer and follows the display's refresh rate without a frame cap. The stage updates only the clock on steady frames, and the fragment shaders skip particle work outside exact silhouettes or where the light is far below one 8-bit color step. Compare matched frames at the same shader times and measure the running companion at the same resolution, glass level and actual drawn frame rate.
+Live keeps the full device-pixel buffer and follows the display's refresh rate without a frame cap. A hidden tab or unfocused window holds the last rendered frame. When the page is visible and focused again, Live resumes from that frame without advancing the clock for time spent away. The stage updates only the clock on steady frames, and the fragment shaders skip particle work outside exact silhouettes or where the light is far below one 8-bit color step. Compare matched frames at the same shader times and measure the running companion at the same resolution, glass level and actual drawn frame rate.
 
 ## Restraint Budget
 

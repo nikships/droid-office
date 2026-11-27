@@ -72,6 +72,7 @@ interface Rig {
   resize(width: number, height: number): void;
   tick(now: number): void;
   setHidden(hidden: boolean): void;
+  setFocused(focused: boolean): void;
 }
 
 function rig(t: { after(fn: () => void): void }, { webgl = true } = {}): Rig {
@@ -88,13 +89,15 @@ function rig(t: { after(fn: () => void): void }, { webgl = true } = {}): Rig {
       else delete (globalThis as Record<string, unknown>)[key];
     }
   });
-  const doc = Object.assign(new EventTarget(), { hidden: false });
+  let focused = true;
+  const doc = Object.assign(new EventTarget(), { hidden: false, hasFocus: () => focused });
+  const win = Object.assign(new EventTarget(), { devicePixelRatio: 2 });
   const frames = new Map<number, (now: number) => void>();
   let nextFrame = 1;
   let observer: ((entries: unknown[]) => void) | undefined;
   const define = (key: string, value: unknown) => Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   define('document', doc);
-  define('window', { devicePixelRatio: 2 });
+  define('window', win);
   define('requestAnimationFrame', (fn: (now: number) => void) => {
     frames.set(nextFrame, fn);
     return nextFrame++;
@@ -188,6 +191,10 @@ function rig(t: { after(fn: () => void): void }, { webgl = true } = {}): Rig {
     doc.hidden = hidden;
     doc.dispatchEvent(new Event('visibilitychange'));
   };
+  r.setFocused = (next) => {
+    focused = next;
+    win.dispatchEvent(new Event(next ? 'focus' : 'blur'));
+  };
   return r;
 }
 
@@ -240,6 +247,42 @@ test('a hidden page pauses the stage and resumes without a time jump', (t) => {
   const after = r.draws.at(-1)!.time;
   assert.ok(Math.abs(after - before - 0.016 * EMBERS.speed) < 1e-9, `${before} -> ${after}`);
   stage.destroy();
+});
+
+test('Live holds the last frame on blur and resumes it only when visible and focused', (t) => {
+  const r = rig(t);
+  const stage = createThemeStage(r.canvas)!;
+  r.setFocused(false);
+  stage.show(EMBERS, true);
+  assert.equal(r.frames.size, 0, 'a stage opened in the background paints once');
+  assert.equal(r.draws.at(-1)!.time, STILL_TIMES.embers);
+  r.setFocused(true);
+  r.tick(1000);
+  r.tick(1050);
+  const held = r.draws.at(-1)!.time;
+  const drawn = r.draws.length;
+  r.setFocused(false);
+  assert.equal(r.frames.size, 0, 'blur cancels the next frame');
+  r.tick(2000);
+  assert.equal(r.draws.length, drawn, 'blur neither redraws nor keeps drawing');
+  r.resize(2880, 1800);
+  assert.equal(r.draws.at(-1)!.time, held, 'resize repaints the held frame without advancing');
+  r.setHidden(true);
+  r.setFocused(true);
+  assert.equal(r.frames.size, 0, 'focus alone cannot resume a hidden stage');
+  r.setFocused(false);
+  r.setHidden(false);
+  assert.equal(r.frames.size, 0, 'visibility alone cannot resume an unfocused stage');
+  r.setFocused(true);
+  assert.equal(r.frames.size, 1);
+  r.tick(60_000);
+  assert.equal(r.draws.at(-1)!.time, held, 'the first frame resumes at exactly the held time');
+  r.tick(60_016);
+  assert.equal(r.draws.at(-1)!.time, held + 0.016 * EMBERS.speed);
+  stage.destroy();
+  r.setFocused(false);
+  r.setFocused(true);
+  assert.equal(r.frames.size, 0);
 });
 
 test('Live uploads static GL state only when the size, palette or program changes', (t) => {
