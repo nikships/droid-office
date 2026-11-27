@@ -36,6 +36,8 @@ export class WTermAdapter {
   private readonly nativeParsed = event<string>();
   private readonly resetting = event<void>();
   private readonly resized = event<{ cols: number; rows: number }>();
+  private readonly fit = event<boolean>();
+  private proposal?: { cols: number; rows: number };
   private readonly changed = event<keyof ClientTerminalOptions>();
   private readonly data = event<string>();
   private readonly lifetime = new AbortController();
@@ -58,6 +60,7 @@ export class WTermAdapter {
   constructor(
     options: ClientTerminalOptions,
     private readonly loadFeatures?: () => Promise<readonly WTermFeature[]>,
+    private readonly syncFontMetrics?: (term: WTerm) => void,
   ) {
     this.options = new Proxy(
       { ...options },
@@ -195,7 +198,6 @@ export class WTermAdapter {
     };
   }
   private rowHeight = 1;
-  private fontAdvance = 0;
   private lastClientHeight = 0;
   private metricsContext?: CanvasRenderingContext2D | null;
   private keepTailOnShrink() {
@@ -207,33 +209,7 @@ export class WTermAdapter {
     if (shrank && this.readerRow === undefined && this.isAtTail(el.scrollHeight - this.lastClientHeight) && !this.isAtTail()) this.followTail();
     this.lastClientHeight = clientHeight;
   }
-  private scaleOf(el: HTMLElement) {
-    if (!el.offsetWidth || !el.offsetHeight) return;
-    const rect = el.getBoundingClientRect();
-    // Fractional CSS widths/heights round to integers in offsetWidth/offsetHeight
-    // (at most 0.5px off), so require a >1px discrepancy before treating as scaled.
-    if (Math.abs(rect.width - el.offsetWidth) <= 1 && Math.abs(rect.height - el.offsetHeight) <= 1) return;
-    const sx = rect.width / el.offsetWidth;
-    const sy = rect.height / el.offsetHeight;
-    if (!(sx > 0.01) || !(sy > 0.01)) return;
-    return [sx, sy] as const;
-  }
-  /** WTerm measures cell pitch with getBoundingClientRect(), which inherits ancestor
-   * CSS scale transforms (such as pane opening animations) while DOM row heights and
-   * scroll extents stay in unscaled CSS pixels. Counter-scale during synchronous probes. */
-  private withoutScale<T>(el: HTMLElement, fn: () => T): T {
-    const scale = this.scaleOf(el);
-    if (!scale) return fn();
-    const transform = el.style.transform;
-    const counter = `scale(${1 / scale[0]}, ${1 / scale[1]})`;
-    el.style.transform = transform ? `${counter} ${transform}` : counter;
-    try {
-      return fn();
-    } finally {
-      el.style.transform = transform;
-    }
-  }
-  refreshMetrics() {
+  private refreshMetrics() {
     const el = this.root;
     if (!el) return;
     if (this.native && !el.clientWidth) {
@@ -251,7 +227,6 @@ export class WTermAdapter {
     if (this.metricsContext) {
       this.metricsContext.font = font;
       const metrics = this.metricsContext.measureText('W');
-      this.fontAdvance = metrics.width;
       fontHeight = metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent;
     }
     if (!(fontHeight > 0)) {
@@ -263,28 +238,13 @@ export class WTermAdapter {
       fontHeight = probe.offsetHeight;
       probe.remove();
     }
-    // Preserve the previous renderer's device-pixel rounding, including on Retina displays.
+    // Compact, Default and Relaxed scale the font's natural line box in device pixels.
     const dpr = window.devicePixelRatio;
     if (fontHeight > 0) this.rowHeight = Math.floor(Math.ceil(fontHeight * dpr) * (this.options.lineHeight ?? 1.1)) / dpr;
     el.style.setProperty('--term-row-height', `${this.rowHeight}px`);
-    this.metricsPending = true;
-    if (this.native && el.clientWidth) {
-      // fit() remeasures the font before considering a resize. An empty content width
-      // lets it refresh mouse/cell metrics without reflowing the authoritative PTY grid.
-      this.withoutScale(el, () => {
-        const { width, paddingLeft, paddingRight } = el.style;
-        el.style.width = '0px';
-        el.style.paddingLeft = '0px';
-        el.style.paddingRight = '0px';
-        try {
-          this.native!.fit();
-          this.metricsPending = false;
-        } finally {
-          el.style.width = width;
-          el.style.paddingLeft = paddingLeft;
-          el.style.paddingRight = paddingRight;
-        }
-      });
+    this.metricsPending = false;
+    if (this.native) {
+      this.syncFontMetrics?.(this.native);
       if (previousHeight !== this.rowHeight) {
         if (this.readerRow !== undefined) el.scrollTop = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
         this.pendingRestore = { appliedTop: el.scrollTop };
@@ -318,7 +278,6 @@ export class WTermAdapter {
     root.inert = true;
     this.root = root;
     host.append(root);
-    this.refreshMetrics();
     let lastScrollTop: number | undefined;
     let restoredSameTop = false;
     try {
@@ -359,12 +318,11 @@ export class WTermAdapter {
         core.dispose();
         return;
       }
+      this.refreshMetrics();
       this.native = native;
       this.core = core;
       await native.init();
       if (signal.aborted) return;
-      // Preferences can change while the core download is outstanding.
-      this.refreshMetrics();
       this.applyOption('theme');
       this.applyOption('cursorBlink');
       this.applyOption('cursorStyle');
@@ -399,18 +357,36 @@ export class WTermAdapter {
         { capture: true, passive: true, signal },
       );
       this.syncRendering();
+      // The content box excludes padding, borders and the actual scrollbar. The
+      // native font probe survives grid rebuilds and also observes web-font loads.
+      const probe = root.querySelector('.term-size-probe')!;
+      let box: DOMRectReadOnly | undefined;
+      let cell: DOMRectReadOnly | undefined;
+      let lastGeometry: string | undefined;
       this.lastClientHeight = root.clientHeight;
-      const probe = root.querySelector('.term-size-probe');
       const observer = new ResizeObserver((entries) => {
         this.keepTailOnShrink();
-        // WTerm's own ResizeObserver on .term-size-probe runs before ours and
-        // measures scaled rects when an ancestor animates transform. Remeasure
-        // unscaled before the next render frame commits spacers or scrollTop.
-        const probeResized = probe !== null && entries.some((e) => e.target === probe);
-        if (root.clientWidth > 0 && (this.metricsPending || (probeResized && this.scaleOf(root)))) this.refreshMetrics();
+        for (const entry of entries) {
+          if (entry.target === root) box = entry.contentRect;
+          else cell = entry.contentRect;
+        }
+        if (!box?.width || !box.height || !cell?.width || !cell.height) {
+          this.proposal = undefined;
+          return;
+        }
+        if (this.metricsPending) {
+          this.refreshMetrics();
+          cell = probe.getBoundingClientRect();
+        }
+        const geometry = `${box.width},${box.height},${cell.width},${cell.height}`;
+        if (this.proposal && geometry === lastGeometry) return;
+        this.proposal = { cols: Math.floor(box.width / cell.width), rows: Math.floor(box.height / cell.height) };
+        const changed = lastGeometry !== undefined && lastGeometry !== geometry;
+        lastGeometry = geometry;
+        this.fit.fire(changed);
       });
       observer.observe(root);
-      if (probe) observer.observe(probe);
+      observer.observe(probe);
       const visibility = new IntersectionObserver(([entry]) => {
         this.inViewport = entry.isIntersecting;
         this.syncRendering();
@@ -437,23 +413,10 @@ export class WTermAdapter {
     }
   }
   proposeDimensions() {
-    const el = this.root;
-    if (!el?.clientWidth || !el.clientHeight) return;
-    const style = getComputedStyle(el);
-    // The previous DOM renderer sized its screen to a whole CSS pixel, then
-    // divided by the current column count. A rounded single span can lose a
-    // column at the boundary, especially after changing the font or shared grid.
-    const width = this.fontAdvance > 0 ? Math.round(this.fontAdvance * this.cols) / this.cols : parseFloat(style.getPropertyValue('--term-cell-width'));
-    if (!(width > 0)) return;
-    // The modal reserves space beside the grid, including any real scrollbar.
-    // Keep that reserve out of CSS padding so it cannot clip the painted row.
-    const inner = el.offsetWidth - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
-    const gutter = parseFloat(style.getPropertyValue('--office-fit-gutter')) || 0;
-    const available = Math.min(el.clientWidth, inner - gutter) - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-    return {
-      cols: Math.floor(available / width),
-      rows: Math.floor((el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.getPropertyValue('--office-fit-bottom') || style.paddingBottom)) / this.rowHeight),
-    };
+    return this.proposal;
+  }
+  onFit(fn: (geometryChanged: boolean) => void) {
+    return this.fit.on(fn);
   }
   attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean) {
     this.keyHandler = fn;
@@ -590,6 +553,6 @@ export class WTermAdapter {
     this.root = this.native = this.core = undefined;
     this.parser.reset();
     this.keyHandler = undefined;
-    for (const e of [this.before, this.changed, this.opened, this.parsed, this.nativeParsed, this.resetting, this.resized, this.data]) e.clear();
+    for (const e of [this.before, this.changed, this.opened, this.parsed, this.nativeParsed, this.resetting, this.resized, this.fit, this.data]) e.clear();
   }
 }

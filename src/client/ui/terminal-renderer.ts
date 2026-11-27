@@ -8,22 +8,6 @@ export async function openTerminalRenderer(term: WTermAdapter, host: HTMLElement
   while (alive()) {
     try {
       await term.open(host);
-      const root = term.native?.element;
-      const opening = [host.closest('.modal'), host.closest('.dash-pane')].flatMap((el) => el?.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity) ?? []);
-      if (root && opening.length) {
-        // Only pointer coordinates depend on the scaled DOM measurement. Attach,
-        // write and fit the PTY immediately, then measure the unscaled cells once.
-        root.classList.add('measuring-cells');
-        void Promise.allSettled(opening.map((a) => a.finished)).then(() => {
-          try {
-            if (alive() && term.native?.element === root) term.refreshMetrics();
-          } catch (error) {
-            console.warn('Could not refresh terminal cell metrics', error);
-          } finally {
-            root.classList.remove('measuring-cells');
-          }
-        });
-      }
       return;
     } catch {
       if (!alive()) return;

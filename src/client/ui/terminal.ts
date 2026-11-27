@@ -327,22 +327,17 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       return;
     }
     if (!mirror.ready || !opened || !net.up) return;
-    if (!host.clientWidth || !host.clientHeight) return;
     if (typing || paneSizeChanged) adoptSharedSize = false;
     paneSizeChanged = false;
-    if (!typing && adoptSharedSize) {
+    if (adoptSharedSize) {
       const w = store.worker(workerId);
       if (w && (w.cols !== term.cols || w.rows !== term.rows)) term.resize(w.cols, w.rows);
       return;
     }
-    try {
-      const size = term.proposeDimensions();
-      if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
-      // Match WorkerManager.resize's limits so the server can acknowledge the exact request.
-      term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
-    } catch {
-      return;
-    }
+    const size = term.proposeDimensions();
+    if (!size) return;
+    // Match WorkerManager.resize's limits so the server can acknowledge the exact request.
+    term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
     const key = `${term.cols}x${term.rows}`;
     const w = store.worker(workerId);
     if (w && (pendingSizes.length || w.cols !== term.cols || w.rows !== term.rows) && key !== lastSentSize) {
@@ -423,12 +418,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     () => net.send({ t: 'worker.attach', workerId }),
     (ready) => (term.options.disableStdin = !ready || readOnly || !net.up),
   );
-  const offPrefs = followTerminalPrefs(term, {
-    resized: () => {
-      paneSizeChanged = true;
-      sendSize();
-    },
-  });
+  const offPrefs = followTerminalPrefs(term);
   term.attachCustomKeyEventHandler((e) => {
     if (e.ctrlKey && e.key === ']' && (!inline || inline.onLeave)) {
       if (e.type === 'keydown') {
@@ -443,7 +433,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   term.onData((data) => {
     if (readOnly || !mirror.ready || !net.up) return;
     // Focus moving is not typing, so it leaves the shared PTY at its size.
-    if (!isFocusReport(data)) sendSize(true);
+    if (!isFocusReport(data) && adoptSharedSize) sendSize(true);
     net.send({ t: 'term.input', workerId, data });
   });
   const unbind = () => {
@@ -479,15 +469,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     offMission();
   };
   const unsubCredits = store.on('factory', refresh);
-  let box: { width: number; height: number } | undefined;
-  const ro = new ResizeObserver(([entry]) => {
-    if (!entry) return;
-    const { width, height } = entry.contentRect;
-    if (width <= 0 || height <= 0) return;
-    // The initial observation is not a layout change and must not seize a shared terminal.
-    // Keep a change pending through snapshot loading/disconnection, without fitting hidden boxes.
-    if (box && (width !== box.width || height !== box.height)) paneSizeChanged = true;
-    box = { width, height };
+  term.onFit((changed) => {
+    paneSizeChanged ||= changed;
     sendSize();
   });
   const offStatus = net.onStatus((up) => {
@@ -508,7 +491,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     unbind();
     offFont();
     offTheme();
-    ro.disconnect();
     net.send({ t: 'worker.detach', workerId });
     term.dispose();
     alive = false;
@@ -621,8 +603,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const offFont = onTermFontSize((px) => {
     term.options.fontSize = px;
     header?.zoom(px);
-    paneSizeChanged = true;
-    sendSize();
   });
   const offTheme = onTermTheme(() => (term.options.theme = termTheme()));
 
@@ -636,7 +616,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     try {
       const paths = await Promise.all(files.map((f) => uploadDrop(workerId, f)));
       if (!alive || !mirror.ready || !net.up) return;
-      sendSize(true);
       term.paste(droppedPaths(paths));
       term.focus();
     } catch (err) {
@@ -696,7 +675,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       await openTerminalRenderer(term, host, () => alive);
       if (!alive) return;
       opened = true;
-      ro.observe(host);
       adoptSharedSize = store.worker(workerId)?.open === true;
       if (!threadView && (!inline || !document.hidden)) net.send({ t: 'worker.attach', workerId });
       setTimeout(() => {
@@ -770,24 +748,19 @@ export function openOfficeShell(net: Net) {
   let ptyCols = 0;
   let ptyRows = 0;
   const pendingSizes: string[] = [];
-  let box: { width: number; height: number } | undefined;
   let boxChanged = false;
 
   const sendSize = (typing = false) => {
-    if (term.options.disableStdin || !mirror?.ready || !opened || !net.up || !host.clientWidth || !host.clientHeight) return;
+    if (term.options.disableStdin || !mirror?.ready || !opened || !net.up) return;
     if (typing || boxChanged) shared = false;
     boxChanged = false;
-    if (!typing && shared) {
+    if (shared) {
       if (ptyCols !== term.cols || ptyRows !== term.rows) term.resize(ptyCols, ptyRows);
       return;
     }
-    try {
-      const size = term.proposeDimensions();
-      if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
-      term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
-    } catch {
-      return;
-    }
+    const size = term.proposeDimensions();
+    if (!size) return;
+    term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
     const key = `${term.cols}x${term.rows}`;
     if ((pendingSizes.length || ptyCols !== term.cols || ptyRows !== term.rows) && key !== lastSentSize) {
       lastSentSize = key;
@@ -814,12 +787,7 @@ export function openOfficeShell(net: Net) {
     () => net.send({ t: 'shell.attach' }),
     (ready) => (term.options.disableStdin = !ready || !net.up || guestTokenOn()),
   );
-  const offPrefs = followTerminalPrefs(term, {
-    resized: () => {
-      boxChanged = true;
-      sendSize();
-    },
-  });
+  const offPrefs = followTerminalPrefs(term);
   term.attachCustomKeyEventHandler((e) => {
     if (e.ctrlKey && e.key === ']') {
       if (e.type === 'keydown') modal.close();
@@ -830,7 +798,7 @@ export function openOfficeShell(net: Net) {
   });
   term.onData((data) => {
     if (term.options.disableStdin || !mirror?.ready || !net.up) return;
-    if (!isFocusReport(data)) sendSize(true);
+    if (!isFocusReport(data) && shared) sendSize(true);
     net.send({ t: 'shell.input', data });
   });
   const offStatus = net.onStatus((up) => {
@@ -872,12 +840,8 @@ export function openOfficeShell(net: Net) {
     lastSentSize = '';
     pendingSizes.length = 0;
   });
-  const ro = new ResizeObserver(([entry]) => {
-    if (!entry) return;
-    const { width, height } = entry.contentRect;
-    if (width <= 0 || height <= 0) return;
-    if (box && (width !== box.width || height !== box.height)) boxChanged = true;
-    box = { width, height };
+  term.onFit((changed) => {
+    boxChanged ||= changed;
     sendSize();
   });
 
@@ -899,7 +863,6 @@ export function openOfficeShell(net: Net) {
       unbind();
       offFont();
       offTheme();
-      ro.disconnect();
       net.send({ t: 'shell.detach' });
       term.dispose();
       if (current?.modal === modal) current = null;
@@ -915,8 +878,6 @@ export function openOfficeShell(net: Net) {
   const offFont = onTermFontSize((px) => {
     term.options.fontSize = px;
     paintZoom(px);
-    boxChanged = true;
-    sendSize();
   });
   const offTheme = onTermTheme(() => (term.options.theme = termTheme()));
   const zoomBy = (dir: 1 | -1) => {
@@ -934,7 +895,6 @@ export function openOfficeShell(net: Net) {
     try {
       const paths = await Promise.all(files.map((f) => uploadDrop(OFFICE_SHELL_ID, f)));
       if (current?.modal !== modal) return;
-      sendSize(true);
       term.paste(droppedPaths(paths));
       term.focus();
     } catch (err) {
@@ -987,7 +947,6 @@ export function openOfficeShell(net: Net) {
       await openTerminalRenderer(term, host, () => shellAlive);
       if (!shellAlive) return;
       opened = true;
-      ro.observe(host);
       net.send({ t: 'shell.attach' });
       setTimeout(() => {
         if (current?.modal === modal) term.focus();

@@ -28,6 +28,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
           document.dispatchEvent(new Event('visibilitychange'));
         };
         w.visibility(pageHidden);
+        localStorage.removeItem('droid-office.term-font');
         const { Terminal, store, openTerminal, openOfficeShell, routeTerminalMessage, OFFICE_SHELL_ID } = w.TerminalUI;
         const open = Terminal.prototype.open;
         Terminal.prototype.open = function (host: HTMLElement) {
@@ -114,6 +115,38 @@ test('inline terminals follow pane geometry without focus or stale size rollback
   }
 
   for (const mode of ['inline', 'shell']) {
+    await t.test(`${mode} sends 30 settled keystrokes without measuring or resizing`, async () => {
+      const page = await rig(true, false, false, mode);
+      await page.evaluate(() => (window as any).term.focus());
+      await page.keyboard.type('x');
+      assert.equal(await page.evaluate(() => (window as any).sizes().length), 1, 'first input claims the shared grid');
+      await page.evaluate(() => {
+        const w = window as any;
+        w.messages = [];
+        w.proposals = 0;
+        const propose = w.term.proposeDimensions.bind(w.term);
+        w.term.proposeDimensions = () => {
+          w.proposals++;
+          return propose();
+        };
+        // Apart from the adapter's proposal, the old input path read the host itself.
+        const host = document.querySelector('.term-host')!;
+        for (const name of ['clientWidth', 'clientHeight', 'offsetWidth', 'offsetHeight', 'getBoundingClientRect'])
+          Object.defineProperty(host, name, {
+            get: () => {
+              throw Error(`input measured ${name}`);
+            },
+          });
+      });
+      await page.keyboard.type('abcdefghijklmnopqrstuvwxyzabcd');
+      assert.deepEqual(
+        await page.evaluate(() => {
+          const w = window as any;
+          return [w.proposals, w.sizes().length, w.messages.filter((m: any) => m.t.endsWith('.input')).length];
+        }),
+        [0, 0, 30],
+      );
+    });
     await t.test(`${mode} enables clipboard and input only after snapshot and pending output drain`, async () => {
       const page = await rig(true, true, false, mode);
       const result = await page.evaluate(async (mode) => {

@@ -24,6 +24,19 @@ export function createAndroidTerminal(images: KittyTerminalOptions) {
         graphics = attachWtermGraphics(adapter, images);
       },
     ],
+    (native) => {
+      // Phone/Desktop fitting tests successive font sizes in the same turn. Update
+      // native hit-test and scroll metrics before restoring the reader, but never
+      // fit a local grid in place of the authoritative PTY.
+      const { style } = native.element;
+      const width = style.width;
+      style.width = '0px';
+      try {
+        native.fit();
+      } finally {
+        style.width = width;
+      }
+    },
   );
   return { term, expandAtClient: (x: number, y: number) => graphics?.expandAtClient(x, y) ?? false };
 }
