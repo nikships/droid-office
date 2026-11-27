@@ -838,6 +838,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 /* Keep the old 14px scrollbar gutter beside the grid, plus the 4px window inset. */
 .modal.term .term-host .office-wterm { --office-fit-gutter: 14px; }
 .office-wterm.measuring-cells, .office-wterm.measuring-cells * { pointer-events: none !important; }
+.changes-log:focus-visible .office-wterm { outline: 2px solid var(--accent); outline-offset: -2px; }
 .office-wterm.term-kitty-clickable, .office-wterm.term-kitty-clickable .term-row { cursor: zoom-in; }
 .modal.term .term-team { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
 /* A cloud worker's window (ui/factory-cloud.ts): the terminal window's frame around its Factory session */

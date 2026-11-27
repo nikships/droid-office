@@ -125,6 +125,7 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
         openChanges({ send: () => true }, 'pixel');
       });
       const log = pane.getByRole('button', { name: /^Log/ }),
+        logHost = pane.locator('.changes-log'),
         root = pane.locator('.changes-log .office-wterm');
       await log.click();
       const focusLog = async () => {
@@ -132,11 +133,15 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
           .locator('.term-row')
           .first()
           .click({ position: { x: 5, y: 5 } });
-        assert.ok(await root.evaluate((el) => el.contains(document.activeElement)));
+        assert.ok(await logHost.evaluate((el) => el.contains(document.activeElement)));
       };
       await focusLog();
       await pane.keyboard.press('Tab');
-      const tabLeaves = await root.evaluate((el) => !el.contains(document.activeElement));
+      const tabLeaves = await logHost.evaluate((el) => !el.contains(document.activeElement));
+      await log.focus();
+      for (let i = 0; i < 8 && !(await logHost.evaluate((el) => el === document.activeElement)); i++) await pane.keyboard.press('Tab');
+      assert.ok(await logHost.evaluate((el) => el.matches(':focus-visible')), 'Tab reaches the Log host');
+      assert.deepEqual(await root.evaluate((el) => [getComputedStyle(el).outlineStyle, getComputedStyle(el).outlineOffset]), ['solid', '-2px'], 'focused Changes Log needs a visible inset keyboard outline');
       await focusLog();
       await pane.keyboard.press('t');
       const toggled = (await log.getAttribute('aria-pressed')) === 'false';

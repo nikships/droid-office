@@ -341,9 +341,8 @@ export class WTermAdapter {
   /** A display-only log leaves the focused window and browser in charge of keys.
    * Unlike a handled terminal shortcut, these events keep their default action. */
   useWindowKeyboard() {
-    this.onOpen(({ element }) => {
+    this.onOpen(() => {
       if (this.textarea) this.textarea.disabled = true;
-      element.tabIndex = 0;
     });
   }
   onOpen(fn: (native: WTerm, signal: AbortSignal) => void) {
