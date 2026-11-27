@@ -38,6 +38,19 @@ test('inline terminals follow pane geometry without focus or stale size rollback
         const mount = document.getElementById('mount')!;
         mount.style.width = '600px';
         mount.style.height = '350px';
+        if (mode === 'dashboard') {
+          const body = document.createElement('div');
+          body.className = 'dash-body';
+          body.style.cssText = 'position:fixed;inset:0';
+          const workspace = document.createElement('div');
+          workspace.className = 'dash-workspace';
+          body.append(document.createElement('aside'), workspace);
+          document.body.append(body);
+          workspace.append(mount);
+          mount.className = 'dash-pane';
+          mount.dataset.mode = 'terminal';
+          mount.style.cssText = '--x:0;--y:0;--w:0.5;--h:1;--gl:0px;--gr:0px;--gt:0px;--gb:0px';
+        }
         if (hidden) mount.style.display = 'none';
         const worker = { id: 'pixel', name: 'Pixel', kind: 'agent', color: '#89d9ed', status: 'idle', cols: 120, rows: 40, open: shared };
         store.workers.set(worker.id, worker);
@@ -295,22 +308,8 @@ test('inline terminals follow pane geometry without focus or stale size rollback
   });
 
   await t.test('dashboard sidebar breakpoints and pane splits send only the settled grid', async () => {
-    const page = await rig(false);
+    const page = await rig(false, false, false, 'dashboard');
     await page.setViewportSize({ width: 1120, height: 720 });
-    await page.evaluate(() => {
-      const mount = document.getElementById('mount')!;
-      const body = document.createElement('div');
-      body.className = 'dash-body';
-      body.style.cssText = 'position:fixed;inset:0';
-      const workspace = document.createElement('div');
-      workspace.className = 'dash-workspace';
-      body.append(document.createElement('aside'), workspace);
-      document.body.append(body);
-      workspace.append(mount);
-      mount.className = 'dash-pane';
-      mount.dataset.mode = 'terminal';
-      mount.style.cssText = '--x:0;--y:0;--w:0.5;--h:1;--gl:0px;--gr:0px;--gt:0px;--gb:0px';
-    });
     const settle = () =>
       page.evaluate(async () => {
         const w = window as any;
@@ -333,6 +332,21 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     }
     await page.locator('#mount').evaluate((el) => el.style.setProperty('--w', '1'));
     assert.equal((await settle()).length, 1, 'one resize when the terminal takes the full workspace');
+    await page.evaluate(async () => {
+      const pane = document.getElementById('mount')!;
+      pane.parentElement!.classList.add('resizing');
+      for (const width of ['0.4', '0.5', '0.6']) {
+        pane.style.setProperty('--w', width);
+        await (window as any).frames();
+      }
+    });
+    assert.deepEqual(await settle(), [], 'a live divider drag does not repeatedly reflow the PTY');
+    await page.evaluate(() => {
+      const workspace = document.querySelector('.dash-workspace')!;
+      workspace.classList.remove('resizing');
+      workspace.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    });
+    assert.equal((await settle()).length, 1, 'release commits the last observed box even when the pointer stopped moving');
   });
 
   await t.test('shared attachment stays passive, but each pane size change claims its new box', async () => {

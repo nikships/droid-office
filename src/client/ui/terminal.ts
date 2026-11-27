@@ -312,6 +312,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   let lastPtySize = '';
   const pendingSizes: string[] = [];
   let paneSizeChanged = false;
+  const workspace = inline?.mount.closest('.dash-workspace');
   /**
    * Whether another window already had this terminal open when this one attached. Merely
    * opening or resizing then adopts the shared size instead of reflowing the terminal under
@@ -327,6 +328,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       return;
     }
     if (!mirror.ready || !opened || !net.up) return;
+    if (!typing && workspace?.classList.contains('resizing')) return;
     if (typing || paneSizeChanged) adoptSharedSize = false;
     paneSizeChanged = false;
     if (adoptSharedSize) {
@@ -473,6 +475,19 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     paneSizeChanged ||= changed;
     sendSize();
   });
+  // A captured splitter can stop moving before pointerup. Its last observation
+  // is already cached, so release must also publish when no further resize fires.
+  if (workspace && !readOnly) {
+    term.onOpen((_native, signal) => {
+      const released = () => {
+        if (!paneSizeChanged || workspace.classList.contains('resizing')) return;
+        // The last pointermove can land in the same turn as release. Let the
+        // final content-box observation run before consuming the cached fit.
+        requestAnimationFrame(() => requestAnimationFrame(() => alive && paneSizeChanged && sendSize()));
+      };
+      for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) workspace.addEventListener(type, released, { signal });
+    });
+  }
   const offStatus = net.onStatus((up) => {
     header?.refresh(store.worker(workerId) ?? info);
     thread?.update(store.worker(workerId) ?? info, up);
