@@ -84,22 +84,18 @@ test('OSC 52 writes silently on a live owner mirror and never reads the clipboar
   await request('unsupported selector', 'p');
   for (const payload of ['?', '%%%', '/w==']) await write(`\x1b]52;c;${payload}\x07`);
   assert.equal((await writes()).length, count);
-  // No permission bubbles: a fresh, inactive page must check specifically
-  // for a pre-existing grant to write WITHOUT user activation.
+  // A fresh, inactive page still asks the browser to write; permission UI
+  // and the outcome of that first request belong to the browser.
   await cdp.send('Runtime.evaluate', {
     expression: `Object.defineProperty(navigator, 'userActivation', {configurable:true,value:{isActive:false}});
-    window.grant={state:'prompt'};window.queries=[];
-    Object.defineProperty(navigator, 'permissions', {value:{async query(desc){window.queries.push(desc);return window.grant;}}});
+    window.queries=[];
+    Object.defineProperty(navigator, 'permissions', {value:{async query(desc){window.queries.push(desc);return {state:'prompt'};}}});
     window.term.write('\\x1b]52;c;Z2F0ZWQ=\\x07');`,
     userGesture: false,
   });
-  assert.equal((await writes()).length, count);
-  assert.deepEqual(await page.evaluate(() => (window as any).queries), [{ name: 'clipboard-write', allowWithoutGesture: true }]);
-  await page.evaluate(() => {
-    (window as any).grant.state = 'granted';
-  });
-  await request('pre-existing grant');
-  assert.equal((await writes()).at(-1), 'pre-existing grant');
+  assert.equal((await writes()).length, count + 1);
+  assert.equal((await writes()).at(-1), 'gated');
+  assert.deepEqual(await page.evaluate(() => (window as any).queries), []);
   const grantedCount = (await writes()).length;
   await page.evaluate(() => {
     (window as any).deny = true;
