@@ -7,7 +7,7 @@ const launcher = ['../../bin/', '../../../bin/'].map((base) => fileURLToPath(new
 
 /** Wrap only the final, interactive login shell, not the setup shell or any
  * agent subprocess. Off bypasses the startup handoff as well as its marks. */
-export function interactiveShell(file: string, args: string[], home: string | undefined) {
-  if (process.platform === 'win32' || path.basename(file) !== 'zsh' || !home || !launcher || existsSync(path.join(home, '.droid-office', 'no-shell-integration'))) return { file, args };
+export function interactiveShell(file: string, args: string[], enabled: boolean) {
+  if (!enabled || process.platform === 'win32' || path.basename(file) !== 'zsh' || !launcher) return { file, args };
   return { file: '/bin/sh', args: [launcher, file, ...args] };
 }

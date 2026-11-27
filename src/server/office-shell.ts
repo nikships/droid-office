@@ -71,6 +71,7 @@ export class OfficeShell {
     dataDir: string,
     private readonly host: PtyHost,
     private readonly events: ShellEvents,
+    private readonly shellIntegration: () => boolean = () => true,
   ) {
     this.statePath = path.join(dataDir, 'shell.json');
     this.scrollPath = path.join(dataDir, 'shell.ansi');
@@ -189,7 +190,7 @@ export class OfficeShell {
     env.COLORTERM = 'truecolor';
     let proc: Pty;
     try {
-      proc = this.host.spawn({ ...interactiveShell(shell, args, env.HOME), cwd: this.dir, env, cols: this.cols, rows: this.rows, prelude });
+      proc = this.host.spawn({ ...interactiveShell(shell, args, this.shellIntegration()), cwd: this.dir, env, cols: this.cols, rows: this.rows, prelude });
     } catch (err) {
       this.fails++;
       this.note(`\r\n\x1b[31mFailed to start the shell: ${(err as Error).message}\x1b[0m\r\n`);

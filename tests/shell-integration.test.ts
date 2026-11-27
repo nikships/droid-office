@@ -14,7 +14,7 @@ const marks = (text: string) => [...text.matchAll(mark)].map((m) => m[1]);
 // Wait for the actual ZLE bracketed-paste enable on each prompt, not a
 // timer. Keep the full PTY stream for byte comparison with an unwrapped zsh.
 async function session(home: string, wrapped: boolean, commands: string[], extra: Record<string, string> = {}) {
-  const { file, args } = wrapped ? interactiveShell(zsh, ['-l'], home) : { file: zsh, args: ['-l'] };
+  const { file, args } = wrapped ? interactiveShell(zsh, ['-l'], true) : { file: zsh, args: ['-l'] };
   const proc = pty.spawn(file, args, { cwd: home, cols: 100, rows: 24, env: { HOME: home, PATH: '/usr/bin:/bin', TERM: 'xterm-256color', LANG: 'C', ...extra } });
   let chunk = '';
   const prompts: string[] = [];
@@ -38,13 +38,9 @@ async function session(home: string, wrapped: boolean, commands: string[], extra
   });
 }
 
-test('only the final interactive zsh is wrapped, and the off switch bypasses the handoff', async (t) => {
-  const home = await mkdtemp(path.join(tmpdir(), 'office-shell-'));
-  t.after(() => rm(home, { recursive: true, force: true }));
-  for (const file of ['/bin/bash', '/bin/sh', '/usr/bin/fish', '/path/to/droid']) assert.deepEqual(interactiveShell(file, ['-l'], home), { file, args: ['-l'] });
-  await mkdir(path.join(home, '.droid-office'));
-  await writeFile(path.join(home, '.droid-office', 'no-shell-integration'), '');
-  assert.deepEqual(interactiveShell(zsh, ['-l'], home), { file: zsh, args: ['-l'] });
+test('only the final interactive zsh is wrapped, and the off switch bypasses the handoff', () => {
+  for (const file of ['/bin/bash', '/bin/sh', '/usr/bin/fish', '/path/to/droid']) assert.deepEqual(interactiveShell(file, ['-l'], true), { file, args: ['-l'] });
+  assert.deepEqual(interactiveShell(zsh, ['-l'], false), { file: zsh, args: ['-l'] });
 });
 
 test('real zsh login prompts and status equal native, apart from the semantic marks', { skip: !existsSync(zsh) }, async (t) => {

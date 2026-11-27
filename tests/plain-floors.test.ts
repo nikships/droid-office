@@ -178,6 +178,7 @@ test('a floor removes leftover guests.json on load', (t) => {
     connections: () => 0,
     leaveOnMerge: () => false,
     freshMain: () => false,
+    shellIntegration: () => true,
     officeDataDir: dataDir,
     subagents: () => ({ ...SUBAGENT_DEFAULTS, wakeLead: false }),
     floor: () => undefined,

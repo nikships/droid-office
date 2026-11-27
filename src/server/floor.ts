@@ -97,6 +97,7 @@ export interface FloorContext {
   leaveOnMerge(): boolean;
   /** ⚙️ Settings: a fresh worker starts from the latest of the default branch (see WorkerManager.freshMain). */
   freshMain(): boolean;
+  shellIntegration(): boolean;
   /** ⚙️ Settings → Subagents & visits: how workers hire subagents. */
   subagents(): SubagentSettings;
   /** Droid's model list, which leads choose subagents' models from. */
@@ -389,6 +390,7 @@ export class Floor {
       this.cloud.drops.setShared(ctx.sharedImages);
     }
     this.workers.freshMain = () => ctx.freshMain();
+    this.workers.shellIntegration = ctx.shellIntegration;
     this.workers.visitsOn = () => ctx.subagents().visits;
     this.workers.pullList = () => this.board.pulls.items;
     this.workers.modelGate = (model) => ctx.modelGate?.(model);
@@ -567,10 +569,16 @@ export class Floor {
       }),
       onPatch: (patch, { origin, caps }) => ctx.emit(this, { t: 'whiteboard', floor: this.id, update: { kind: 'patch', patch }, ...(origin ? { origin } : {}), ...(Object.keys(caps).length ? { caps } : {}) }),
     });
-    this.shell = new OfficeShell(def.dir, dataDir, this.workers.terminals, {
-      screen: (frame) => ctx.emit(this, { t: 'screen', workerId: OFFICE_SHELL_ID, ...frame }, true),
-      data: (data, ids) => ctx.termData(OFFICE_SHELL_ID, data, ids),
-    });
+    this.shell = new OfficeShell(
+      def.dir,
+      dataDir,
+      this.workers.terminals,
+      {
+        screen: (frame) => ctx.emit(this, { t: 'screen', workerId: OFFICE_SHELL_ID, ...frame }, true),
+        data: (data, ids) => ctx.termData(OFFICE_SHELL_ID, data, ids),
+      },
+      ctx.shellIntegration,
+    );
     // Started with the workers, so a shell the host kept is claimed before leftover sessions are ended.
     this.workers.officeShell = this.shell;
     this.ready = this.workers.start();

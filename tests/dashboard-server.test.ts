@@ -1,6 +1,6 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import http from 'node:http';
@@ -12,6 +12,7 @@ import { build } from 'vite';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { loadConfig } from '../src/server/config.js';
+import { Store } from '../src/client/state.js';
 import { leaveFloorTerminals, startServer } from '../src/server/server.js';
 import { HOOK_VERSION } from '../src/server/workers.js';
 import { DevicesStore } from '../src/server/devices.js';
@@ -82,6 +83,73 @@ function socket(t: TestContext, base: string, query: string, origin = base) {
   const send = (msg: ClientMsg) => ws.send(JSON.stringify(msg));
   return { ws, messages, wait, send };
 }
+
+test('shell integration broadcasts to owners, persists across restart, and reads the switch at launch', async (t) => {
+  const zsh = '/bin/zsh';
+  const hasZsh = existsSync(zsh);
+  if (hasZsh) {
+    const config = mkdtempSync(path.join(os.tmpdir(), 'office-zdotdir-'));
+    const previous = { SHELL: process.env.SHELL, ZDOTDIR: process.env.ZDOTDIR };
+    t.after(() => {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      rmSync(config, { recursive: true, force: true });
+    });
+    writeFileSync(path.join(config, '.zshenv'), 'startup_context=$ZSH_EVAL_CONTEXT\n');
+    process.env.SHELL = zsh;
+    process.env.ZDOTDIR = config;
+  }
+  const first = await office(t);
+  const owner = socket(t, first.base, 'name=Owner');
+  const store = new Store();
+  const seen: boolean[] = [];
+  store.on('shellIntegration', () => seen.push(store.shellIntegration.on));
+  const initial = await owner.wait('welcome');
+  assert.deepEqual(initial.shellIntegration, { on: true });
+  store.apply(initial);
+  const other = socket(t, first.base, 'client=dashboard');
+  await other.wait('welcome');
+  owner.ws.send(JSON.stringify({ t: 'shellIntegration.set', on: 'false', requestId: 'malformed' }));
+  assert.equal((await owner.wait('action.result', (m) => m.requestId === 'malformed')).ok, false);
+
+  async function probe(client: ReturnType<typeof socket>, workerId: string, expected: string) {
+    const boss = workerId === 'office-shell';
+    client.send(boss ? { t: 'shell.attach' } : { t: 'worker.attach', workerId });
+    await client.wait('term.snapshot', (m) => m.workerId === workerId);
+    const data = `printf '\\nStartup[%s]\\n' "$startup_context"\r`;
+    client.send(boss ? { t: 'shell.input', data } : { t: 'term.input', workerId, data });
+    await client.wait('term.data', (m) => m.workerId === workerId && m.data.includes(`Startup[${expected}]`));
+  }
+  owner.send({ t: 'shellIntegration.set', on: false });
+  const update = await other.wait('shellIntegration');
+  store.apply(update);
+  assert.deepEqual(seen, [true, false]);
+  const { state } = update;
+  assert.equal(state.on, false);
+  assert.ok(state.at && state.by);
+  if (hasZsh) {
+    // The current floor's Boss Shell started on. Turning the switch off
+    // must not restart or alter it, but the next worker gets native zsh.
+    await probe(owner, 'office-shell', 'file:file');
+    owner.send({ t: 'worker.spawn', kind: 'shell', deskId: 'auto', requestId: 'new' });
+    const hired = await owner.wait('action.result', (m) => m.requestId === 'new');
+    assert.ok(hired.workerId, hired.error);
+    await probe(owner, hired.workerId, 'file');
+  }
+  await first.stop();
+  const second = await office(t, first.dir);
+  const restored = socket(t, second.base, 'name=Owner');
+  const afterRestart = await restored.wait('welcome');
+  assert.deepEqual(afterRestart.shellIntegration, state);
+  store.apply(afterRestart);
+  if (hasZsh) await probe(restored, 'office-shell', 'file');
+  restored.send({ t: 'shellIntegration.set', on: true });
+  store.apply(await restored.wait('shellIntegration'));
+  assert.deepEqual(seen, [true, false, false, true]);
+  await second.stop();
+});
 
 test('Mission Control readiness updates on one connected client after sign-in and Office MCP changes', async (t) => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'mission-readiness-'));

@@ -208,6 +208,7 @@ export class WorkerManager {
    * from the branch the checkout is on, which is left alone.
    */
   freshMain?: () => boolean;
+  shellIntegration: () => boolean = () => true;
   /** ⚙️ Settings → Subagents & visits → Visits: a worker with no lead is told about the visit tools when it starts. */
   visitsOn?: () => boolean;
   /** The floor's pull requests as the board last listed them, to tell a checkout whose branch merged (see settleCheckout). */
@@ -2216,7 +2217,7 @@ export class WorkerManager {
     else if (this.trees.ceiling) env.GIT_CEILING_DIRECTORIES = [this.trees.ceiling, env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(path.delimiter);
     // The host keeps its own copy of the screen for the next office: it starts with the same history.
     const where = { cwd, env, cols: info.cols, rows: info.rows, prelude };
-    const launch = isShell ? interactiveShell(shell, args, env.HOME) : { file: commandPath ?? command, args };
+    const launch = isShell ? interactiveShell(shell, args, this.shellIntegration()) : { file: commandPath ?? command, args };
     // Only a new worktree's first terminal: a resume finds it ready.
     const plan = resumeSessionId ? undefined : w.setupPlan;
     w.setupPlan = undefined;

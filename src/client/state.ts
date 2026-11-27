@@ -9,6 +9,7 @@ import type {
   GhState,
   LeaveOnMergeState,
   FreshMainState,
+  ShellIntegrationState,
   MachineState,
   ProjectInfo,
   ProjectsDirState,
@@ -67,6 +68,7 @@ export type Topic =
   | 'sky'
   | 'leaveOnMerge'
   | 'freshMain'
+  | 'shellIntegration'
   | 'subagents'
   | 'bundledSkills'
   | 'hiddenModels'
@@ -299,6 +301,7 @@ export class Store {
   leaveOnMerge: LeaveOnMergeState = { on: false };
   /** Whether fresh workers start from the latest of the default branch (⚙️ Settings). */
   freshMain: FreshMainState = { on: true };
+  shellIntegration: ShellIntegrationState = { on: true };
   /** How workers hire subagents (⚙️ Settings → Subagents & visits), and where the Droid skill is. */
   subagents: SubagentsState = { ...SUBAGENT_DEFAULTS };
   /** Bundled workflow skills synced into ~/.factory/skills/ (⚙️ Settings → Workers). */
@@ -440,6 +443,7 @@ export class Store {
         if (msg.jukebox) this.setJukebox(msg.jukebox);
         this.leaveOnMerge = msg.leaveOnMerge ?? { on: false };
         this.freshMain = msg.freshMain ?? { on: true };
+        this.shellIntegration = msg.shellIntegration ?? { on: true };
         this.subagents = msg.subagents ?? { ...SUBAGENT_DEFAULTS };
         this.bundledSkills = msg.bundledSkills ?? { on: true, disabled: [], skills: [] };
         this.hiddenModels = msg.hiddenModels ?? [];
@@ -467,6 +471,7 @@ export class Store {
           'jukebox',
           'leaveOnMerge',
           'freshMain',
+          'shellIntegration',
           'subagents',
           'bundledSkills',
           'prompts',
@@ -694,6 +699,10 @@ export class Store {
       case 'freshMain':
         this.freshMain = msg.state;
         this.emit('freshMain');
+        break;
+      case 'shellIntegration':
+        this.shellIntegration = msg.state;
+        this.emit('shellIntegration');
         break;
       case 'models.hidden':
         this.hiddenModels = msg.ids;

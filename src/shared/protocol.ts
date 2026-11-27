@@ -749,6 +749,13 @@ export interface FreshMainState {
   at?: number;
 }
 
+/** Office-wide zsh integration for newly launched shells (default on). */
+export interface ShellIntegrationState {
+  on: boolean;
+  by?: string;
+  at?: number;
+}
+
 /** What ⚙️ Settings → Subagents & visits sets: Office MCP access and how workers hire subagents (see server/team.ts). */
 export interface SubagentSettings {
   /** Expose the authenticated Office MCP to local Droid workers. */
@@ -1064,6 +1071,7 @@ type ClientMessage =
   | { t: 'leaveOnMerge.set'; on: boolean }
   /** Fresh workers start from the latest of the default branch (true), or from the branch the checkout is on. */
   | { t: 'freshMain.set'; on: boolean }
+  | { t: 'shellIntegration.set'; on: boolean }
   /** How workers hire subagents (⚙️ Settings → Subagents & visits), for every floor. */
   | { t: 'subagents.set'; settings: SubagentSettings }
   /** Turn Droid Office's bundled workflow skills on/off, globally or per skill (⚙️ Settings → Workers). */
@@ -1149,6 +1157,7 @@ export type ServerMsg =
       jukebox: JukeboxState;
       leaveOnMerge: LeaveOnMergeState;
       freshMain: FreshMainState;
+      shellIntegration: ShellIntegrationState;
       subagents: SubagentsState;
       bundledSkills?: BundledSkillsState;
       hiddenModels?: string[];
@@ -1281,6 +1290,7 @@ export type ServerMsg =
   | { t: 'sky'; state: SkyState }
   | { t: 'leaveOnMerge'; state: LeaveOnMergeState }
   | { t: 'freshMain'; state: FreshMainState }
+  | { t: 'shellIntegration'; state: ShellIntegrationState }
   | { t: 'subagents'; state: SubagentsState }
   | { t: 'bundledSkills'; state: BundledSkillsState }
   | { t: 'models.hidden'; ids: string[]; hideNative?: boolean }

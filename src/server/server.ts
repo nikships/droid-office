@@ -40,7 +40,7 @@ import { FloorActivity } from './floor-activity.js';
 import { Floor, type FloorContext } from './floor.js';
 import { Sky } from './sky.js';
 import { LeaveOnMerge } from './leave-on-merge.js';
-import { FreshMain } from './saved-switch.js';
+import { FreshMain, SavedSwitch } from './saved-switch.js';
 import { Subagents, removeBundledSkills } from './subagents.js';
 import { BundledSkills } from './bundled-skills.js';
 import { createOfficeMcp, OFFICE_MCP_PATH, syncOfficeMcpConnection, type OfficeMcpServer } from './office-mcp/index.js';
@@ -346,6 +346,7 @@ export async function startServer(cfg: Config) {
   const leaveOnMerge = new LeaveOnMerge(cfg.dataDir, (state) => broadcast({ t: 'leaveOnMerge', state }));
   // Whether a fresh worker starts from the latest of the default branch, on every floor (⚙️ Settings).
   const freshMain = new FreshMain(cfg.dataDir, (state) => broadcast({ t: 'freshMain', state }));
+  const shellIntegration = new SavedSwitch(cfg.dataDir, 'shell-integration.json', true, (state) => broadcast({ t: 'shellIntegration', state }));
   // The prompts the office writes for workers by itself, and the worker a new one starts on when nobody picks (Settings).
   const prompts = new OfficePrompts(cfg.dataDir, (state) => {
     broadcast({ t: 'prompts', state });
@@ -826,6 +827,7 @@ export async function startServer(cfg: Config) {
     watches: (clientId) => !clients.get(clientId)?.guest,
     leaveOnMerge: () => leaveOnMerge.on,
     freshMain: () => freshMain.on,
+    shellIntegration: () => shellIntegration.on,
     subagents: () => subagents.settings,
     droidModels: availableDroidModels,
     modelGate,
@@ -1156,6 +1158,7 @@ export async function startServer(cfg: Config) {
       jukebox: jukebox.state(),
       leaveOnMerge: leaveOnMerge.state(),
       freshMain: freshMain.state(),
+      shellIntegration: shellIntegration.state(),
       subagents: subagents.state(),
       bundledSkills: bundledSkills.state(),
       hiddenModels: hiddenModels.state(),
@@ -2274,6 +2277,12 @@ export async function startServer(cfg: Config) {
         if (on === freshMain.on) break;
         freshMain.set(on, who);
         toastAll(on ? `🌿 ${who} set fresh workers to start from the latest main` : `🌿 ${who} set fresh workers to start from the branch the checkout is on`);
+        break;
+      }
+      case 'shellIntegration.set': {
+        if (typeof msg.on !== 'boolean') return stop('Shell prompt integration must be on or off.');
+        if (msg.on !== shellIntegration.on) shellIntegration.set(msg.on, who);
+        done();
         break;
       }
       case 'bundledSkills.set': {

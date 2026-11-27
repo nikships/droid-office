@@ -191,6 +191,23 @@ async function rig(t: TestContext, { commits = false } = {}) {
   return { office, base, api, owner, tailscaleLog: log, alphaId, betaId, alphaDir: alpha, a1, a2, a3, b1, link, guest };
 }
 
+test('an edit-office guest cannot read or change the office-wide shell integration switch', async (t) => {
+  const r = await rig(t);
+  const guest = r.guest((await r.link('Guest', 'edit-office')).token);
+  assert.equal('shellIntegration' in (await guest.wait('welcome')), false);
+  assert.equal((await guest.act({ t: 'shellIntegration.set', on: false })).ok, false);
+  const observer = watch(t, new WebSocket(`${r.base.replace('http:', 'ws:')}/ws`, { origin: r.base }));
+  assert.deepEqual((await observer.wait('welcome')).shellIntegration, { on: true });
+  assert.equal((await r.owner.act({ t: 'shellIntegration.set', on: false })).ok, true);
+  await r.owner.wait('shellIntegration', (m) => !m.state.on);
+  guest.send({ t: 'ping', at: 1 });
+  await guest.wait('pong');
+  assert.equal(
+    guest.messages.some((m) => m.t === 'shellIntegration'),
+    false,
+  );
+});
+
 test('a worker across repositories comes and goes without a frame to a floor link that never saw it', { timeout: 60_000 }, async (t) => {
   const r = await rig(t, { commits: true });
   const { owner, alphaId, betaId } = r;
