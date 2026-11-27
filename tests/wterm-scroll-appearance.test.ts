@@ -361,6 +361,12 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       assert.ok(Math.abs(s.logical - (850.25 - output)) < 0.08);
     }
   });
+  await t.test('explicit tail wins over a pending font restore without further output', async () => {
+    const s = await changeReader('tail');
+    t.diagnostic(JSON.stringify(s));
+    assert.ok(s.before?.startsWith('line '));
+    assert.ok(s.tail <= 1, `${s.tail}px short of the bottom`);
+  });
   await t.test('holds retained content through cap, resize and new output; typing and paste follow again', async () => {
     const result = await page.evaluate(async () => {
       const { a, x, write, frame, el } = window as any;

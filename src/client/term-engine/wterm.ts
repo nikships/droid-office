@@ -203,9 +203,9 @@ export class WTermAdapter {
       } finally {
         el.style.width = width;
       }
-      if (previousHeight !== this.rowHeight && this.readerRow !== undefined) {
+      if (previousHeight !== this.rowHeight) {
         this.restoreAfterPaint = true;
-        el.scrollTop = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
+        if (this.readerRow !== undefined) el.scrollTop = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
       }
     }
   }
@@ -254,8 +254,8 @@ export class WTermAdapter {
             queueMicrotask(() => {
               // Native paint commits both the virtual spacer and its own scroll
               // adjustment. Only then is a logical row a usable pixel offset.
-              if (!this.restoreAfterPaint || this.metricsPending || !root.clientHeight || this.readerRow === undefined) return;
-              root.scrollTop = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
+              if (!this.restoreAfterPaint || this.metricsPending || !root.clientHeight) return;
+              root.scrollTop = this.readerRow === undefined ? root.scrollHeight : Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
               this.restoreAfterPaint = false;
             });
         },
@@ -428,7 +428,8 @@ export class WTermAdapter {
     this.native?.setRenderingPaused(paused || !this.inViewport);
   }
   scrollToBottom() {
-    this.restoreAfterPaint = false;
+    this.readerRow = undefined;
+    if (this.native && this.metricsPending) this.restoreAfterPaint = true;
     if (this.root) this.root.scrollTop = this.root.scrollHeight;
   }
   dispose() {
