@@ -163,7 +163,7 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
         await t.test(`fractional-height fit preserves the unrounded pane's PTY rows at DPR ${dpr}`, async () => {
           const page = await pane();
           try {
-            const samples = await page.evaluate(() => {
+            const samples = await page.evaluate(async () => {
               const t = (window as any).term,
                 el = t.native.element,
                 host = el.parentElement;
@@ -176,6 +176,14 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
                   const height = Math.ceil(rows * pitch + 12) - 1 + fraction;
                   host.style.flex = 'none';
                   host.style.height = `${height}px`;
+                  // Sample the cached proposal after the adapter has observed this box.
+                  await new Promise<void>((resolve) => {
+                    const observer = new ResizeObserver(() => {
+                      observer.disconnect();
+                      resolve();
+                    });
+                    observer.observe(el);
+                  });
                   samples.push({ height, actual: t.proposeDimensions().rows, expected: Math.floor((host.clientHeight - 12) / pitch), painted: Math.floor((host.clientHeight - paintedInset) / pitch) });
                 }
               return samples;

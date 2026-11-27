@@ -371,8 +371,6 @@ export class WTermAdapter {
       // The content box excludes padding, borders and the actual scrollbar. The
       // native font probe survives grid rebuilds and also observes web-font loads.
       const probe = root.querySelector('.term-size-probe')!;
-      // The scroll-end rounding allowance is real padding but not a fit inset.
-      const tailAllowance = parseFloat(getComputedStyle(root).getPropertyValue('--office-tail-allowance')) || 0;
       let box: DOMRectReadOnly | undefined;
       let cell: DOMRectReadOnly | undefined;
       let lastGeometry: string | undefined;
@@ -393,7 +391,12 @@ export class WTermAdapter {
         }
         const geometry = `${box.width},${box.height},${cell.width},${cell.height}`;
         if (this.proposal && geometry === lastGeometry) return;
-        this.proposal = { cols: Math.floor(box.width / cell.width), rows: Math.floor((box.height + tailAllowance) / cell.height) };
+        // Scrollport height is rounded to CSS pixels, unlike the observed box
+        // at fractional zoom. Count only fit padding, not the scroll-end allowance.
+        const style = getComputedStyle(root);
+        const fitBottom = style.getPropertyValue('--office-fit-bottom');
+        const rows = fitBottom ? Math.floor((root.clientHeight - parseFloat(style.paddingTop) - parseFloat(fitBottom)) / this.rowHeight) : Math.floor(box.height / cell.height);
+        this.proposal = { cols: Math.floor(box.width / cell.width), rows };
         const changed = lastGeometry !== undefined && lastGeometry !== geometry;
         lastGeometry = geometry;
         this.fit.fire(changed);

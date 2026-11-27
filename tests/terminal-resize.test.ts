@@ -359,6 +359,37 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     assert.match(await page.locator('.term-grid').innerText(), /output during drag/);
   });
 
+  await t.test('a Thread pane stays next to a visible Raw TTY throughout a layout change', async () => {
+    const page = await rig(false, false, false, 'dashboard');
+    const result = await page.evaluate(async () => {
+      const raw = document.querySelector<HTMLElement>('#mount')!;
+      const thread = document.createElement('section');
+      thread.className = 'dash-pane';
+      thread.dataset.mode = 'thread';
+      thread.style.cssText = '--x:.5;--y:0;--w:.5;--h:1;--gl:3px;--gr:0px;--gt:0px;--gb:0px';
+      raw.style.setProperty('--gr', '3px');
+      raw.after(thread);
+      const gap = () => thread.getBoundingClientRect().left - raw.getBoundingClientRect().right;
+      const samples = [gap()];
+      for (const width of ['.333333', '.5']) {
+        raw.style.setProperty('--w', width);
+        thread.style.setProperty('--x', width);
+        thread.style.setProperty('--w', width);
+        for (let i = 0; i < 5; i++) {
+          await new Promise(requestAnimationFrame);
+          samples.push(gap());
+        }
+      }
+      raw.hidden = true;
+      return { samples, threadOnly: getComputedStyle(thread).transitionProperty };
+    });
+    assert.ok(
+      result.samples.every((value) => Math.abs(value - 6) <= 1),
+      `6px divider gaps: ${result.samples}`,
+    );
+    assert.match(result.threadOnly, /\bwidth\b/, 'Thread-only workspaces still animate');
+  });
+
   await t.test('shared attachment stays passive, but each pane size change claims its new box', async () => {
     const page = await rig();
     assert.deepEqual(await page.evaluate(() => (window as any).sizes()), []);

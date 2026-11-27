@@ -104,7 +104,7 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       const url = '/term-engine/wterm.ts';
       const { WTermAdapter } = await import(url);
       const host = document.createElement('div');
-      host.style.cssText = 'width:500px;height:200px;--office-tail-allowance:1px';
+      host.style.cssText = 'width:500px;height:200px;--office-fit-bottom:0px;--office-tail-allowance:1px';
       document.body.append(host);
       const term = new WTermAdapter({ fontSize: 14 });
       try {
