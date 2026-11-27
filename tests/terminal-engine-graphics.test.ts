@@ -73,6 +73,96 @@ test('autowrap changes do not invent a row trim for an image anchor', async (t) 
     for (const chunk of chunks) write(chunk);
     assert.deepEqual([core.getCursor().y, core.getScrollbackLength(), image.line], [1, 0, 1]);
   }
+  write('\r\n'.repeat(6));
+  write('\x1b[?7lX\x1b[?7h');
+  assert.deepEqual([core.getCursor().y, core.getScrollbackLength(), image.line], [7, 0, 1]);
+  write(`\r\x1b[?7l${'x'.repeat(40)}`);
+  write('\x1b[?7hY'); // Printing the last cell sets pending wrap even with DECAWM disabled.
+  assert.deepEqual([core.getCursor().x, core.getScrollbackLength(), image.line], [1, 1, 1]);
+});
+
+test('Unicode prompts and output keep direct image rows at the bottom and mid-screen like xterm', async (t) => {
+  const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
+  const inputs = ['➜  droid-office git:(main) ', 'héllo wörld\r\n'.repeat(5), '日本語のテキスト\r\n'.repeat(3), '\r\x1b[K❯ '];
+  for (const y of [23, 11]) {
+    const actual = [];
+    const expected = [];
+    for (const input of inputs) {
+      const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(80, 24, { scrollbackLimit: 5000 });
+      const xt = new headless.Terminal({ cols: 80, rows: 24, scrollback: 5000, allowProposedApi: true });
+      const rows = new GraphicsRows(core);
+      const write = async (s: string) => {
+        rows.begin(s);
+        core.write(s);
+        rows.end();
+        await new Promise<void>((r) => xt.write(s, r));
+      };
+      await write('\r\n'.repeat(y - 5));
+      const marker = rows.anchor()!,
+        ref = xt.registerMarker(0)!;
+      await write('\r\n'.repeat(5));
+      await write(input);
+      actual.push([core.getCursor().y, core.getScrollbackLength(), marker.line]);
+      expected.push([xt.buffer.active.cursorY, xt.buffer.active.baseY, ref.line]);
+      if (input === inputs[0] && y === 23) {
+        // Real zsh echo backs up over the first typed character before drawing the rest.
+        await write('r');
+        await write("\brepeat 5 print 'héll");
+        assert.equal(marker.line, ref.line, 'Unicode command echo after leading backspace');
+      }
+      xt.dispose();
+      core.free();
+    }
+    t.diagnostic(JSON.stringify({ y, ghostty: actual, xterm: expected }));
+    await t.test(`start row ${y}`, () => assert.deepEqual(actual, expected));
+  }
+});
+
+test('a Unicode line crossing the native trim boundary keeps only the correct numbered row', async (t) => {
+  const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
+  const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(80, 24, { scrollbackLimit: 5000 });
+  t.after(() => core.free());
+  const rows = new GraphicsRows(core);
+  const write = (s: string) => {
+    rows.begin(s);
+    core.write(s);
+    rows.end();
+  };
+  // Discover a real page eviction instead of assuming the configured limit is in lines.
+  let previous = 0;
+  for (let i = 0; i < 6000; i++) {
+    write('fill\r\n');
+    const current = core.getScrollbackLength();
+    if (current < previous) break;
+    previous = current;
+  }
+  assert.ok(core.getScrollbackLength() < previous);
+  write('UNIQUE');
+  const kept = rows.anchor()!;
+  write('\r\n');
+  for (let i = 0; i < 6000 && core.getScrollbackLength() < previous; i++) write('fill\r\n');
+  assert.equal(core.getScrollbackLength(), previous);
+  const before = core.getScrollbackLength();
+  write('日本語\r\n');
+  assert.ok(core.getScrollbackLength() < before);
+  assert.equal(
+    core
+      .getScrollbackLine(kept.line)
+      ?.slice(0, 6)
+      .map((c) => String.fromCodePoint(c.codepoint))
+      .join(''),
+    'UNIQUE',
+  );
+  // At the next eviction a wide glyph wraps from the last cell instead of a newline.
+  // The native flag is on the continuation (last) row. Never treat that as zero wraps.
+  const uncertain = rows.anchor()!;
+  for (let i = 0; i < 6000 && core.getScrollbackLength() < previous; i++) write('fill\r\n');
+  assert.equal(core.getScrollbackLength(), previous);
+  write('x'.repeat(79));
+  write('日');
+  assert.ok(core.getScrollbackLength() < previous);
+  assert.ok(core.isRowWrapped(23));
+  assert.ok(uncertain.isDisposed);
 });
 
 test('ED2 and ED3 handle screen and history image markers like xterm clear', async (t) => {

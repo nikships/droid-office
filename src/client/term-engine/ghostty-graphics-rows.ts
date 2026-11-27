@@ -34,6 +34,7 @@ interface Position {
   x: number;
   y: number;
   history: number;
+  autowrap: boolean;
 }
 
 /** ASCII shell output has an exact line-advance count, even when every
@@ -41,16 +42,22 @@ interface Position {
 function lineAdvances(data: string, startX: number, cols: number, autowrap: boolean, previous: boolean | undefined) {
   let x = startX;
   // A cursor already on the margin may or may not have a wrap pending from an earlier write.
-  let pending = x === cols - 1 && autowrap ? previous : false;
+  let pending = x === cols - 1 ? previous : false;
   let count = 0;
-  for (const ch of data) {
+  for (let i = 0; i < data.length; i++) {
+    const ch = data[i];
+    if (ch === '\x1b' && (data.startsWith('\x1b[?7h', i) || data.startsWith('\x1b[?7l', i))) {
+      autowrap = data[i + 4] === 'h';
+      i += 4;
+      continue;
+    }
     if (ch >= ' ' && ch <= '~') {
-      if (pending === undefined) return undefined;
-      if (pending) {
+      if (autowrap && pending === undefined) return undefined;
+      if (autowrap && pending) {
         count++;
         x = 0;
       }
-      pending = x === cols - 1 && autowrap;
+      pending = x === cols - 1;
       x = Math.min(cols - 1, x + 1);
       continue;
     }
@@ -158,7 +165,7 @@ export class GraphicsRows {
   }
 
   private checkpoint() {
-    this.before = this.anchors.size && !this.core.isAlternateScreen() ? { ...this.core.getCursor(), history: this.core.getScrollbackLength() } : undefined;
+    this.before = this.anchors.size && !this.core.isAlternateScreen() ? { ...this.core.getCursor(), history: this.core.getScrollbackLength(), autowrap: this.core.getMode(7) } : undefined;
   }
 
   /** A scanner callback runs after the preceding output but before the following text. Split
@@ -255,14 +262,14 @@ export class GraphicsRows {
     const after = this.core.getCursor();
     // Styling, OSC titles and shell-integration metadata, private mode toggles, horizontal
     // absolute positioning and erase-in-line do not themselves add or remove physical rows.
-    const plain = data.replace(/\x1b\][^\x07\x18\x1a\x1b\x9c]*(?:\x07|\x1b\\|\x9c)|\x1b\[[\d:;]*m|\x1b\[\?(?:(?:1|7|9|12|25|100[0-7]|101[56]|2004|2027);?)+[hl]|\x1b\[\d*K/g, '');
-    const text = plain.replace(/\x1b\[\d*G$/, '');
-    // getMode(7) describes the end of the span, not the text preceding a DECAWM toggle.
-    const changesWrap = /\x1b\[\?(?:[\d;]*;)?7(?:;[\d;]*)?[hl]/.test(data);
-    const advances = changesWrap ? undefined : lineAdvances(text, before.x, this.core.cols, this.core.getMode(7), previous);
+    const styled = data.replace(/\x1b\][^\x07\x18\x1a\x1b\x9c]*(?:\x07|\x1b\\|\x9c)|\x1b\[[\d:;]*m|\x1b\[\?((?:(?:1|7|9|12|25|100[0-7]|101[56]|2004|2027);?)+)([hl])|\x1b\[\d*K/g, (_, modes: string | undefined, toggle: string) =>
+      modes?.split(';').includes('7') ? `\x1b[?7${toggle}` : '',
+    );
+    const text = styled.replace(/\x1b\[\d*G$/, '');
+    const advances = lineAdvances(text, before.x, this.core.cols, before.autowrap, previous);
     let trimmed: number;
     if (advances !== undefined && !this.region && !this.horizontalMargins) {
-      this.pendingWrap = text === plain && advances.pending;
+      this.pendingWrap = text === styled && advances.pending;
       trimmed = before.y + advances.count - after.y - delta;
     } else {
       // The core exposes neither a trim counter nor stable row handles. Only accept a
@@ -270,17 +277,29 @@ export class GraphicsRows {
       // UTF-16 unit occupies at most two cells; controls below move the cursor but do not
       // scroll. If even the upper bound cannot cross the bottom, no trim was possible.
       const cursorMotion = /\x1b(?:[78]|\[[\d;]*[GKCDHfABsu])/g;
+      // zsh can echo a Unicode command after backing up over its first character. A
+      // leading BS inside the row cannot reverse-wrap; do not assume that at the margin.
+      const plain = styled.replace(/\x1b\[\?7[hl]/g, '').replace(/^\x08+/, (bs) => (this.horizontalMargins ? bs : bs.slice(before.x)));
       const rest = plain.replace(cursorMotion, '');
       const positions = rest !== plain;
       const pieces = plain.split(cursorMotion).flatMap((s) => s.split(/[\r\n]/));
       const wraps = pieces.reduce((sum, piece) => sum + (piece ? Math.ceil((2 * piece.length) / Math.max(1, this.core.cols - 1)) : 0), 0);
-      const max = (rest.match(/\n/g)?.length ?? 0) + wraps;
+      const breaks = rest.match(/\n/g)?.length ?? 0;
+      const max = breaks + wraps;
       const appended = positions ? max : Math.max(0, before.y + max - this.core.rows + 1);
-      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\t]/.test(rest) || appended !== delta) {
+      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\t]/.test(rest)) {
         this.invalidate();
         return;
       }
       trimmed = 0;
+      if (appended !== delta) {
+        // The pinned WASM flags the continuation row, including the current cursor row.
+        // If all possible destination rows remain on-screen and none is flagged, only
+        // the literal newlines advanced. A pre-existing flag is ambiguous, never count it.
+        if (positions || this.region || this.horizontalMargins || max > after.y) return this.invalidate();
+        for (let row = after.y - max + 1; row <= after.y; row++) if (this.core.isRowWrapped(row)) return this.invalidate();
+        trimmed = before.y + breaks - after.y - delta;
+      }
     }
     if (trimmed < 0) {
       this.invalidate();
