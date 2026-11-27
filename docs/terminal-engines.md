@@ -39,3 +39,7 @@ These results use the shipped 0.6.0 core in Chromium. Where the PTY protocol or 
 | Close/reopen and lifetime | Works | After 30 browser open/close cycles followed by GC, 0 live adapters, 0 native terminals and 0 bytes of pane WASM remained. `WTerm.destroy()` does not own an injected core; the adapter also calls `GhosttyCore.dispose()`. |
 
 Regression entry points: `tests/wterm-{foundation,keys,scroll-appearance,graphics,graphics-rows,links}.test.ts`, `tests/terminal-engine-{browser,parity}.test.ts`, `tests/terminal-scanner.test.ts`, `tests/terminal-prefs.test.ts` and the existing mirror/resize/input suites.
+
+## Streaming CPU cost
+
+In 20 matched-grid trials, streaming output used more CPU with wterm (`71f8c68d`) than with xterm (`7c1044fd`). With one pane, median CPU rose from 32.93% to 44.25% of one core (+34% relative). With three panes, it rose from 29.09% to 37.23% (+28%). Wterm used more CPU in all five pairs for each pane count. Idle and Thread-view differences were within measurement noise; frame rate was unchanged.
