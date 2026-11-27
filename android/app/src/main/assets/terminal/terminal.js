@@ -63,8 +63,12 @@ export async function start() {
       cellH = parseFloat(root.style.getPropertyValue('--term-row-height'));
       return cellW * term.cols <= availW && cellH * term.rows <= availH;
     });
-    host.style.width = `${term.cols * cellW}px`;
-    host.style.height = `${term.rows * cellH}px`;
+    // Make the whole pane a native pan surface. Padding keeps the scroll range
+    // and the drawn grid the same size as the shared PTY, even in portrait.
+    host.style.width = `${availW}px`;
+    host.style.height = `${availH}px`;
+    root.style.paddingRight = `${Math.max(0, availW - term.cols * cellW)}px`;
+    root.style.paddingBottom = `${Math.max(0, availH - term.rows * cellH)}px`;
     const fit = fitGrid(availW, availH, baseW, baseH);
     const key = `${fit.cols}x${fit.rows}`;
     if (key !== lastFit) post({ t: 'fit', ...fit });
