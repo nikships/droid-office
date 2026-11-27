@@ -90,7 +90,7 @@ export function graphicsAnchors(core: GhosttyCore, parser: VtScanner) {
           }
         }
         if (switchesScreen && final === 'l' && core.usingAltScreen()) returning = true;
-        if (params.includes(69)) {
+        if (params.includes(69) && horizontalMargins !== (final === 'h')) {
           horizontalMargins = final === 'h';
           dropLive();
         }
