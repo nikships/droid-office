@@ -4,10 +4,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import type { CDPSession } from 'playwright-core';
 import { createServer } from 'vite';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 
 const status = browserStatus();
+async function wasmBytes(cdp: CDPSession) {
+  const { result } = await cdp.send('Runtime.evaluate', { expression: 'WebAssembly.Memory.prototype', objectGroup: 'measurement' });
+  const { objects } = await cdp.send('Runtime.queryObjects', { prototypeObjectId: result.objectId!, objectGroup: 'measurement' });
+  const mem = await cdp.send('Runtime.callFunctionOn', { objectId: objects.objectId, functionDeclaration: 'function(){return this.reduce((sum,m)=>sum+m.buffer.byteLength,0)}', returnByValue: true });
+  await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'measurement' });
+  return Number(mem.result.value);
+}
 test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry and disposal', { skip: status.installed ? false : `No Chromium in ${status.path}` }, async (t) => {
   const cacheDir = await mkdtemp(join(tmpdir(), 'office-ghostty-vite-'));
   const server = await createServer({
@@ -170,6 +178,14 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
       ]),
       [true, true, 1, 'Ghostty could not load. Using xterm for this terminal.'],
     );
+    await p.locator('.modal.term .close').click();
+    await p.unroute('**/*.wasm*');
+    await p.evaluate(async () => {
+      const url = '/ui/terminal.ts';
+      (await import(url)).openOfficeShell({ up: true, send: Boolean });
+    });
+    await p.locator('.modal.term .ghostty-terminal canvas:not(.term-kitty-layer)').waitFor();
+    assert.equal(await p.locator('.modal.term .xterm').count(), 0);
     await p.close();
   });
   await t.test('display writes never forward a native DA reply as user input', async () => {
@@ -210,39 +226,102 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
       [true, false, true, false],
     );
   });
-  await t.test('closing 30 panes releases their adapters and reports native WASM retention', async () => {
-    const p = await context.newPage();
-    await p.route('**/fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<div id="host"></div>' }));
-    await p.goto(page.url());
-    const cdp = await context.newCDPSession(p);
-    const measure = async () => {
-      await cdp.send('HeapProfiler.collectGarbage');
-      const { result } = await cdp.send('Runtime.evaluate', { expression: 'WebAssembly.Memory.prototype', objectGroup: 'measurement' });
-      const { objects } = await cdp.send('Runtime.queryObjects', { prototypeObjectId: result.objectId!, objectGroup: 'measurement' });
-      const mem = await cdp.send('Runtime.callFunctionOn', { objectId: objects.objectId, functionDeclaration: 'function(){return this.reduce((sum,m)=>sum+m.buffer.byteLength,0)}', returnByValue: true });
-      await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'measurement' });
-      const counts = await p.evaluate(() => ((window as any).refs ?? []).reduce(([a, n]: number[], [adapter, native]: WeakRef<object>[]) => [a + Number(!!adapter.deref()), n + Number(!!native.deref())], [0, 0]));
-      return { adapters: counts[0], native: counts[1], wasmBytes: mem.result.value };
-    };
-    const before = await measure();
-    await p.evaluate(async () => {
+  await t.test('a selected pane survives a busy sibling growing memory and closing', async () => {
+    const cdp = await context.newCDPSession(page);
+    await page.evaluate(async () => {
       const mod = '/term-engine/ghostty.ts',
         features = '/term-engine/features.ts';
       const { GhosttyAdapter } = await import(mod),
         { attachEngineFeatures } = await import(features);
-      const refs = ((window as any).refs = [] as WeakRef<object>[][]);
-      for (let i = 0; i < 30; i++) {
-        const a = new GhosttyAdapter({ allowProposedApi: true });
-        attachEngineFeatures({ term: a, ghostty: a });
-        await a.open(document.getElementById('host'));
-        refs.push([new WeakRef(a), new WeakRef(a.native)]);
-        a.dispose();
-      }
+      const panes = await Promise.all(
+        [0, 1].map(async () => {
+          const a = new GhosttyAdapter({ scrollback: 10000 });
+          attachEngineFeatures({ term: a, ghostty: a });
+          const host = document.createElement('div');
+          document.body.append(host);
+          await a.open(host);
+          return a;
+        }),
+      );
+      (window as any).panes = panes;
+      panes[0].write('keeper');
+      panes[0].native.select(0, 0, 6);
+      panes[0].redraw();
     });
+    const before = await wasmBytes(cdp);
+    const history = await page.evaluate(() => {
+      const [keeper, busy] = (window as any).panes;
+      const line = `${'x'.repeat(75)}\r\n`;
+      busy.write(line.repeat(65536));
+      for (let i = 0; i < 20; i++) {
+        busy.write(line.repeat(400));
+        keeper.write('.');
+      }
+      return busy.buffer.active.baseY;
+    });
+    const grown = await wasmBytes(cdp);
+    assert.ok(history >= 500, `history=${history} memory=${before}→${grown}`);
+    assert.ok(grown > before, `WASM memory did not grow: ${before} → ${grown}`);
+    assert.deepEqual(
+      await page.evaluate(() => {
+        const [keeper, busy] = (window as any).panes;
+        busy.dispose();
+        document.dispatchEvent(new MouseEvent('mouseup'));
+        keeper.write('ok');
+        keeper.redraw();
+        const core = keeper.native.wasmTerm;
+        const text = core
+          .getLine(0)
+          .map((c: { codepoint: number }) => String.fromCodePoint(c.codepoint || 32))
+          .join('')
+          .trimEnd();
+        const { x, y } = core.getCursor();
+        const result = [text, x, y, keeper.native.getSelection()];
+        keeper.dispose();
+        return result;
+      }),
+      [`keeper${'.'.repeat(20)}ok`, 28, 0, 'keeper'],
+    );
+    t.diagnostic(`two live panes: ${before} → ${grown} WASM bytes, ${history} history rows`);
+    await cdp.detach();
+  });
+  await t.test('closing 30 panes releases every adapter and all pane WASM memory', async () => {
+    const p = await context.newPage();
+    await p.route('**/fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<div id="host"></div>' }));
+    await p.goto(page.url());
+    const cdp = await context.newCDPSession(p);
+    p.on('pageerror', (e) => errors.push(e.message));
+    const measure = async () => {
+      await cdp.send('HeapProfiler.collectGarbage');
+      const bytes = await wasmBytes(cdp);
+      const counts = await p.evaluate(() => ((window as any).refs ?? []).reduce(([a, n]: number[], [adapter, native]: WeakRef<object>[]) => [a + Number(!!adapter.deref()), n + Number(!!native.deref())], [0, 0]));
+      return { adapters: counts[0], native: counts[1], wasmBytes: bytes, jsBytes: (await cdp.send('Runtime.getHeapUsage')).usedSize };
+    };
+    const cycle = (n: number) =>
+      p.evaluate(async (n) => {
+        const mod = '/term-engine/ghostty.ts',
+          features = '/term-engine/features.ts';
+        const { GhosttyAdapter } = await import(mod),
+          { attachEngineFeatures } = await import(features);
+        const refs = ((window as any).refs = [] as WeakRef<object>[][]);
+        for (let i = 0; i < n; i++) {
+          const a = new GhosttyAdapter({ allowProposedApi: true });
+          attachEngineFeatures({ term: a, ghostty: a });
+          await a.open(document.getElementById('host'));
+          refs.push([new WeakRef(a), new WeakRef(a.native)]);
+          a.dispose();
+        }
+        document.dispatchEvent(new MouseEvent('mousedown'));
+        document.dispatchEvent(new MouseEvent('mouseup'));
+      }, n);
+    await cycle(1); // Load modules and warm the renderer before measuring the additional 30 closes.
+    const before = await measure();
+    await cycle(30);
     const after = await measure();
     t.diagnostic(JSON.stringify({ before, after }));
     await p.close();
     assert.equal(after.adapters, 0);
+    assert.equal(after.wasmBytes, 0);
   });
   assert.deepEqual(errors, []);
 });
