@@ -41,10 +41,8 @@ export const onTerminalPrefs = prefs.on;
 
 const LINE_HEIGHT: Record<TerminalPrefs['lineHeight'], number> = { compact: 1, default: 1.1, relaxed: 1.25 };
 const SCROLL_SPEED: Record<TerminalPrefs['scrollSpeed'], number> = { slow: 0.5, default: 1, fast: 2 };
-/** Long enough to follow by eye, short enough that a held key never lags behind. */
-export const SMOOTH_SCROLL_MS = 125;
 
-export type TerminalPrefOptions = Required<Pick<ClientTerminalOptions, 'lineHeight' | 'cursorStyle' | 'cursorBlink' | 'smoothScrollDuration' | 'scrollSensitivity' | 'macOptionIsMeta'>>;
+export type TerminalPrefOptions = Required<Pick<ClientTerminalOptions, 'lineHeight' | 'cursorStyle' | 'cursorBlink' | 'scrollSensitivity' | 'macOptionIsMeta'>>;
 
 /** The concrete terminal settings for these preferences. */
 export function terminalOptions(p: TerminalPrefs = terminalPrefs()): TerminalPrefOptions {
@@ -52,7 +50,6 @@ export function terminalOptions(p: TerminalPrefs = terminalPrefs()): TerminalPre
     lineHeight: LINE_HEIGHT[p.lineHeight],
     cursorStyle: p.cursorStyle,
     cursorBlink: p.cursorBlink,
-    smoothScrollDuration: SMOOTH_SCROLL_MS,
     scrollSensitivity: SCROLL_SPEED[p.scrollSpeed],
     macOptionIsMeta: p.optionIsMeta,
   };
@@ -68,17 +65,4 @@ export function followTerminalPrefs(term: Pick<WTermAdapter, 'options'>, opts: {
     Object.assign(term.options, terminalOptions(next), opts.fixed);
     if (term.options.lineHeight !== before) opts.resized?.();
   });
-}
-
-/** Snap a snapshot or search jump immediately, then restore the user's scroll settings. */
-export function scrollAtOnce(term: Pick<WTermAdapter, 'options'>, scroll: () => void, snap?: () => void) {
-  const glide = term.options.smoothScrollDuration ?? 0;
-  if (!glide) return scroll();
-  term.options.smoothScrollDuration = 0;
-  try {
-    scroll();
-  } finally {
-    term.options.smoothScrollDuration = glide;
-    snap?.();
-  }
 }

@@ -306,8 +306,10 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       await raw.click();
       await pane.waitForFunction(() => document.querySelector('.wterm.has-scrollback'));
       const element = pane.locator('.office-wterm');
-      await element.evaluate((el) => {
-        el.scrollTop = 30 * parseFloat(getComputedStyle(el).getPropertyValue('--term-row-height'));
+      const expectedAfterTrim = await element.evaluate((el) => {
+        const pitch = parseFloat(getComputedStyle(el).getPropertyValue('--term-row-height'));
+        el.scrollTop = 30.25 * pitch;
+        return el.scrollTop - 7 * pitch;
       });
       const top = () =>
         element.evaluate((el) => {
@@ -333,7 +335,7 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
         await new Promise(requestAnimationFrame);
       });
       assert.equal(await top(), 'history row 30');
-      assert.equal(await element.evaluate((el) => Math.floor(el.scrollTop / parseFloat(getComputedStyle(el).getPropertyValue('--term-row-height')))), 23);
+      assert.equal(await element.evaluate((el) => el.scrollTop), expectedAfterTrim);
     } finally {
       await pane.close();
     }

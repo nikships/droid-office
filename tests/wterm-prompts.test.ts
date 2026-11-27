@@ -90,6 +90,9 @@ test('OSC 133 state and navigation follow real marks, never a reconstructed prom
 
   const viewport = () => page.evaluate(() => (window as any).term.buffer.active.viewportY);
   await page.waitForFunction(() => (window as any).term.buffer.active.viewportY > 15);
+  await page.locator('#host .wterm').evaluate((el) => {
+    el.scrollTop -= 5;
+  });
   for (const code of ['BracketLeft', 'BracketLeft', 'BracketRight']) {
     const before = await viewport();
     await page.evaluate(() => {
@@ -198,12 +201,13 @@ test('OSC 133 state and navigation follow real marks, never a reconstructed prom
       const a = (window as any).term;
       a.reset();
       a.resize(24, 8);
-      a.write('012345\r\nabcdef\r\nUVWXYZ');
+      a.write(`${'history\r\n'.repeat(12)}012345\r\nabcdef\r\nUVWXYZ`);
     });
     await page.waitForFunction(() => document.querySelector('.term-grid')?.textContent?.includes('UVWXYZ'));
     const start = await page.evaluate(() => {
       const el = (window as any).term.native.element as HTMLElement;
-      const top = el.querySelector('.term-grid .term-row')!.getBoundingClientRect();
+      el.scrollTop -= 5;
+      const top = [...el.querySelectorAll('.term-row')].find((row) => row.textContent?.includes('012345'))!.getBoundingClientRect();
       return { x: top.x, y: top.y, width: parseFloat(getComputedStyle(el).getPropertyValue('--term-cell-width')), height: top.height };
     });
     const drag = async (override: boolean) => {

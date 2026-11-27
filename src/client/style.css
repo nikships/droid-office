@@ -839,6 +839,12 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .modal.term .term-host { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: #000000; }
 /* Keep the old 14px scrollbar gutter beside the grid, plus the 4px window inset. */
 .modal.term .term-host .office-wterm { --office-fit-gutter: 14px; }
+/* wterm#293: redraw targets an integer CSS offset; input uses the native end.
+   At fractional zoom those can be one device pixel apart. Round the viewport,
+   then let the last CSS pixel of inset absorb rounding, never a glyph or row. */
+.office-wterm.wterm { height: round(down, 100%, 1px) !important; }
+.changes-log .office-wterm { padding-bottom: 1px; }
+:is(.modal.term, .changes-log) .office-wterm > .term-grid { margin-bottom: -1px; }
 .office-wterm > textarea { min-height: 0; }
 /* The invisible input retains its last focused cursor position. After a history
    clear it must not extend the scrollport past the grid. The visible IME preedit

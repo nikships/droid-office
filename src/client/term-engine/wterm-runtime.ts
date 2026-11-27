@@ -2,7 +2,6 @@ import { attachWtermPrompts } from './wterm-prompts';
 import { attachWtermSearch } from './wterm-search';
 import type { KittyTerminalOptions } from '../term-kitty-overlay';
 import type { TerminalPaths } from '../ui/terminal-path-links';
-import { scrollAtOnce } from '../ui/terminal-prefs';
 import type { WebTerminalFeatures } from './web-terminal';
 import type { WTermFeature } from './wterm';
 import { attachWtermGraphics } from './wterm-graphics';
@@ -19,9 +18,7 @@ export function webFeatures(hooks: WebTerminalFeatures, images?: KittyTerminalOp
       hooks.keyAction = attachWtermKeys(adapter).keyAction;
     },
     (adapter) => {
-      const scroll = attachWtermScroll(adapter);
-      hooks.handleKey = scroll.handleKey;
-      hooks.scrollAtOnce = (move) => scrollAtOnce(adapter, move, scroll.snap);
+      hooks.handleKey = attachWtermScroll(adapter).handleKey;
     },
     (adapter) => {
       hooks.find = attachWtermLinks(adapter, paths).find;

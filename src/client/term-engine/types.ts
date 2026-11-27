@@ -8,7 +8,6 @@ export interface ClientTerminalOptions {
   fontSize?: number;
   theme?: Partial<typeof TERM_THEME> & { cursorAccent?: string };
   scrollback?: number;
-  smoothScrollDuration?: number;
   lineHeight?: number;
   scrollSensitivity?: number;
   macOptionIsMeta?: boolean;

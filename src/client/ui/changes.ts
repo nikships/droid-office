@@ -189,7 +189,6 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
 
   /** The worker's terminal, read-only, made the first time T shows it and attached until the window closes. */
   let term: WTermAdapter | null = null;
-  let scrollToBottom = () => {};
   let unfollow = () => {};
   let attached = false;
   let view: 'diff' | 'log' = 'diff';
@@ -197,7 +196,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
   const openLog = () => {
     if (term) return;
     const fixed = { cursorBlink: false };
-    const { term: t, features } = createWebTerminal({
+    const { term: t } = createWebTerminal({
       ...terminalOptions(),
       ...fixed,
       fontFamily: TERM_FONT,
@@ -216,7 +215,6 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       offFont();
       offTheme();
     };
-    scrollToBottom = () => features.scrollAtOnce(() => t.scrollToBottom());
     // Keys belong to the window (T, Esc), never to the program in the terminal.
     t.useWindowKeyboard();
     term = t;
@@ -424,7 +422,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       const t = term;
       t.reset();
       t.resize(msg.cols, msg.rows);
-      t.write(msg.data, scrollToBottom);
+      t.write(msg.data, () => t.scrollToBottom());
     } else if (msg.t === 'changes' && msg.state.workerId === workerId && msg.state.repo === repo) onState(msg.state);
     else if (msg.t === 'changes.diff' && msg.workerId === workerId && msg.repo === repo && msg.path === selected) {
       loading = false;
@@ -490,7 +488,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       toast(`🌿 Asked ${w.name} to commit${s.pr ? ` and push to ${words().pr} ${words().ref(s.pr.number)}` : ` and open a ${words().pull}`}`);
       if (view !== 'log') {
         setView('log');
-        scrollToBottom();
+        term?.scrollToBottom();
       }
     };
     const name = w.task?.name.trim() ?? '';

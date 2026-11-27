@@ -8,11 +8,10 @@ export interface WebTerminalFeatures {
   keyAction(event: KeyboardEvent, csiEnter: boolean): KeyAction;
   handleKey(event: KeyboardEvent): boolean;
   find(hit: TerminalFind): string | undefined;
-  scrollAtOnce(move: () => void): void;
 }
 
 export function createWebTerminal(options: ClientTerminalOptions, images?: KittyTerminalOptions, paths?: TerminalPaths) {
-  const features: WebTerminalFeatures = { keyAction: () => ({ do: 'default' }), handleKey: () => false, find: () => undefined, scrollAtOnce: (move) => move() };
+  const features: WebTerminalFeatures = { keyAction: () => ({ do: 'default' }), handleKey: () => false, find: () => undefined };
   const term = new WTermAdapter(options, async () => (await import('./wterm-runtime')).webFeatures(features, images, paths));
   return { term, features };
 }

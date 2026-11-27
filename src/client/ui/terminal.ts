@@ -402,7 +402,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       disconnected.classList.add('hidden');
       sendSize();
       if (restoreReader && !pendingFind) restoreReader();
-      else features.scrollAtOnce(() => term.scrollToBottom());
+      else term.scrollToBottom();
       restoreReader = undefined;
       refresh();
       if (pendingFind) jumpTo(pendingFind);
@@ -806,7 +806,7 @@ export function openOfficeShell(net: Net) {
       lastSentSize = '';
       pendingSizes.length = 0;
       sendSize();
-      features.scrollAtOnce(() => term.scrollToBottom());
+      term.scrollToBottom();
     },
     () => net.send({ t: 'shell.attach' }),
     (ready) => (term.options.disableStdin = !ready || !net.up || guestTokenOn()),

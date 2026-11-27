@@ -92,6 +92,60 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       node.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: rect.left + 1, clientY: rect.top + 1, deltaY, ...opts }));
     };
   });
+  await t.test('typing and echo redraws share one tail in a fractional-height scrollport', async () => {
+    // Native scroll offsets at Retina 90% zoom are multiples of 1/1.8 CSS pixels.
+    const scaled = await chromium.launch({ executablePath: status.executable, chromiumSandbox: true, args: ['--force-device-scale-factor=1.8'] });
+    try {
+      const tab = await scaled.newPage({ viewport: null });
+      await tab.route('**/fixture', (r) =>
+        r.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/style.css"><div class="modal term" style="position:absolute;top:0;width:640px;height:201.5px;animation:none"><div class="term-host"></div></div>' }),
+      );
+      await tab.goto(page.url());
+      await tab.evaluate(async () => {
+        const path = '/term-engine/web-terminal.ts';
+        const { createWebTerminal } = await import(path);
+        const { term } = createWebTerminal({ fontSize: 14, fontFamily: 'monospace' });
+        await term.open(document.querySelector('.term-host'));
+        term.resize(40, 10);
+        term.write('row\r\n'.repeat(91));
+        term.focus();
+        const el = term.native.element;
+        const w = window as any;
+        w.offsets = [];
+        w.typed = '';
+        el.addEventListener('scroll', () => w.offsets.push(el.scrollTop));
+        term.onData((s: string) => {
+          w.typed += s;
+          // Input scrolls first; the echo arrives in a later frame, as from a PTY.
+          requestAnimationFrame(() => term.write(s));
+        });
+      });
+      const settle = () => tab.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => done())))));
+      await settle();
+      for (const height of [201, 201.25, 201.5, 201.75, 202.5]) {
+        await tab.locator('.modal').evaluate((el, height) => {
+          el.style.height = `${height}px`;
+        }, height);
+        await settle();
+        await tab.keyboard.press('x');
+        await settle();
+        await tab.evaluate(() => {
+          const w = window as any;
+          w.offsets = [];
+          w.typed = '';
+        });
+        for (const key of 'abc') {
+          await tab.keyboard.press(key);
+          await settle();
+        }
+        const { offsets, typed } = await tab.evaluate(() => ({ offsets: (window as any).offsets, typed: (window as any).typed }));
+        assert.equal(typed, 'abc');
+        assert.deepEqual(offsets, [], `pane height ${height}`);
+      }
+    } finally {
+      await scaled.close();
+    }
+  });
   await t.test('opening an animated dashboard pane preserves the previous 566×769 PTY grid', async () => {
     const sample = await page.evaluate(async () => {
       const path = '/term-engine/web-terminal.ts',
@@ -377,7 +431,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
         host.id = 'held-reader';
         host.style.cssText = 'position:fixed;inset:0;width:500px;height:152px;z-index:50';
         document.body.append(host);
-        const { term } = createWebTerminal({ fontSize: 14, fontFamily: 'monospace', lineHeight: 1.1, scrollback: 1100, smoothScrollDuration: 0 });
+        const { term } = createWebTerminal({ fontSize: 14, fontFamily: 'monospace', lineHeight: 1.1, scrollback: 1100 });
         const w = window as any;
         w.heldReader = term;
         await term.open(host);
@@ -543,143 +597,112 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       return viewportY === baseY;
     });
   });
-  await t.test('accumulated page keys, snap, notch glide, precise deltas, speed and thumb visibility', async () => {
-    await page.evaluate(async () => {
-      const { a, x, input, frame } = window as any;
-      for (const [term, i] of [
-        [a, 0],
-        [x, 1],
-      ]) {
-        term.focus();
-        input[i].length = 0;
-        for (const key of ['PageUp', 'PageUp', 'PageUp', 'PageDown']) term.textarea.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey: true, bubbles: true, cancelable: true }));
-      }
-      await frame();
+  await t.test('a trusted pixel wheel stream stops between rows, and Shift+Page preserves that offset', async () => {
+    const root = page.locator('#w .office-wterm');
+    await root.hover();
+    const start = await root.evaluate((el) => {
+      const h = parseFloat(el.style.getPropertyValue('--term-row-height'));
+      el.scrollTop = 40 * h;
+      return { top: el.scrollTop, page: el.clientHeight - h, h };
     });
-    await page.waitForFunction(() => {
-      const { a, x } = window as any;
-      return [a, x].every((t) => t.buffer.active.baseY - t.buffer.active.viewportY === 2 * (t.rows - 1));
-    });
-    assert.deepEqual(await page.evaluate(() => (window as any).input), [[], []]);
-    const gestures = await page.evaluate(async () => {
-      const { a, el, wheel, scrollApi } = window as any;
-      a.scrollToBottom();
-      const bottom = el.scrollTop;
-      a.options.scrollSensitivity = 2;
-      wheel(a, -3);
-      const precise = bottom - el.scrollTop;
-      wheel(a, -3, { altKey: true });
-      const fast = bottom - el.scrollTop - precise;
-      wheel(a, -6, { deltaX: 22 });
-      const horizontal = bottom - el.scrollTop - precise - fast;
-      const thumb = getComputedStyle(el, '::-webkit-scrollbar-thumb').backgroundColor;
-      a.scrollToBottom();
-      wheel(a, -1, { deltaMode: 1 });
-      const immediate = el.scrollTop;
-      a.options.smoothScrollDuration = 0;
-      a.scrollToBottom();
-      a.options.smoothScrollDuration = 125;
-      scrollApi.snap();
-      return { precise, fast, horizontal, thumb, immediate, bottom };
-    });
-    assert.deepEqual([gestures.precise, gestures.fast, gestures.horizontal], [6, 30, 0]);
-    assert.equal(gestures.immediate, gestures.bottom);
-    assert.notEqual(gestures.thumb, 'rgba(0, 0, 0, 0)');
-    await page.waitForFunction(() => !(window as any).el.classList.contains('wterm-scrolling'));
-    assert.equal(await page.evaluate(() => (window as any).el.scrollTop), gestures.bottom);
-    await page.locator('#w').hover();
-    await page.mouse.wheel(0, -540);
-    await page.waitForFunction((before) => {
-      const { pitch, el } = window as any;
-      return before - el.scrollTop === Math.round(100 / pitch()) * pitch();
-    }, gestures.bottom); // 2×50 px, settled to the nearest row
+    for (const dy of [-9, -5, -3, -2, -2]) await page.mouse.wheel(1, dy);
+    const release = start.top - 21;
+    await page.waitForFunction((y) => (window as any).el.scrollTop === y, release);
+    assert.notEqual(release % start.h, 0);
+    await page.waitForTimeout(400);
+    assert.equal(await root.evaluate((el) => el.scrollTop), release);
+    await root.locator('textarea').focus();
+    await page.keyboard.press('Shift+PageUp');
+    assert.equal(await root.evaluate((el) => el.scrollTop), release - start.page);
+    await page.keyboard.press('Shift+PageDown');
+    assert.equal(await root.evaluate((el) => el.scrollTop), release);
+    // A detent uses the platform delta, not a fixed notch length.
+    await page.mouse.wheel(0, -120);
+    await page.waitForFunction((y) => (window as any).el.scrollTop === y, release - 120);
+    await page.waitForTimeout(400);
+    assert.equal(await root.evaluate((el) => el.scrollTop), release - 120);
   });
-  await t.test('alternate arrows and SGR wheel bytes, including sub-line and horizontal swipes', async () => {
-    const output = await page.evaluate(async () => {
-      const { a, x, write, wheel, input } = window as any;
-      for (const t of [x, a]) {
-        t.options.scrollSensitivity = 1;
-        t.scrollToBottom();
+  await t.test('wheel speed scales the actual delta and slow speed retains small movements', async () => {
+    const samples = await page.evaluate(() => {
+      const { a, el, wheel } = window as any;
+      const samples = [];
+      for (const speed of [2, 0.5]) {
+        a.options.scrollSensitivity = speed;
+        const start = el.scrollTop;
+        for (let i = 0; i < 10; ++i) wheel(a, -1);
+        const normal = el.scrollTop;
+        wheel(a, -8, { altKey: true });
+        samples.push([start - normal, normal - el.scrollTop]);
       }
-      await write('\x1b[?1049h');
-      input.forEach((d: string[]) => (d.length = 0));
-      for (const t of [a, x]) {
-        const h = (window as any).pitch();
-        for (let i = 0; i < 4; i++) wheel(t, -h);
-      }
-      await write('\x1b[?1h');
-      for (const t of [a, x]) wheel(t, 1, { deltaMode: 1 });
-      await write('\x1b[?1000h\x1b[?1006h');
-      for (const t of [a, x]) {
-        wheel(t, -80);
-        wheel(t, 80, { altKey: true });
-        wheel(t, 80, { shiftKey: true });
-      }
-      wheel(a, -40, { deltaX: 80 });
-      await write('\x1b[?1016h');
-      for (const t of [a, x]) wheel(t, 1, { deltaMode: 1 });
-      return input;
+      a.options.scrollSensitivity = 1;
+      return samples;
     });
-    assert.deepEqual(output[0], output[1]);
-    assert.equal(output[0].length, 5);
+    assert.deepEqual(samples, [
+      [20, 80],
+      [5, 20],
+    ]);
   });
-  await t.test('single multi-line alternate-screen wheel gestures send the same arrow sequence as xterm', async () => {
-    const samples = await page.evaluate(async () => {
-      const { a, x, input, write } = window as any;
-      const out = [];
-      await write('\x1bc\x1b[?1049h');
-      for (const [deltaY, deltaMode, wheelDeltaY] of [
-        [100, 0, 0],
-        [-100, 0, 120],
-        [3, 1, 0],
-        [-1, 2, 0],
-      ]) {
-        input.forEach((d: string[]) => {
-          d.length = 0;
-        });
-        for (const t of [a, x]) {
-          const node = t === x ? x.element.querySelector('.xterm-screen') : a.native.element.querySelector('.term-row');
-          const e = new WheelEvent('wheel', { deltaY, deltaMode, bubbles: true, cancelable: true });
-          Object.defineProperty(e, 'wheelDeltaY', { value: wheelDeltaY });
-          node.dispatchEvent(e);
-        }
-        out.push(input.map((d: string[]) => d.join('')));
-      }
-      await write('\x1b[?1049l');
-      return out;
-    });
-    t.diagnostic(JSON.stringify(samples));
-    for (const [w, x] of samples) assert.equal(w, x);
-  });
-  await t.test('read-only normal-buffer mouse tracking handles wheel history like xterm', async () => {
+  await t.test('alternate screen translates pixel travel into arrows and native mouse reports use the negotiated protocol', async () => {
     const result = await page.evaluate(async () => {
-      const { a, x, write, wheel, frame, input } = window as any;
-      await write(`\x1bc${'history\r\n'.repeat(60)}\x1b[?1000;1006h`);
-      for (const t of [a, x]) {
-        t.options.disableStdin = true;
-        t.scrollToBottom();
-      }
-      await frame();
-      const measure = () => [a, x].map((t) => t.buffer.active.viewportY);
-      const before = measure();
-      input.forEach((d: string[]) => {
-        d.length = 0;
-      });
-      for (const t of [a, x]) wheel(t, -100);
-      await new Promise((r) => setTimeout(r, 300));
-      const after = measure();
-      const sent = input.map((d: string[]) => d.join(''));
-      for (const t of [a, x]) t.options.disableStdin = false;
-      await write('\x1b[?1000;1006l');
-      return { delta: after.map((v, i) => v - before[i]), sent };
+      const { a, write, wheel, input, pitch } = window as any;
+      await write('\x1bc\x1b[?1049h');
+      input[0].length = 0;
+      wheel(a, -1);
+      const partial = input[0].splice(0);
+      wheel(a, -(pitch() - 1));
+      await write('\x1b[?1h');
+      wheel(a, 2, { deltaMode: 1 });
+      wheel(a, -1, { deltaX: 80 });
+      await write('\x1b[?1000;1006h');
+      wheel(a, -80);
+      wheel(a, 80, { altKey: true });
+      await write('\x1b[?1016h');
+      wheel(a, 1, { deltaMode: 1 });
+      return { partial, sent: input[0].splice(0) };
     });
-    t.diagnostic(JSON.stringify(result));
-    assert.equal(result.delta[0], result.delta[1]);
-    assert.deepEqual(result.sent, ['', '']);
+    assert.deepEqual(result.partial, []);
+    assert.deepEqual(result.sent, ['\x1b[A', '\x1bOB\x1bOB', '\x1b[<64;1;1M', '\x1b[<73;1;1M', '\x1b[<65;2;2M']);
+  });
+  await t.test('tracked wheel reports at the live tail, but scrolls fractional history and read-only logs without reporting', async () => {
+    const root = page.locator('#w .office-wterm');
+    await page.evaluate(async () => {
+      const { a, write, input } = window as any;
+      await write(`\x1bc${'history\r\n'.repeat(60)}\x1b[?1000;1006h`);
+      a.scrollToBottom();
+      input[0].length = 0;
+    });
+    await root.hover();
+    await page.mouse.wheel(0, -20);
+    await page.waitForFunction(() => (window as any).input[0].length > 0);
+    for (const readOnly of [false, true]) {
+      const start = await page.evaluate((readOnly) => {
+        const { a, el, input, pitch } = window as any;
+        a.options.disableStdin = readOnly;
+        a.scrollToBottom();
+        if (!readOnly) el.scrollTop -= pitch() + 5;
+        input[0].length = 0;
+        return el.scrollTop;
+      }, readOnly);
+      await page.mouse.wheel(1, -12);
+      await page.waitForFunction((y) => (window as any).el.scrollTop === y, start - 12);
+      await page.evaluate(() => {
+        (window as any).a.options.scrollSensitivity = 2;
+      });
+      await page.mouse.wheel(1, -12);
+      await page.waitForFunction((y) => (window as any).el.scrollTop === y, start - 36);
+      await page.evaluate(() => {
+        (window as any).a.options.scrollSensitivity = 1;
+      });
+      assert.deepEqual(await page.evaluate(() => (window as any).input[0]), []);
+    }
+    await page.evaluate(async () => {
+      const { a, write } = window as any;
+      a.options.disableStdin = false;
+      await write('\x1b[?1000;1006l');
+    });
   });
   await t.test('the first scrollback row cannot change the proposed PTY columns at a glyph boundary', async (t) => {
-    // Playwright hides scrollbars by default. Exercise an actual 3px classic
-    // gutter, not an overlay that takes no width.
+    // Playwright hides scrollbars by default. A classic thumb reserves layout width.
     const classic = await chromium.launch({ executablePath: status.executable, chromiumSandbox: true, ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--disable-features=OverlayScrollbar'] });
     t.after(() => classic.close());
     const pane = await classic.newPage();
@@ -763,19 +786,44 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       assert.deepEqual(actual, reference, 'the classic scrollbar clipped the last-column full block');
       assert.ok(result.hit, 'the final pixel must hit the last glyph');
       assert.ok(result.history > 0);
-      assert.deepEqual([result.before[0][1], result.after[0][1]], [3, 3]);
+      assert.ok(result.before[0][1] > 0);
+      assert.equal(result.before[0][1], result.after[0][1]);
       t.diagnostic(JSON.stringify(result));
       assert.deepEqual(
         result.after.map((v) => v[0]),
         result.before.map((v) => v[0]),
       );
     }
+    await t.test('releasing the native scrollbar thumb leaves the exact mid-row offset for 400 ms', async () => {
+      const root = pane.locator('#classic-fit .office-wterm');
+      await pane.setViewportSize({ width: 1280, height: 950 });
+      const { x, y, h } = await root.evaluate(async (el) => {
+        el.scrollTop = 0;
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        const r = el.getBoundingClientRect();
+        return { x: r.right - (el.offsetWidth - el.clientWidth) / 2, y: r.top + 12, h: parseFloat(el.style.getPropertyValue('--term-row-height')) };
+      });
+      await pane.mouse.move(x, y);
+      await pane.mouse.down();
+      await pane.mouse.move(x, y + 31, { steps: 8 });
+      let release = await root.evaluate((el) => el.scrollTop);
+      if (release % h === 0) {
+        await pane.mouse.move(x, y + 34);
+        release = await root.evaluate((el) => el.scrollTop);
+      }
+      await pane.mouse.up();
+      assert.ok(release > 0 && release % h !== 0, `native thumb drag ended at ${release}px, pitch ${h}`);
+      await pane.waitForTimeout(400);
+      assert.equal(await root.evaluate((el) => el.scrollTop), release);
+    });
   });
   await t.test('tracked wheel chooses the same cell as xterm at a fractional column boundary', async () => {
     const reports = await page.evaluate(async () => {
       const { a, x, input, write } = window as any;
       await write('\x1b[?1000;1006h');
       const result = [];
+      a.scrollToBottom();
       for (const [i, t] of [a, x].entries()) {
         const node = i ? x.element.querySelector('.xterm-screen') : a.native.element.querySelector('.term-row:not(.term-scrollback-row)');
         const before = node.getBoundingClientRect();
@@ -800,13 +848,14 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     assert.equal(reports[1].report, '\x1b[<64;2;1M');
     assert.equal(reports[0].report, reports[1].report);
   });
-  await t.test('legacy wheel reports at the byte-coordinate boundaries', async () => {
+  await t.test('negotiated mouse wheel reports at byte-coordinate boundaries', async () => {
     const comparisons = await page.evaluate(async () => {
       const { a, x, el, frame, write, input } = window as any;
       const binary: string[] = [];
       const sub = x.onBinary((s: string) => binary.push(s));
       const report = [];
       el.parentElement.style.width = '2600px';
+      el.parentElement.style.height = `${100 * (window as any).pitch()}px`;
       for (const t of [a, x]) t.resize(240, 100);
       for (const [tracking, encoding] of [
         [1000, 0],
@@ -842,6 +891,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       }
       sub.dispose();
       el.parentElement.style.width = '';
+      el.parentElement.style.height = `${10 * (window as any).pitch()}px`;
       for (const t of [a, x]) t.resize(40, 10);
       await frame();
       return report;
@@ -852,7 +902,9 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
         const binary = col > 223 ? '' : `\x1b[M${String.fromCharCode(direction < 0 ? 96 : 97, col + 32, row + 32)}`;
         assert.equal(xData, '', label);
         assert.equal(xBinary, binary, label);
-        assert.equal(adapter, Math.max(col, row) <= 95 ? xBinary : '', label);
+        const code = direction < 0 ? 96 : 97;
+        const expected = encoding === 1015 ? `\x1b[${code};${col};${row}M` : encoding === 1005 ? `\x1b[M${String.fromCodePoint(code, col + 32, row + 32)}` : Math.max(col, row) <= 95 ? xBinary : '';
+        assert.equal(adapter, expected, label);
       }
   });
   await t.test('minimum contrast in both directions and reverse video; retain existing ANSI, truecolor and glyph styling', async () => {

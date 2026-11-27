@@ -167,7 +167,7 @@ test('wterm links and find against the xterm pane', { skip: !browserStatus().ins
     await page.evaluate(() => {
       const { x, w } = window as any;
       x.scrollToTop();
-      w.native.element.scrollTop = 0;
+      w.native.element.scrollTop = 5;
     });
     await frame();
     for (const id of ['x', 'w']) {

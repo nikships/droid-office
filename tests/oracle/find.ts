@@ -1,7 +1,6 @@
 import type { Terminal } from '@xterm/xterm';
 import { findLine } from '../../src/shared/search';
 import { TERM_THEME } from '../../src/client/term-theme';
-import { scrollAtOnce } from '../../src/client/ui/terminal-prefs';
 import type { TerminalFind } from '../../src/client/term-engine/types';
 
 export function findInXterm(term: Terminal, f: TerminalFind): string | undefined {
@@ -17,10 +16,14 @@ export function findInXterm(term: Terminal, f: TerminalFind): string | undefined
   const scroll = () => {
     if (marker.line < 0) return;
     // xterm scrolls from where its scrollbar is, which lags behind a resize; from the top is exact.
-    scrollAtOnce(term, () => {
+    const duration = term.options.smoothScrollDuration;
+    term.options.smoothScrollDuration = 0;
+    try {
       term.scrollLines(-term.buffer.active.length);
       term.scrollLines(Math.max(0, marker.line - Math.floor(term.rows / 3)));
-    });
+    } finally {
+      term.options.smoothScrollDuration = duration;
+    }
   };
   scroll();
   // The window settles its size just after it opens; stay on the line through that.
