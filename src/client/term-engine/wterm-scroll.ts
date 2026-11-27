@@ -90,19 +90,23 @@ export function attachWtermScroll(adapter: WTermAdapter) {
             partialWheel %= 1;
           }
           if (core.mouseTracking()) {
-            // xterm's legacy reports use onBinary, not the office's onData channel.
-            // Native SGR also defers to history when scrolled up. xterm reports
-            // regardless, and uses zero-based rather than one-based pixel coordinates.
+            // Native reports defer to history when scrolled up. xterm also uses
+            // zero-based pixels for SGR-pixels, but one-based cells for other modes.
             const encoding = core.mouseEncoding();
-            if (encoding === 'sgr-pixels' || encoding === 'sgr') {
-              const rect = el.querySelector('.term-row:not(.term-scrollback-row)')?.getBoundingClientRect();
-              if (rect) {
-                const x = Math.floor(e.clientX - rect.left);
-                const y = Math.floor(e.clientY - rect.top);
-                const code = (e.deltaY < 0 ? 64 : 65) + (e.altKey ? 8 : 0) + (e.ctrlKey ? 16 : 0);
-                const width = parseFloat(el.style.getPropertyValue('--term-cell-width'));
-                if (x >= 0 && y >= 0 && x < adapter.cols * width && y < adapter.rows * height()) adapter.input(`\x1b[<${code};${encoding === 'sgr' ? Math.floor(x / width) + 1 : x};${encoding === 'sgr' ? Math.floor(y / height()) + 1 : y}M`);
-              }
+            const rect = el.querySelector('.term-row:not(.term-scrollback-row)')?.getBoundingClientRect();
+            if (!rect) return cancel();
+            const x = Math.floor(e.clientX - rect.left);
+            const y = Math.floor(e.clientY - rect.top);
+            const code = (e.deltaY < 0 ? 64 : 65) + (e.altKey ? 8 : 0) + (e.ctrlKey ? 16 : 0);
+            const width = parseFloat(el.style.getPropertyValue('--term-cell-width'));
+            if (x >= 0 && y >= 0 && x < adapter.cols * width && y < adapter.rows * height()) {
+              const col = Math.floor(x / width) + 1;
+              const row = Math.floor(y / height()) + 1;
+              if (encoding === 'sgr-pixels') adapter.input(`\x1b[<${code};${x};${y}M`);
+              else if (encoding === 'sgr') adapter.input(`\x1b[<${code};${col};${row}M`);
+              // xterm ignores 1005/1015 and stays in legacy encoding. The PTY
+              // takes UTF-8 strings: forward the complete ASCII report or nothing.
+              else if (col <= 95 && row <= 95) adapter.input(`\x1b[M${String.fromCharCode(code + 32, col + 32, row + 32)}`);
             }
           } else adapter.input(`\x1b${core.cursorKeysApp() ? 'O' : '['}${e.deltaY < 0 ? 'A' : 'B'}`);
           return cancel();

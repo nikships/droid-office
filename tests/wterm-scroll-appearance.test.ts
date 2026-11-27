@@ -216,6 +216,61 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     assert.deepEqual(output[0], output[1]);
     assert.equal(output[0].length, 5);
   });
+  await t.test('legacy wheel reports at the byte-coordinate boundaries', async () => {
+    const comparisons = await page.evaluate(async () => {
+      const { a, x, el, frame, write, input } = window as any;
+      const binary: string[] = [];
+      const sub = x.onBinary((s: string) => binary.push(s));
+      const report = [];
+      el.parentElement.style.width = '2600px';
+      for (const t of [a, x]) t.resize(240, 100);
+      for (const [tracking, encoding] of [
+        [1000, 0],
+        [1002, 0],
+        [1003, 0],
+        [1000, 1005],
+        [1000, 1015],
+      ]) {
+        const modes = `\x1bc\x1b[?${tracking}h${encoding ? `\x1b[?${encoding}h` : ''}`;
+        await write(modes);
+        const caps = [];
+        for (const [col, row] of [
+          [1, 3],
+          [95, 3],
+          [96, 3],
+          [223, 3],
+          [224, 3],
+          [1, 95],
+          [1, 96],
+        ])
+          for (const direction of [-1, 1]) {
+            for (const out of [...input, binary]) out.length = 0;
+            for (const t of [a, x]) {
+              const node = t === x ? x.element.querySelector('.xterm-screen') : t.native.element.querySelector('.term-row:not(.term-scrollback-row)');
+              const rect = node.getBoundingClientRect();
+              const width = t === x ? rect.width / t.cols : parseFloat(t.native.element.style.getPropertyValue('--term-cell-width'));
+              const height = t === x ? rect.height / t.rows : rect.height;
+              node.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 1, deltaY: direction, clientX: rect.left + (col - 0.5) * width, clientY: rect.top + height * (row - 0.5) }));
+            }
+            caps.push({ col, row, direction, adapter: input[0].join(''), xData: input[1].join(''), xBinary: binary.join('') });
+          }
+        report.push({ tracking, encoding, caps });
+      }
+      sub.dispose();
+      el.parentElement.style.width = '';
+      for (const t of [a, x]) t.resize(40, 10);
+      await frame();
+      return report;
+    });
+    for (const { tracking, encoding, caps } of comparisons)
+      for (const { col, row, direction, xBinary, xData, adapter } of caps) {
+        const label = `tracking ${tracking}, encoding ${encoding}, (${col},${row}), wheel ${direction}`;
+        const binary = col > 223 ? '' : `\x1b[M${String.fromCharCode(direction < 0 ? 96 : 97, col + 32, row + 32)}`;
+        assert.equal(xData, '', label);
+        assert.equal(xBinary, binary, label);
+        assert.equal(adapter, Math.max(col, row) <= 95 ? xBinary : '', label);
+      }
+  });
   await t.test('minimum contrast in both directions and reverse video; retain existing ANSI, truecolor and glyph styling', async () => {
     const rows = await page.evaluate(async () => {
       const { a, x, write } = window as any;
