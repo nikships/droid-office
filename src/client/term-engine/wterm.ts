@@ -38,7 +38,7 @@ export class WTermAdapter {
   private readonly resized = event<{ cols: number; rows: number }>();
   private readonly fit = event<boolean>();
   private proposal?: { cols: number; rows: number };
-  private replay?: 'waiting' | 'parsed' | 'painted';
+  private replay?: 'waiting' | 'parsing' | 'parsed' | 'painted';
   private revealFrame = 0;
   private readonly changed = event<keyof ClientTerminalOptions>();
   private readonly data = event<string>();
@@ -439,16 +439,22 @@ export class WTermAdapter {
     this.replay = 'waiting';
     this.root?.classList.add('replaying');
   }
+  /** Keep an existing grid painted while an accepted snapshot replaces the core. */
+  holdSnapshot() {
+    this.replay = 'parsing';
+    this.syncRendering();
+  }
   endSnapshot() {
-    this.replay = 'parsed';
+    this.replay = this.root?.classList.contains('replaying') ? 'parsed' : undefined;
+    this.syncRendering();
   }
   private revealPaintedGrid() {
-    if (!this.proposal || this.replay !== 'painted' || this.revealFrame) return;
+    if (!this.proposal || this.replay !== 'painted' || this.fitting || this.revealFrame) return;
     // The first content-box observation can negotiate a different grid after
     // native paint. A resize invalidates that paint before it can be revealed.
     this.revealFrame = requestAnimationFrame(() => {
       this.revealFrame = 0;
-      if (this.replay !== 'painted' || !this.proposal) return;
+      if (this.replay !== 'painted' || !this.proposal || this.fitting) return;
       this.replay = undefined;
       this.root?.classList.remove('replaying');
     });
@@ -555,9 +561,10 @@ export class WTermAdapter {
     if (this.fitting === fitting) return;
     this.fitting = fitting;
     this.syncRendering();
+    if (!fitting) this.revealPaintedGrid();
   }
   private get renderingPaused() {
-    return this.paused || this.fitting || !this.inViewport || !!this.root?.ownerDocument.hidden;
+    return this.paused || this.fitting || this.replay === 'parsing' || !this.inViewport || !!this.root?.ownerDocument.hidden;
   }
   /** Read operations waiting for a paint must stop if this pane can no longer paint. */
   get paintSignal() {

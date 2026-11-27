@@ -2,25 +2,29 @@ import type { WTermAdapter } from '../term-engine/wterm';
 import { h, toast } from './dom';
 
 /** Observe every box, but never reflow the shared program through a gesture's
- * intermediate boxes. First observation (attach) and explicit typing stay immediate. */
-export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: () => void, workspace?: Element | null) {
+ * intermediate boxes. Input bytes don't wait for the queued ownership claim. */
+export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: (claim: boolean) => void, workspace?: Element | null) {
   let frame = 0;
   let task = 0;
-  let viewportChanging = false;
+  let settling = false;
+  let pending = false;
+  let claim = false;
+  let dragging = false;
   const cancel = () => {
     cancelAnimationFrame(frame);
     clearTimeout(task);
   };
   const commit = () => {
     cancel();
-    if (workspace?.classList.contains('resizing')) return;
-    viewportChanging = false;
-    fit();
+    if (dragging || document.hidden) return;
+    settling = false;
+    if (pending) fit(claim);
+    pending = claim = false;
     term.setFitPending(false);
   };
   const settle = () => {
     cancel();
-    if (workspace?.classList.contains('resizing')) return;
+    if (dragging || document.hidden) return;
     // Frame callbacks run *before* box observations. Allow two quiet frames,
     // then publish after observations on the third, not before its new layout.
     let remaining = 3;
@@ -30,28 +34,55 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     };
     frame = requestAnimationFrame(tick);
   };
+  const request = (typing = false) => {
+    pending = true;
+    claim ||= typing;
+    if (!settling && !dragging) commit();
+  };
   term.onFit((resized) => {
-    if (!resized) return fit();
-    changed();
-    // Terminal layouts don't tween. A discrete split, font or spacing change
-    // already has its final box; continuous window and pointer drags do not.
-    if (!viewportChanging && !workspace?.classList.contains('resizing')) return commit();
-    term.setFitPending(true);
-    settle();
+    if (resized) changed();
+    if (resized && (settling || dragging) && !document.hidden) {
+      term.setFitPending(true);
+      settle();
+    }
+    request();
   });
   term.onOpen((_native, signal) => {
-    window.addEventListener('resize', () => (viewportChanging = true), { signal });
-    // A divider can stop moving before release, with no final box observation.
-    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'])
-      workspace?.addEventListener(
-        type,
-        (event) => {
-          if (event.target instanceof Element && event.target.closest('.dash-handle')) settle();
-        },
-        { signal },
-      );
-    signal.addEventListener('abort', cancel, { once: true });
+    window.addEventListener(
+      'resize',
+      () => {
+        settling = true;
+        settle();
+      },
+      { signal },
+    );
+    dragging = !!workspace?.classList.contains('resizing');
+    const observer = new MutationObserver(() => {
+      const next = !!workspace?.classList.contains('resizing');
+      if (next === dragging || document.hidden) return;
+      dragging = next;
+      if (!dragging) {
+        settling = true;
+        settle();
+      }
+    });
+    if (workspace) observer.observe(workspace, { attributes: true, attributeFilter: ['class'] });
+    const release = () => {
+      cancel();
+      settling = dragging = false;
+      term.setFitPending(false);
+    };
+    document.addEventListener('visibilitychange', () => (document.hidden ? release() : commit()), { signal });
+    signal.addEventListener(
+      'abort',
+      () => {
+        observer.disconnect();
+        release();
+      },
+      { once: true },
+    );
   });
+  return request;
 }
 
 /** Opening never attaches to a PTY until the renderer is ready. Only an explicit

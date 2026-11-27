@@ -6,7 +6,7 @@ interface Snapshot {
   rows: number;
   shared?: boolean;
 }
-type Sink = Pick<WTermAdapter, 'reset' | 'resize' | 'write'>;
+type Sink = Pick<WTermAdapter, 'reset' | 'resize' | 'write'> & Partial<Pick<WTermAdapter, 'holdSnapshot'>>;
 
 /** Terminal writes stay ordered across snapshots, reconnects and disposal. Never retain an
  * unbounded stream while a snapshot is parsing; request a newer snapshot instead. */
@@ -46,6 +46,7 @@ export class TerminalMirror {
   snapshot(snapshot: Snapshot) {
     if (!this.visible) return;
     this.disconnect();
+    this.term.holdSnapshot?.();
     this.waiting = false;
     const generation = this.generation;
     // Drain old async writes *before* clearing them. Live data arriving meanwhile waits below.

@@ -420,7 +420,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     if (msg.t === 'term.data' && msg.workerId === workerId && attached) term?.write(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === workerId && attached && term) {
       const t = term;
-      t.beginSnapshot();
+      t.holdSnapshot();
       t.reset();
       t.resize(msg.cols, msg.rows);
       t.write(msg.data, () => {

@@ -210,6 +210,18 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       await pane.waitForFunction(() => (window as any).attached);
       await pane.evaluate(() => (window as any).replay());
       await pane.waitForFunction(() => (window as any).tailVisible());
+      await pane.waitForSelector('.changes-log .office-wterm:not(.replaying)');
+      const resync = await pane.evaluate(async () => {
+        const w = window as any,
+          grid = document.querySelector('.changes-log .office-wterm')!;
+        w.replay();
+        for (let i = 0; i < 5; i++) {
+          if (getComputedStyle(grid).opacity !== '1' || !grid.querySelector('.term-grid')?.textContent?.includes('END-OF-LOG')) return false;
+          await new Promise(requestAnimationFrame);
+        }
+        return true;
+      });
+      assert.equal(resync, true, 'Changes Log keeps its painted grid throughout a same-size resync');
       await pane.locator('.changes-log .office-wterm,.changes-log .xterm-screen').hover();
       await pane.mouse.wheel(0, -1000);
       await pane.waitForFunction(() => !(window as any).tailVisible());
@@ -231,10 +243,18 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       await pane.evaluate(async () => {
         const ui = '/ui/changes.ts',
           state = '/state.ts';
-        const { openChanges } = await import(ui),
+        const { openChanges, routeChangesMessage } = await import(ui),
           { store } = await import(state);
         store.workers.set('pixel', { id: 'pixel', name: 'Pixel', kind: 'shell', deskId: 'desk', status: 'idle', color: '#89d9ed', cols: 80, rows: 24 });
-        openChanges({ send: () => true }, 'pixel');
+        openChanges(
+          {
+            send: (m: { t: string }) => {
+              if (m.t === 'worker.attach') queueMicrotask(() => routeChangesMessage({ t: 'term.snapshot', workerId: 'pixel', cols: 80, rows: 24, data: 'initial log' }));
+              return true;
+            },
+          },
+          'pixel',
+        );
       });
       const log = pane.getByRole('button', { name: /^Log/ }),
         logHost = pane.locator('.changes-log'),

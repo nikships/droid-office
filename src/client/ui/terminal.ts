@@ -329,7 +329,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       return;
     }
     if (!mirror.ready || !opened || !net.up) return;
-    if (!typing && workspace?.classList.contains('resizing')) return;
     if (typing || paneSizeChanged) adoptSharedSize = false;
     paneSizeChanged = false;
     if (adoptSharedSize) {
@@ -410,7 +409,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       lastSentSize = '';
       pendingSizes.length = 0;
       disconnected.classList.add('hidden');
-      sendSize();
+      requestFit();
       if (restoreReader && !pendingFind) restoreReader();
       else term.scrollToBottom();
       restoreReader = undefined;
@@ -437,7 +436,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   term.onData((data) => {
     if (readOnly || !mirror.ready || !net.up) return;
     // Focus moving is not typing, so it leaves the shared PTY at its size.
-    if (!isFocusReport(data) && (adoptSharedSize || paneSizeChanged)) sendSize(true);
+    if (!isFocusReport(data) && (adoptSharedSize || paneSizeChanged)) requestFit(true);
     net.send({ t: 'term.input', workerId, data });
   });
   const unbind = () => {
@@ -460,10 +459,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const onMsg = (msg: ServerMsg) => {
     if (!opened || threadView) return;
     if (msg.t === 'term.data' && msg.workerId === workerId) mirror.data(msg.data);
-    else if (msg.t === 'term.snapshot' && msg.workerId === workerId) {
-      term.beginSnapshot();
-      mirror.snapshot(msg);
-    }
+    else if (msg.t === 'term.snapshot' && msg.workerId === workerId) mirror.snapshot(msg);
   };
   listeners.add(onMsg);
   // A building agent (the Orchestrator) comes and goes with Mission Control state, not the floor's workers.
@@ -474,7 +470,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     offMission();
   };
   const unsubCredits = store.on('factory', refresh);
-  followTerminalFit(term, () => (paneSizeChanged = true), sendSize, readOnly ? null : workspace);
+  const requestFit = followTerminalFit(term, () => (paneSizeChanged = true), sendSize, readOnly ? null : workspace);
   const offStatus = net.onStatus((up) => {
     header?.refresh(store.worker(workerId) ?? info);
     thread?.update(store.worker(workerId) ?? info, up);
@@ -595,7 +591,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         term.beginSnapshot();
         mirror.disconnect();
         net.send({ t: 'worker.attach', workerId });
-        sendSize();
         if (focus) setTimeout(() => alive && term.focus(), 0);
       }
       refresh();
@@ -755,7 +750,7 @@ export function openOfficeShell(net: Net) {
   let boxChanged = false;
 
   const sendSize = (typing = false) => {
-    if (term.options.disableStdin || !mirror?.ready || !opened || !net.up) return;
+    if (term.options.disableStdin || !mirror.ready || !opened || !net.up) return;
     if (typing || boxChanged) shared = false;
     boxChanged = false;
     if (shared) {
@@ -785,7 +780,7 @@ export function openOfficeShell(net: Net) {
       ptyRows = snapshot.rows;
       lastSentSize = '';
       pendingSizes.length = 0;
-      sendSize();
+      requestFit();
       term.scrollToBottom();
       term.endSnapshot();
     },
@@ -802,8 +797,8 @@ export function openOfficeShell(net: Net) {
     return !features.keyException(e, false) && !features.handleKey(e);
   });
   term.onData((data) => {
-    if (term.options.disableStdin || !mirror?.ready || !net.up) return;
-    if (!isFocusReport(data) && (shared || boxChanged)) sendSize(true);
+    if (term.options.disableStdin || !mirror.ready || !net.up) return;
+    if (!isFocusReport(data) && (shared || boxChanged)) requestFit(true);
     net.send({ t: 'shell.input', data });
   });
   const offStatus = net.onStatus((up) => {
@@ -817,13 +812,12 @@ export function openOfficeShell(net: Net) {
   };
   const onMsg = (msg: ServerMsg) => {
     if (!opened) return;
-    if (msg.t === 'term.data' && msg.workerId === OFFICE_SHELL_ID) mirror?.data(msg.data);
+    if (msg.t === 'term.data' && msg.workerId === OFFICE_SHELL_ID) mirror.data(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === OFFICE_SHELL_ID) {
       shared = msg.shared === true;
       ptyCols = msg.cols;
       ptyRows = msg.rows;
-      term.beginSnapshot();
-      mirror?.snapshot(msg);
+      mirror.snapshot(msg);
     }
   };
   listeners.add(onMsg);
@@ -831,7 +825,7 @@ export function openOfficeShell(net: Net) {
   const unsub = store.on('screens', (changedId) => {
     if (changedId && changedId !== OFFICE_SHELL_ID) return;
     const s = store.screens.get(OFFICE_SHELL_ID);
-    if (!s || !mirror?.ready) return;
+    if (!s || !mirror.ready) return;
     if (s.cols === ptyCols && s.rows === ptyRows) return;
     ptyCols = s.cols;
     ptyRows = s.rows;
@@ -846,7 +840,7 @@ export function openOfficeShell(net: Net) {
     lastSentSize = '';
     pendingSizes.length = 0;
   });
-  followTerminalFit(term, () => (boxChanged = true), sendSize);
+  const requestFit = followTerminalFit(term, () => (boxChanged = true), sendSize);
 
   const modal = openModal(el, {
     backdropCloses: true,

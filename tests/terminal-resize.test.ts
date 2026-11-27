@@ -307,6 +307,274 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     assert.equal(await page.evaluate(() => (window as any).sizes().length), 1, 'typing explicitly reclaims size');
   });
 
+  await t.test('an unpainted snapshot accepts keyboard input but not pointer reports', async () => {
+    const page = await rig(true, true);
+    await page.evaluate(() => (window as any).snapshot('\x1b[?1000h\x1b[?1006h\x1b[?2026h'));
+    const root = page.locator('.office-wterm');
+    await page.waitForFunction(() => !(window as any).term.options.disableStdin && !!document.querySelector('.office-wterm.replaying'));
+    await page.evaluate(() => (window as any).term.focus());
+    await page.keyboard.type('k');
+    const bounds = (await root.boundingBox())!;
+    await page.mouse.click(bounds.x + 25, bounds.y + 34);
+    const input = await page.evaluate(() => (window as any).messages.filter((m: any) => m.t === 'term.input').map((m: any) => m.data));
+    assert.deepEqual(input, ['k']);
+    await page.evaluate(() => (window as any).term.write('\x1b[?2026l'));
+    await page.waitForFunction(() => !document.querySelector('.office-wterm.replaying'));
+    await page.mouse.click(bounds.x + 25, bounds.y + 34);
+    assert.match(await page.evaluate(() => (window as any).messages.at(-1).data), /^\x1b\[<0;/);
+  });
+
+  for (const mode of ['inline', 'shell']) {
+    await t.test(`${mode} keeps a painted grid visible throughout a same-size resync`, async () => {
+      const page = await rig(true, true, false, mode);
+      const frames = await page.evaluate(async () => {
+        const w = window as any,
+          el = w.term.native.element;
+        w.snapshot('old screen');
+        await w.frames();
+        const sample = () => [getComputedStyle(el).opacity, el.querySelector('.term-grid').textContent.trim()];
+        w.snapshot('new screen');
+        const samples = [sample()];
+        for (let i = 0; i < 5; i++) {
+          await new Promise(requestAnimationFrame);
+          samples.push(sample());
+        }
+        return samples;
+      });
+      assert.ok(
+        frames.every(([opacity, text]) => opacity === '1' && /old screen|new screen/.test(text)),
+        JSON.stringify(frames),
+      );
+      assert.match(frames.at(-1)![1], /new screen/);
+    });
+  }
+
+  await t.test('a late detached snapshot cannot conceal the last visible grid', async () => {
+    const page = await rig(true, true);
+    const result = await page.evaluate(async () => {
+      const w = window as any,
+        el = w.term.native.element;
+      w.snapshot('old screen');
+      await w.frames();
+      w.visibility(true);
+      w.snapshot('late screen');
+      w.visibility(false);
+      await w.frames();
+      return [el.classList.contains('replaying'), getComputedStyle(el).opacity, el.querySelector('.term-grid').textContent.trim()];
+    });
+    assert.deepEqual(result, [false, '1', 'old screen']);
+  });
+
+  await t.test('a viewport resize with no box change does not defer the next discrete fit', async () => {
+    const page = await rig(false);
+    const grids = await page.evaluate(async () => {
+      const w = window as any;
+      window.dispatchEvent(new Event('resize'));
+      await w.frames();
+      const observed = new Promise((resolve) => w.term.onFit(() => resolve([w.term.cols, w.term.proposeDimensions().cols])));
+      w.resize(500, 300);
+      return (await observed) as number[];
+    });
+    assert.equal(grids[0], grids[1]);
+  });
+
+  await t.test('the first painted snapshot stays concealed while its observed fit is pending', async () => {
+    const page = await rig(false, true, false, 'dashboard');
+    const state = await page.evaluate(async () => {
+      const w = window as any,
+        raw = document.querySelector<HTMLElement>('#mount')!,
+        el = w.term.native.element;
+      const painted = new Promise<void>((resolve) => {
+        const observer = new MutationObserver(() => {
+          if (!el.querySelector('.term-grid').textContent.includes('first screen')) return;
+          observer.disconnect();
+          raw.parentElement!.classList.add('resizing');
+          raw.style.setProperty('--w', '.7');
+          resolve();
+        });
+        observer.observe(el, { subtree: true, childList: true, characterData: true });
+      });
+      w.snapshot('first screen');
+      await painted;
+      await w.frames();
+      const during = getComputedStyle(el).opacity;
+      raw.parentElement!.classList.remove('resizing');
+      await w.frames();
+      await w.frames();
+      return [during, getComputedStyle(el).opacity, w.term.cols, w.term.proposeDimensions().cols];
+    });
+    assert.deepEqual(state, ['0', '1', state[3], state[3]]);
+  });
+
+  await t.test('a sidebar toggle with a covered Raw terminal emits at most one resize', async () => {
+    const page = await rig(false, false, false, 'dashboard');
+    const sizes = await page.evaluate(async () => {
+      const w = window as any,
+        raw = document.querySelector<HTMLElement>('#mount')!;
+      raw.classList.add('covered');
+      const thread = document.createElement('section');
+      thread.className = 'dash-pane';
+      thread.dataset.mode = 'thread';
+      raw.after(thread);
+      w.messages = [];
+      const body = document.querySelector('.dash-body')!;
+      body.classList.add('side-closed');
+      await w.frames();
+      await Promise.all(body.getAnimations().map((a) => a.finished));
+      await w.frames();
+      return w.sizes();
+    });
+    assert.ok(sizes.length <= 1, JSON.stringify(sizes));
+  });
+
+  await t.test('typing at successive splitter positions sends bytes immediately but claims only the final size', async () => {
+    const page = await rig(true, false, false, 'dashboard');
+    const sizes = await page.evaluate(async () => {
+      const w = window as any,
+        raw = document.querySelector<HTMLElement>('#mount')!;
+      raw.parentElement!.classList.add('resizing');
+      for (const [width, key] of [
+        ['.4', 'a'],
+        ['.7', 'b'],
+      ]) {
+        raw.style.setProperty('--w', width);
+        await w.frames();
+        w.term.input(key);
+      }
+      const during = w.sizes(),
+        bytes = w.messages.filter((m: any) => m.t === 'term.input').map((m: any) => m.data);
+      raw.parentElement!.classList.remove('resizing');
+      await w.frames();
+      const { cols, rows } = w.term.proposeDimensions();
+      return { during, bytes, after: w.sizes(), expected: [cols, rows] };
+    });
+    assert.deepEqual(sizes.bytes, ['a', 'b']);
+    assert.deepEqual(sizes.during, []);
+    assert.deepEqual(sizes.after, [sizes.expected]);
+  });
+
+  for (const mode of ['inline', 'shell']) {
+    await t.test(`${mode} snapshot-ready and input share the settling viewport fit`, async () => {
+      const page = await rig(true, true, false, mode);
+      const result = await page.evaluate(async () => {
+        const w = window as any,
+          pane = w.term.native.element.parentElement;
+        const observed = () =>
+          new Promise<void>((resolve) => {
+            const sub = w.term.onFit(() => {
+              sub.dispose();
+              resolve();
+            });
+          });
+        window.dispatchEvent(new Event('resize'));
+        let next = observed();
+        pane.style.width = '510px';
+        await next;
+        w.snapshot();
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+        w.term.input('x');
+        const during = w.sizes(),
+          bytes = w.messages.filter((m: any) => m.t.endsWith('.input')).map((m: any) => m.data);
+        next = observed();
+        pane.style.width = '730px';
+        await next;
+        await w.frames();
+        const { cols, rows } = w.term.proposeDimensions();
+        return { bytes, during, after: w.sizes(), expected: [cols, rows] };
+      });
+      assert.deepEqual(result.bytes, ['x']);
+      assert.deepEqual(result.during, []);
+      assert.deepEqual(result.after, [result.expected]);
+    });
+  }
+
+  await t.test('removing the drag class without a pointer event resumes live painting', async () => {
+    const page = await rig(false, false, false, 'dashboard');
+    const output = await page.evaluate(async () => {
+      const w = window as any,
+        raw = document.querySelector<HTMLElement>('#mount')!;
+      raw.parentElement!.classList.add('resizing');
+      raw.style.setProperty('--w', '.7');
+      await w.frames();
+      w.term.write('still streaming');
+      raw.parentElement!.classList.remove('resizing');
+      await w.frames();
+      return w.term.native.element.textContent;
+    });
+    assert.match(output, /still streaming/);
+  });
+
+  await t.test('hiding a tab or disposing a pane clears its unfinished fit', async () => {
+    const page = await rig(false, false, false, 'dashboard');
+    const result = await page.evaluate(async () => {
+      const w = window as any,
+        raw = document.querySelector<HTMLElement>('#mount')!;
+      raw.parentElement!.classList.add('resizing');
+      raw.style.setProperty('--w', '.7');
+      await w.frames();
+      w.visibility(true);
+      const hiddenFit = w.term.fitting;
+      w.visibility(false);
+      await w.frames();
+      w.term.write('paint after interrupted drag');
+      await w.frames();
+      const painted = w.term.native.element.textContent.includes('paint after interrupted drag');
+      raw.parentElement!.classList.remove('resizing');
+      await w.frames();
+      raw.parentElement!.classList.add('resizing');
+      raw.style.setProperty('--w', '.4');
+      await w.frames();
+      w.messages = [];
+      w.handle.close();
+      raw.parentElement!.classList.remove('resizing');
+      await w.frames();
+      return [hiddenFit, painted, w.term.fitting, w.sizes()];
+    });
+    assert.deepEqual(result, [false, true, false, []]);
+  });
+
+  await t.test('the divider stays on the terminal edge, and Thread-only dividers still animate', async () => {
+    const page = await rig(false, false, false, 'dashboard');
+    const result = await page.evaluate(async () => {
+      const raw = document.querySelector<HTMLElement>('#mount')!,
+        handle = document.createElement('div');
+      handle.className = 'dash-handle col';
+      handle.style.setProperty('--at', '.5');
+      raw.after(handle);
+      const offset = () => handle.getBoundingClientRect().left + 4 - raw.getBoundingClientRect().right;
+      const offsets = [offset()];
+      raw.style.setProperty('--w', '.7');
+      handle.style.setProperty('--at', '.7');
+      for (let i = 0; i < 6; i++) {
+        await new Promise(requestAnimationFrame);
+        offsets.push(offset());
+      }
+      raw.dataset.mode = 'thread';
+      return { offsets, threadOnly: getComputedStyle(handle).transitionProperty };
+    });
+    assert.ok(
+      result.offsets.every((n) => Math.abs(n) < 1),
+      `divider offsets: ${result.offsets}`,
+    );
+    assert.match(result.threadOnly, /left/);
+  });
+
+  await t.test('reduced motion disables all mixed-pane and divider transitions', async () => {
+    const page = await rig(false, false, false, 'dashboard');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const properties = await page.evaluate(() => {
+      const raw = document.querySelector<HTMLElement>('#mount')!,
+        thread = document.createElement('section'),
+        handle = document.createElement('div');
+      thread.className = 'dash-pane';
+      thread.dataset.mode = 'thread';
+      handle.className = 'dash-handle col';
+      raw.after(thread, handle);
+      return [raw, thread, handle].map((el) => getComputedStyle(el).transitionProperty);
+    });
+    assert.deepEqual(properties, ['none', 'none', 'none']);
+  });
+
   await t.test('dashboard sidebar breakpoints and pane splits send only the settled grid', async () => {
     const page = await rig(false, false, false, 'dashboard');
     await page.setViewportSize({ width: 1120, height: 720 });
