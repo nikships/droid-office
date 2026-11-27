@@ -241,6 +241,8 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       const tail = await root.evaluate((el) => el.scrollTop);
       await pane.keyboard.press('Control+Shift+BracketLeft');
       await pane.waitForFunction((prev) => document.querySelector('.changes-log .office-wterm')!.scrollTop < prev, tail);
+      await pane.getByRole('button', { name: 'Previous prompt' }).click();
+      assert.ok(await logHost.evaluate((el) => document.activeElement === el), 'a prompt jump returns focus to the read-only Log host');
       const apple = await pane.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform));
       await pane.keyboard.press(apple ? 'Meta+f' : 'Control+Shift+f');
       await pane.getByRole('textbox', { name: 'Find in terminal' }).fill('logged');

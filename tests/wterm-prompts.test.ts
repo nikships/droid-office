@@ -134,6 +134,8 @@ test('OSC 133 state and navigation follow real marks, never a reconstructed prom
     }),
     'second>',
   );
+  await page.keyboard.type('k');
+  assert.deepEqual(await page.evaluate(() => (window as any).sent.splice(0)), ['k'], 'typing after a prompt arrow goes to the PTY');
   await write('line\r\n'.repeat(65));
   assert.equal(
     await page.evaluate(() => {

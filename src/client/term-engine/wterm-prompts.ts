@@ -19,7 +19,14 @@ export function attachWtermPrompts(adapter: WTermAdapter) {
       const name = direction === -1 ? 'Previous prompt' : 'Next prompt';
       const el = h('button', { type: 'button', 'aria-label': name, title: `${name} (Ctrl+Shift+${direction === -1 ? '[' : ']'})` }, direction === -1 ? '↑' : '↓');
       if (keyTarget === host) el.tabIndex = -1;
-      el.addEventListener('click', () => jump(direction), { signal });
+      el.addEventListener(
+        'click',
+        () => {
+          jump(direction);
+          keyTarget?.focus({ preventScroll: true });
+        },
+        { signal },
+      );
       return el;
     };
     const chip = h('div.wterm-prompt-chip', { hidden: true }, label, arrow(-1), arrow(1));
