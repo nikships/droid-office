@@ -330,7 +330,9 @@ export class WTermAdapter {
     const width = this.fontAdvance > 0 ? Math.round(this.fontAdvance * this.cols) / this.cols : parseFloat(style.getPropertyValue('--term-cell-width'));
     if (!(width > 0)) return;
     return {
-      cols: Math.floor((el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) / width),
+      // The reserved right inset includes the scrollbar; count the pane's
+      // inner layout width, not the content width left after history appears.
+      cols: Math.floor((el.offsetWidth - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth) - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) / width),
       rows: Math.floor((el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / this.rowHeight),
     };
   }

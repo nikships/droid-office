@@ -440,6 +440,40 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     assert.deepEqual(output[0], output[1]);
     assert.equal(output[0].length, 5);
   });
+  await t.test('the first scrollback row cannot change the proposed PTY columns at a glyph boundary', async () => {
+    const result = await page.evaluate(async () => {
+      const engine = '/term-engine/web-terminal.ts';
+      const { createWebTerminal } = await import(engine);
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;inset:0;width:566px;height:152px';
+      document.body.append(host);
+      const { term } = createWebTerminal({ fontFamily: 'monospace', fontSize: 14, lineHeight: 1.1 });
+      try {
+        await term.open(host);
+        term.resize(64, 8);
+        const frame = (window as any).frame;
+        const read = () =>
+          Array.from({ length: 16 }, (_, i) => {
+            host.style.width = `${557 + i}px`;
+            return [term.proposeDimensions().cols, term.native.element.offsetWidth - term.native.element.clientWidth];
+          });
+        await frame();
+        const before = read();
+        term.write('row\r\n'.repeat(50));
+        await frame();
+        return { before, after: read(), history: term.buffer.active.baseY };
+      } finally {
+        term.dispose();
+        host.remove();
+      }
+    });
+    assert.ok(result.history > 0);
+    t.diagnostic(JSON.stringify(result));
+    assert.deepEqual(
+      result.after.map((v) => v[0]),
+      result.before.map((v) => v[0]),
+    );
+  });
   await t.test('legacy wheel reports at the byte-coordinate boundaries', async () => {
     const comparisons = await page.evaluate(async () => {
       const { a, x, el, frame, write, input } = window as any;
