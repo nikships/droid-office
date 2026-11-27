@@ -10,7 +10,10 @@ export function attachWtermScroll(adapter: WTermAdapter) {
     handleKey = (e) => {
       if (!e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'PageUp' && e.key !== 'PageDown') || core.usingAltScreen()) return false;
       e.preventDefault();
-      if (e.type === 'keydown') el.scrollTop += (e.key === 'PageUp' ? -1 : 1) * Math.max(height(), el.clientHeight - height());
+      if (e.type === 'keydown') {
+        adapter.cancelReaderRestore();
+        el.scrollTop += (e.key === 'PageUp' ? -1 : 1) * Math.max(height(), el.clientHeight - height());
+      }
       return true;
     };
 

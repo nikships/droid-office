@@ -488,6 +488,40 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     assert.ok(result.final < result.start);
   });
 
+  await t.test('trusted paging during a shrinking layout leaves the reader at the paged offset', async () => {
+    const page = await rig(false);
+    await page.evaluate(async () => {
+      const w = window as any,
+        pane = document.getElementById('mount')!;
+      w.term.write(Array.from({ length: 180 }, (_, i) => `line ${i}\r\n`).join(''));
+      w.term.scrollToBottom();
+      w.term.focus();
+      await w.frames();
+      // Two 12px steps: PageDown has 12px less travel than PageUp, and
+      // the new bottom is 12px farther away. The reader should finish 24px up.
+      pane.style.transition = 'height 60s steps(4)';
+      pane.style.height = '302px';
+      w.shrink = pane.getAnimations()[0];
+      w.shrink.currentTime = 16000;
+      await w.frames();
+    });
+    await page.keyboard.press('Shift+PageUp');
+    await page.evaluate(async () => {
+      const w = window as any;
+      await w.frames();
+      w.shrink.currentTime = 31000;
+      await w.frames();
+    });
+    await page.keyboard.press('Shift+PageDown');
+    const gap = await page.evaluate(async () => {
+      const w = window as any;
+      await w.frames();
+      const el = w.term.native.element;
+      return el.scrollHeight - el.clientHeight - el.scrollTop;
+    });
+    assert.equal(gap, 24);
+  });
+
   for (const reading of [false, true]) {
     await t.test(`an animated shrink preserves the ${reading ? 'reader offset' : 'tail'} through intermediate boxes`, async () => {
       const page = await rig(false);

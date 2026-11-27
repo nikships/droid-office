@@ -133,6 +133,7 @@ export class WTermAdapter {
     const range = el.scrollHeight - el.clientHeight;
     const remaining = range - el.scrollTop;
     this.readerRow = this.isAtTail(range) ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;
+    if (this.readerRow !== undefined) el.classList.remove('pinning-tail');
     // wterm 0.6 follows within 5px of the end, and resets to zero when a
     // clipped shared grid has no history. Don't let either paint move a reader.
     if (scrolled) {
