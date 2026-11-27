@@ -1,0 +1,261 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { deflateSync } from 'node:zlib';
+import test from 'node:test';
+import { Ghostty } from 'ghostty-web';
+import headless from '@xterm/headless';
+import serialize from '@xterm/addon-serialize';
+import { createServer } from 'vite';
+import { GraphicsRows, placeholderRow } from '../src/client/term-engine/ghostty-graphics-rows.js';
+import { KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
+import { screenSnapshot } from '../src/server/screen.js';
+import { browserStatus, closeBrowser, launchBrowser } from '../src/server/whiteboard-browser.js';
+
+const apc = (body: string) => `\x1b_G${body}\x1b\\`;
+const cell = (r: number, c: number) => KITTY_PLACEHOLDER_CHAR + String.fromCodePoint(KITTY_DIACRITICS[r], KITTY_DIACRITICS[c]);
+
+test('actual WASM rows follow identical output across history growth and page trims; uncertain reflow drops direct anchors', async (t) => {
+  const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
+  const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(40, 8, { scrollbackLimit: 10 });
+  t.after(() => core.free());
+  const rows = new GraphicsRows(core);
+  const write = (data: string) => {
+    rows.begin(data);
+    core.write(data);
+    rows.end();
+  };
+  write('label');
+  const first = rows.anchor()!;
+  write('\r\nrepeat\r\n');
+  assert.equal(first.line, 0);
+  core.resize(48, 8);
+  rows.resized();
+  assert.equal(first.line, 0, 'safe width change, no wrapped lines or history');
+  write('repeat\r\n'.repeat(100));
+  assert.equal(first.line, 0);
+  assert.equal(core.getScrollbackLine(first.line)?.[0].codepoint, 108);
+  // Force a real trim: the pinned core's page budget is not the configured number of rows.
+  write('repeat\r\n'.repeat(100_000));
+  assert.ok(first.isDisposed);
+  write('UNIQUE');
+  const next = rows.anchor()!;
+  write(`\r\n${'repeat\r\n'.repeat(700)}`);
+  assert.equal(
+    core
+      .getScrollbackLine(next.line)
+      ?.slice(0, 6)
+      .map((c) => String.fromCodePoint(c.codepoint))
+      .join(''),
+    'UNIQUE',
+  );
+  core.resize(30, 8);
+  rows.resized();
+  assert.ok(next.isDisposed);
+  write(`\x1b[38;2;18;52;86m${cell(2, 3)}${KITTY_PLACEHOLDER_CHAR}\r\n`);
+  const line = core.getScrollbackLength() + core.getCursor().y - 1;
+  write('\r\n'.repeat(10));
+  const found = placeholderRow(core, line, core.getScrollbackLength(), []).map;
+  assert.deepEqual([found?.get(0)?.imageId, found?.get(0)?.row, found?.get(1)?.col], [0x123456, 2, 4]);
+});
+
+const status = browserStatus();
+test('Ghostty graphics: ordered split APC, actual snapshot, Retina pixels, scroll, clipped placement, alternate screen, expand and teardown', { skip: !status.installed && 'Chromium not installed' }, async (t) => {
+  const cacheDir = await mkdtemp(join(tmpdir(), 'office-graphics-vite-'));
+  const server = await createServer({
+    root: fileURLToPath(new URL('../src/client', import.meta.url)),
+    configFile: false,
+    cacheDir,
+    logLevel: 'error',
+    appType: 'custom',
+    server: { host: '127.0.0.1', port: 0, hmr: false },
+    optimizeDeps: { noDiscovery: true, include: ['ghostty-web'] },
+  });
+  t.after(async () => {
+    await server.close();
+    await rm(cacheDir, { recursive: true, force: true });
+  });
+  await server.listen();
+  const address = server.httpServer!.address();
+  assert.ok(address && typeof address === 'object');
+  const browser = await launchBrowser();
+  t.after(closeBrowser);
+  const context = await browser.newContext({ deviceScaleFactor: 2 });
+  t.after(() => context.close());
+  const page = await context.newPage();
+  page.setDefaultTimeout(4000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.route('**/fixture', (route) => route.fulfill({ contentType: 'text/html', body: '<div class="modal term"><div id="host" class="term-host"></div></div>' }));
+  await page.goto(`http://127.0.0.1:${address.port}/fixture`);
+  await page.addStyleTag({ url: '/style.css?direct' });
+  await page.evaluate(async () => {
+    const url = '/term-engine/ghostty.ts',
+      feature = '/term-engine/ghostty-graphics.ts';
+    const { GhosttyAdapter } = await import(url);
+    const { attachGhosttyGraphics } = await import(feature);
+    const links = '/term-engine/ghostty-links.ts';
+    const { attachGhosttyLinks } = await import(links);
+    const w = window as any;
+    w.sent = [];
+    w.open = async (interactive: boolean) => {
+      const a = (w.term = new GhosttyAdapter({ fontSize: 15, fontFamily: 'monospace', scrollback: 200 }));
+      w.expand = async (img: { blob: Blob; width: number; height: number }) => {
+        const bmp = await createImageBitmap(img.blob);
+        w.expanded = [img.width, img.height, bmp.width, bmp.height];
+        bmp.close();
+      };
+      attachGhosttyGraphics(a, interactive ? { onExpandImage: w.expand } : {});
+      attachGhosttyLinks(a);
+      a.onData((s: string) => w.sent.push(s));
+      await a.open(document.getElementById('host'));
+      a.resize(40, 8);
+    };
+    await w.open(true);
+    w.pixel = (x: number, y: number) => {
+      const c = document.querySelector<HTMLCanvasElement>('.term-kitty-layer')!;
+      if (!c.width) return [0, 0, 0, 0];
+      const m = w.term.native.renderer.getMetrics();
+      return Array.from(c.getContext('2d')!.getImageData(Math.floor((x + 0.5) * m.width * devicePixelRatio), Math.floor((y + 0.5) * m.height * devicePixelRatio), 1, 1).data);
+    };
+  });
+  const write = (s: string) => page.evaluate((s) => (window as any).term.write(s), s);
+  const painted = async (x: number, y: number, red: boolean) => {
+    await page.waitForFunction(
+      ([x, y, red]) => {
+        const [r, , , a] = (window as any).pixel(x, y);
+        return red ? r === 255 && a === 255 : a === 0;
+      },
+      [x, y, red] as const,
+      { timeout: 4000 },
+    );
+  };
+  const packed = deflateSync(Buffer.from([255, 0, 0])).toString('base64');
+  await write(`${apc('a=q,i=99,f=24,s=1,v=1;AAAA')}label\r\n${apc(`a=t,i=2,f=24,s=1,v=1,o=z,m=1;${packed.slice(0, 4)}`)}`);
+  const tail = apc(`m=0;${packed.slice(4)}`) + apc('a=p,i=2,p=7,c=4,r=3');
+  for (const chunk of [tail.slice(0, 2), tail.slice(2, -1), tail.slice(-1)]) await write(chunk);
+  await painted(1, 1, true);
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const c = (window as any).term.native.wasmTerm.getCursor();
+      return [c.x, c.y];
+    }),
+    [4, 3],
+  );
+  assert.deepEqual(await page.evaluate(() => (window as any).sent), []);
+  const point = await page.evaluate(() => {
+    const native = (window as any).term.native;
+    const m = native.renderer.getMetrics();
+    const r = native.renderer.getCanvas().getBoundingClientRect();
+    const overlay = document.querySelector<HTMLCanvasElement>('.term-kitty-layer')!;
+    const b = overlay.getBoundingClientRect();
+    return { x: r.left + m.width * 1.5, y: r.top + m.height * 3.75, aligned: b.left === r.left && b.top === r.top, dpr: overlay.width / b.width };
+  });
+  assert.equal(point.aligned, true);
+  assert.equal(point.dpr, 2);
+  await page.mouse.move(point.x, point.y);
+  await page.getByRole('button', { name: 'Expand image' }).click();
+  await page.waitForFunction(() => (window as any).expanded);
+  assert.deepEqual(await page.evaluate(() => (window as any).expanded), [1, 1, 1, 1]);
+  await page.evaluate(() => {
+    (window as any).expanded = null;
+  });
+  await page.mouse.click(point.x, point.y);
+  await page.waitForFunction(() => (window as any).expanded);
+  await write('\x1b[?1000h');
+  await page.evaluate(() => {
+    (window as any).expanded = null;
+    (window as any).sent = [];
+  });
+  await page.keyboard.down('Control');
+  await page.mouse.click(point.x, point.y);
+  await page.keyboard.up('Control');
+  await page.waitForFunction(() => (window as any).expanded);
+  assert.deepEqual(await page.evaluate(() => (window as any).sent), []);
+  await write('\x1b[?1000l');
+  await write('\x1b[?1049h');
+  await painted(1, 1, false);
+  await write('\x1b[?1049l');
+  await painted(1, 1, true);
+  await write(`\x1b[?1049h${'TUI\r\n'.repeat(10)}\x1b[?1049l${'same\r\n'.repeat(7)}`); // active screen top = history row 3; only the last image row remains.
+  await painted(1, 0, true);
+  await painted(1, 1, false);
+  await page.evaluate(() => (window as any).term.native.scrollToTop());
+  await painted(1, 1, true);
+  await write(apc('a=d,d=i,i=2,p=7'));
+  await painted(1, 0, false);
+  await painted(1, 1, false);
+  // Real server snapshot serialization, not a hand-written approximation of its prelude.
+  const host = new headless.Terminal({ rows: 8, cols: 40, allowProposedApi: true });
+  t.after(() => host.dispose());
+  const serializer = new serialize.SerializeAddon();
+  host.loadAddon(serializer);
+  const snapshot = screenSnapshot(host, serializer);
+  await new Promise<void>((done) => host.write(`title\r\n${apc('a=T,i=42,f=32,s=1,v=1,c=3,r=2;/wAA/w==')}`, done));
+  await page.evaluate(() => (window as any).term.reset());
+  await write(snapshot());
+  await painted(0, 1, true);
+  await painted(2, 2, true);
+  await new Promise<void>((done) => host.write('\x1bc', done));
+  await new Promise<void>((done) => host.write(`${apc('a=T,U=1,i=515,c=2,r=1,f=32,s=1,v=1;/wAA/w==')}\x1b[38;2;0;2;3m${cell(0, 0)}${cell(0, 1)}\x1b[39m`, done));
+  await page.evaluate(() => (window as any).term.reset());
+  await write(snapshot());
+  await painted(0, 0, true);
+  await painted(1, 0, true);
+  await painted(2, 0, false);
+  await page.evaluate(() => (window as any).term.resize(33, 6));
+  await painted(1, 0, true);
+  await write('\r \x1b[0m');
+  await painted(0, 0, false);
+  await painted(1, 0, true);
+  await write('\x1bc');
+  await painted(1, 0, false);
+  await t.test('one large PNG in a BEL-terminated APC paints and immediately resumes ordinary text', async () => {
+    const result = await page.evaluate(() => {
+      const term = (window as any).term;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 1600;
+      const ctx = canvas.getContext('2d')!;
+      const pixels = ctx.createImageData(canvas.width, canvas.height);
+      // A red strip for an independent pixel assertion; opaque deterministic noise elsewhere
+      // keeps the browser-encoded PNG larger than the former 8 Mi-character scanner limit.
+      let noise = 17;
+      for (let i = 0; i < pixels.data.length; i += 4) {
+        noise ^= noise << 13;
+        noise ^= noise >>> 17;
+        noise ^= noise << 5;
+        const red = (i / 4) % canvas.width < 200;
+        pixels.data[i] = red ? 255 : noise & 255;
+        pixels.data[i + 1] = red ? 0 : (noise >>> 8) & 255;
+        pixels.data[i + 2] = red ? 0 : (noise >>> 16) & 255;
+        pixels.data[i + 3] = 255;
+      }
+      ctx.putImageData(pixels, 0, 0);
+      const payload = canvas.toDataURL('image/png').split(',')[1];
+      term.write(`\x1b_Ga=T,i=71,f=100,c=8,r=4,C=1;${payload}\x07AFTER`);
+      const text = term.native.wasmTerm
+        .getLine(0)
+        .slice(0, 5)
+        .map((cell: { codepoint: number }) => String.fromCodePoint(cell.codepoint))
+        .join('');
+      return { chars: payload.length, text };
+    });
+    assert.ok(result.chars > 8 * 1024 * 1024 && result.chars < 16 * 1024 * 1024);
+    assert.equal(result.text, 'AFTER', 'BEL ends the APC, not the next ordinary write');
+    await painted(0, 0, true);
+    t.diagnostic(`Rendered one ${result.chars}-character PNG payload terminated with BEL.`);
+  });
+  await page.evaluate(async () => {
+    const w = window as any;
+    w.term.dispose();
+    await w.open(false);
+  });
+  assert.equal(await page.locator('.term-kitty-expand').count(), 0);
+  await write(snapshot());
+  await painted(1, 0, true);
+  await page.evaluate(() => (window as any).term.dispose());
+  assert.equal(await page.locator('.term-kitty-layer').count(), 0);
+  assert.deepEqual(errors, []);
+});
