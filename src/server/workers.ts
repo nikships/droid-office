@@ -40,6 +40,7 @@ import { validateWorkerEffort, validateWorkerModel } from './agents.js';
 import { ScrollbackStore, plainTail, searchTerminal, terminalTail } from './history.js';
 import { DropStore, type SharedDropImages } from './drops.js';
 import { screenSnapshot, setTerminalResponder } from './screen.js';
+import { interactiveShell } from './shell-integration.js';
 import { snapshotScreen, type ScreenFrame } from './screen-frame.js';
 import { readScreenMenu } from '../shared/asks.js';
 import { SCREEN_SETTLE_MS, readDroidScreen, screenStatus, type DroidScreen } from './droid-screen.js';
@@ -2215,19 +2216,19 @@ export class WorkerManager {
     else if (this.trees.ceiling) env.GIT_CEILING_DIRECTORIES = [this.trees.ceiling, env.GIT_CEILING_DIRECTORIES].filter(Boolean).join(path.delimiter);
     // The host keeps its own copy of the screen for the next office: it starts with the same history.
     const where = { cwd, env, cols: info.cols, rows: info.rows, prelude };
+    const launch = isShell ? interactiveShell(shell, args, env.HOME) : { file: commandPath ?? command, args };
     // Only a new worktree's first terminal: a resume finds it ready.
     const plan = resumeSessionId ? undefined : w.setupPlan;
     w.setupPlan = undefined;
     let proc: Pty;
     try {
       if (plan && this.setupScript) {
-        const file = isShell ? shell : (commandPath ?? command);
-        const line = setupLine({ node: process.execPath, script: this.setupScript, plan, file, quoteFile: isShell || !!commandPath, args, cmd: WIN && !process.env.SHELL });
+        const line = setupLine({ node: process.execPath, script: this.setupScript, plan, ...launch, quoteFile: isShell || !!commandPath, cmd: WIN && !process.env.SHELL });
         w.settingUp = true;
         if (!isShell) info.activity = 'Setting up its worktree';
         proc = this.host.spawn({ file: shell, args: shellRun(line), ...where });
       } else if (isShell) {
-        proc = this.host.spawn({ file: shell, args, ...where });
+        proc = this.host.spawn({ ...launch, ...where });
       } else if (commandPath) {
         proc = this.host.spawn({ file: commandPath, args, ...where });
       } else {

@@ -1,0 +1,8 @@
+# Run with /bin/sh. Only the final zsh inherits this one-shot startup directory.
+if [ "${ZDOTDIR+x}" = x ]; then
+    export _office_original_zdotdir="$ZDOTDIR"
+else
+    unset _office_original_zdotdir
+fi
+export ZDOTDIR="${0%/*}/zsh"
+exec "$@"

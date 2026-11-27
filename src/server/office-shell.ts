@@ -8,6 +8,7 @@ import { DropStore } from './drops.js';
 import { plainTail, terminalTail } from './history.js';
 import { type PtyHost, SCROLLBACK, type Pty } from './ptys.js';
 import { screenSnapshot, setTerminalResponder } from './screen.js';
+import { interactiveShell } from './shell-integration.js';
 import { snapshotScreen, type ScreenFrame } from './screen-frame.js';
 import { childEnv, DEFAULT_COLS, DEFAULT_ROWS, defaultShell } from './workers.js';
 
@@ -188,7 +189,7 @@ export class OfficeShell {
     env.COLORTERM = 'truecolor';
     let proc: Pty;
     try {
-      proc = this.host.spawn({ file: shell, args, cwd: this.dir, env, cols: this.cols, rows: this.rows, prelude });
+      proc = this.host.spawn({ ...interactiveShell(shell, args, env.HOME), cwd: this.dir, env, cols: this.cols, rows: this.rows, prelude });
     } catch (err) {
       this.fails++;
       this.note(`\r\n\x1b[31mFailed to start the shell: ${(err as Error).message}\x1b[0m\r\n`);

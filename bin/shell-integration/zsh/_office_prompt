@@ -1,0 +1,48 @@
+# Autoloaded on first precmd, after the user's login configuration. All
+# option changes stay local. Never expand PS1 to find out what it prints.
+builtin local -i status_code=$?
+builtin local use_percent=${options[promptpercent]}
+builtin emulate -L zsh
+
+# Restore the clean prompt on repeated precmd without preexec (empty line,
+# interrupt, redraw). Leave a prompt rebuilt by the user's theme alone.
+if [[ -n ${_office_marked_ps1+x} && $PS1 == $_office_marked_ps1 ]]; then
+    PS1=$_office_clean_ps1
+fi
+
+# A terminal-provided integration owns its own marks. Starship can be a
+# plain prompt or call an external formatter; don't execute it a second time.
+if [[ $use_percent != on || ${(t)PS1} == *readonly* ||
+      $PS1$RPROMPT == *$'\e]133;'* || $PS1$RPROMPT == *$'\e]633;'* ||
+      -n ${ITERM_SHELL_INTEGRATION_INSTALLED-}${VSCODE_SHELL_INTEGRATION-} ||
+      -n ${_ghostty_state+x}${_ksi_state+x} || ${precmd_functions[(Ie)prompt_starship_precmd]} != 0 ]]; then
+    precmd_functions=(${precmd_functions:#_office_prompt})
+    preexec_functions=(${preexec_functions:#_office_preexec})
+    return 0
+fi
+if [[ -z ${_office_clean_ps1+x} ]]; then
+    _office_preexec() {
+        builtin emulate -L zsh
+        # A later theme hook may have replaced our prompt with its own marks.
+        [[ $PS1 == $_office_marked_ps1 ]] || return 0
+        PS1=$_office_clean_ps1
+        builtin print -rn -- $'\e]133;C\a' > /dev/tty
+        builtin typeset -gi _office_running=1
+    }
+    builtin typeset -ga preexec_functions
+    preexec_functions=(_office_preexec $preexec_functions)
+fi
+if (( _office_running )); then
+    builtin print -rn -- $'\e]133;D;'"$status_code"$'\a' > /dev/tty
+    _office_running=0
+fi
+# Themes that install further precmd hooks after ours get the final say on
+# this first prompt. Wrap their finished prompt last on subsequent cycles.
+if [[ ${precmd_functions[-1]} != _office_prompt ]]; then
+    precmd_functions=(${precmd_functions:#_office_prompt} _office_prompt)
+fi
+builtin typeset -g _office_clean_ps1=$PS1
+builtin local tail=${PS1##*[^%]}
+(( ${#tail} % 2 )) && PS1+=%
+builtin typeset -g _office_marked_ps1=$'%{\e]133;A\a%}'$PS1$'%{\e]133;B\a%}'
+PS1=$_office_marked_ps1
