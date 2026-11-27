@@ -1,13 +1,10 @@
 import type { CellData, TerminalCore } from '@wterm/core';
 import type { WTermAdapter } from './wterm';
 
-// Display-only surfaces (Android and Changes Log) never expose navigable anchors.
-export const nativeLinkPanes = new WeakSet<WTermAdapter>();
-
-/** Only mask host-owned placeholders and links on surfaces without navigation. */
-export function wtermAppearance(core: TerminalCore, adapter: WTermAdapter): TerminalCore {
+/** Office owns link activation and Kitty placeholder ink; leave the program's colors alone. */
+export function wtermAppearance(core: TerminalCore, _adapter: WTermAdapter): TerminalCore {
   function display(cell: CellData): CellData {
-    if (cell.linkUri && !nativeLinkPanes.has(adapter)) cell = { ...cell, linkUri: undefined, linkId: undefined, linkKey: undefined };
+    if (cell.linkUri) cell = { ...cell, linkUri: undefined, linkId: undefined, linkKey: undefined };
     if (cell.char === 0x10eeee) return { ...cell, char: 32, chars: undefined, flags: cell.flags & ~8, underlineStyle: 'none' };
     return cell;
   }

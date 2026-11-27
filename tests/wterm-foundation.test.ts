@@ -73,6 +73,32 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
     widths: [4, 4, 4, 4, 4],
     children: 0,
   });
+  await t.test('OSC 8 output cannot create a tab stop or navigation target in any web terminal', async () => {
+    const counts = await page.evaluate(async () => {
+      const web = '/term-engine/web-terminal.ts',
+        paths = '/ui/terminal-path-links.ts';
+      const { createWebTerminal } = await import(web),
+        { TerminalPaths } = await import(paths);
+      const counts: number[] = [];
+      for (const surface of ['interactive', 'read-only', 'changes']) {
+        const host = document.getElementById('host')!;
+        const links = surface === 'changes' ? undefined : new TerminalPaths({ floor: 'floor', workerId: 'worker', inert: surface === 'read-only' });
+        const { term } = createWebTerminal({ disableStdin: surface !== 'interactive' }, undefined, links);
+        try {
+          await term.open(host);
+          term.write('\x1b]8;;https://example.org\x07manual\x1b]8;;\x07');
+          await new Promise(requestAnimationFrame);
+          const grid = host.querySelector('.term-grid')!;
+          if (!grid.textContent?.includes('manual')) throw Error(`OSC label not painted in ${surface}`);
+          counts.push(grid.querySelectorAll('a').length);
+        } finally {
+          term.dispose();
+        }
+      }
+      return counts;
+    });
+    assert.deepEqual(counts, [0, 0, 0]);
+  });
   await t.test('a hidden reader retains its viewport while output arrives and after reveal', async () => {
     const positions = await page.evaluate(async () => {
       const mod = '/term-engine/wterm.ts',

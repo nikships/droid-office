@@ -3,7 +3,6 @@ import { toast } from '../ui/dom';
 import type { TerminalPaths } from '../ui/terminal-path-links';
 import type { TerminalFind } from './types';
 import type { WTermAdapter } from './wterm';
-import { nativeLinkPanes } from './wterm-appearance';
 import { installFind, missingLine } from './wterm-links-find';
 import type { Point } from './wterm-links-lines';
 import { type Target, targetAt } from './wterm-links-target';
@@ -12,7 +11,6 @@ type Action = (e: MouseEvent) => void;
 type XY = Pick<MouseEvent, 'clientX' | 'clientY'>;
 const modified = (e: MouseEvent | KeyboardEvent) => e.ctrlKey || e.metaKey;
 const same = (a: Target, b: Target | undefined) => a.kind === b?.kind && a.label === b.label && a.text === b.text;
-const anchorAt = (target: EventTarget | null) => (target instanceof Element ? target.closest<HTMLAnchorElement>('a.term-link') : null);
 
 function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElement, signal: AbortSignal, paths: TerminalPaths) {
   const root = grid.parentElement!;
@@ -25,7 +23,7 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
   // HTTP(S) activation stays synchronous for the browser's popup/user gesture policy.
   function resolve(target: Target, ready: (action?: Action) => void, activate = false) {
     const { kind, text } = target;
-    if (kind === 'web')
+    if (kind === 'web' || (kind === 'osc8' && /^https?:\/\//i.test(text)))
       return ready(() => {
         window.open(text, '_blank', 'noopener,noreferrer');
       });
@@ -47,7 +45,7 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
     for (const el of grid.querySelectorAll('.wterm-link-range')) el.classList.remove('wterm-link-range');
   }
   function hover() {
-    if (!pointer || !modifier || anchorAt(document.elementFromPoint(pointer.clientX, pointer.clientY))) return clearHover();
+    if (!pointer || !modifier) return clearHover();
     const t = targetAt(core, point(pointer));
     if (hovered && t && same(hovered, t) && hovered.range.start.x === t.range.start.x && hovered.range.start.y === t.range.start.y && hovered.range.end.x === t.range.end.x && hovered.range.end.y === t.range.end.y) return;
     clearHover();
@@ -71,18 +69,11 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
     });
   }
   let press: { at: XY; target: Target } | undefined;
-  let nativePress: { at: XY; anchor: HTMLAnchorElement } | undefined;
-  let nativeClick: HTMLAnchorElement | undefined;
   root.addEventListener(
     'mousedown',
     (e) => {
-      press = nativePress = nativeClick = undefined;
-      if (e.button || !modified(e) || core.mouseTracking() || !(e.target instanceof Node && grid.contains(e.target))) return;
-      const anchor = anchorAt(e.target);
-      if (anchor) {
-        nativePress = { at: e, anchor };
-        return;
-      }
+      press = undefined;
+      if (e.button || !modified(e) || !(e.target instanceof Node && grid.contains(e.target))) return;
       const target = targetAt(core, point(e));
       if (target) press = { at: e, target };
     },
@@ -92,7 +83,6 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
     'mousemove',
     (e) => {
       if (press && Math.hypot(e.clientX - press.at.clientX, e.clientY - press.at.clientY) > 3) press = undefined;
-      if (nativePress && Math.hypot(e.clientX - nativePress.at.clientX, e.clientY - nativePress.at.clientY) > 3) nativePress = undefined;
       pointer = e;
       modifier = modified(e) && !e.buttons;
       hover();
@@ -100,7 +90,7 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
     options,
   );
   const leave = () => {
-    press = nativePress = nativeClick = pointer = undefined;
+    press = pointer = undefined;
     clearHover();
   };
   root.addEventListener('mouseleave', leave, { signal });
@@ -123,38 +113,11 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
     if (press && !same(press.target, targetAt(core, point(press.at)))) press = undefined;
     if (pointer && modifier) hover();
   });
-  // WTerm owns keyboard and platform modifier activation. Keep the Office mouse
-  // gesture fence (including drag-out-and-back) and its other modifier.
-  root.addEventListener(
-    'click',
-    (e) => {
-      const anchor = anchorAt(e.target);
-      if (!anchor) return;
-      const keyboard = e.detail === 0 && anchor === document.activeElement;
-      if (!e.isTrusted || core.mouseTracking() || !(keyboard || (anchor === nativeClick && modified(e)))) e.preventDefault();
-      nativeClick = undefined;
-    },
-    options,
-  );
-  for (const event of ['auxclick', 'contextmenu', 'dragstart'] as const)
-    root.addEventListener(
-      event,
-      (e) => {
-        if (anchorAt(e.target)) e.preventDefault();
-      },
-      options,
-    );
+  // Chromium on macOS sends Ctrl+mousedown/up but no click. xterm also
+  // activates on mouseup; keep native selection/drag behavior on ordinary presses.
   root.addEventListener(
     'mouseup',
     (e) => {
-      const native = nativePress;
-      nativePress = undefined;
-      if (native && native.anchor === anchorAt(e.target) && modified(e) && !e.button && !core.mouseTracking() && Math.hypot(e.clientX - native.at.clientX, e.clientY - native.at.clientY) <= 3) {
-        if (navigator.platform.startsWith('Mac') ? e.metaKey : e.ctrlKey) nativeClick = native.anchor;
-        // Chromium on macOS delivers Ctrl+mouseup without a click.
-        else if (e.isTrusted) window.open(native.anchor.href, '_blank', 'noopener,noreferrer');
-        return;
-      }
       const down = press;
       press = undefined;
       if (!down || !modified(e) || e.button || !(e.target instanceof Node && grid.contains(e.target))) return;
@@ -162,7 +125,7 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
       const current = targetAt(core, at);
       if (!current || !same(down.target, current) || Math.hypot(e.clientX - down.at.clientX, e.clientY - down.at.clientY) > 3) return;
       e.preventDefault();
-      if (current.kind === 'web') {
+      if (current.kind === 'web' || (current.kind === 'osc8' && /^https?:\/\//i.test(current.text))) {
         resolve(current, (action) => action?.(e));
         return;
       }
@@ -197,7 +160,6 @@ function installPointer(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElem
 }
 
 export function attachWtermLinks(adapter: WTermAdapter, paths?: TerminalPaths) {
-  if (paths) nativeLinkPanes.add(adapter);
   let find: (hit: TerminalFind) => string | undefined = () => missingLine;
   adapter.onOpen((native, signal) => {
     const grid = native.element.querySelector<HTMLElement>('.term-grid')!;

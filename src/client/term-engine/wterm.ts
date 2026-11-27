@@ -331,7 +331,6 @@ export class WTermAdapter {
         root.addEventListener(
           phase,
           (e) => {
-            if (e.target instanceof Element && e.target.closest('a.term-link')) return;
             if (this.keyHandler?.(e) !== false) return;
             e.preventDefault();
             e.stopImmediatePropagation();

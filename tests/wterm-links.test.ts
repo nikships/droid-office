@@ -80,13 +80,6 @@ test('wterm links and find against the xterm pane', { skip: !browserStatus().ins
     ]);
     const rig = window as any;
     rig.urls = [];
-    // Observe the browser's default anchor navigation after the terminal has handled the gesture.
-    document.addEventListener('click', (event) => {
-      const link = event.target instanceof Element && event.target.closest<HTMLAnchorElement>('a.term-link');
-      if (!link || event.defaultPrevented) return;
-      event.preventDefault();
-      rig.urls.push([link.href, link.target, link.rel.replace(' ', ',')]);
-    });
     window.open = (...args) => {
       rig.urls.push(args);
       return null;
@@ -168,28 +161,6 @@ test('wterm links and find against the xterm pane', { skip: !browserStatus().ins
     await page.mouse.move(p.x, p.y);
     assert.equal(await page.locator('.wterm-link-range').count(), 0);
     await page.keyboard.up('Control');
-  });
-  await t.test('native OSC 8 anchor and bare URL share a wrapped history line at a pixel offset', async () => {
-    await write(`first\r\n${' '.repeat(18)}\x1b]8;;https://example.org/guide\x07open manual\x1b]8;;\x07 https://example.net/path\r\n${'tail\r\n'.repeat(15)}`);
-    const root = page.locator('#w .office-wterm');
-    await root.evaluate((el) => (el.scrollTop = 5));
-    await frame();
-    const anchors = root.locator('a.term-link');
-    assert.deepEqual(await anchors.allTextContents(), ['open m', 'anual']);
-    const mod = await page.evaluate(() => (navigator.platform.startsWith('Mac') ? 'Meta' : 'Control'));
-    await anchors.last().click();
-    await anchors.last().click({ button: 'middle' });
-    assert.deepEqual(await urls(), []);
-    await anchors.last().click({ modifiers: [mod] });
-    assert.deepEqual(await urls(), [['https://example.org/guide', '_blank', 'noopener,noreferrer']]);
-    await anchors.first().focus();
-    await page.keyboard.press('Tab');
-    assert.equal(await anchors.last().evaluate((a) => document.activeElement === a), true);
-    await page.keyboard.press('Enter');
-    assert.deepEqual(await urls(), [['https://example.org/guide', '_blank', 'noopener,noreferrer']]);
-    await click('w', 2, 3);
-    assert.deepEqual(await urls(), [['https://example.net/path', '_blank', 'noopener,noreferrer']]);
-    assert.equal(await root.evaluate((el) => el.scrollTop), 5);
   });
   await t.test('wrapped history ranges include the full path after wide text, activate the same local and remote actions', async () => {
     await write(`漢e\u0301 example: src/server.ts:120\r\nhttps://example.com/long/path\r\n${'tail\r\n'.repeat(12)}`);
@@ -337,7 +308,6 @@ test('wterm links and find against the xterm pane', { skip: !browserStatus().ins
         rig.policy.write('\x1b]8;;file:///checkout/src/server.ts\x07file\x1b]8;;\x07\r\n\x1b]8;;https://example.com/osc\x07web\x1b]8;;\x07');
       }, policy);
       await frame();
-      assert.deepEqual(await page.locator('#policy a.term-link').evaluateAll((links) => links.map((a) => a.getAttribute('href'))), policy === 'guest' ? ['https://example.com/osc'] : []);
       await click('policy', 1, 0);
       assert.equal(await page.locator('#policy .wterm-link-range').count(), 0);
       await click('policy', 1, 1);
