@@ -33,6 +33,89 @@ test('Ghostty link policy, search reflow, glass, selection, fonts and cursor on 
   await page.route('**/fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/style.css"><div id="host"></div><div id="modal-root"></div>' }));
   await page.goto(`http://127.0.0.1:${address.port}/fixture`);
   await page.addScriptTag({ content: 'window.__name = (fn) => fn;' });
+  await t.test('appearance installation preserves the canvas and owns no second blink or unscoped listeners', async () => {
+    const lifecycle = await page.evaluate(async () => {
+      const load = (url: string) => import(url);
+      const { GhosttyAdapter } = await load('/term-engine/ghostty.ts');
+      const { installAppearance } = await load('/term-engine/ghostty-links-appearance.ts');
+      const term = new GhosttyAdapter({ cursorBlink: true, fontFamily: 'serif', fontSize: 20 });
+      const intervals = new Set<number>();
+      const start = window.setInterval;
+      const stop = window.clearInterval;
+      window.setInterval = (fn, ms, ...args) => {
+        const id = start.call(window, fn, ms, ...args);
+        intervals.add(id);
+        return id;
+      };
+      window.clearInterval = (id) => {
+        intervals.delete(id!);
+        stop.call(window, id);
+      };
+      try {
+        await term.open(document.querySelector('#host'));
+        const native = term.native;
+        const element = native.element;
+        const canvas: HTMLCanvasElement = native.renderer.getCanvas();
+        const ctx = canvas.getContext('2d')!;
+        ctx.fillStyle = '#2c44aa';
+        ctx.fillRect(0, 0, 5, 5);
+        ctx.font = 'bold 11px monospace';
+        const snapshot = () => [canvas.width, canvas.height, canvas.style.cssText, ctx.font, ctx.fillStyle, ctx.getTransform().toString(), [...ctx.getImageData(1, 1, 1, 1).data]];
+        const before = snapshot();
+        const nativeBlinks = intervals.size;
+        const adds: string[] = [];
+        const measurements: string[] = [];
+        const timeout = window.setTimeout;
+        const frame = window.requestAnimationFrame;
+        const listen = EventTarget.prototype.addEventListener;
+        const measure = CanvasRenderingContext2D.prototype.measureText;
+        let attachedSignal: AbortSignal | undefined;
+        // Observe browser API calls only across the synchronous installation, not Ghostty.open.
+        window.setTimeout = (...args) => {
+          adds.push('timeout');
+          return timeout(...args);
+        };
+        window.requestAnimationFrame = (fn) => {
+          adds.push('frame');
+          return frame(fn);
+        };
+        EventTarget.prototype.addEventListener = function (type, listener, opts) {
+          const scoped = opts && typeof opts === 'object' && opts.signal === attachedSignal;
+          adds.push(`${this === element ? 'root' : this === attachedSignal ? 'lifetime' : 'other'}:${type}:${scoped ? 'scoped' : 'unscoped'}`);
+          listen.call(this, type, listener, opts);
+        };
+        CanvasRenderingContext2D.prototype.measureText = function (s) {
+          measurements.push(`${this === ctx ? 'active' : 'scratch'}:${this.font}:${s}`);
+          return measure.call(this, s);
+        };
+        try {
+          term.onOpen((opened: typeof native, lifetime: AbortSignal) => {
+            attachedSignal = lifetime;
+            installAppearance(term, opened, lifetime);
+          });
+        } finally {
+          window.setTimeout = timeout;
+          window.requestAnimationFrame = frame;
+          EventTarget.prototype.addEventListener = listen;
+          CanvasRenderingContext2D.prototype.measureText = measure;
+        }
+        const after = snapshot();
+        const installedBlinks = intervals.size;
+        term.dispose();
+        // A surviving focus listener would restart the original blink on the detached root.
+        element.dispatchEvent(new FocusEvent('focusin'));
+        return { before, after, nativeBlinks, installedBlinks, disposedBlinks: intervals.size, aborted: attachedSignal?.aborted, adds, measurements };
+      } finally {
+        window.setInterval = start;
+        window.clearInterval = stop;
+      }
+    });
+    assert.deepEqual(lifecycle.after, lifecycle.before);
+    assert.deepEqual([lifecycle.nativeBlinks, lifecycle.installedBlinks, lifecycle.disposedBlinks], [1, 1, 0]);
+    assert.deepEqual(lifecycle.adds, ['root:focusin:scoped', 'lifetime:abort:unscoped']);
+    assert.equal(lifecycle.aborted, true);
+    assert.deepEqual(lifecycle.measurements, ['scratch:20px serif:M']);
+  });
   const metrics = await page.evaluate(async () => {
     const load = (url: string) => import(url);
     const [{ GhosttyAdapter }, { attachGhosttyLinks }, { TerminalPathLinksAddon }, { TERM_FONT, loadFonts }, { TERM_THEME }] = await Promise.all([

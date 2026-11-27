@@ -97,13 +97,19 @@ export function installAppearance(adapter: GhosttyAdapter, term: Terminal, signa
     override setSelectionManager = original.setSelectionManager.bind(original);
     override setHoveredLinkRange = original.setHoveredLinkRange.bind(original);
     override setHoveredHyperlinkId = original.setHoveredHyperlinkId.bind(original);
-    override dispose = original.dispose.bind(original);
+    override dispose() {
+      // In the pinned renderer dispose only stops that instance's blink, not the canvas.
+      super.dispose();
+      original.dispose();
+    }
     override render(source: IRenderable, force?: boolean, offset?: number, history?: Parameters<CanvasRenderer['render']>[3], opacity?: number) {
       viewportOffset = Math.floor(offset ?? 0);
       original.render(source === core ? buffer : source, force, offset, history === term ? scrollback : history, opacity);
     }
   }
-  term.renderer = new OfficeRenderer(original.getCanvas());
+  // The pinned constructor reuses the 2D context without drawing/resizing it, measures M
+  // on a scratch canvas, and starts no listeners or timers with blink disabled.
+  term.renderer = new OfficeRenderer(original.getCanvas(), { fontFamily: term.options.fontFamily, fontSize: term.options.fontSize, cursorBlink: false });
   const changed = adapter.onOptionChange((key) => {
     if (key === 'minimumContrastRatio' || key === 'theme') {
       ground = glassGround();
