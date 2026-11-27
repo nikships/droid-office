@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright-core';
 import { createServer } from 'vite';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 
@@ -494,8 +495,16 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     assert.equal(result.delta[0], result.delta[1]);
     assert.deepEqual(result.sent, ['', '']);
   });
-  await t.test('the first scrollback row cannot change the proposed PTY columns at a glyph boundary', async () => {
-    const result = await page.evaluate(async () => {
+  await t.test('the first scrollback row cannot change the proposed PTY columns at a glyph boundary', async (t) => {
+    // Playwright hides scrollbars by default. Run this case with a classic
+    // layout scrollbar so the first row of history really changes clientWidth.
+    const classic = await chromium.launch({ executablePath: status.executable, chromiumSandbox: true, ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--disable-features=OverlayScrollbar'] });
+    t.after(() => classic.close());
+    const pane = await classic.newPage();
+    await pane.route('**/classic', (r) => r.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/style.css">' }));
+    await pane.addInitScript('window.__name = fn => fn');
+    await pane.goto(`http://127.0.0.1:${address.port}/classic`);
+    const result = await pane.evaluate(async () => {
       const engine = '/term-engine/web-terminal.ts';
       const { createWebTerminal } = await import(engine);
       const host = document.createElement('div');
@@ -505,7 +514,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       try {
         await term.open(host);
         term.resize(64, 8);
-        const frame = (window as any).frame;
+        const frame = () => new Promise(requestAnimationFrame).then(() => new Promise(requestAnimationFrame));
         const read = () =>
           Array.from({ length: 16 }, (_, i) => {
             host.style.width = `${557 + i}px`;
@@ -522,6 +531,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       }
     });
     assert.ok(result.history > 0);
+    assert.deepEqual([result.before[0][1], result.after[0][1]], [0, 3]);
     t.diagnostic(JSON.stringify(result));
     assert.deepEqual(
       result.after.map((v) => v[0]),
