@@ -637,6 +637,43 @@ test('production terminal Retry recovers rendering and styles after a failed ass
   assert.deepEqual(style, ['relative', 'border-box', 'pre', 'hidden']);
 });
 
+test('production terminal recovers after the first renderer JavaScript chunk fetch fails', { skip: !browserStatus().installed }, async (t) => {
+  const { base } = await office(t);
+  const socketClient = socket(t, base, 'client=dashboard');
+  const { floor } = await socketClient.wait('welcome');
+  socketClient.send({ t: 'worker.spawn', deskId: 'auto', kind: 'shell', requestId: 'recover-js', requestFloor: floor });
+  const { workerId } = await socketClient.wait('action.result', (m) => m.requestId === 'recover-js');
+  assert.ok(workerId);
+  const browser = await launchBrowser();
+  t.after(closeBrowser);
+  const ctx = await newIsolatedContext(browser);
+  t.after(() => ctx.close());
+  for (const failure of ['one abort', 'outage', 'HTTP 503']) {
+    const page = await ctx.newPage();
+    let requests = 0,
+      offline = true;
+    await page.route(/\/assets\/wterm-core-[^/]+\.js$/, (route) => {
+      requests++;
+      if (!offline || (failure === 'one abort' && requests > 1)) return route.continue();
+      return failure === 'HTTP 503' ? route.fulfill({ status: 503, body: 'Unavailable' }) : route.abort();
+    });
+    await page.goto(`${base}/dashboard#${new URLSearchParams({ worker: workerId, floor: floor! })}`);
+    const root = page.locator('.term-host .office-wterm:not([inert]) textarea');
+    const button = page.getByRole('button', { name: /^(Retry|Reload)$/ });
+    await root.or(button).first().waitFor({ state: 'attached' });
+    const action = (await button.count()) ? await button.innerText() : 'none';
+    const before = requests;
+    const timeOrigin = await page.evaluate(() => performance.timeOrigin);
+    offline = false;
+    if (action !== 'none') await button.click();
+    await root.waitFor({ state: 'attached', timeout: 5000 });
+    assert.equal(await page.evaluate(() => performance.timeOrigin), timeOrigin, 'recovered in the same document');
+    t.diagnostic(JSON.stringify({ failure, action, before, requests }));
+    assert.ok(before >= 1 && requests >= 2);
+    await page.close();
+  }
+});
+
 test('production dashboard has a public data-free bootstrap, gated APIs and no 3D office in its bundle', async (t) => {
   const { base, server } = await office(t);
   const proxy = await tailnetProxy(t, server.server);
