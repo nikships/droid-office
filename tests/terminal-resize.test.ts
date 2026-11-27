@@ -82,7 +82,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
         };
         w.sizes = () => w.messages.filter((m: any) => m.t === 'term.resize' || m.t === 'shell.resize').map(({ cols, rows }: any) => [cols, rows]);
         w.frames = async () => {
-          for (let i = 0; i < 3; i++) await new Promise(requestAnimationFrame);
+          for (let i = 0; i < 6; i++) await new Promise(requestAnimationFrame);
         };
         document.getElementById('focus')!.focus();
         if (mode === 'shell') openOfficeShell(w.net);
@@ -344,7 +344,10 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     await page.evaluate(() => {
       const workspace = document.querySelector('.dash-workspace')!;
       workspace.classList.remove('resizing');
-      workspace.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      const handle = document.createElement('div');
+      handle.className = 'dash-handle';
+      workspace.append(handle);
+      handle.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
     });
     assert.equal((await settle()).length, 1, 'release commits the last observed box even when the pointer stopped moving');
   });
@@ -466,6 +469,26 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     assert.deepEqual(await page.evaluate(() => (window as any).messages), []);
     assert.equal(await page.evaluate(() => (window as any).term.buffer.active.viewportY), before.viewport);
     assert.equal(await page.evaluate(() => (window as any).term.options.disableStdin), false);
+  });
+
+  await t.test('first visible desk cells are the painted PTY snapshot, never the provisional 80×24 grid', async () => {
+    const page = await rig(true, true);
+    const result = await page.evaluate(async () => {
+      const w = window as any;
+      const root = w.term.native.element;
+      const before = [w.term.cols, w.term.rows, getComputedStyle(root).opacity];
+      const visible: number[][] = [];
+      w.snapshot(Array.from({ length: 120 }, (_, i) => `settled row ${i}\r\n`).join(''));
+      for (let i = 0; i < 10; i++) {
+        await new Promise(requestAnimationFrame);
+        if (getComputedStyle(root).opacity !== '0') visible.push([w.term.cols, w.term.rows, root.scrollTop]);
+      }
+      return { before, visible, tail: root.scrollHeight - root.clientHeight, text: root.textContent.includes('settled row 119') };
+    });
+    assert.deepEqual(result.before, [80, 24, '0']);
+    assert.ok(result.visible.length && result.text);
+    assert.ok(result.tail > 0);
+    for (const grid of result.visible) assert.deepEqual(grid, [120, 40, result.tail]);
   });
 
   await t.test('initial unshared fit survives the snapshot refresh before its acknowledgement', async () => {

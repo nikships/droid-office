@@ -38,6 +38,8 @@ export class WTermAdapter {
   private readonly resized = event<{ cols: number; rows: number }>();
   private readonly fit = event<boolean>();
   private proposal?: { cols: number; rows: number };
+  private replay?: 'waiting' | 'parsed' | 'painted';
+  private revealFrame = 0;
   private readonly changed = event<keyof ClientTerminalOptions>();
   private readonly data = event<string>();
   private readonly lifetime = new AbortController();
@@ -275,6 +277,7 @@ export class WTermAdapter {
     if (signal.aborted) return;
     const root = document.createElement('div');
     root.className = 'office-wterm wterm';
+    root.classList.toggle('replaying', !!this.replay);
     root.inert = true;
     this.root = root;
     host.append(root);
@@ -299,17 +302,24 @@ export class WTermAdapter {
           this.paintedDiscarded = discarded;
           if (!this.pendingRestore && this.holdReaderAfterPaint && this.heldAlternate === this.core?.usingAltScreen()) this.pendingRestore = { appliedTop: root.scrollTop };
           const restore = this.pendingRestore;
-          if (restore)
+          if (restore || this.replay === 'parsed')
             queueMicrotask(() => {
-              // Native paint commits both the virtual spacer and its own scroll
-              // adjustment. Only then is a logical row a usable pixel offset.
-              if (restore !== this.pendingRestore || this.metricsPending || !root.clientHeight) return;
-              root.scrollTop = this.readerRow === undefined ? root.scrollHeight : Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
-              // Chromium queues scroll even when two writes in one paint cancel
-              // out. Feeding that duplicate back to wterm would repaint forever
-              // on a clipped grid without history. Never hide a new coordinate.
-              restoredSameTop = this.holdReaderAfterPaint && this.core?.getScrollbackCount() === 0 && root.scrollTop === lastScrollTop;
-              this.pendingRestore = undefined;
+              if (this.metricsPending || !root.clientHeight) return;
+              if (restore && restore === this.pendingRestore) {
+                // Native paint follows output. Only navigate again if the last
+                // painted row is still below the viewport (e.g. a paused write).
+                if (this.readerRow !== undefined) root.scrollTop = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
+                else if (!this.replay || (root.querySelector('.term-grid')?.getBoundingClientRect().bottom ?? 0) > root.getBoundingClientRect().bottom) root.scrollTop = root.scrollHeight;
+                // Chromium queues scroll even when two writes in one paint cancel
+                // out. Feeding that duplicate back to wterm would repaint forever
+                // on a clipped grid without history. Never hide a new coordinate.
+                restoredSameTop = this.holdReaderAfterPaint && this.core?.getScrollbackCount() === 0 && root.scrollTop === lastScrollTop;
+                this.pendingRestore = undefined;
+              }
+              if (this.replay === 'parsed') {
+                this.replay = 'painted';
+                this.revealPaintedGrid();
+              }
             });
         },
       );
@@ -384,6 +394,7 @@ export class WTermAdapter {
         const changed = lastGeometry !== undefined && lastGeometry !== geometry;
         lastGeometry = geometry;
         this.fit.fire(changed);
+        this.revealPaintedGrid();
       });
       observer.observe(root);
       observer.observe(probe);
@@ -417,6 +428,24 @@ export class WTermAdapter {
   }
   onFit(fn: (geometryChanged: boolean) => void) {
     return this.fit.on(fn);
+  }
+  beginSnapshot() {
+    this.replay = 'waiting';
+    this.root?.classList.add('replaying');
+  }
+  endSnapshot() {
+    this.replay = 'parsed';
+  }
+  private revealPaintedGrid() {
+    if (!this.proposal || this.replay !== 'painted' || this.revealFrame) return;
+    // The first content-box observation can negotiate a different grid after
+    // native paint. A resize invalidates that paint before it can be revealed.
+    this.revealFrame = requestAnimationFrame(() => {
+      this.revealFrame = 0;
+      if (this.replay !== 'painted' || !this.proposal) return;
+      this.replay = undefined;
+      this.root?.classList.remove('replaying');
+    });
   }
   attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean) {
     this.keyHandler = fn;
@@ -489,6 +518,7 @@ export class WTermAdapter {
     const t = this.native;
     if (!t || (cols === t.cols && rows === t.rows)) return;
     this.keepTailOnShrink();
+    if (this.replay === 'painted') this.replay = 'parsed';
     const oldCols = t.cols,
       oldRows = t.rows;
     t.resize(cols, rows);
@@ -545,6 +575,7 @@ export class WTermAdapter {
   dispose() {
     if (this.lifetime.signal.aborted) return;
     this.lifetime.abort();
+    if (this.revealFrame) cancelAnimationFrame(this.revealFrame);
     this.paintLifetime?.abort();
     this.pendingRestore = undefined;
     this.native?.destroy();

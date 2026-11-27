@@ -215,6 +215,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       offTheme();
     };
     // Keys belong to the window (T, Esc), never to the program in the terminal.
+    t.beginSnapshot();
     t.useWindowKeyboard();
     term = t;
 
@@ -419,9 +420,13 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     if (msg.t === 'term.data' && msg.workerId === workerId && attached) term?.write(msg.data);
     else if (msg.t === 'term.snapshot' && msg.workerId === workerId && attached && term) {
       const t = term;
+      t.beginSnapshot();
       t.reset();
       t.resize(msg.cols, msg.rows);
-      t.write(msg.data, () => t.scrollToBottom());
+      t.write(msg.data, () => {
+        t.scrollToBottom();
+        t.endSnapshot();
+      });
     } else if (msg.t === 'changes' && msg.state.workerId === workerId && msg.state.repo === repo) onState(msg.state);
     else if (msg.t === 'changes.diff' && msg.workerId === workerId && msg.repo === repo && msg.path === selected) {
       loading = false;
