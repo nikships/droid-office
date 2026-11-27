@@ -440,6 +440,60 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     assert.deepEqual(output[0], output[1]);
     assert.equal(output[0].length, 5);
   });
+  await t.test('single multi-line alternate-screen wheel gestures send the same arrow sequence as xterm', async () => {
+    const samples = await page.evaluate(async () => {
+      const { a, x, input, write } = window as any;
+      const out = [];
+      await write('\x1bc\x1b[?1049h');
+      for (const [deltaY, deltaMode, wheelDeltaY] of [
+        [100, 0, 0],
+        [-100, 0, 120],
+        [3, 1, 0],
+        [-1, 2, 0],
+      ]) {
+        input.forEach((d: string[]) => {
+          d.length = 0;
+        });
+        for (const t of [a, x]) {
+          const node = t === x ? x.element.querySelector('.xterm-screen') : a.native.element.querySelector('.term-row');
+          const e = new WheelEvent('wheel', { deltaY, deltaMode, bubbles: true, cancelable: true });
+          Object.defineProperty(e, 'wheelDeltaY', { value: wheelDeltaY });
+          node.dispatchEvent(e);
+        }
+        out.push(input.map((d: string[]) => d.join('')));
+      }
+      await write('\x1b[?1049l');
+      return out;
+    });
+    t.diagnostic(JSON.stringify(samples));
+    for (const [w, x] of samples) assert.equal(w, x);
+  });
+  await t.test('read-only normal-buffer mouse tracking handles wheel history like xterm', async () => {
+    const result = await page.evaluate(async () => {
+      const { a, x, write, wheel, frame, input } = window as any;
+      await write(`\x1bc${'history\r\n'.repeat(60)}\x1b[?1000;1006h`);
+      for (const t of [a, x]) {
+        t.options.disableStdin = true;
+        t.scrollToBottom();
+      }
+      await frame();
+      const measure = () => [a, x].map((t) => t.buffer.active.viewportY);
+      const before = measure();
+      input.forEach((d: string[]) => {
+        d.length = 0;
+      });
+      for (const t of [a, x]) wheel(t, -100);
+      await new Promise((r) => setTimeout(r, 300));
+      const after = measure();
+      const sent = input.map((d: string[]) => d.join(''));
+      for (const t of [a, x]) t.options.disableStdin = false;
+      await write('\x1b[?1000;1006l');
+      return { delta: after.map((v, i) => v - before[i]), sent };
+    });
+    t.diagnostic(JSON.stringify(result));
+    assert.equal(result.delta[0], result.delta[1]);
+    assert.deepEqual(result.sent, ['', '']);
+  });
   await t.test('the first scrollback row cannot change the proposed PTY columns at a glyph boundary', async () => {
     const result = await page.evaluate(async () => {
       const engine = '/term-engine/web-terminal.ts';
