@@ -68,6 +68,23 @@ test('native terminal search, working directory and read-only snapshots in Chrom
   const find = page.locator('#host input[aria-label="Find in terminal"]');
   const frame = () => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
   await frame();
+  await t.test('fresh f and g reach the Find field after a shortcut without its letter keyup', async () => {
+    const cdp = await context.newCDPSession(page);
+    const values = [];
+    try {
+      for (const key of ['f', 'g']) {
+        // macOS may omit the letter keyup while Cmd is held. The next press is not a repeat.
+        await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, code: `Key${key.toUpperCase()}`, modifiers: key === 'f' && !mac ? 10 : 4 });
+        await page.keyboard.press(key);
+        values.push(await find.inputValue());
+        await find.fill('');
+      }
+    } finally {
+      await cdp.detach();
+      await page.keyboard.press('Escape');
+    }
+    assert.deepEqual(values, ['f', 'g']);
+  });
   await t.test('shortcuts, counts, case, reflow and refresh use native search without PTY input', async () => {
     await page.keyboard.press(shortcut);
     assert.equal(await find.evaluate((e) => e === document.activeElement), true);

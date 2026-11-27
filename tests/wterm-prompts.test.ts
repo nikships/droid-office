@@ -119,6 +119,7 @@ test('OSC 133 state and navigation follow real marks, never a reconstructed prom
   await write('\x1b[<u');
   await page.evaluate(() => (window as any).term.resize(12, 8));
   await chip.getByRole('button', { name: 'Previous prompt' }).click();
+  await chip.getByRole('button', { name: 'Previous prompt' }).focus();
   await chip.getByRole('button', { name: 'Next prompt' }).click();
   await page.waitForFunction((old) => (window as any).term.buffer.active.viewportY > old, beforeResize);
   // Reflow moved the marked row, not merely the scrollbar position.
@@ -136,6 +137,41 @@ test('OSC 133 state and navigation follow real marks, never a reconstructed prom
   );
   await page.keyboard.type('k');
   assert.deepEqual(await page.evaluate(() => (window as any).sent.splice(0)), ['k'], 'typing after a prompt arrow goes to the PTY');
+  await t.test('pointer prompt jumps keep terminal focus without a DECSET 1004 focus cycle', async () => {
+    await write('\x1b[?1004h');
+    const textarea = page.locator('#host textarea');
+    await textarea.focus();
+    const before = await viewport();
+    await textarea.evaluate((el) => {
+      const w = window as any;
+      w.focusChanges = [];
+      for (const type of ['blur', 'focus']) el.addEventListener(type, () => w.focusChanges.push(type), { once: true });
+      w.sent.length = 0;
+    });
+    await chip.getByRole('button', { name: 'Previous prompt' }).click();
+    assert.deepEqual(await page.evaluate(() => (window as any).focusChanges), []);
+    assert.ok(await textarea.evaluate((el) => el === document.activeElement));
+    assert.ok((await viewport()) < before);
+    assert.deepEqual(await page.evaluate(() => (window as any).sent), []);
+  });
+  await t.test('Enter on a prompt arrow jumps without passing repeats or release to the PTY', async () => {
+    await write('\x1b[?1004l\x1b[>3u');
+    await page.evaluate(() => (window as any).term.scrollToBottom());
+    const prev = chip.getByRole('button', { name: 'Previous prompt' });
+    await prev.focus();
+    await page.evaluate(() => {
+      (window as any).sent.length = 0;
+    });
+    const before = await viewport();
+    await page.keyboard.down('Enter');
+    const jumped = (await viewport()) < before;
+    await page.keyboard.down('Enter');
+    await page.keyboard.up('Enter');
+    assert.ok(jumped);
+    assert.ok(await prev.evaluate((el) => el === document.activeElement));
+    assert.deepEqual(await page.evaluate(() => (window as any).sent.splice(0)), []);
+    await write('\x1b[<u');
+  });
   await write('line\r\n'.repeat(65));
   assert.equal(
     await page.evaluate(() => {

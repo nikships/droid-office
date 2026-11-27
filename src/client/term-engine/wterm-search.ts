@@ -90,7 +90,10 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
         })
       : undefined;
     const keyboard = (e: KeyboardEvent) => {
-      if (swallowed.has(e.code) && (e.repeat || e.type !== 'keydown')) {
+      // Cmd can suppress the letter keyup. Start a fresh press unless the window
+      // already claimed this very keydown for its read-only Find field.
+      if (e.type === 'keydown' && !e.repeat && !(keyboardHost && e.code === 'Escape' && e.defaultPrevented)) swallowed.delete(e.code);
+      if (swallowed.has(e.code)) {
         if (e.type === 'keyup') swallowed.delete(e.code);
         e.preventDefault();
         e.stopImmediatePropagation();
