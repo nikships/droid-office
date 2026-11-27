@@ -99,7 +99,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
         { openTerminalRenderer } = await import(renderer);
       const pane = document.createElement('section');
       pane.className = 'dash-pane';
-      pane.style.cssText = 'width:566px;height:769px;border:0;transition:none';
+      pane.style.cssText = 'width:566px;height:769px;border:0;transition:none;animation:none';
       const modal = document.createElement('div');
       modal.className = 'modal term inline';
       const host = document.createElement('div');
@@ -111,12 +111,10 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       scale.pause();
       const { term } = createWebTerminal({ fontFamily: (window as any).a.options.fontFamily, fontSize: 14, lineHeight: 1.1, scrollback: 5000 });
       try {
-        const open = openTerminalRenderer(term, host, () => true);
-        // A pane can mount under a transformed ancestor; the terminal probes the DOM in viewport pixels.
-        await new Promise((r) => setTimeout(r, 120));
-        const premature = !!term.native;
+        await openTerminalRenderer(term, host, () => true);
+        const firstFit = term.proposeDimensions();
         scale.finish();
-        await open;
+        await new Promise(requestAnimationFrame);
         const { x } = window as any;
         const comparisons = [];
         try {
@@ -141,7 +139,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
           x.resize(40, 8);
           x.options.fontSize = 14;
         }
-        return { premature, box: [host.clientWidth, host.clientHeight], pitch: parseFloat(term.native.element.style.getPropertyValue('--term-cell-width')), comparisons };
+        return { firstFit, box: [host.clientWidth, host.clientHeight], pitch: parseFloat(term.native.element.style.getPropertyValue('--term-cell-width')), comparisons };
       } finally {
         scale.cancel();
         term.dispose();
@@ -150,9 +148,74 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     });
     t.diagnostic(JSON.stringify(sample));
     assert.deepEqual(sample.box, [566, 769]);
-    assert.equal(sample.premature, false);
+    assert.deepEqual(sample.firstFit, { cols: 64, rows: 39 });
     assert.ok(Math.abs(sample.pitch - 8.4) < 0.02);
     for (const c of sample.comparisons) assert.deepEqual(c.fit, c.expected, JSON.stringify(c));
+  });
+  await t.test('clicks during pane scale do not report a provisional cell; the first settled click reports the painted cell', async () => {
+    const target = await page.evaluate(async () => {
+      const renderer = '/ui/terminal-renderer.ts',
+        engine = '/term-engine/web-terminal.ts';
+      const { createWebTerminal } = await import(engine);
+      const pane = document.createElement('div');
+      pane.className = 'modal term';
+      pane.style.cssText = 'position:fixed;inset:0 auto auto 0;width:640px;height:400px;z-index:10000;animation:none';
+      const host = document.createElement('div');
+      host.className = 'term-host';
+      pane.append(host);
+      document.body.append(pane);
+      const scale = pane.animate([{ transform: 'scale(.7)' }, { transform: 'none' }], 10000);
+      scale.pause();
+      const { term } = createWebTerminal({ fontFamily: 'monospace', fontSize: 14, lineHeight: 1.1 });
+      await (await import(renderer)).openTerminalRenderer(term, host, () => true);
+      const { cols, rows } = term.proposeDimensions();
+      term.resize(cols, rows);
+      const sent: string[] = [];
+      term.onData((s: string) => sent.push(s));
+      term.write('\x1b[8;48HZ\x1b[?1000;1006h');
+      await new Promise(requestAnimationFrame);
+      const point = () => {
+        const row = host.querySelectorAll('.term-row')[7];
+        const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          const at = node.textContent!.indexOf('Z');
+          if (at < 0) continue;
+          const range = document.createRange();
+          range.setStart(node, at);
+          range.setEnd(node, at + 1);
+          const r = range.getBoundingClientRect();
+          return [r.x + r.width / 2, r.y + r.height / 2];
+        }
+        throw Error('missing painted target at 48,8');
+      };
+      Object.assign(window, {
+        pointerCheck: {
+          scale,
+          point,
+          sent,
+          close: () => {
+            term.dispose();
+            pane.remove();
+          },
+        },
+      });
+      return point();
+    });
+    try {
+      await page.mouse.click(target[0], target[1]);
+      assert.deepEqual(await page.evaluate(() => (window as any).pointerCheck.sent), []);
+      const settled = await page.evaluate(async () => {
+        const { scale, point } = (window as any).pointerCheck;
+        scale.finish();
+        await new Promise(requestAnimationFrame);
+        return point();
+      });
+      await page.mouse.click(settled[0], settled[1]);
+      assert.deepEqual(await page.evaluate(() => (window as any).pointerCheck.sent), ['\x1b[<0;48;8M', '\x1b[<0;48;8m']);
+    } finally {
+      await page.evaluate(() => (window as any).pointerCheck.close());
+    }
   });
   await t.test('painted row pitch and usable rows match the previous renderer across fonts, sizes and line spacing', async () => {
     const samples = await page.evaluate(async () => {

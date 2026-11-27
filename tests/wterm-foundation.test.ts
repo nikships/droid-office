@@ -299,7 +299,7 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
     assert.equal(result.cursor, '#fedcba');
     for (const rgb of ['a1a1/b2b2/c3c3', '1212/3434/5656']) assert.match(result.replies, new RegExp(`rgb:${rgb}`, 'i'));
   });
-  await t.test('font and row spacing remeasure without reflowing a shared grid; init waits for the modal', async () => {
+  await t.test('font and row spacing remeasure without reflowing a shared grid; open and paint during the modal animation', async () => {
     const data = await page.evaluate(async () => {
       const mod = '/term-engine/wterm.ts',
         { WTermAdapter } = await import(mod);
@@ -314,11 +314,13 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
         { duration: 10000 },
       );
       animation.pause();
-      const opening = a.open(host);
+      const renderer = '/ui/terminal-renderer.ts';
+      await (await import(renderer)).openTerminalRenderer(a, host, () => true);
+      a.write('live');
       await new Promise(requestAnimationFrame);
-      const waited = !a.native;
+      const early = a.native.element.querySelector('.term-row').textContent.trim();
       animation.finish();
-      await opening;
+      await new Promise(requestAnimationFrame);
       a.resize(61, 12);
       const el = a.native.element;
       const metrics = () => [parseFloat(getComputedStyle(el).getPropertyValue('--term-cell-width')), el.querySelector('.term-row').offsetHeight];
@@ -334,7 +336,6 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       el.append(probe);
       const width = probe.getBoundingClientRect().width;
       const size = [a.cols, a.rows];
-      a.write('live');
       await new Promise(requestAnimationFrame);
       a.setRenderingPaused(true);
       a.write('-paused');
@@ -346,9 +347,9 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       a.dispose();
       animation.cancel();
       host.classList.remove('modal');
-      return { before, after, waited, width, size, initial, next, paused, resumed };
+      return { before, after, early, width, size, initial, next, paused, resumed };
     });
-    assert.ok(data.waited);
+    assert.equal(data.early, 'live');
     assert.deepEqual(data.size, [61, 12]);
     assert.ok(data.after[0] > data.before[0] && Math.abs(data.after[0] - data.width) < 0.05);
     assert.ok(data.after[1] > data.before[1]);

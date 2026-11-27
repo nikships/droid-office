@@ -154,7 +154,7 @@ export class WTermAdapter {
   private rowHeight = 1;
   private fontAdvance = 0;
   private metricsContext?: CanvasRenderingContext2D | null;
-  private typography() {
+  refreshMetrics() {
     const el = this.root;
     if (!el) return;
     if (this.options.fontFamily) el.style.setProperty('--term-font-family', this.options.fontFamily);
@@ -199,7 +199,7 @@ export class WTermAdapter {
   private applyOption(key: keyof ClientTerminalOptions) {
     const t = this.native;
     if (!t || !this.root) return;
-    if (key === 'fontSize' || key === 'fontFamily' || key === 'lineHeight') this.typography();
+    if (key === 'fontSize' || key === 'fontFamily' || key === 'lineHeight') this.refreshMetrics();
     if (key === 'theme') {
       const colors = { ...TERM_THEME, ...this.options.theme };
       const rgb = (key: keyof typeof TERM_THEME) => Number.parseInt((/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(colors[key]) ? colors[key].slice(0, 7) : TERM_THEME[key]).slice(1), 16);
@@ -216,16 +216,14 @@ export class WTermAdapter {
 
   async open(host: HTMLElement) {
     const { signal } = this.lifetime;
-    const modal = host.closest('.modal');
-    const animations = modal?.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity) ?? [];
-    const [{ loadWterm }, features] = await Promise.all([import('./wterm-core'), this.loadFeatures?.() ?? [], Promise.allSettled(animations.map((a) => a.finished))]);
+    const [{ loadWterm }, features] = await Promise.all([import('./wterm-core'), this.loadFeatures?.() ?? []]);
     if (signal.aborted) return;
     const root = document.createElement('div');
     root.className = 'office-wterm wterm';
     root.inert = true;
     this.root = root;
     host.append(root);
-    this.typography();
+    this.refreshMetrics();
     try {
       const { native, core, attachFeatures } = await loadWterm(
         this,
@@ -246,7 +244,7 @@ export class WTermAdapter {
       await native.init();
       if (signal.aborted) return;
       // Preferences can change while the core download is outstanding.
-      this.typography();
+      this.refreshMetrics();
       this.applyOption('theme');
       this.applyOption('cursorBlink');
       this.applyOption('cursorStyle');
@@ -265,7 +263,7 @@ export class WTermAdapter {
       root.addEventListener('scroll', () => this.sampleReader(), { passive: true, signal });
       native.setRenderingPaused(this.paused);
       const observer = new ResizeObserver(() => {
-        if (root.clientWidth > 0 && this.metricsPending) this.typography();
+        if (root.clientWidth > 0 && this.metricsPending) this.refreshMetrics();
       });
       observer.observe(root);
       const visibility = new IntersectionObserver(([entry]) => {
