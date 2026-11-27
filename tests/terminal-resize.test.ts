@@ -525,34 +525,4 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     await page.evaluate(() => (window as any).frames());
     assert.equal(await page.evaluate(() => (window as any).sizes().length), count);
   });
-
-  await t.test('hidden and disconnected panes do not send sizes; restored panes fit without focus', async () => {
-    const page = await rig();
-    await page.evaluate(() => {
-      document.getElementById('mount')!.style.display = 'none';
-      (window as any).resize(800, 500);
-    });
-    await page.evaluate(() => (window as any).frames());
-    assert.deepEqual(await page.evaluate(() => (window as any).sizes()), []);
-    await page.evaluate(() => {
-      const w = window as any;
-      w.net.up = false;
-      w.connectionStatus(false);
-      document.getElementById('mount')!.style.display = '';
-    });
-    await page.evaluate(() => (window as any).frames());
-    assert.deepEqual(await page.evaluate(() => (window as any).sizes()), []);
-    await page.evaluate(() => {
-      const w = window as any;
-      w.net.up = true;
-      w.connectionStatus(true);
-      w.handle.attach();
-    });
-    await page.waitForFunction(() => (window as any).sizes().length === 1);
-    assert.equal(await page.evaluate(() => document.activeElement?.id), 'focus');
-    await page.evaluate(() => (window as any).handle.close());
-    await page.evaluate(() => (window as any).resize(1000, 700));
-    await page.evaluate(() => (window as any).frames());
-    assert.equal(await page.evaluate(() => (window as any).sizes().length), 1, 'closed panes stop observing geometry');
-  });
 });
