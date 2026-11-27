@@ -832,9 +832,6 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .palette-row mark { background: var(--warning); color: var(--text-inverse); border-radius: 1px; padding: 0 1px; }
 .palette-empty { margin: 4px 16px 14px; font-size: 13px; color: var(--text-secondary); }
 
-/* Keep terminal hit targets stationary from their first painted frame. */
-.modal.term, .modal.desk-changes { animation-name: fade; }
-
 /* Terminal modal */
 .modal.term { width: min(1200px, 100%); height: min(820px, calc(100vh - 32px)); background: #000000; }
 .modal.term.inline { width: 100%; height: 100%; max-height: none; flex: 1; min-height: 0; border: 0; border-radius: 0; box-shadow: none; animation: none; }
@@ -849,13 +846,14 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 :is(.modal.term, .changes-log) .office-wterm { --office-tail-allowance: 1px; padding-bottom: calc(var(--office-fit-bottom) + var(--office-tail-allowance)); }
 :is(.modal.term, .changes-log) .office-wterm > .term-grid { margin-bottom: calc(-1 * var(--office-tail-allowance)); }
 .office-wterm > textarea { min-height: 0; }
-/* Keep the measured scrollport and keyboard focus while the first PTY snapshot paints. */
-.office-wterm.replaying { opacity: 0; }
-.office-wterm.replaying, .office-wterm.replaying * { pointer-events: none !important; }
 /* The invisible input retains its last focused cursor position. After a history
    clear it must not extend the scrollport past the grid. The visible IME preedit
    and touch input still use wterm's cursor positioning. */
 .office-wterm > textarea[style*="opacity: 0;"] { position: fixed !important; top: 0 !important; }
+/* Keep the measured scrollport and keyboard focus while the first PTY snapshot paints. */
+.office-wterm.replaying { opacity: 0; }
+.office-wterm.replaying, .office-wterm.replaying * { pointer-events: none !important; }
+.office-wterm.measuring-cells, .office-wterm.measuring-cells * { pointer-events: none !important; }
 .changes-log:focus-visible .office-wterm { outline: 2px solid var(--accent); outline-offset: -2px; }
 .office-wterm.term-kitty-clickable, .office-wterm.term-kitty-clickable .term-row { cursor: zoom-in; }
 .modal.term .term-team { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 6px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
@@ -2954,8 +2952,6 @@ body.themed { background: transparent; }
 /* The floor down the side: stable worker teams, their activity, and hiring. */
 .dash-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); transition: grid-template-columns .24s var(--ease); }
 .dash-body.side-closed { grid-template-columns: 0 minmax(0, 1fr); }
-/* Changing the sidebar or split must not send the PTY a series of animated grids. */
-.dash-body:has(.dash-pane[data-mode=terminal]:not([hidden])) { transition: none; }
 .dash-body.side-closed .dash-side { visibility: hidden; }
 /* All workers is a directory, not another terminal layout. The hidden workspace keeps its panes. */
 .dash-building { flex: 1; min-height: 0; overflow: auto; border-top: 1px solid var(--border); outline: none; }
@@ -3206,14 +3202,11 @@ body.themed { background: transparent; }
 }
 .dash-workspace { --spring: cubic-bezier(.2, .9, .25, 1); position: relative; flex: 1; min-height: 0; margin: var(--space-2); }
 .dash-workspace.resizing { user-select: none; }
-.dash-pane { position: absolute; left: calc(var(--x) * 100% + var(--gl)); top: calc(var(--y) * 100% + var(--gt)); width: calc(var(--w) * 100% - var(--gl) - var(--gr)); height: calc(var(--h) * 100% - var(--gt) - var(--gb)); container: pane / inline-size; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); transition: left .32s var(--spring), top .32s var(--spring), width .32s var(--spring), height .32s var(--spring), opacity .2s var(--ease), border-color .2s var(--ease); animation: fade .24s var(--ease) both; }
+.dash-pane { position: absolute; left: calc(var(--x) * 100% + var(--gl)); top: calc(var(--y) * 100% + var(--gt)); width: calc(var(--w) * 100% - var(--gl) - var(--gr)); height: calc(var(--h) * 100% - var(--gt) - var(--gb)); container: pane / inline-size; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); transition: left .32s var(--spring), top .32s var(--spring), width .32s var(--spring), height .32s var(--spring), opacity .2s var(--ease), transform .2s var(--ease), border-color .2s var(--ease); animation: dash-pane-in .24s var(--ease) both; }
 .dash-workspace.resizing .dash-pane { transition: border-color .2s var(--ease); }
-@media (prefers-reduced-motion: no-preference) {
-  .dash-workspace:has(.dash-pane[data-mode=terminal]:not([hidden], .covered)) .dash-pane { transition: opacity .2s var(--ease), border-color .2s var(--ease); }
-  .dash-workspace:has(.dash-pane[data-mode=terminal]:not([hidden], .covered)) .dash-handle { transition: none; }
-}
 .dash-pane.maximized { z-index: 5; }
-.dash-pane.covered { opacity: 0; pointer-events: none; }
+.dash-pane.covered { opacity: 0; transform: scale(.97); pointer-events: none; }
+@keyframes dash-pane-in { from { opacity: 0; transform: scale(.97); } }
 .dash-pane-head { position: relative; flex: none; display: flex; align-items: center; gap: var(--space-2); height: 44px; padding: 0 var(--space-1) 0 var(--space-3); border-bottom: 1px solid rgba(255, 255, 255, .055); }
 .dash-pane-no[draggable=true] { cursor: grab; }
 .dash-pane-no[draggable=true]:active { cursor: grabbing; }

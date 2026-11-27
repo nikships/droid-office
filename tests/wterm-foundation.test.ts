@@ -160,6 +160,40 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       [64, 24],
     ]);
   });
+  await t.test('failed post-animation metrics do not leave pointer input gated', async () => {
+    const blocked = await page.evaluate(async () => {
+      const mod = '/ui/terminal-renderer.ts',
+        { openTerminalRenderer } = await import(mod);
+      const host = document.createElement('section');
+      host.className = 'dash-pane';
+      document.body.append(host);
+      const root = document.createElement('div');
+      host.append(root);
+      const anim = host.animate([{ opacity: 0.9 }, { opacity: 1 }], { duration: 5000 });
+      anim.pause();
+      try {
+        await openTerminalRenderer(
+          {
+            open: async () => {},
+            native: { element: root },
+            refreshMetrics() {
+              throw Error('fixture metrics');
+            },
+          },
+          host,
+          () => true,
+        );
+        if (!root.classList.contains('measuring-cells')) throw Error('pointer gate was never installed');
+        anim.finish();
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        return root.classList.contains('measuring-cells');
+      } finally {
+        host.remove();
+      }
+    });
+    assert.equal(blocked, false);
+  });
   await t.test('asking a worker to ship opens its Changes Log at the new output, not the historical reader', async () => {
     const pane = await context.newPage();
     try {
@@ -501,7 +535,13 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       const a = new WTermAdapter({ fontFamily: 'monospace', fontSize: 14, lineHeight: 1 });
       const host = document.getElementById('host')!;
       host.classList.add('modal');
-      const animation = host.animate([{ opacity: 0.6 }, { opacity: 1 }], { duration: 10000 });
+      const animation = host.animate(
+        [
+          { transform: 'scale(.7)', opacity: 0.6 },
+          { transform: 'none', opacity: 1 },
+        ],
+        { duration: 10000 },
+      );
       animation.pause();
       const renderer = '/ui/terminal-renderer.ts';
       await (await import(renderer)).openTerminalRenderer(a, host, () => true);

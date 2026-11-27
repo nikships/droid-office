@@ -336,7 +336,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       if (w && (w.cols !== term.cols || w.rows !== term.rows)) term.resize(w.cols, w.rows);
       return;
     }
-    const size = term.proposeDimensions();
+    const size = term.observedDimensions;
     if (!size) return;
     // Match WorkerManager.resize's limits so the server can acknowledge the exact request.
     term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
@@ -766,7 +766,7 @@ export function openOfficeShell(net: Net) {
       if (ptyCols !== term.cols || ptyRows !== term.rows) term.resize(ptyCols, ptyRows);
       return;
     }
-    const size = term.proposeDimensions();
+    const size = term.observedDimensions;
     if (!size) return;
     term.resize(Math.max(20, Math.min(400, size.cols)), Math.max(5, Math.min(200, size.rows)));
     const key = `${term.cols}x${term.rows}`;

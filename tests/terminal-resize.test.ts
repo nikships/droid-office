@@ -450,18 +450,76 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     assert.deepEqual(result, [false, '1', 'old screen']);
   });
 
-  await t.test('a viewport resize with no box change does not defer the next discrete fit', async () => {
-    const page = await rig(false);
-    const grids = await page.evaluate(async () => {
+  await t.test('a viewport resize with no box change releases the next input claim', async () => {
+    const page = await rig(true);
+    const sizes = await page.evaluate(async () => {
       const w = window as any;
       window.dispatchEvent(new Event('resize'));
       await w.frames();
-      const observed = new Promise((resolve) => w.term.onFit(() => resolve([w.term.cols, w.term.proposeDimensions().cols])));
-      w.resize(500, 300);
-      return (await observed) as number[];
+      w.term.input('x');
+      return w.sizes();
     });
-    assert.equal(grids[0], grids[1]);
+    assert.equal(sizes.length, 1);
   });
+
+  await t.test('a stepped width animation retains its grid through quiet intermediate boxes', async () => {
+    const page = await rig(false);
+    const result = await page.evaluate(async () => {
+      const w = window as any,
+        pane = document.getElementById('mount')!;
+      w.messages = [];
+      const start = w.term.cols;
+      const movement = pane.animate([{ width: '600px' }, { width: '400px' }], { duration: 500, easing: 'steps(3)', fill: 'forwards' });
+      await movement.ready;
+      const intermediate = [];
+      while (movement.playState === 'running') {
+        if (pane.offsetWidth < 600 && pane.offsetWidth > 400) intermediate.push([w.term.cols, w.sizes().length]);
+        await new Promise(requestAnimationFrame);
+      }
+      await w.frames();
+      return { start, intermediate, after: w.sizes(), final: w.term.cols };
+    });
+    assert.ok(result.intermediate.length > 1);
+    assert.ok(result.intermediate.every(([cols, packets]: number[]) => cols === result.start && packets === 0));
+    assert.deepEqual(
+      result.after.map(([cols]: number[]) => cols),
+      [result.final],
+    );
+    assert.ok(result.final < result.start);
+  });
+
+  for (const reading of [false, true]) {
+    await t.test(`an animated shrink preserves the ${reading ? 'reader offset' : 'tail'} through intermediate boxes`, async () => {
+      const page = await rig(false);
+      const result = await page.evaluate(async (reading) => {
+        const w = window as any,
+          term = w.term,
+          root = term.native.element,
+          pane = document.getElementById('mount')!;
+        term.write(Array.from({ length: 180 }, (_, i) => `line ${i}\r\n`).join(''));
+        term.scrollToBottom();
+        await w.frames();
+        if (reading) root.scrollTop -= 280;
+        await w.frames();
+        const start = root.scrollTop,
+          offset = () => (reading ? Math.abs(root.scrollTop - start) : root.scrollHeight - root.clientHeight - root.scrollTop),
+          offsets: number[] = [];
+        w.messages = [];
+        const observation = term.onFit(() => offsets.push(offset()));
+        const shrink = pane.animate([{ height: '350px' }, { height: '210px' }], { duration: 320, fill: 'forwards' });
+        await shrink.ready;
+        term.write('in flight\r\n');
+        await shrink.finished;
+        await w.frames();
+        observation.dispose();
+        return { offsets, final: offset(), sizes: w.sizes(), live: root.textContent.includes('in flight') };
+      }, reading);
+      assert.ok(result.offsets.length > 2);
+      assert.ok(Math.max(...result.offsets, result.final) < 1, JSON.stringify(result));
+      assert.equal(result.sizes.length, 1);
+      assert.equal(result.live, true);
+    });
+  }
 
   await t.test('the first painted snapshot stays concealed while its observed fit is pending', async () => {
     const page = await rig(false, true, false, 'dashboard');
@@ -723,6 +781,8 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       thread.style.cssText = '--x:.5;--y:0;--w:.5;--h:1;--gl:3px;--gr:0px;--gt:0px;--gb:0px';
       raw.style.setProperty('--gr', '3px');
       raw.after(thread);
+      // Both newly mounted panes scale around their centers before layout begins.
+      await Promise.all([raw, thread].flatMap((el) => el.getAnimations().map((a) => a.finished)));
       const gap = () => thread.getBoundingClientRect().left - raw.getBoundingClientRect().right;
       const samples = [gap()];
       for (const width of ['.333333', '.5']) {

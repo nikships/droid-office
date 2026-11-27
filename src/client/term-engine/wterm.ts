@@ -64,7 +64,6 @@ export class WTermAdapter {
   constructor(
     options: ClientTerminalOptions,
     private readonly loadFeatures?: () => Promise<readonly WTermFeature[]>,
-    private readonly syncFontMetrics?: (term: WTerm) => void,
   ) {
     this.options = new Proxy(
       { ...options },
@@ -216,7 +215,33 @@ export class WTermAdapter {
     if (shrank && this.readerRow === undefined && this.isAtTail(el.scrollHeight - this.lastClientHeight) && !this.isAtTail()) this.followTail();
     this.lastClientHeight = clientHeight;
   }
-  private refreshMetrics() {
+  private scaleOf(el: HTMLElement) {
+    if (!el.offsetWidth || !el.offsetHeight) return;
+    const rect = el.getBoundingClientRect();
+    // Fractional CSS widths/heights round to integers in offsetWidth/offsetHeight
+    // (at most 0.5px off), so require a >1px discrepancy before treating as scaled.
+    if (Math.abs(rect.width - el.offsetWidth) <= 1 && Math.abs(rect.height - el.offsetHeight) <= 1) return;
+    const sx = rect.width / el.offsetWidth;
+    const sy = rect.height / el.offsetHeight;
+    if (!(sx > 0.01) || !(sy > 0.01)) return;
+    return [sx, sy] as const;
+  }
+  /** WTerm measures cell pitch with getBoundingClientRect(), which inherits ancestor
+   * CSS scale transforms (such as pane opening animations) while DOM row heights and
+   * scroll extents stay in unscaled CSS pixels. Counter-scale during synchronous probes. */
+  private withoutScale<T>(el: HTMLElement, fn: () => T): T {
+    const scale = this.scaleOf(el);
+    if (!scale) return fn();
+    const transform = el.style.transform;
+    const counter = `scale(${1 / scale[0]}, ${1 / scale[1]})`;
+    el.style.transform = transform ? `${counter} ${transform}` : counter;
+    try {
+      return fn();
+    } finally {
+      el.style.transform = transform;
+    }
+  }
+  refreshMetrics() {
     const el = this.root;
     if (!el) return;
     if (this.native && !el.clientWidth) {
@@ -245,13 +270,28 @@ export class WTermAdapter {
       fontHeight = probe.offsetHeight;
       probe.remove();
     }
-    // Compact, Default and Relaxed scale the font's natural line box in device pixels.
+    // Preserve the previous renderer's device-pixel rounding, including on Retina displays.
     const dpr = window.devicePixelRatio;
     if (fontHeight > 0) this.rowHeight = Math.floor(Math.ceil(fontHeight * dpr) * (this.options.lineHeight ?? 1.1)) / dpr;
     el.style.setProperty('--term-row-height', `${this.rowHeight}px`);
-    this.metricsPending = false;
-    if (this.native) {
-      this.syncFontMetrics?.(this.native);
+    this.metricsPending = true;
+    if (this.native && el.clientWidth) {
+      // fit() remeasures the font before considering a resize. An empty content width
+      // lets it refresh mouse/cell metrics without reflowing the authoritative PTY grid.
+      this.withoutScale(el, () => {
+        const { width, paddingLeft, paddingRight } = el.style;
+        el.style.width = '0px';
+        el.style.paddingLeft = '0px';
+        el.style.paddingRight = '0px';
+        try {
+          this.native!.fit();
+          this.metricsPending = false;
+        } finally {
+          el.style.width = width;
+          el.style.paddingLeft = paddingLeft;
+          el.style.paddingRight = paddingRight;
+        }
+      });
       if (previousHeight !== this.rowHeight) {
         if (this.readerRow !== undefined) el.scrollTop = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
         this.pendingRestore = { appliedTop: el.scrollTop };
@@ -286,6 +326,7 @@ export class WTermAdapter {
     root.inert = true;
     this.root = root;
     host.append(root);
+    this.refreshMetrics();
     let lastScrollTop: number | undefined;
     let restoredSameTop = false;
     try {
@@ -338,11 +379,11 @@ export class WTermAdapter {
         core.dispose();
         return;
       }
-      this.refreshMetrics();
       this.native = native;
       this.core = core;
       await native.init();
       if (signal.aborted) return;
+      this.refreshMetrics();
       this.applyOption('theme');
       this.applyOption('cursorBlink');
       this.applyOption('cursorStyle');
@@ -394,18 +435,12 @@ export class WTermAdapter {
           this.proposal = undefined;
           return;
         }
-        if (this.metricsPending) {
-          this.refreshMetrics();
-          cell = probe.getBoundingClientRect();
-        }
+        // The native probe observer runs first and may have measured a transformed
+        // rectangle. Its content box (like the scrollport's) is always unscaled.
+        if (this.metricsPending || (entries.some((e) => e.target === probe) && this.scaleOf(root))) this.refreshMetrics();
         const geometry = `${box.width},${box.height},${cell.width},${cell.height}`;
         if (this.proposal && geometry === lastGeometry) return;
-        // Scrollport height is rounded to CSS pixels, unlike the observed box
-        // at fractional zoom. Count only fit padding, not the scroll-end allowance.
-        const style = getComputedStyle(root);
-        const fitBottom = style.getPropertyValue('--office-fit-bottom');
-        const rows = fitBottom ? Math.floor((root.clientHeight - parseFloat(style.paddingTop) - parseFloat(fitBottom)) / this.rowHeight) : Math.floor(box.height / cell.height);
-        this.proposal = { cols: Math.floor(box.width / cell.width), rows };
+        this.proposal = this.proposeDimensions(box.width, cell.width);
         const changed = lastGeometry !== undefined && lastGeometry !== geometry;
         lastGeometry = geometry;
         this.fit.fire(changed);
@@ -438,7 +473,21 @@ export class WTermAdapter {
       throw error;
     }
   }
-  proposeDimensions() {
+  /** Explicit synchronous measurement, including before the first observation.
+   * Publication and input use observedDimensions instead of forcing layout. */
+  proposeDimensions(contentWidth?: number, cellWidth?: number) {
+    const el = this.root;
+    if (!el?.clientHeight) return;
+    const style = getComputedStyle(el);
+    const width = contentWidth ?? el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    const cell = cellWidth ?? parseFloat(style.getPropertyValue('--term-cell-width'));
+    if (!(width > 0 && cell > 0)) return;
+    return {
+      cols: Math.floor(width / cell),
+      rows: Math.floor((el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.getPropertyValue('--office-fit-bottom') || style.paddingBottom)) / this.rowHeight),
+    };
+  }
+  get observedDimensions() {
     return this.proposal;
   }
   onFit(fn: (geometryChanged: boolean) => void) {

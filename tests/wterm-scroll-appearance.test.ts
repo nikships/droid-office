@@ -177,7 +177,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       if (sample.lineHeight === 1.1) assert.equal(sample.pitch, ({ 12: 17, 14: 19, 18: 25 } as Record<number, number>)[sample.fontSize]);
     }
   });
-  await t.test('opening a fading dashboard pane with history keeps following streamed output during and after the animation', async () => {
+  await t.test('opening a scaled dashboard pane with history keeps following streamed output during and after the animation', async () => {
     const sample = await page.evaluate(async () => {
       const { createWebTerminal } = await import('/term-engine/web-terminal.ts');
       const { openTerminalRenderer } = await import('/ui/terminal-renderer.ts');
@@ -191,8 +191,8 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       modal.append(host);
       pane.append(modal);
       document.body.append(pane);
-      const fade = pane.animate([{ opacity: '.5' }, { opacity: '1' }], { duration: 10000 });
-      fade.pause();
+      const scale = pane.animate([{ transform: 'scale(.97)' }, { transform: 'none' }], { duration: 10000 });
+      scale.pause();
       const { term } = createWebTerminal({ fontFamily: (window as any).a.options.fontFamily, fontSize: 14, lineHeight: 1.1, scrollback: 5000 });
       const frames = async (n = 3) => {
         for (let i = 0; i < n; i++) await new Promise(requestAnimationFrame);
@@ -200,7 +200,6 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       const gapOf = (el: HTMLElement) => el.scrollHeight - el.clientHeight - el.scrollTop;
       try {
         await openTerminalRenderer(term, host, () => true);
-        await frames(2);
         const fit = term.proposeDimensions();
         term.resize(fit.cols, fit.rows);
         const lines = Array.from({ length: 260 }, (_, i) => `hist ${i + 1}`).join('\r\n');
@@ -215,7 +214,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
         }
         const spacerBefore = parseFloat(root.querySelector<HTMLElement>('.term-scrollback-spacer')?.style.height ?? '0');
         const duringStream = gapOf(root);
-        fade.finish();
+        scale.finish();
         await frames(4);
         const spacerAfter = parseFloat(root.querySelector<HTMLElement>('.term-scrollback-spacer')?.style.height ?? '0');
         const afterSettle = gapOf(root);
@@ -226,13 +225,13 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
         const afterStream = gapOf(root);
         return { duringSnapshot, duringStream, afterSettle, afterStream, spacerBefore, spacerAfter };
       } finally {
-        fade.cancel();
+        scale.cancel();
         term.dispose();
         pane.remove();
       }
     });
-    assert.ok(sample.duringSnapshot < 1, `opening snapshot gap=${sample.duringSnapshot}`);
-    assert.ok(sample.duringStream < 1, `opening stream gap=${sample.duringStream}`);
+    assert.ok(sample.duringSnapshot < 1, `scaled snapshot gap=${sample.duringSnapshot}`);
+    assert.ok(sample.duringStream < 1, `scaled stream gap=${sample.duringStream}`);
     assert.ok(sample.afterSettle < 1, `settled gap=${sample.afterSettle}`);
     assert.ok(sample.afterStream < 1, `post-settle stream gap=${sample.afterStream}`);
     assert.ok(Math.abs(sample.spacerAfter - sample.spacerBefore) < 1, `spacer jump ${sample.spacerBefore} -> ${sample.spacerAfter}`);
@@ -259,7 +258,6 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
         const { term } = createWebTerminal({ fontFamily: (window as any).a.options.fontFamily, fontSize: 14, lineHeight: 1.1, scrollback: 5000 });
         try {
           await openTerminalRenderer(term, host, () => true);
-          await frames(2);
           const fit = term.proposeDimensions();
           term.resize(fit.cols, fit.rows);
           const lines = Array.from({ length: 180 }, (_, i) => `row ${i + 1} ${'x'.repeat(70)}`).join('\r\n');
@@ -280,7 +278,6 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
           ]) {
             pane.style.width = `${w}px`;
             pane.style.height = `${h}px`;
-            await frames(2);
             const next = term.proposeDimensions();
             term.resize(next.cols, next.rows);
             await frames(2);
@@ -298,23 +295,22 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     assert.ok(sample.following.gap < 1, `shrunk tail gap=${sample.following.gap}`);
     assert.ok(sample.reading.gap > 200, `scrolled-up reader should stay unpinned: ${JSON.stringify(sample.reading)}`);
   });
-  await t.test('the first pointer click during the terminal fade reports the painted cell', async () => {
+  await t.test('clicks during pane scale do not report a provisional cell; the first settled click reports the painted cell', async () => {
     const target = await page.evaluate(async () => {
       const renderer = '/ui/terminal-renderer.ts',
         engine = '/term-engine/web-terminal.ts';
       const { createWebTerminal } = await import(engine);
       const pane = document.createElement('div');
       pane.className = 'modal term';
-      pane.style.cssText = 'position:fixed;inset:0 auto auto 0;width:640px;height:400px;z-index:10000';
+      pane.style.cssText = 'position:fixed;inset:0 auto auto 0;width:640px;height:400px;z-index:10000;animation:none';
       const host = document.createElement('div');
       host.className = 'term-host';
       pane.append(host);
       document.body.append(pane);
-      const [scale] = pane.getAnimations();
+      const scale = pane.animate([{ transform: 'scale(.7)' }, { transform: 'none' }], 10000);
       scale.pause();
       const { term } = createWebTerminal({ fontFamily: 'monospace', fontSize: 14, lineHeight: 1.1 });
       await (await import(renderer)).openTerminalRenderer(term, host, () => true);
-      await (window as any).frame();
       const { cols, rows } = term.proposeDimensions();
       term.resize(cols, rows);
       const sent: string[] = [];
@@ -351,7 +347,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     });
     try {
       await page.mouse.click(target[0], target[1]);
-      assert.deepEqual(await page.evaluate(() => (window as any).pointerCheck.sent.splice(0)), ['\x1b[<0;48;8M', '\x1b[<0;48;8m']);
+      assert.deepEqual(await page.evaluate(() => (window as any).pointerCheck.sent), []);
       const settled = await page.evaluate(async () => {
         const { scale, point } = (window as any).pointerCheck;
         scale.finish();
