@@ -156,13 +156,17 @@ test('unavailable fonts fall back to monospace but the renderer is mandatory', b
 
 test('a swipe starting below the fitted desktop grid scrolls history or its fullscreen program', browserTest, async (t) => {
   const { page, context } = await openPhone(t);
-  await page.evaluate(() => {
-    const w = window as any;
-    w.office.receive({ t: 'snapshot', cols: 136, rows: 20, data: 'history\r\n'.repeat(200) });
-  });
+  const lines = 200;
+  const rows = 20;
+  await page.evaluate((snapshot) => (window as any).office.receive(snapshot), { t: 'snapshot', cols: 136, rows, data: 'history\r\n'.repeat(lines) });
   await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'drawn'));
   const point = { x: 200, y: 510 };
-  await page.waitForFunction(() => document.querySelector('.wterm')!.scrollTop > 0);
+  await page.waitForFunction((historyRows) => {
+    const el = document.querySelector('.wterm')!;
+    const rowHeight = parseFloat(getComputedStyle(el).getPropertyValue('--term-row-height'));
+    // The initial spacer can be at its own tail before the snapshot's history is painted.
+    return el.scrollTop >= Math.floor(historyRows * rowHeight) && el.scrollHeight - el.scrollTop - el.clientHeight < 1;
+  }, lines - rows);
   assert.ok(await page.evaluate((y) => [...document.querySelectorAll('.term-row')].at(-1)!.getBoundingClientRect().bottom < y, point.y));
   const top = () => page.locator('.wterm').evaluate((el) => el.scrollTop);
   const before = await top();
