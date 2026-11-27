@@ -936,7 +936,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     const result = await page.evaluate(async () => {
       const w = window as any;
       const root = w.term.native.element;
-      const before = [w.term.cols, w.term.rows, getComputedStyle(root).opacity];
+      const before = [w.term.cols, w.term.rows, getComputedStyle(root).opacity, root.querySelector('.term-grid').getBoundingClientRect().height];
       const visible: number[][] = [];
       w.snapshot(Array.from({ length: 120 }, (_, i) => `settled row ${i}\r\n`).join(''));
       for (let i = 0; i < 10; i++) {
@@ -945,7 +945,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       }
       return { before, visible, tail: root.scrollHeight - root.clientHeight, text: root.textContent.includes('settled row 119') };
     });
-    assert.deepEqual(result.before, [80, 24, '0']);
+    assert.deepEqual(result.before, [80, 24, '0', 0]);
     assert.ok(result.visible.length && result.text);
     assert.ok(result.tail > 0);
     for (const grid of result.visible) assert.deepEqual(grid, [120, 40, result.tail]);

@@ -281,6 +281,8 @@ export class WTermAdapter {
       // lets it refresh mouse/cell metrics without reflowing the authoritative PTY grid.
       this.withoutScale(el, () => {
         const { width, paddingLeft, paddingRight } = el.style;
+        const waiting = el.classList.contains('awaiting-grid');
+        if (waiting) el.classList.remove('awaiting-grid');
         el.style.width = '0px';
         el.style.paddingLeft = '0px';
         el.style.paddingRight = '0px';
@@ -291,6 +293,7 @@ export class WTermAdapter {
           el.style.width = width;
           el.style.paddingLeft = paddingLeft;
           el.style.paddingRight = paddingRight;
+          if (waiting) el.classList.add('awaiting-grid');
         }
       });
       if (previousHeight !== this.rowHeight) {
@@ -347,6 +350,9 @@ export class WTermAdapter {
         (discarded) => {
           this.paintPending = false;
           this.paintedDiscarded = discarded;
+          // The native renderer has populated the first snapshot's rows. Give
+          // them a scroll range before its scroll phase, not at window reveal.
+          if (this.replay === 'parsed') root.classList.remove('awaiting-grid');
           if (!this.pendingRestore && this.holdReaderAfterPaint && this.heldAlternate === this.core?.usingAltScreen()) this.pendingRestore = { appliedTop: root.scrollTop };
           const restore = this.pendingRestore;
           const reader = this.afterSnapshotPaint;
@@ -385,6 +391,7 @@ export class WTermAdapter {
       await native.init();
       if (signal.aborted) return;
       this.refreshMetrics();
+      root.classList.toggle('awaiting-grid', !!this.replay);
       this.applyOption('theme');
       this.applyOption('cursorBlink');
       this.applyOption('cursorStyle');
@@ -496,7 +503,7 @@ export class WTermAdapter {
   }
   beginSnapshot() {
     this.replay = 'waiting';
-    this.root?.classList.add('replaying');
+    this.root?.classList.add('replaying', 'awaiting-grid');
   }
   /** Keep an existing grid painted while an accepted snapshot replaces the core. */
   holdSnapshot() {

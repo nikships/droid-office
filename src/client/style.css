@@ -855,6 +855,7 @@ label.choice:has(> input:disabled) { opacity: .5; cursor: default; }
 .office-wterm > textarea[style*="opacity: 0;"] { position: fixed !important; top: 0 !important; }
 /* Keep the measured scrollport and keyboard focus while the first PTY snapshot paints. */
 .office-wterm.replaying { opacity: 0; }
+.office-wterm.awaiting-grid > .term-grid { display: none; }
 .office-wterm.replaying, .office-wterm.replaying * { pointer-events: none !important; }
 .office-wterm.measuring-cells, .office-wterm.measuring-cells * { pointer-events: none !important; }
 .changes-log:focus-visible .office-wterm { outline: 2px solid var(--accent); outline-offset: -2px; }
