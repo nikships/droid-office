@@ -15,7 +15,9 @@ export function attachWtermPrompts(adapter: WTermAdapter) {
     };
     const arrow = (direction: -1 | 1) => {
       const name = direction === -1 ? 'Previous prompt' : 'Next prompt';
-      return h('button', { type: 'button', 'aria-label': name, title: `${name} (Ctrl+Shift+${direction === -1 ? '[' : ']'})`, onclick: () => jump(direction) }, direction === -1 ? '↑' : '↓');
+      const el = h('button', { type: 'button', 'aria-label': name, title: `${name} (Ctrl+Shift+${direction === -1 ? '[' : ']'})` }, direction === -1 ? '↑' : '↓');
+      el.addEventListener('click', () => jump(direction), { signal });
+      return el;
     };
     const chip = h('div.wterm-prompt-chip', { hidden: true }, label, arrow(-1), arrow(1));
     const overlay = h('div.wterm-shell-tools', {}, chip);

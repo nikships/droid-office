@@ -13,7 +13,11 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
     if (hasNativeSearchControls(adapter)) return;
     const root = native.element;
     const mac = /Mac|iPhone|iPad/.test(navigator.platform);
-    const button = (label: string, text: string, click: () => void) => h('button', { type: 'button', title: label, 'aria-label': label, onclick: click }, text);
+    const button = (label: string, text: string, click: () => void) => {
+      const el = h('button', { type: 'button', title: label, 'aria-label': label }, text);
+      el.addEventListener('click', click, { signal });
+      return el;
+    };
     const field = h('input', { type: 'text', placeholder: 'Find in terminal', 'aria-label': 'Find in terminal', maxlength: 1024, autocomplete: 'off', spellcheck: 'false' });
     const status = h('span', { role: 'status', 'aria-live': 'polite' });
     let sensitive = false;
