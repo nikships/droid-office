@@ -329,10 +329,12 @@ export class WTermAdapter {
     // column at the boundary, especially after changing the font or shared grid.
     const width = this.fontAdvance > 0 ? Math.round(this.fontAdvance * this.cols) / this.cols : parseFloat(style.getPropertyValue('--term-cell-width'));
     if (!(width > 0)) return;
+    // A classic scrollbar can occupy part of the right inset. Count that
+    // space once, but never fit a cell under the bar in a pane without padding.
+    const inner = el.offsetWidth - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
+    const available = Math.min(el.clientWidth, inner - parseFloat(style.paddingRight)) - parseFloat(style.paddingLeft);
     return {
-      // The reserved right inset includes the scrollbar; count the pane's
-      // inner layout width, not the content width left after history appears.
-      cols: Math.floor((el.offsetWidth - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth) - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) / width),
+      cols: Math.floor(available / width),
       rows: Math.floor((el.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / this.rowHeight),
     };
   }
