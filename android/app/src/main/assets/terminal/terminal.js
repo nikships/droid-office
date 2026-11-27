@@ -79,21 +79,28 @@ export async function start() {
     atBottom = at;
   };
   root.addEventListener('scroll', bottom, { passive: true });
+  let hasMarks = false;
+  let prompts = false;
+  function updatePrompts(alternate) {
+    const available = hasMarks && !alternate;
+    if (available !== prompts) post({ t: 'prompts', available });
+    prompts = available;
+  }
   let lastFlags = -1;
   function modes() {
     const flags = core.kittyKeyboardFlags();
     if (lastFlags !== flags) post({ t: 'kitty', flags });
     lastFlags = flags;
-    root.classList.toggle('program-swipe', core.usingAltScreen() || !!core.mouseTracking());
+    const alternate = core.usingAltScreen();
+    root.classList.toggle('program-swipe', alternate || !!core.mouseTracking());
+    updatePrompts(alternate);
   }
   term.onWriteParsed(modes);
   modes();
   native.onSearchChange = ({ activeIndex, count, searching, limited }) => post({ t: 'matches', active: activeIndex, count, searching, limited });
-  let prompts = false;
   native.onShellIntegration = (state) => {
-    const available = state.phase !== 'unknown' && !core.usingAltScreen();
-    if (available !== prompts) post({ t: 'prompts', available });
-    prompts = available;
+    hasMarks = state.phase !== 'unknown';
+    updatePrompts(core.usingAltScreen());
   };
 
   // History uses WebView's own pan and inertia. Only a program which consumes

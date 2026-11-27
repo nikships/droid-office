@@ -71,4 +71,14 @@ test("the phone's Raw TTY follows a finger pixel for pixel with native scrolling
   assert.equal(await rowTop(190), moved, 'new output does not pull a reader down');
   await page.evaluate(() => (window as any).office.receive({ t: 'bottom' }));
   await page.waitForFunction(() => (window as any).posted.at(-1)?.at === true);
+  await t.test('prompt buttons follow alternate-screen entry and exit without new shell marks', async () => {
+    await page.evaluate(() => (window as any).office.receive({ t: 'data', data: '\x1b]133;A\x07shell % ' }));
+    await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'prompts' && m.available));
+    const changes = await page.evaluate(() => {
+      const w = window as any;
+      for (const data of ['\x1b[?1049h', 'editor', '\x1b[?1049l', 'normal']) w.office.receive({ t: 'data', data });
+      return w.posted.filter((m: any) => m.t === 'prompts').map((m: any) => m.available);
+    });
+    assert.deepEqual(changes, [true, false, true]);
+  });
 });
