@@ -39,6 +39,12 @@ export function installFind(adapter: WTermAdapter, core: GhosttyCore, grid: HTML
         el.classList.toggle('wterm-find-line', y >= line.start && y <= line.end);
       }
     }
+    // The initial snapshot has parsed before its virtual rows and follow-tail
+    // scroll are committed. Even a requested offset of zero must wait for paint.
+    const frame = requestAnimationFrame(() => {
+      scrolled = false;
+      paint();
+    });
     const observer = new MutationObserver(paint);
     // Virtual rows are mounted/unmounted as the user scrolls; resize replaces them.
     observer.observe(grid, { childList: true });
@@ -47,6 +53,7 @@ export function installFind(adapter: WTermAdapter, core: GhosttyCore, grid: HTML
     clear = () => {
       clear = undefined;
       clearTimeout(timer);
+      cancelAnimationFrame(frame);
       observer.disconnect();
       sub.dispose();
       marker.dispose();

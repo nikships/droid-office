@@ -287,6 +287,29 @@ test('wterm links and find against the xterm pane', { skip: !browserStatus().ins
     }
     assert.deepEqual(opens, []);
   });
+  await t.test('a hit at the beginning of a just-replayed snapshot stays visible after first paint', async () => {
+    const result = await page.evaluate(async () => {
+      const rig = window as any;
+      document.getElementById('policy')!.style.height = '420px';
+      await rig.mount('policy', 'ghostty', 'changes');
+      try {
+        const term = rig.policy;
+        term.resize(24, 24);
+        if (term.native.element.scrollTop !== 0) throw Error('expected fresh pane at scrollTop zero');
+        term.write(`first line needle\r\n${'ordinary line\r\n'.repeat(60)}`);
+        const answer = rig.findpolicy({ needle: 'first line needle', fromEnd: 61 });
+        for (let i = 0; i < 4; i++) await new Promise(requestAnimationFrame);
+        const el = term.native.element;
+        const hit = el.querySelector('.wterm-find-line')?.getBoundingClientRect();
+        const view = el.getBoundingClientRect();
+        return { answer, inView: hit && hit.top >= view.top - 1 && hit.bottom <= view.bottom + 1, top: el.scrollTop };
+      } finally {
+        rig.policy.dispose();
+        document.getElementById('policy')!.style.height = '';
+      }
+    });
+    assert.deepEqual(result, { answer: undefined, inView: true, top: 0 });
+  });
   await t.test('find agrees on missing and repeated wrapped lines, tracks reflow, replacement, reset and expiry', async () => {
     const needle = '漢e\u0301 disk full';
     const label = 'A long repeated hit: 漢e\u0301 disk    FULL';
