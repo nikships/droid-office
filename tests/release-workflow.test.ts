@@ -325,10 +325,35 @@ test('lint retains the recommended policy and formatting in CI and pre-commit', 
   assert.match(jobSteps('website').join('\n'), /npx biome check --error-on-warnings website/);
 });
 
-test('PR checks run on GitHub runners while main builds and releases on the Mac Mini runner', () => {
-  for (const [job, hostedRunner] of Object.entries({ changes: 'ubuntu-latest', release: 'macos-26', website: 'ubuntu-latest', mac: 'macos-26', android: 'ubuntu-latest' })) {
-    const expression = workflow.match(new RegExp(`^ {2}${job}:\\n(?: {4}[^\\n]*\\n)*? {4}runs-on: \\$\\{\\{ (.+) \\}\\}$`, 'm'))?.[1];
-    assert.ok(expression, job);
+function runnerExpression(job: string) {
+  const expression = workflow.match(new RegExp(`^ {2}${job}:\\n(?: {4}[^\\n]*\\n)*? {4}runs-on: \\$\\{\\{ (.+) \\}\\}$`, 'm'))?.[1];
+  assert.ok(expression, job);
+  return expression;
+}
+
+test('release runs on the Mac Mini except for fork and Dependabot pull requests', () => {
+  const expression = runnerExpression('release');
+  assert.equal(
+    expression,
+    `github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'macos-26' || fromJSON('["self-hosted", "macOS", "ARM64", "droid-office"]')`,
+  );
+  const repository = 'nikships/droid-office';
+  const mini = ['self-hosted', 'macOS', 'ARM64', 'droid-office'];
+  for (const [event, head, login, expected] of [
+    ['pull_request', repository, 'contributor', mini],
+    ['pull_request', 'contributor/fork', 'contributor', 'macos-26'],
+    ['pull_request', repository, 'dependabot[bot]', 'macos-26'],
+    ['push', '', '', mini],
+    ['workflow_dispatch', '', '', mini],
+  ] as const) {
+    const github = { event_name: event, repository, event: head ? { pull_request: { head: { repo: { full_name: head } }, user: { login } } } : {} };
+    assert.deepEqual(runInNewContext(expression, { github, fromJSON: JSON.parse }), expected, `${event}: ${head} ${login}`);
+  }
+});
+
+test('other PR checks run on GitHub runners while main builds and releases on the Mac Mini', () => {
+  for (const [job, hostedRunner] of Object.entries({ changes: 'ubuntu-latest', website: 'ubuntu-latest', mac: 'macos-26', android: 'ubuntu-latest' })) {
+    const expression = runnerExpression(job);
     assert.equal(expression, `github.event_name == 'pull_request' && '${hostedRunner}' || fromJSON('["self-hosted", "macOS", "ARM64", "droid-office"]')`, job);
     for (const event of ['pull_request', 'push', 'workflow_dispatch']) {
       const runner = runInNewContext(expression, { github: { event_name: event }, fromJSON: JSON.parse });
@@ -338,8 +363,10 @@ test('PR checks run on GitHub runners while main builds and releases on the Mac 
   const publishRunsOn = workflow.match(/^ {2}publish:\n[\s\S]*?\n {4}runs-on: (.+)$/m)?.[1];
   assert.equal(publishRunsOn, '[self-hosted, macOS, ARM64, droid-office]', 'publish');
 
-  // PRs configure Node, Java, and Gradle through GitHub Actions.
-  assert.match(workflow, /actions\/setup-node@v7/);
+  // Hosted jobs configure Node, Java, and Gradle through GitHub Actions.
+  const setupNode = jobSteps('release').find((step) => step.includes('uses: actions/setup-node@v7'));
+  assert.ok(setupNode);
+  assert.match(setupNode, /^ {8}if: runner\.environment == 'github-hosted'$/m);
   assert.match(workflow, /actions\/setup-java@v6/);
   assert.match(workflow, /gradle\/actions\/setup-gradle@v6/);
 
@@ -358,21 +385,29 @@ test('PR checks run on GitHub runners while main builds and releases on the Mac 
     const step = jobSteps(job).find((candidate) => candidate.includes("name: Check the runner's toolchain"));
     assert.ok(step, job);
     assert.match(step, new RegExp(`runner-toolchain\\.sh ${tools}\\n`), job);
-    if (job !== 'publish') {
+    if (job === 'release') {
+      assert.match(step, /^ {8}if: runner\.environment == 'self-hosted'$/m);
+    } else if (job !== 'publish') {
       assert.match(step, /if: github\.event_name != 'pull_request'/);
     }
   }
 });
 
-test('CI caches Chromium on PRs and proves the sandboxed browser can render before coverage on both Macs', () => {
+test('CI caches hosted Chromium, isolates Mac Mini PR installs and checks rendering before coverage', () => {
   const steps = jobSteps('release');
+  const miniPrFolder = steps.find((step) => step.includes('name: Keep the Mac Mini PR browser separate'));
+  assert.ok(miniPrFolder);
+  assert.match(miniPrFolder, /^ {8}if: runner\.environment == 'self-hosted' && github\.event_name == 'pull_request'$/m);
+  const useTempFolder = /^ {8}run: echo "DROID_OFFICE_BROWSERS_PATH=\$RUNNER_TEMP\/browsers" >> "\$GITHUB_ENV"$/m;
+  assert.match(miniPrFolder, useTempFolder);
+  assert.ok(steps.indexOf(miniPrFolder) < steps.findIndex((step) => step.includes('name: Install and build')));
   const folder = steps.find((step) => step.includes('name: Choose the shared Chromium folder'));
   assert.ok(folder);
-  assert.match(folder, /^ {8}run: echo "DROID_OFFICE_BROWSERS_PATH=\$RUNNER_TEMP\/browsers" >> "\$GITHUB_ENV"$/m);
+  assert.match(folder, useTempFolder);
   const cache = steps.find((step) => step.includes('name: Cache Chromium'));
   assert.ok(cache);
   assert.ok(steps.indexOf(folder) < steps.indexOf(cache));
-  for (const step of [folder, cache]) assert.match(step, /^ {8}if: github\.event_name == 'pull_request'$/m);
+  for (const step of [folder, cache]) assert.match(step, /^ {8}if: runner\.environment == 'github-hosted'$/m);
   assert.match(cache, /uses: actions\/cache@/);
   assert.match(cache, /^ {10}path: \$\{\{ runner\.temp \}\}\/browsers$/m);
   assert.match(cache, /key: chromium-\$\{\{ runner\.os \}\}/);

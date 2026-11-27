@@ -12,8 +12,9 @@ name: Release
 # PRs compile and test, but never version, package, sign or upload release artifacts.
 # Test/docs-only changes publish nothing. Manual runs check everything, releasing only on main.
 #
-# Pull requests use GitHub-hosted macos-26 for Node and native Mac presenter checks.
-# Change detection, website and Android checks use GitHub-hosted ubuntu-latest on pull requests.
+# The Node suite runs on the Mac Mini for same-repository PRs except Dependabot's.
+# Fork and Dependabot PRs use the slower GitHub-hosted macos-26, where timing-sensitive tests may fail.
+# All PRs use hosted macos-26 for presenter checks and ubuntu-latest for changes, website and Android.
 # Actual merges to main, building the Mac app and Android app, signing, notarizing, and publishing
 # remain on the owner's Mac Mini self-hosted runner (`droid-office`).
 #
@@ -154,25 +155,29 @@ jobs:
   release:
     needs: changes
     if: needs.changes.outputs.node == 'true'
-    runs-on: ${{ github.event_name == 'pull_request' && 'macos-26' || fromJSON('["self-hosted", "macOS", "ARM64", "droid-office"]') }}
+    runs-on: ${{ github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]') && 'macos-26' || fromJSON('["self-hosted", "macOS", "ARM64", "droid-office"]') }}
     timeout-minutes: 20
     env:
       # Electron is only for the Mac app, which the mac job builds.
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-      # On the Mac Mini runner, Chromium lives outside the workspace in the office cache folder.
+      # Main and manual runs reuse the Mac Mini's persistent browser installation.
       DROID_OFFICE_BROWSERS_PATH: ~/Library/Caches/droid-office/ci-browsers
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
-        if: github.event_name == 'pull_request'
+        if: runner.environment == 'github-hosted'
         with:
           node-version: 22
           cache: npm
 
       - name: Check the runner's toolchain
-        if: github.event_name != 'pull_request'
+        if: runner.environment == 'self-hosted'
         run: .github/scripts/runner-toolchain.sh node
+
+      - name: Keep the Mac Mini PR browser separate from release builds
+        if: runner.environment == 'self-hosted' && github.event_name == 'pull_request'
+        run: echo "DROID_OFFICE_BROWSERS_PATH=$RUNNER_TEMP/browsers" >> "$GITHUB_ENV"
 
       - name: Install and build
         run: npm ci --prefer-offline --no-audit --no-fund # its prepare script builds the client and the server
@@ -182,11 +187,11 @@ jobs:
       - run: npm run typecheck
 
       - name: Choose the shared Chromium folder
-        if: github.event_name == 'pull_request'
+        if: runner.environment == 'github-hosted'
         run: echo "DROID_OFFICE_BROWSERS_PATH=$RUNNER_TEMP/browsers" >> "$GITHUB_ENV"
 
       - name: Cache Chromium
-        if: github.event_name == 'pull_request'
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/browsers
