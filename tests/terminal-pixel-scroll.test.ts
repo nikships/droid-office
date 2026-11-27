@@ -7,7 +7,7 @@ import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '
 
 const status = browserStatus();
 
-test('the Android xterm pixel scroller keeps rendered rows, selection, links and images aligned', { skip: status.installed ? false : `Chromium is not installed in ${status.path}` }, async (t) => {
+test('the legacy xterm comparison scroller keeps rendered rows, selection, links and images aligned', { skip: status.installed ? false : `Chromium is not installed in ${status.path}` }, async (t) => {
   const browser = await launchBrowser();
   t.after(closeBrowser);
   const context = await newIsolatedContext(browser);
@@ -15,7 +15,7 @@ test('the Android xterm pixel scroller keeps rendered rows, selection, links and
   const bundle = buildSync({
     stdin: {
       contents:
-        "export { attachKittyTerminal } from './tests/oracle/kitty'; export { TerminalPathLinksAddon } from './tests/oracle/paths'; export { attachPixelScroll, pixelScrollOf, SETTLE_DELAY_MS, SETTLE_MS } from './src/client/term-pixel-scroll'; export { Terminal } from '@xterm/xterm';",
+        "export { attachKittyTerminal } from './tests/oracle/kitty'; export { TerminalPathLinksAddon } from './tests/oracle/paths'; export { attachPixelScroll, pixelScrollOf, SETTLE_DELAY_MS, SETTLE_MS } from './tests/oracle/pixel-scroll'; export { Terminal } from '@xterm/xterm';",
       resolveDir: fileURLToPath(new URL('..', import.meta.url)),
     },
     bundle: true,

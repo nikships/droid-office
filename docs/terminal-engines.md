@@ -1,6 +1,6 @@
-# Web and Mac terminal
+# Web, Mac and Android terminals
 
-Worker windows, inline panes, Boss Shell, Changes Log and `/dashboard` use [wterm](https://github.com/vercel-labs/wterm)’s DOM renderer and libghostty WASM (`@wterm/dom`, `@wterm/ghostty` and `@wterm/core` 0.6.0, Apache-2.0). Android Raw TTY and the PTY host still use xterm. The 3D screens draw compact server previews, not another interactive terminal instance.
+Worker windows, inline panes, Boss Shell, Changes Log, `/dashboard` and Android Raw TTY use [wterm](https://github.com/vercel-labs/wterm)’s DOM renderer and libghostty WASM (`@wterm/dom`, `@wterm/ghostty` and `@wterm/core` 0.6.0, Apache-2.0). Android loads its own feature list and package-local assets in a WebView. The server mirror still uses `@xterm/headless`, `@xterm/addon-serialize` and `@xterm/addon-unicode11`: wterm 0.6.0 cannot provide the complete screen snapshots needed for a reconnect. Mode 2027 remains off in clients for compatibility with that mirror. The 3D screens draw compact server previews, not another interactive terminal instance.
 
 Both web entry points warm the runtime when idle. Concurrent loads of the same hashed `ghostty-vt` URL share the package’s download and compiled module; each pane owns and disposes its own core and memory. The binary is 599,627 bytes. If opening fails, the pane stays open with an inline **Retry** button and one toast. It sends no input while unavailable, and does not retry automatically. Settings control presentation and input, not the renderer. Older saved engine values are ignored.
 
@@ -13,7 +13,7 @@ Both web entry points warm the runtime when idle. Concurrent loads of the same h
 - `adapter.native` is the public `WTerm` and `adapter.core` the unmodified pane-owned `GhosttyCore` after open. Features subscribe to `onOpen((native, signal) => …)`, `onBeforeWrite(data)`, `onNativeParsed(chunk)`, `onWriteParsed()`, `onReset()`, `onResize({cols,rows})` and `onOptionChange(key)`. The lifetime signal aborts before native teardown. `onResize` fires synchronously **after** an actual size change, not on a repeated request for the same grid.
 - The runtime installs `wterm-keys.ts` (Office key policy), `wterm-scroll.ts` (navigation and scroll preferences), `wterm-graphics.ts` (shared Kitty overlay), and `wterm-links.ts` (Office link policy and `TerminalFind`). The runtime composes the `wterm-appearance.ts` display view with its response gate. Display-only changes do not modify cells read through `adapter.core`. No package internals are patched.
 
-## Parity matrix
+## Web and Mac parity matrix
 
 These results use the shipped 0.6.0 core in Chromium. Where the PTY protocol or public core API limits parity, the table describes what the user sees.
 

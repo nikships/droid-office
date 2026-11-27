@@ -7,7 +7,7 @@ import { build } from 'esbuild';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
-test('only the Android WebView pixel-scroll input may import xterm under src/client', async () => {
+test('no terminal client, including the Android bundle entry, imports xterm', async () => {
   const imports: string[] = [];
   const client = join(root, 'src/client');
   for (const entry of await readdir(client, { recursive: true, withFileTypes: true })) {
@@ -15,8 +15,7 @@ test('only the Android WebView pixel-scroll input may import xterm under src/cli
     const path = join(entry.parentPath, entry.name);
     if (/(?:\bfrom\s*|\bimport(?:\s+type)?\s*\(?\s*|\brequire\s*\(\s*)['"]@xterm\//.test(await readFile(path, 'utf8'))) imports.push(relative(root, path));
   }
-  assert.deepEqual(imports, ['src/client/term-pixel-scroll.ts']);
-  assert.ok((await readFile(join(root, 'tools/android-terminal.mjs'), 'utf8')).includes("['src/client/term-pixel-scroll.ts', 'terminal/vendor/pixel-scroll.js']"));
+  assert.deepEqual(imports, []);
 });
 
 test('a bare adapter entry does not include desktop features or CSS', async () => {

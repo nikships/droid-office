@@ -12,7 +12,7 @@ import {
   type KittyKeyEvent,
 } from '../../src/shared/kitty';
 import type { KeyAction } from '../../src/shared/csi-enter';
-import { pixelScrollOf } from '../../src/client/term-pixel-scroll';
+import { pixelScrollOf } from './pixel-scroll';
 import { createKittyOverlay, type KittyTerminalOptions } from '../../src/client/term-kitty-overlay';
 export {
   decodeScreenBitmap,

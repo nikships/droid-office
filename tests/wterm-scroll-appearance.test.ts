@@ -42,7 +42,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     const w = window as any;
     const path = '/oracle/terminal.ts',
       scrolling = '/term-engine/wterm-scroll.ts',
-      pixel = '/term-pixel-scroll.ts',
+      pixel = '/oracle/pixel-scroll.ts',
       theme = '/term-theme.ts';
     const { comparisonTerminal } = await import(path);
     const options = {

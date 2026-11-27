@@ -9,8 +9,7 @@
 // Only the normal buffer moves by pixels. The alternate screen and programs that read the wheel
 // (mouse reporting) still get whole lines from xterm, as before.
 //
-// Shared with the Android terminal page (bundled by tools/android-terminal.mjs), so it imports
-// nothing at runtime and touches xterm internals only through the guarded lookups below.
+// Test-only reference for comparing the old client against the current renderer.
 
 import type { IDisposable, Terminal } from '@xterm/xterm';
 
