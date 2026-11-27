@@ -47,7 +47,7 @@ export class WTermAdapter {
   // History index including discarded rows, or undefined when following the tail.
   private readerRow?: number;
   private paintedDiscarded = 0;
-  private restoreFrame = 0;
+  private restoreAfterPaint = false;
   private keyHandler?: (e: KeyboardEvent) => boolean;
 
   constructor(
@@ -101,7 +101,7 @@ export class WTermAdapter {
     const el = this.root;
     // display:none collapses every DOM scroll metric to zero. Keep the last visible
     // position and subtract history evicted while painting was paused.
-    if (el?.clientHeight && !this.restoreFrame) this.readerRow = el.scrollHeight - el.clientHeight - el.scrollTop < 1 ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;
+    if (el?.clientHeight && !this.restoreAfterPaint) this.readerRow = el.scrollHeight - el.clientHeight - el.scrollTop < 1 ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;
   }
   get buffer() {
     const baseY = this.core?.getScrollbackCount() ?? 0;
@@ -204,20 +204,8 @@ export class WTermAdapter {
         el.style.width = width;
       }
       if (previousHeight !== this.rowHeight && this.readerRow !== undefined) {
-        const reader = this.readerRow;
-        const offset = () => Math.max(0, (reader - this.paintedDiscarded) * this.rowHeight);
-        el.scrollTop = offset();
-        cancelAnimationFrame(this.restoreFrame);
-        this.restoreFrame = 0;
-        // A virtual history spacer can still have its old height, clamping
-        // the requested offset. Restore the rest after the new layout paints.
-        if (offset() - el.scrollTop > 1) {
-          const clamped = el.scrollTop;
-          this.restoreFrame = requestAnimationFrame(() => {
-            this.restoreFrame = 0;
-            if (el.scrollTop === clamped) el.scrollTop = offset();
-          });
-        }
+        this.restoreAfterPaint = true;
+        el.scrollTop = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
       }
     }
   }
@@ -262,6 +250,14 @@ export class WTermAdapter {
         features,
         (discarded) => {
           this.paintedDiscarded = discarded;
+          if (this.restoreAfterPaint)
+            queueMicrotask(() => {
+              // Native paint commits both the virtual spacer and its own scroll
+              // adjustment. Only then is a logical row a usable pixel offset.
+              if (!this.restoreAfterPaint || this.metricsPending || !root.clientHeight || this.readerRow === undefined) return;
+              root.scrollTop = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
+              this.restoreAfterPaint = false;
+            });
         },
       );
       if (signal.aborted) {
@@ -433,14 +429,13 @@ export class WTermAdapter {
     this.native?.setRenderingPaused(paused || !this.inViewport);
   }
   scrollToBottom() {
-    if (this.restoreFrame) cancelAnimationFrame(this.restoreFrame);
-    this.restoreFrame = 0;
+    this.restoreAfterPaint = false;
     if (this.root) this.root.scrollTop = this.root.scrollHeight;
   }
   dispose() {
     if (this.lifetime.signal.aborted) return;
     this.lifetime.abort();
-    if (this.restoreFrame) cancelAnimationFrame(this.restoreFrame);
+    this.restoreAfterPaint = false;
     this.native?.destroy();
     this.core?.dispose();
     this.root?.remove();

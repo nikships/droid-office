@@ -308,6 +308,59 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     }
     assert.deepEqual([result.pending, result.painted, result.final], [24, 24, result.first]);
   });
+  // Exercise the virtual history spacer near its old limit, not just a short buffer.
+  const changeReader = async (action: 'hidden' | 'tail', output = 0) =>
+    page.evaluate(
+      async ({ action, output }) => {
+        const engine = '/term-engine/web-terminal.ts';
+        const { createWebTerminal } = await import(engine);
+        const host = document.createElement('div');
+        host.style.cssText = 'position:fixed;inset:0;width:500px;height:152px;z-index:50';
+        document.body.append(host);
+        const { term } = createWebTerminal({ fontSize: 14, fontFamily: 'monospace', lineHeight: 1.1, scrollback: 1000 });
+        try {
+          await term.open(host);
+          term.resize(40, 8);
+          term.write(Array.from({ length: 1008 }, (_, i) => `line ${i}\r\n`).join(''));
+          const frame = (window as any).frame;
+          await frame();
+          const el = term.native.element;
+          const height = () => parseFloat(getComputedStyle(el).getPropertyValue('--term-row-height'));
+          const label = () => document.elementFromPoint(4, 1)?.closest('.term-row')?.textContent?.trim();
+          el.scrollTop = 850.25 * height();
+          await frame();
+          const before = label();
+          if (action === 'hidden') {
+            host.style.display = 'none';
+            term.setRenderingPaused(true);
+            await frame();
+          }
+          term.options.fontSize = 26;
+          if (action === 'tail') term.scrollToBottom();
+          else {
+            if (output) term.write('more\r\n'.repeat(output));
+            await frame();
+            host.style.display = '';
+            term.setRenderingPaused(false);
+          }
+          for (let i = 0; i < 4; i++) await frame();
+          return { before, after: label(), logical: el.scrollTop / height(), tail: el.scrollHeight - el.clientHeight - el.scrollTop };
+        } finally {
+          term.dispose();
+          host.remove();
+        }
+      },
+      { action, output },
+    );
+  await t.test('a hidden near-tail reader survives a font change and paused output', async () => {
+    for (const output of [0, 13]) {
+      const s = await changeReader('hidden', output);
+      t.diagnostic(JSON.stringify({ output, ...s }));
+      assert.ok(s.before?.startsWith('line '));
+      assert.equal(s.after, s.before);
+      assert.ok(Math.abs(s.logical - (850.25 - output)) < 0.08);
+    }
+  });
   await t.test('holds retained content through cap, resize and new output; typing and paste follow again', async () => {
     const result = await page.evaluate(async () => {
       const { a, x, write, frame, el } = window as any;
