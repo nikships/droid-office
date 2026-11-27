@@ -181,11 +181,12 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
               .concat('END-OF-LOG')
               .join('\r\n'),
           });
-        w.tailVisible = () => {
+        w.hiddenOutput = () => routeChangesMessage({ t: 'term.data', workerId, data: `${'\r\nhidden output'.repeat(80)}\r\nNEW-LOG-TAIL` });
+        w.tailVisible = (label = 'END-OF-LOG') => {
           const port = document.querySelector('.changes-log .office-wterm,.changes-log .xterm-screen');
           if (!port) return false;
           const rect = port.getBoundingClientRect();
-          return [...port.querySelectorAll('.term-row,.xterm-rows > div')].some((n) => n.textContent?.includes('END-OF-LOG') && n.getBoundingClientRect().top >= rect.top - 1 && n.getBoundingClientRect().top < rect.bottom);
+          return [...port.querySelectorAll('.term-row,.xterm-rows > div')].some((n) => n.textContent?.includes(label) && n.getBoundingClientRect().top >= rect.top - 1 && n.getBoundingClientRect().top < rect.bottom);
         };
       });
       const log = pane.getByRole('button', { name: /^Log/ });
@@ -197,9 +198,10 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       await pane.mouse.wheel(0, -1000);
       await pane.waitForFunction(() => !(window as any).tailVisible());
       await pane.getByRole('button', { name: /^Diff/ }).click();
+      await pane.evaluate(() => (window as any).hiddenOutput());
       await pane.getByRole('button', { name: /^Commit & open/ }).click();
       await pane.waitForFunction(() => (window as any).asked === 1);
-      await pane.waitForFunction(() => (window as any).tailVisible(), undefined, { timeout: 1500 });
+      await pane.waitForFunction(() => (window as any).tailVisible('NEW-LOG-TAIL'), undefined, { timeout: 1500 });
     } finally {
       await pane.close();
     }

@@ -47,6 +47,7 @@ export class WTermAdapter {
   // History index including discarded rows, or undefined when following the tail.
   private readerRow?: number;
   private paintedDiscarded = 0;
+  private paintPending = false;
   private pendingRestore?: { appliedTop?: number };
   private readerRevision = 0;
   private keyHandler?: (e: KeyboardEvent) => boolean;
@@ -264,6 +265,7 @@ export class WTermAdapter {
         },
         features,
         (discarded) => {
+          this.paintPending = false;
           this.paintedDiscarded = discarded;
           const restore = this.pendingRestore;
           if (restore)
@@ -387,6 +389,7 @@ export class WTermAdapter {
     return this.changed.on(fn);
   }
   private writeNative(chunk: string) {
+    this.paintPending = true;
     this.native?.write(chunk);
     this.nativeParsed.fire(chunk);
   }
@@ -452,7 +455,8 @@ export class WTermAdapter {
     const el = this.root;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-    if (this.pendingRestore || (this.native && this.metricsPending)) this.pendingRestore = { appliedTop: el.clientHeight ? el.scrollTop : undefined };
+    // Buffered output can lengthen the spacer after this immediate scroll.
+    if (this.pendingRestore || this.paintPending || (this.native && this.metricsPending)) this.pendingRestore = { appliedTop: el.clientHeight ? el.scrollTop : undefined };
   }
   dispose() {
     if (this.lifetime.signal.aborted) return;
