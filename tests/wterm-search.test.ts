@@ -68,6 +68,80 @@ test('native terminal search, working directory and read-only snapshots in Chrom
   const find = page.locator('#host input[aria-label="Find in terminal"]');
   const frame = () => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
   await frame();
+  await t.test('only terminal rows and padding define the scroll range through clears, replay, reflow, Find and IME', async () => {
+    const samples = await page.evaluate(async () => {
+      const path = '/term-engine/web-terminal.ts';
+      const { createWebTerminal } = await import(path);
+      const pane = document.createElement('div');
+      const focused = document.activeElement as HTMLElement;
+      pane.className = 'modal term inline';
+      pane.style.cssText = 'position:fixed;inset:0;width:600px;height:200px;z-index:10';
+      const host = document.createElement('div');
+      host.className = 'term-host';
+      pane.append(host);
+      document.body.append(pane);
+      const { term } = createWebTerminal({ fontSize: 14, scrollback: 500 });
+      try {
+        await term.open(host);
+        const el = term.native.element,
+          input = term.textarea;
+        const results = [];
+        const read = async (step: string) => {
+          await new Promise(requestAnimationFrame);
+          await new Promise(requestAnimationFrame);
+          const last = el.querySelectorAll('.term-row:not(.term-scrollback-row)')[term.rows - 1];
+          const end = last.getBoundingClientRect().bottom - el.getBoundingClientRect().top + el.scrollTop + parseFloat(getComputedStyle(el).paddingBottom);
+          results.push({ step, actual: el.scrollHeight, expected: Math.max(el.clientHeight, Math.round(end)) });
+        };
+        term.resize(35, 10);
+        const history = Array.from({ length: 90 }, (_, i) => `keep ${i} ${'x'.repeat(50)}\r\n`).join('');
+        term.write(history);
+        await read('history');
+        term.focus();
+        term.write('\x1b[3J\x1b[H\x1b[2J');
+        await read('focused clear');
+        term.write(history);
+        await read('refill');
+        term.focus();
+        term.reset();
+        term.write('replayed');
+        await read('short attach snapshot');
+        term.write(history);
+        await read('long attach snapshot');
+        term.focus();
+        for (const cols of [60, 20]) {
+          term.resize(cols, 10);
+          await read(`resize to ${cols} columns`);
+        }
+        el.querySelector('.wterm-search-panel > button').click();
+        const find = el.parentElement.querySelector('input[aria-label="Find in terminal"]');
+        if (!find) throw Error('missing Find');
+        find.value = 'keep 77';
+        find.dispatchEvent(new Event('input', { bubbles: true }));
+        await read('Find reveal');
+        if (document.activeElement !== find || !term.native.getSearchState().count) throw Error('Find did not reveal the retained match');
+        find.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        term.scrollToBottom();
+        term.focus();
+        term.write('\x1b[10;4H');
+        await read('last-row cursor');
+        input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+        await read('visible IME preedit');
+        const caret = input.getBoundingClientRect(),
+          lastRow = Array.from(el.querySelectorAll('.term-row')).at(-1) as HTMLElement;
+        if (Math.abs(caret.top - lastRow.getBoundingClientRect().top) > 1 || caret.height > lastRow.offsetHeight + 1) throw Error('IME preedit is not at the last-row cursor');
+        input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+        term.write('\x1b[3J\x1b[H\x1b[2J');
+        await read('clear after IME');
+        return results;
+      } finally {
+        term.dispose();
+        pane.remove();
+        focused.focus({ preventScroll: true });
+      }
+    });
+    for (const s of samples) assert.ok(Math.abs(s.expected - s.actual) <= 1, JSON.stringify(s));
+  });
   await t.test('fresh f and g reach the Find field after a shortcut without its letter keyup', async () => {
     const cdp = await context.newCDPSession(page);
     const values = [];

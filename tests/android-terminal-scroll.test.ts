@@ -43,6 +43,27 @@ async function openPhone(t: TestContext, missing?: 'fonts' | 'renderer', deviceS
   return { context, page };
 }
 
+test('the touch input does not extend the Raw TTY below its last row and fitted padding', browserTest, async (t) => {
+  const { page } = await openPhone(t);
+  const root = page.locator('.wterm');
+  const send = (m: Record<string, unknown>) => page.evaluate((m) => (window as any).office.receive(m), m);
+  for (const data of ['line\r\n'.repeat(180), 'short replay']) {
+    await send({ t: 'snapshot', cols: 60, rows: 12, data });
+    await root.locator('textarea').focus();
+    for (const width of [700, 400]) {
+      await page.setViewportSize({ width, height: 700 });
+      const { expected, actual } = await root.evaluate(async (el) => {
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        const last = Array.from(el.querySelectorAll('.term-row:not(.term-scrollback-row)')).at(-1)!;
+        const end = el.scrollTop + last.getBoundingClientRect().bottom - el.getBoundingClientRect().top + parseFloat(getComputedStyle(el).paddingBottom);
+        return { expected: Math.max(el.clientHeight, Math.round(end)), actual: el.scrollHeight };
+      });
+      assert.ok(Math.abs(expected - actual) <= 1, JSON.stringify({ expected, actual, width }));
+    }
+  }
+});
+
 test('fitting a wide desktop grid keeps the reader through landscape and keyboard layouts', browserTest, async (t) => {
   const { page } = await openPhone(t, undefined, 1.75);
   const frame = { t: 'snapshot', cols: 136, rows: 39, data: Array.from({ length: 220 }, (_, i) => `row ${i}\r\n`).join('') };
