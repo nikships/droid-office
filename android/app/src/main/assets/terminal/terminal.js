@@ -4,6 +4,7 @@ import { minimumContrast } from './theme.js';
 const READABLE_PX = 12.5;
 const PAD = 8;
 const post = (msg) => window.OfficeBridge?.post(JSON.stringify(msg));
+const gridCoordinate = (offset, extent) => Math.max(1, Math.min(1 + Math.floor(offset), Math.ceil(extent)));
 
 async function expandImage({ blob, width, height }) {
   // Bound the image handed to the Kotlin viewer (and its JavaScript bridge).
@@ -152,12 +153,12 @@ export async function start() {
       const px = p.clientX - rect.left;
       const py = p.clientY - rect.top;
       const encoding = core.mouseEncoding();
-      const col = Math.max(1, Math.min(term.cols, 1 + Math.floor(px / cellW)));
-      const row = Math.max(1, Math.min(term.rows, 1 + Math.floor(py / cellH)));
+      const col = gridCoordinate(px / cellW, term.cols);
+      const row = gridCoordinate(py / cellH, term.rows);
       if (encoding === 'x10' && core.mouseTracking() && (col > 95 || row > 95)) return;
       const pixel = encoding === 'sgr-pixels';
       const state = { mouse: term.modes.mouseTrackingMode, appCursor: core.cursorKeysApp(), encoding: pixel || encoding === 'sgr' ? SGR : encoding === 'utf8' ? UTF8 : encoding === 'urxvt' ? URXVT : 0 };
-      post({ t: 'input', data: swipeInput(count, state, pixel ? Math.floor(px) + 1 : col, pixel ? Math.floor(py) + 1 : row) });
+      post({ t: 'input', data: swipeInput(count, state, pixel ? gridCoordinate(px, term.cols * cellW) : col, pixel ? gridCoordinate(py, term.rows * cellH) : row) });
     },
     { passive: true },
   );

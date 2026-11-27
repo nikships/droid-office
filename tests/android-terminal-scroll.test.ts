@@ -106,6 +106,40 @@ test('a swipe starting below the fitted desktop grid scrolls history or its full
   await page.evaluate(() => (window as any).office.receive({ t: 'data', data: '\x1b[?1049h' }));
   await drag();
   assert.ok(await page.evaluate(() => (window as any).posted.some((m: any) => m.t === 'input' && m.data.includes('\x1b[A'))));
+  // The wide grid has space below; the narrow one also has space on the right.
+  for (const [cols, rows, x] of [
+    [136, 20, 200],
+    [12, 5, 360],
+  ]) {
+    point.x = x;
+    await page.evaluate(
+      ({ cols, rows }) => {
+        const w = window as any;
+        w.office.receive({ t: 'size', cols, rows });
+        w.office.receive({ t: 'data', data: `\x1b[?1000h\x1b[?1016h\x1b[2J\x1b[H${'X'.repeat(cols)}` });
+        w.posted.length = 0;
+      },
+      { cols, rows },
+    );
+    const ink = page
+      .locator('.term-row')
+      .filter({ hasText: new RegExp(`^X{${cols}}$`) })
+      .first();
+    const bounds = await ink.evaluate((row, rows) => {
+      const cells = [...row.children].map((el) => el.getBoundingClientRect());
+      return { left: cells[0].left, width: cells.at(-1)!.right - cells[0].left, height: row.getBoundingClientRect().height * rows };
+    }, rows);
+    await drag();
+    const reports = await page.evaluate(() =>
+      (window as any).posted
+        .filter((m: any) => m.t === 'input')
+        .map((m: any) => m.data)
+        .join(''),
+    );
+    const expected = `\x1b[<64;${Math.min(Math.floor(x - bounds.left) + 1, Math.ceil(bounds.width))};${Math.ceil(bounds.height)}M`;
+    assert.ok(reports.length > 0);
+    assert.equal(reports, expected.repeat(reports.split('M').length - 1));
+  }
 });
 
 test("the phone's Raw TTY follows a finger pixel for pixel with native scrolling and holds a historical reader", browserTest, async (t) => {
