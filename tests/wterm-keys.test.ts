@@ -62,6 +62,55 @@ test('wterm owns desktop keyboard negotiation, selection and text input', { skip
             },
             { type, props },
           );
+        await sub.test('Escape clears empty and unserializable terminal selections before interrupting', async () => {
+          await reset(1);
+          const seen = [];
+          for (const kind of ['blank row', 'non-grid text']) {
+            const selection = await page.evaluate(async (kind) => {
+              const { native } = (window as any).term;
+              await new Promise(requestAnimationFrame);
+              const node = kind === 'blank row' ? native.element.querySelectorAll('.term-grid .term-row')[1] : native.element.appendChild(document.createElement('span'));
+              if (kind === 'non-grid text') node.textContent = 'label';
+              const range = document.createRange(),
+                sel = document.getSelection()!;
+              range.selectNodeContents(node);
+              sel.removeAllRanges();
+              sel.addRange(range);
+              return [sel.isCollapsed, native.getSelectionText()];
+            }, kind);
+            assert.deepEqual(selection, [false, kind === 'blank row' ? '' : null]);
+            seen.push([await key('Escape'), await page.evaluate(() => document.getSelection()!.isCollapsed)]);
+          }
+          assert.deepEqual(seen, [
+            ['', true],
+            ['', true],
+          ]);
+        });
+        await sub.test('a composed or missed keyup cannot rename the next plain key', async () => {
+          const seen = [];
+          for (const composing of [true, false]) {
+            await reset(11);
+            const digit = { code: 'Digit2', keyCode: 50 };
+            await event('keydown', { ...digit, key: '@', altKey: true, shiftKey: true });
+            if (composing) {
+              await cdp.send('Input.imeSetComposition', { text: 'に', selectionStart: 1, selectionEnd: 1 });
+              await event('keyup', { ...digit, key: '2', isComposing: true });
+              await cdp.send('Input.insertText', { text: '日' });
+            }
+            await sent();
+            await event('keydown', { ...digit, key: '2' });
+            await event('keydown', { ...digit, key: '2', repeat: true });
+            await event('keyup', { ...digit, key: '2' });
+            seen.push(await sent());
+          }
+          assert.deepEqual(seen, Array(2).fill('\x1b[50u\x1b[50;1:2u\x1b[50;1:3u'));
+        });
+        await sub.test('Kitty Escape retains its identity without a recognized physical code', async () => {
+          await reset(3);
+          for (const type of ['keydown', 'keyup']) await event(type, { key: 'Escape', code: 'Unidentified' });
+          assert.equal(await sent(), '\x1b[27u\x1b[27;1:3u');
+          assert.equal(await key('Tab'), '\t');
+        });
         await sub.test('plain Escape keeps Tab and Shift+Tab in the program', async () => {
           const seen = [];
           for (const flags of [0, 1, 3])

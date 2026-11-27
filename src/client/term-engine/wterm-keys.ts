@@ -47,8 +47,12 @@ export function deskKeyExceptions(adapter: WTermAdapter) {
   });
   return (e: KeyboardEvent, agent: boolean): boolean => {
     if (forwarded.has(e)) return false;
-    if ((e.type !== 'keydown' && e.type !== 'keyup') || e.isComposing || e.keyCode === 229 || e.target !== adapter.textarea) return false;
+    if ((e.type !== 'keydown' && e.type !== 'keyup') || e.target !== adapter.textarea) return false;
     const down = e.type === 'keydown';
+    const heldKey = !down || e.repeat ? pressed.get(e.code) : undefined;
+    // End the old pairing even when the IME owns this event or its last release was lost.
+    if (!down || !e.repeat) pressed.delete(e.code);
+    if (e.isComposing || e.keyCode === 229) return false;
     const unmodified = !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
     if (down && tabTraversalArmed && e.key !== 'Shift') {
       disarm();
@@ -59,10 +63,14 @@ export function deskKeyExceptions(adapter: WTermAdapter) {
     }
     let key: string | undefined;
     if (e.key === 'Escape' && unmodified) {
-      if (down && !e.repeat && adapter.native?.getSelectionText()) {
-        adapter.native.clearSelection();
-        tabTraversalArmed = true;
-        return true;
+      if (down && !e.repeat && adapter.native) {
+        const root = adapter.native.element;
+        const selection = root.ownerDocument.getSelection();
+        if (adapter.native.getSelectionText() !== null || (selection && !selection.isCollapsed && root.contains(selection.anchorNode) && root.contains(selection.focusNode))) {
+          adapter.native.clearSelection();
+          tabTraversalArmed = true;
+          return true;
+        }
       }
       if (!adapter.core?.kittyKeyboardFlags()) {
         if (down) adapter.input('\x1b');
@@ -101,12 +109,12 @@ export function deskKeyExceptions(adapter: WTermAdapter) {
       key = optionBase(e);
     }
     // A release may have different modifiers than its press; keep the identity, not the modifiers.
-    if (!down || e.repeat) key = pressed.get(e.code) ?? key;
+    key = heldKey ?? key;
     if (down && !e.repeat && e.code && key) pressed.set(e.code, key);
-    if (!down) pressed.delete(e.code);
     if (!key || key === e.key) return false;
     const normalized = new KeyboardEvent(e.type, e);
-    Object.defineProperties(normalized, { key: { value: key }, code: { value: e.code || e.key }, getModifierState: { value: e.getModifierState.bind(e) } });
+    const code = key === 'Unidentified' && e.key === 'Escape' ? 'Escape' : e.code || e.key;
+    Object.defineProperties(normalized, { key: { value: key }, code: { value: code }, getModifierState: { value: e.getModifierState.bind(e) } });
     forwarded.add(normalized);
     adapter.textarea?.dispatchEvent(normalized);
     return true;
