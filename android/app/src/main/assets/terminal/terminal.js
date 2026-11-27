@@ -47,13 +47,19 @@ export async function start() {
   let lastLayout = '';
   let cellW = 0;
   let cellH = 0;
-  function layout() {
+  function layout(refreshBase = false) {
     const availW = innerWidth - PAD * 2;
     const availH = innerHeight - PAD * 2;
     if (!(baseW > 0 && availW > 0 && availH > 0)) return;
     const dimensions = `${availW},${availH},${term.cols},${term.rows},${view}`;
-    if (dimensions === lastLayout) return;
+    if (dimensions === lastLayout && !refreshBase) return;
     lastLayout = dimensions;
+    const restore = term.saveReader();
+    if (refreshBase) {
+      term.options.fontSize = baseFont;
+      baseW = parseFloat(root.style.getPropertyValue('--term-cell-width'));
+      baseH = parseFloat(root.style.getPropertyValue('--term-row-height'));
+    }
     // Size the actual glyphs rather than transforming their parent. WTerm measures
     // a rendered glyph in viewport pixels for its cursor, hit targets and rows.
     const scale = fitScale(view, availW, availH, term.cols * baseW, term.rows * baseH, 24 / READABLE_PX);
@@ -67,8 +73,8 @@ export async function start() {
     // and the drawn grid the same size as the shared PTY, even in portrait.
     host.style.width = `${availW}px`;
     host.style.height = `${availH}px`;
-    root.style.paddingRight = `${Math.max(0, availW - term.cols * cellW)}px`;
     root.style.paddingBottom = `${Math.max(0, availH - term.rows * cellH)}px`;
+    restore?.();
     const fit = fitGrid(availW, availH, baseW, baseH);
     const key = `${fit.cols}x${fit.rows}`;
     if (key !== lastFit) post({ t: 'fit', ...fit });
@@ -168,8 +174,8 @@ export async function start() {
       },
       { passive: false },
     );
-  window.addEventListener('resize', layout);
-  term.onResize(layout);
+  window.addEventListener('resize', () => layout());
+  term.onResize(() => layout());
   document.addEventListener('visibilitychange', () => term.setRenderingPaused(document.hidden));
   window.addEventListener('pagehide', () => term.dispose(), { once: true });
 
@@ -195,13 +201,9 @@ export async function start() {
           break;
         }
         case 'config':
-          lastLayout = '';
           baseFont = READABLE_PX * (msg.fontScale > 0 ? msg.fontScale : 1);
-          term.options.fontSize = baseFont;
-          baseW = parseFloat(root.style.getPropertyValue('--term-cell-width'));
-          baseH = parseFloat(root.style.getPropertyValue('--term-row-height'));
           view = msg.view;
-          layout();
+          layout(true);
           break;
         case 'view':
           view = msg.view;

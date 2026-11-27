@@ -10,10 +10,10 @@ const assets = fileURLToPath(new URL('../android/app/src/main/assets/', import.m
 const TYPES: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm', '.ttf': 'font/ttf' };
 
 const browserTest = { skip: status.installed ? false : `Chromium is not installed in ${status.path}` };
-async function openPhone(t: TestContext, missing?: 'fonts' | 'renderer') {
+async function openPhone(t: TestContext, missing?: 'fonts' | 'renderer', deviceScaleFactor = 2) {
   const browser = await launchBrowser();
   t.after(closeBrowser);
-  const context = await browser.newContext({ hasTouch: true, viewport: { width: 400, height: 700 }, deviceScaleFactor: 2 });
+  const context = await browser.newContext({ hasTouch: true, viewport: { width: 400, height: 700 }, deviceScaleFactor });
   t.after(() => context.close());
   await context.route('http://phone.test/**', async (route) => {
     const url = new URL(route.request().url());
@@ -42,6 +42,33 @@ async function openPhone(t: TestContext, missing?: 'fonts' | 'renderer') {
   await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'ready' || m.t === 'unavailable'));
   return { context, page };
 }
+
+test('fitting a wide desktop grid keeps the reader through landscape and keyboard layouts', browserTest, async (t) => {
+  const { page } = await openPhone(t, undefined, 1.75);
+  const frame = { t: 'snapshot', cols: 136, rows: 39, data: Array.from({ length: 220 }, (_, i) => `row ${i}\r\n`).join('') };
+  await page.setViewportSize({ width: 404, height: 598 });
+  await page.evaluate((m) => (window as any).office.receive(m), frame);
+  await page.waitForFunction(() => document.querySelector('.wterm')!.scrollTop > 500);
+  const position = () => page.locator('.wterm').evaluate((el) => el.scrollTop / parseFloat(getComputedStyle(el).getPropertyValue('--term-row-height')));
+  await page.locator('.wterm').evaluate((el) => {
+    el.scrollTop = 74.25 * parseFloat(getComputedStyle(el).getPropertyValue('--term-row-height'));
+  });
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  const before = await position();
+  for (const size of [
+    { width: 899, height: 136 },
+    { width: 404, height: 598 },
+    { width: 404, height: 240 },
+  ]) {
+    await page.setViewportSize(size);
+    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+    const after = await position();
+    assert.ok(Math.abs(after - before) < 0.5, `reader moved from ${before} to ${after} rows at ${size.width}x${size.height}`);
+  }
+  await page.evaluate(() => (window as any).office.receive({ t: 'config', fontScale: 1.3, view: 'desktop' }));
+  await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+  assert.ok(Math.abs((await position()) - before) < 0.5);
+});
 
 test('unavailable fonts fall back to monospace but the renderer is mandatory', browserTest, async (t) => {
   for (const [missing, expected] of [
