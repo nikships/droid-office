@@ -85,7 +85,11 @@ test('OSC 133 state and navigation follow real marks, never a reconstructed prom
   });
 
   const viewport = () => page.evaluate(() => (window as any).term.buffer.active.viewportY);
-  await page.waitForFunction(() => (window as any).term.buffer.active.viewportY > 15);
+  // The core restores history before the next paint replaces the alternate screen's scroll range.
+  await page.waitForFunction(() => {
+    const term = (window as any).term;
+    return term.buffer.active.viewportY > 15 && term.native.element.classList.contains('has-scrollback') && term.isAtTail();
+  });
   await page.locator('#host .wterm').evaluate((el) => {
     el.scrollTop -= 5;
   });
