@@ -1,4 +1,4 @@
-import { GhosttyAdapter } from '../src/client/term-engine/ghostty.js';
+import { WTermAdapter } from '../src/client/term-engine/wterm.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SMOOTH_SCROLL_MS, TERMINAL_DEFAULTS, followTerminalPrefs, isDefaultTerminalPrefs, normalizeTerminalPrefs, scrollAtOnce, setTerminalPrefs, resetTerminalPrefs, terminalOptions } from '../src/client/ui/terminal-prefs.js';
@@ -56,16 +56,16 @@ test('an open terminal follows every change, re-fits only when its rows change h
   assert.equal(term.options.cursorStyle, 'bar', 'a closed terminal hears nothing more');
 });
 
-test('line spacing refits the actual xterm renderer, not Ghostty or the saved engine', (t) => {
+test('line spacing refits both live renderers regardless of the saved choice', (t) => {
   t.after(resetTerminalPrefs);
   const opts = terminalOptions();
-  const ghost = new GhosttyAdapter({ ...opts });
+  const ghost = new WTermAdapter({ ...opts });
   const fallback = { options: { ...opts } };
   const counts = [0, 0];
   const off = [ghost, fallback].map((term, i) => followTerminalPrefs(term, { resized: () => counts[i]++ }));
   t.after(() => off.forEach((f) => f()));
   setTerminalPrefs({ engine: 'ghostty', lineHeight: 'relaxed' });
-  assert.deepEqual(counts, [0, 1]);
+  assert.deepEqual(counts, [1, 1]);
 });
 test('scrolls that must land at once run with smooth scrolling off, which comes back after', () => {
   const term = { options: { smoothScrollDuration: SMOOTH_SCROLL_MS } };

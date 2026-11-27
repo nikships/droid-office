@@ -19,6 +19,7 @@ test('terminal scrollback moves by pixels with everything drawn on it lined up',
       resolveDir: fileURLToPath(new URL('..', import.meta.url)),
     },
     bundle: true,
+    external: ['*/wterm-runtime'], // This stand-alone xterm fixture has no Vite asset server.
     format: 'iife',
     globalName: 'TerminalUI',
     write: false,

@@ -21,6 +21,7 @@ test('the desk window switches Thread and Raw TTY without remounting either view
       resolveDir: fileURLToPath(new URL('..', import.meta.url)),
     },
     bundle: true,
+    external: ['*/wterm-runtime'], // This stand-alone xterm fixture has no Vite asset server.
     format: 'iife',
     globalName: 'TerminalUI',
     write: false,

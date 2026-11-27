@@ -34,12 +34,15 @@ export class WTermAdapter implements ClientTerminal {
   private readonly parsed = event<void>();
   private readonly nativeParsed = event<string>();
   private readonly resetting = event<void>();
+  private readonly resized = event<{ cols: number; rows: number }>();
   private readonly changed = event<keyof ClientTerminalOptions>();
   private readonly data = event<string>();
   private readonly lifetime = new AbortController();
   private root?: HTMLDivElement;
   private displayWrite = false;
   private paused = false;
+  private inViewport = true;
+  private metricsPending = true;
   private keyHandler?: (e: KeyboardEvent) => boolean;
 
   constructor(options: ClientTerminalOptions) {
@@ -100,6 +103,7 @@ export class WTermAdapter implements ClientTerminal {
     if (this.options.fontFamily) el.style.setProperty('--term-font-family', this.options.fontFamily);
     el.style.setProperty('--term-font-size', `${this.options.fontSize ?? 14}px`);
     el.style.setProperty('--term-row-height', `${this.rowHeight}px`);
+    this.metricsPending = true;
     if (this.native && el.clientWidth) {
       // fit() remeasures the font before considering a resize. An empty content width
       // lets it refresh mouse/cell metrics without reflowing the authoritative PTY grid.
@@ -107,6 +111,7 @@ export class WTermAdapter implements ClientTerminal {
       el.style.width = '0px';
       try {
         this.native.fit();
+        this.metricsPending = false;
       } finally {
         el.style.width = width;
       }
@@ -165,16 +170,31 @@ export class WTermAdapter implements ClientTerminal {
     this.core = core;
     await native.init();
     if (signal.aborted) return;
+    // Preferences can change while the core download is outstanding.
+    this.typography();
     this.applyOption('theme');
+    this.applyOption('cursorBlink');
     this.applyOption('cursorStyle');
     native.write(widths);
     root.inert = false;
     native.setRenderingPaused(this.paused);
     const observer = new ResizeObserver(() => {
-      if (root.clientWidth > 0 && !parseFloat(root.style.getPropertyValue('--term-cell-width'))) this.typography();
+      if (root.clientWidth > 0 && this.metricsPending) this.typography();
     });
     observer.observe(root);
-    signal.addEventListener('abort', () => observer.disconnect(), { once: true });
+    const visibility = new IntersectionObserver(([entry]) => {
+      this.inViewport = entry.isIntersecting;
+      native.setRenderingPaused(this.paused || !this.inViewport);
+    });
+    visibility.observe(root);
+    signal.addEventListener(
+      'abort',
+      () => {
+        observer.disconnect();
+        visibility.disconnect();
+      },
+      { once: true },
+    );
     this.opened.fire(native);
   }
   proposeDimensions() {
@@ -210,6 +230,9 @@ export class WTermAdapter implements ClientTerminal {
   onReset(fn: () => void) {
     return this.resetting.on(fn);
   }
+  onResize(fn: (size: { cols: number; rows: number }) => void) {
+    return this.resized.on(fn);
+  }
   onOptionChange(fn: (key: keyof ClientTerminalOptions) => void) {
     return this.changed.on(fn);
   }
@@ -244,7 +267,12 @@ export class WTermAdapter implements ClientTerminal {
     this.scrollToBottom();
   }
   resize(cols: number, rows: number) {
-    if (cols !== this.cols || rows !== this.rows) this.native?.resize(cols, rows);
+    const t = this.native;
+    if (!t || (cols === t.cols && rows === t.rows)) return;
+    const oldCols = t.cols,
+      oldRows = t.rows;
+    t.resize(cols, rows);
+    if (oldCols !== t.cols || oldRows !== t.rows) this.resized.fire({ cols: t.cols, rows: t.rows });
   }
   focus() {
     this.native?.focus();
@@ -262,7 +290,7 @@ export class WTermAdapter implements ClientTerminal {
   }
   setRenderingPaused(paused: boolean) {
     this.paused = paused;
-    this.native?.setRenderingPaused(paused);
+    this.native?.setRenderingPaused(paused || !this.inViewport);
   }
   scrollToBottom() {
     if (this.root) this.root.scrollTop = this.root.scrollHeight;
@@ -276,6 +304,6 @@ export class WTermAdapter implements ClientTerminal {
     this.root = this.native = this.core = undefined;
     this.parser.reset();
     this.keyHandler = undefined;
-    for (const e of [this.before, this.changed, this.opened, this.parsed, this.nativeParsed, this.resetting, this.data]) e.clear();
+    for (const e of [this.before, this.changed, this.opened, this.parsed, this.nativeParsed, this.resetting, this.resized, this.data]) e.clear();
   }
 }

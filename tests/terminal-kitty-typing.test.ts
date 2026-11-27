@@ -17,6 +17,7 @@ test('worker terminals type Space and Shift+letters once Droid enables Kitty key
       resolveDir: fileURLToPath(new URL('..', import.meta.url)),
     },
     bundle: true,
+    external: ['*/wterm-runtime'], // This stand-alone xterm fixture has no Vite asset server.
     format: 'iife',
     globalName: 'TerminalUI',
     write: false,

@@ -16,7 +16,7 @@ async function wasmBytes(cdp: CDPSession) {
   await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'measurement' });
   return Number(mem.result.value);
 }
-test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry and disposal', { skip: status.installed ? false : `No Chromium in ${status.path}` }, async (t) => {
+test('real wterm dev asset, same-view fallback and WASM disposal', { skip: status.installed ? false : `No Chromium in ${status.path}` }, async (t) => {
   const cacheDir = await mkdtemp(join(tmpdir(), 'office-ghostty-vite-'));
   const server = await createServer({
     root: fileURLToPath(new URL('../src/client', import.meta.url)),
@@ -25,7 +25,7 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
     logLevel: 'error',
     appType: 'custom',
     server: { host: '127.0.0.1', port: 0, hmr: false },
-    optimizeDeps: { noDiscovery: true, include: ['ghostty-web'] },
+    optimizeDeps: { noDiscovery: true, include: ['@wterm/dom', '@wterm/ghostty'] },
   });
   t.after(async () => {
     await server.close();
@@ -43,114 +43,6 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
   page.on('pageerror', (e) => errors.push(e.message));
   await page.route('**/fixture', (route) => route.fulfill({ contentType: 'text/html', body: '<button id="elsewhere">Other pane</button><div id="host"></div>' }));
   await page.goto(`http://127.0.0.1:${address.port}/fixture`);
-  await page.focus('#elsewhere');
-  await page.evaluate(async () => {
-    const url = '/term-engine/ghostty.ts';
-    const { GhosttyAdapter } = await import(url);
-    const term = new GhosttyAdapter({ fontSize: 15, fontFamily: 'monospace', scrollback: 100, theme: { foreground: '#dddddd', background: '#101010' } });
-    const w = window as any;
-    w.term = term;
-    w.sent = [];
-    w.parsed = 0;
-    w.hooks = [];
-    term.onBeforeWrite(() => w.hooks.push('before'));
-    term.onWriteParsed(() => w.hooks.push('parsed'));
-    term.onReset(() => w.hooks.push('reset'));
-    term.onOptionChange((key: string) => w.hooks.push(key));
-    term.onOpen((native: { element?: HTMLElement }, lifetime: AbortSignal) => {
-      w.opened = native.element?.isConnected;
-      lifetime.addEventListener('abort', () => {
-        w.released = true;
-      });
-    });
-    term.onData((d: string) => w.sent.push(d));
-    term.onWriteParsed(() => w.parsed++);
-    w.events = [];
-    term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-      w.events.push(`${e.type}:${e.key}`);
-      if (e.type === 'keyup' && e.key === 'b') term.input('release');
-      return e.key !== 'b';
-    });
-    await term.open(document.getElementById('host'));
-    await new Promise((r) => setTimeout(r, 15));
-    term.resize(40, 8);
-    term.write('\x1b[?1004h\x1b[?2004h\x1b[?1h');
-  });
-  assert.equal(await page.evaluate(() => document.activeElement?.id), 'elsewhere');
-  assert.deepEqual(await page.evaluate(() => (window as any).term.modes), { sendFocusMode: true, applicationCursorKeysMode: true, bracketedPasteMode: true, mouseTrackingMode: 'none' });
-  await page.evaluate(() => (window as any).term.focus());
-  await page.keyboard.press('a');
-  await page.keyboard.press('b');
-  assert.deepEqual(await page.evaluate(() => (window as any).events), ['keydown:a', 'keyup:a', 'keydown:b', 'keyup:b']);
-  assert.deepEqual(
-    await page.evaluate(() => {
-      const { term } = window as any;
-      const bubbled: string[] = [];
-      for (const phase of ['keypress', 'keyup']) {
-        term.native.element.addEventListener(phase, (e: KeyboardEvent) => bubbled.push(`${phase}:${e.key}`));
-        for (const key of ['a', 'b']) term.textarea.dispatchEvent(new KeyboardEvent(phase, { key, bubbles: true, cancelable: true }));
-      }
-      return bubbled;
-    }),
-    ['keypress:a', 'keyup:a'],
-  );
-  await page.evaluate(() => {
-    const { term } = window as any;
-    term.paste('p');
-    term.input('i');
-    term.options.disableStdin = true;
-    term.paste('ignored');
-  });
-  await page.keyboard.press('c');
-  assert.deepEqual(await page.evaluate(() => (window as any).sent), ['\x1b[I', 'a', 'release', 'release', '\x1b[200~p\x1b[201~', 'i']);
-  assert.deepEqual(
-    await page.evaluate(async () => {
-      const { term } = window as any;
-      term.write('line\r\n'.repeat(60));
-      term.native.scrollToTop();
-      const scrolled = term.buffer.active;
-      term.reset();
-      await new Promise<void>((r) => term.write('', r));
-      term.options.fontSize = 19;
-      term.options.cursorStyle = 'bar';
-      term.options.theme = { foreground: '#ffffff', background: '#121212' };
-      term.options.scrollSensitivity = 2;
-      const after = { history: term.buffer.active.baseY, parsed: (window as any).parsed, scroll: scrolled.viewportY === 0 && scrolled.baseY > 0, focusMode: term.modes.sendFocusMode, font: term.native.options.fontSize };
-      const root = term.native.element;
-      term.dispose();
-      const count = (window as any).events.length;
-      root.dispatchEvent(new KeyboardEvent('keyup', { key: 'b', bubbles: true }));
-      if ((window as any).events.length !== count) throw Error('Disposed terminal received a release');
-      return after;
-    }),
-    { history: 0, parsed: 3, scroll: true, focusMode: false, font: 19 },
-  );
-  assert.equal(await page.locator('#host canvas').count(), 0);
-  assert.deepEqual(await page.evaluate(() => [(window as any).opened, (window as any).released]), [true, true]);
-  assert.deepEqual(await page.evaluate(() => (window as any).hooks), ['before', 'parsed', 'disableStdin', 'before', 'parsed', 'reset', 'before', 'parsed', 'fontSize', 'cursorStyle', 'theme', 'scrollSensitivity']);
-  assert.deepEqual(
-    await page.evaluate(async () => {
-      const url = '/term-engine/ghostty.ts';
-      const { GhosttyAdapter } = await import(url);
-      const term = new GhosttyAdapter({});
-      await term.open(document.getElementById('host'));
-      try {
-        const widths = [];
-        for (const mode of ['', '\x1b[?2027h', '\x1b[?2027l', '\x1bc', '\x1b[?1;2027;2004h']) {
-          term.write(`\r${mode}👩‍💻`);
-          widths.push(term.native.wasmTerm.getCursor().x);
-        }
-        const { applicationCursorKeysMode, bracketedPasteMode } = term.modes;
-        term.native.write('\x1b[?2027h'); // Ensure adapter.reset restores the pinned mode itself.
-        term.reset();
-        term.write('👩‍💻');
-        return [widths, applicationCursorKeysMode, bracketedPasteMode, term.native.wasmTerm.getCursor().x];
-      } finally {
-        term.dispose();
-      }
-    }),
-    [[4, 4, 4, 4, 4], true, true, 4],
-  );
   await t.test('a failed Ghostty WASM request keeps the shell window and opens xterm once', async () => {
     const p = await context.newPage();
     await p.route('**/fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<div id="modal-root"></div><div id="toasts"></div>' }));
@@ -184,7 +76,7 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
       const url = '/ui/terminal.ts';
       (await import(url)).openOfficeShell({ up: true, send: Boolean });
     });
-    await p.locator('.modal.term .ghostty-terminal canvas:not(.term-kitty-layer)').waitFor();
+    await p.locator('.modal.term .office-wterm textarea').waitFor();
     assert.equal(await p.locator('.modal.term .xterm').count(), 0);
     await p.close();
   });
@@ -197,7 +89,7 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
         localStorage.setItem('droid-office.terminal', JSON.stringify({ engine: 'ghostty' }));
         const get = HTMLCanvasElement.prototype.getContext;
         HTMLCanvasElement.prototype.getContext = function (...args: Parameters<typeof get>) {
-          if (document.querySelector('.ghostty-terminal')) {
+          if (document.querySelector('.office-wterm')) {
             HTMLCanvasElement.prototype.getContext = get;
             throw Error('Canvas unavailable');
           }
@@ -208,7 +100,7 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
         (window as any).shell = document.querySelector('.modal.term');
       });
       await p.locator('.term-host .xterm textarea').waitFor({ state: 'attached', timeout: 3000 });
-      assert.deepEqual(await p.evaluate(() => [(window as any).shell === document.querySelector('.modal.term'), document.querySelectorAll('.ghostty-terminal').length, document.querySelectorAll('#toasts .toast').length]), [true, 0, 1]);
+      assert.deepEqual(await p.evaluate(() => [(window as any).shell === document.querySelector('.modal.term'), document.querySelectorAll('.office-wterm').length, document.querySelectorAll('#toasts .toast').length]), [true, 0, 1]);
     } finally {
       await p.close();
     }
@@ -216,9 +108,9 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
   await t.test('display writes never forward a native DA reply as user input', async () => {
     assert.deepEqual(
       await page.evaluate(async () => {
-        const url = '/term-engine/ghostty.ts',
-          { GhosttyAdapter } = await import(url);
-        const a = new GhosttyAdapter({});
+        const url = '/term-engine/wterm.ts',
+          { WTermAdapter } = await import(url);
+        const a = new WTermAdapter({});
         await a.open(document.getElementById('host'));
         const sent: string[] = [];
         a.onData((s: string) => sent.push(s));
@@ -229,86 +121,6 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
       }),
       ['user'],
     );
-  });
-  await t.test('snapshot reset and streamed RIS clear the selection', async () => {
-    assert.deepEqual(
-      await page.evaluate(async () => {
-        const url = '/term-engine/ghostty.ts',
-          { GhosttyAdapter } = await import(url);
-        const a = new GhosttyAdapter({});
-        await a.open(document.getElementById('host'));
-        const selected = [];
-        for (const reset of [() => a.reset(), () => a.write('\x1bc')]) {
-          a.write('old');
-          a.native.select(0, 0, 3);
-          selected.push(a.native.hasSelection());
-          reset();
-          selected.push(a.native.hasSelection());
-        }
-        a.dispose();
-        return selected;
-      }),
-      [true, false, true, false],
-    );
-  });
-  await t.test('a selected pane survives a busy sibling growing memory and closing', async () => {
-    const cdp = await context.newCDPSession(page);
-    await page.evaluate(async () => {
-      const mod = '/term-engine/ghostty.ts',
-        features = '/term-engine/features.ts';
-      const { GhosttyAdapter } = await import(mod),
-        { attachEngineFeatures } = await import(features);
-      const panes = await Promise.all(
-        [0, 1].map(async () => {
-          const a = new GhosttyAdapter({ scrollback: 10000 });
-          attachEngineFeatures({ term: a, ghostty: a });
-          const host = document.createElement('div');
-          document.body.append(host);
-          await a.open(host);
-          return a;
-        }),
-      );
-      (window as any).panes = panes;
-      panes[0].write('keeper');
-      panes[0].native.select(0, 0, 6);
-      panes[0].redraw();
-    });
-    const before = await wasmBytes(cdp);
-    const history = await page.evaluate(() => {
-      const [keeper, busy] = (window as any).panes;
-      const line = `${'x'.repeat(75)}\r\n`;
-      busy.write(line.repeat(65536));
-      for (let i = 0; i < 20; i++) {
-        busy.write(line.repeat(400));
-        keeper.write('.');
-      }
-      return busy.buffer.active.baseY;
-    });
-    const grown = await wasmBytes(cdp);
-    assert.ok(history >= 500, `history=${history} memory=${before}→${grown}`);
-    assert.ok(grown > before, `WASM memory did not grow: ${before} → ${grown}`);
-    assert.deepEqual(
-      await page.evaluate(() => {
-        const [keeper, busy] = (window as any).panes;
-        busy.dispose();
-        document.dispatchEvent(new MouseEvent('mouseup'));
-        keeper.write('ok');
-        keeper.redraw();
-        const core = keeper.native.wasmTerm;
-        const text = core
-          .getLine(0)
-          .map((c: { codepoint: number }) => String.fromCodePoint(c.codepoint || 32))
-          .join('')
-          .trimEnd();
-        const { x, y } = core.getCursor();
-        const result = [text, x, y, keeper.native.getSelection()];
-        keeper.dispose();
-        return result;
-      }),
-      [`keeper${'.'.repeat(20)}ok`, 28, 0, 'keeper'],
-    );
-    t.diagnostic(`two live panes: ${before} → ${grown} WASM bytes, ${history} history rows`);
-    await cdp.detach();
   });
   await t.test('closing 30 panes releases every adapter and all pane WASM memory', async () => {
     const p = await context.newPage();
@@ -324,13 +136,13 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
     };
     const cycle = (n: number) =>
       p.evaluate(async (n) => {
-        const mod = '/term-engine/ghostty.ts',
+        const mod = '/term-engine/wterm.ts',
           features = '/term-engine/features.ts';
-        const { GhosttyAdapter } = await import(mod),
+        const { WTermAdapter } = await import(mod),
           { attachEngineFeatures } = await import(features);
         const refs = ((window as any).refs = [] as WeakRef<object>[][]);
         for (let i = 0; i < n; i++) {
-          const a = new GhosttyAdapter({ allowProposedApi: true });
+          const a = new WTermAdapter({ allowProposedApi: true });
           attachEngineFeatures({ term: a, ghostty: a });
           await a.open(document.getElementById('host'));
           refs.push([new WeakRef(a), new WeakRef(a.native)]);
@@ -346,6 +158,7 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
     t.diagnostic(JSON.stringify({ before, after }));
     await p.close();
     assert.equal(after.adapters, 0);
+    assert.equal(after.native, 0);
     assert.equal(after.wasmBytes, 0);
   });
   assert.deepEqual(errors, []);

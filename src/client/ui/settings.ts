@@ -269,7 +269,7 @@ function terminalRows() {
       group(
         'Engine',
         card('Terminal engine', {
-          desc: desc('Applies the next time you open a terminal. Ghostty uses fixed line spacing and scrolls text in whole rows. Keep xterm for adjustable spacing and pixel-smooth scrolling.'),
+          desc: desc('Applies to the next terminal you open. Ghostty uses wterm’s DOM renderer and Ghostty VT core. xterm is the default.'),
           control: engine.row,
         }),
       ),

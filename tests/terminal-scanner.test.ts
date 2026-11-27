@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { Ghostty } from 'ghostty-web';
+import { GhosttyCore } from '@wterm/ghostty';
 import test from 'node:test';
 import { VtScanner } from '../src/shared/vt-scanner.js';
 import { suppressMirrorQueries } from '../src/client/term-mirror.js';
 
 const esc = '\x1b';
 test('ESC and CSI hooks match native actions across C0, DEL and transport splits', async (t) => {
-  const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
-  const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(20, 8);
-  t.after(() => core.free());
+  const binary = await readFile(new URL(import.meta.resolve('@wterm/ghostty/ghostty-vt.wasm')));
+  const core = await GhosttyCore.load({ wasmPath: `data:application/wasm;base64,${binary.toString('base64')}` });
+  core.init(20, 8);
+  t.after(() => core.dispose());
   const controls = [...Array.from({ length: 32 }, (_, i) => i), 0x7f];
   let checked = 0;
   for (const [name, prefix, suffix] of [
@@ -30,17 +31,19 @@ test('ESC and CSI hooks match native actions across C0, DEL and transport splits
         scanner.registerCsiHandler({ prefix: '?', final: 'h' }, (p) => hit(`width:${p.join(';')}`));
         scanner.registerCsiHandler({ final: 'r' }, (p) => hit(`region:${p.join(';')}`));
         scanner.registerEscHandler({ final: 'c' }, () => hit('reset'));
-        core.write(name === 'reset' ? '\x1bc\x1b[?1049h' : '\x1bc\x1b[?2027l');
+        core.writeString(name === 'reset' ? '\x1bc\x1b[?1049h' : '\x1bc\x1b[?2027l');
         for (const chunk of chunks) {
-          core.write(chunk);
+          core.writeString(chunk);
           scanner.write(chunk, () => {});
         }
         let acted: boolean;
-        if (name === 'width') acted = core.getMode(2027);
-        else if (name === 'reset') acted = !core.isAlternateScreen();
+        if (name === 'width') {
+          core.writeString('\r👩‍💻');
+          acted = core.getCursor().col === 2;
+        } else if (name === 'reset') acted = !core.usingAltScreen();
         else {
-          core.write('\x1b[5;1H\n'); // At the region's bottom LF scrolls without advancing y.
-          acted = core.getCursor().y === 4;
+          core.writeString('\x1b[5;1H\n'); // At the region's bottom LF scrolls without advancing y.
+          acted = core.getCursor().row === 4;
         }
         const context = `${name}, byte ${n}, chunks ${chunks.length}`;
         // ESC cancels the old sequence, but ESC ESC c starts a new RIS.

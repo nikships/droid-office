@@ -605,6 +605,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       threadView = next === 'thread';
       threadHost.hidden = !threadView;
       host.hidden = threadView;
+      term.setRenderingPaused?.(threadView);
       threadButton?.classList.toggle('on', threadView);
       rawButton?.classList.toggle('on', !threadView);
       threadButton?.setAttribute('aria-pressed', String(threadView));

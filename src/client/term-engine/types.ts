@@ -31,6 +31,7 @@ export interface ClientTerminal extends Pick<Terminal, 'cols' | 'rows' | 'focus'
   readonly modes: Pick<Terminal['modes'], 'sendFocusMode' | 'applicationCursorKeysMode' | 'bracketedPasteMode' | 'mouseTrackingMode'>;
   readonly buffer: { readonly active: { readonly viewportY: number; readonly baseY: number } };
   readonly textarea?: HTMLTextAreaElement;
+  setRenderingPaused?(paused: boolean): void;
   open(host: HTMLElement): void | Promise<void>;
   write(data: string, done?: () => void): void;
   onData(fn: (data: string) => void): { dispose(): void };

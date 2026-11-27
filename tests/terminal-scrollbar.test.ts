@@ -303,6 +303,7 @@ test('terminal scrollbar in Chromium stays hidden during typing and without scro
       resolveDir: fileURLToPath(new URL('..', import.meta.url)),
     },
     bundle: true,
+    external: ['*/wterm-runtime'], // This stand-alone xterm fixture has no Vite asset server.
     format: 'iife',
     globalName: 'TermSB',
     write: false,

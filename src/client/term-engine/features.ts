@@ -5,10 +5,7 @@ import { attachPixelScroll } from '../term-pixel-scroll';
 import { attachTerminalScrollbar } from '../term-scrollbar';
 import type { TerminalPathLinksAddon } from '../ui/terminal-path-links';
 import { scrollAtOnce } from '../ui/terminal-prefs';
-import { attachWtermKeys } from './wterm-keys';
-import { attachWtermScroll } from './wterm-scroll';
-import { attachWtermGraphics } from './wterm-graphics';
-import { attachWtermLinks } from './wterm-links';
+import { bindWtermHooks } from './wterm-hooks';
 import { findInXterm } from './xterm-find';
 import type { TerminalFind } from './types';
 import type { TerminalEngine } from './index';
@@ -17,14 +14,7 @@ import type { TerminalEngine } from './index';
  * is read-only and deliberately has no path/web add-ons. */
 export function attachEngineFeatures(engine: TerminalEngine, images?: KittyTerminalOptions, paths?: TerminalPathLinksAddon) {
   const term = engine.xterm;
-  if (!term) {
-    const adapter = engine.ghostty;
-    const keys = attachWtermKeys(adapter);
-    attachWtermGraphics(adapter, images);
-    const scroll = attachWtermScroll(adapter);
-    const links = attachWtermLinks(adapter, paths);
-    return { keyAction: keys.keyAction, handleKey: scroll.handleKey, find: links.find, scrollAtOnce: (move: () => void) => scrollAtOnce(adapter, move, scroll.snap) };
-  }
+  if (!term) return bindWtermHooks(engine.ghostty, images, paths);
   if (paths) {
     term.loadAddon(paths);
     term.loadAddon(

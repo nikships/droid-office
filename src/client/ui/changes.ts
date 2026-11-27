@@ -271,6 +271,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     }
     changesBody.classList.toggle('hidden', next === 'log');
     logHost.classList.toggle('hidden', next !== 'log');
+    term?.setRenderingPaused?.(next !== 'log');
     if (next === 'log') openLog();
     el.focus();
   };

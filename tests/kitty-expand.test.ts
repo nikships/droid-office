@@ -91,6 +91,7 @@ test('Kitty terminal images expand on hover button, Cmd/Ctrl+click, and normal-s
       resolveDir: fileURLToPath(new URL('..', import.meta.url)),
     },
     bundle: true,
+    external: ['*/wterm-runtime'], // This stand-alone xterm fixture has no Vite asset server.
     format: 'iife',
     globalName: 'TerminalUI',
     write: false,
