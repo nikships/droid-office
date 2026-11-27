@@ -4,7 +4,7 @@ import { VtScanner } from '../../shared/vt-scanner';
 import type { KittyRowAnchor } from '../term-kitty-overlay';
 
 const placeholder = KITTY_PLACEHOLDER_CHAR.codePointAt(0);
-const passiveModes = new Set(['1', '7', '9', '12', '25', '1000', '1001', '1002', '1003', '1004', '1005', '1006', '1007', '1015', '1016', '2004', '2027']);
+const passiveModes = new Set(['1', '7', '9', '12', '25', '1000', '1001', '1002', '1003', '1004', '1005', '1006', '1007', '1015', '1016', '2004']);
 export const switchesScreen = (params: (number | number[])[]) => params.some((p) => p === 47 || p === 1047 || p === 1049);
 
 /** Read the grapheme at its actual physical cell, including history. Unlike translateToString,
@@ -36,6 +36,7 @@ interface Position {
   y: number;
   history: number;
   autowrap: boolean;
+  standardLayout: boolean;
 }
 
 /** ASCII shell output has an exact line-advance count, even when every
@@ -90,7 +91,7 @@ export class GraphicsRows {
   private spans: string[] = [];
   private span = 0;
   private region = false;
-  private horizontalMargins = false;
+  private uncertainWidth?: number;
   private savedPrimary?: Position;
   private safeWidth = Infinity;
   private lastCols = 0;
@@ -117,7 +118,7 @@ export class GraphicsRows {
   }
 
   anchor(): KittyRowAnchor | undefined {
-    if (this.core.isAlternateScreen() || this.region || this.horizontalMargins) return;
+    if (this.core.isAlternateScreen() || this.region || this.core.getMode(69) || this.uncertainWidth !== undefined) return;
     const anchor = { line: this.core.getScrollbackLength() + this.core.getCursor().y };
     this.anchors.add(anchor);
     return {
@@ -150,10 +151,10 @@ export class GraphicsRows {
   }
 
   mode(params: (number | number[])[], set: boolean) {
-    if (params.includes(69) && !this.core.isAlternateScreen()) {
-      this.horizontalMargins = set;
-      if (set) this.invalidate(true);
-    }
+    // DECCOLM can leave the native grid 80/132 wide even after DECRST or RIS.
+    // The public cols value still reports the last host resize, not this switch.
+    if (params.includes(3) && (this.core.getMode(40) || (set && params.includes(40)))) this.uncertainWidth = this.core.cols;
+    if (set && params.includes(69) && !this.core.isAlternateScreen()) this.invalidate(true);
     if (!switchesScreen(params)) return;
     this.advance(this.spans[this.span++] ?? '');
     this.pendingWrap = undefined;
@@ -178,8 +179,15 @@ export class GraphicsRows {
     this.checkpoint();
   }
 
+  private standardLayout() {
+    const c = this.core;
+    // ANSI IRM/LNM; DEC origin, reverse-wrap, LR margins, column and grapheme modes.
+    // DECSTBM has no public getter. Its parser hook supplies `region`.
+    return !this.region && this.uncertainWidth === undefined && !c.getMode(4, true) && !c.getMode(20, true) && !c.getMode(6) && !c.getMode(45) && !c.getMode(1045) && !c.getMode(69) && !c.getMode(3) && !c.getMode(40) && !c.getMode(2027);
+  }
+
   private checkpoint() {
-    this.before = this.anchors.size && !this.core.isAlternateScreen() ? { ...this.core.getCursor(), history: this.core.getScrollbackLength(), autowrap: this.core.getMode(7) } : undefined;
+    this.before = this.anchors.size && !this.core.isAlternateScreen() ? { ...this.core.getCursor(), history: this.core.getScrollbackLength(), autowrap: this.core.getMode(7), standardLayout: this.standardLayout() } : undefined;
   }
 
   /** A scanner callback runs after the preceding output but before the following text. Split
@@ -224,7 +232,6 @@ export class GraphicsRows {
     this.invalidate();
     if (snapshot) this.boundaries.reset(); // Streamed RIS can be followed by a partial control in this write.
     this.region = false;
-    this.horizontalMargins = false;
     this.savedPrimary = undefined;
     this.safeWidth = Infinity;
   }
@@ -254,6 +261,7 @@ export class GraphicsRows {
 
   resized() {
     this.pendingWrap = undefined;
+    if (this.core.cols !== this.uncertainWidth) this.uncertainWidth = undefined;
     const totalRows = this.core.rows + this.core.getScrollbackLength();
     if (this.core.cols === this.lastCols && totalRows === this.lastTotalRows) return;
     if (this.core.getScrollbackLength() || this.core.cols < this.safeWidth) this.invalidate();
@@ -272,6 +280,7 @@ export class GraphicsRows {
     const previous = this.pendingWrap;
     this.pendingWrap = undefined;
     if (!before || !this.anchors.size || this.core.isAlternateScreen()) return;
+    if (!before.standardLayout || !this.standardLayout()) return this.invalidate();
     const history = this.core.getScrollbackLength();
     const delta = history - before.history;
     const after = this.core.getCursor();
@@ -283,10 +292,9 @@ export class GraphicsRows {
       if (!list.every((m) => passiveModes.has(m))) return seq;
       return list.includes('7') ? `\x1b[?7${toggle}` : '';
     });
-    const reverseBackspace = text.includes('\b') && (this.core.getMode(45) || this.core.getMode(1045));
-    const advances = reverseBackspace ? undefined : lineAdvances(text, before.x, this.core.cols, before.autowrap, previous);
+    const advances = lineAdvances(text, before.x, this.core.cols, before.autowrap, previous);
     let trimmed: number;
-    if (advances !== undefined && advances.x === after.x && !this.region && !this.horizontalMargins) {
+    if (advances !== undefined && advances.x === after.x) {
       this.pendingWrap = advances.pending;
       trimmed = before.y + advances.count - after.y - delta;
     } else {
@@ -298,12 +306,12 @@ export class GraphicsRows {
       // zsh can echo a Unicode command after backing up over its first character. A
       // leading BS inside the row cannot reverse-wrap; do not assume that at the margin.
       // For the bound, a tab and a horizontal CSI can both put the next glyph at the
-      // last column. CUB under reverse-wrap is not horizontal: it can cross a row.
+      // last column. The layout check above excludes reverse-wrap and restricted margins.
       const plain = text
         .replace(/\x1b\[(?:[012]?K|[01]?J)/g, '')
         .replace(/\x1b\[\?7[hl]/g, '')
-        .replace(/^\x08+/, (bs) => (this.horizontalMargins ? bs : bs.slice(before.x)))
-        .replace(/\x1b\[\d*([CDG`])/g, (seq, final: string) => (final === 'D' && (this.core.getMode(45) || this.core.getMode(1045)) ? seq : '\t'));
+        .replace(/^\x08+/, (bs) => bs.slice(before.x))
+        .replace(/\x1b\[\d*[CDG`]/g, '\t');
       const rest = plain.replace(cursorMotion, '');
       const positions = rest !== plain;
       const pieces = plain.split(cursorMotion).flatMap((s) => s.split(/[\r\n]/));
@@ -312,7 +320,7 @@ export class GraphicsRows {
       const tabs = rest.match(/\t/g)?.length ?? 0;
       const max = breaks + wraps + tabs;
       const appended = positions ? max : Math.max(0, before.y + max - this.core.rows + 1);
-      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(rest) || (tabs && (positions || this.region || this.horizontalMargins))) {
+      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(rest) || (tabs && positions)) {
         this.invalidate();
         return;
       }
@@ -325,7 +333,7 @@ export class GraphicsRows {
         // occurred, the last one has at most `breaks` literal newlines after it.
         const check = tabs ? Math.min(max, breaks + 1) : max;
         // ED1 can erase evidence of a wrap on an earlier row in this same span.
-        if (text.includes('\x1b[1J') || positions || this.region || this.horizontalMargins || check > after.y + 1) return this.invalidate();
+        if (text.includes('\x1b[1J') || positions || check > after.y + 1) return this.invalidate();
         for (let row = after.y - check + 1; row <= after.y; row++) if (this.core.isRowWrapped(row)) return this.invalidate();
         trimmed = before.y + breaks - after.y - delta;
       }

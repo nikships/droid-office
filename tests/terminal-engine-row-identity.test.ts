@@ -4,11 +4,16 @@ import test from 'node:test';
 import headless from '@xterm/headless';
 import { Ghostty, type GhosttyTerminal } from 'ghostty-web';
 import { GraphicsRows } from '../src/client/term-engine/ghostty-graphics-rows.js';
+import { VtScanner } from '../src/shared/vt-scanner.js';
 
 const cs = '\x1b[';
 const modes = [1, 7, 9, 12, 25, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1015, 1016, 2004, 2027];
 const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
-const load = async (cols: number, rows: number) => (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(cols, rows, { scrollbackLimit: 5000 });
+const load = async (cols: number, rows: number) => {
+  const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(cols, rows, { scrollbackLimit: 5000 });
+  core.write('\x1b[?2027l'); // Same initial width mode as the browser adapter.
+  return core;
+};
 const rowName = (i: number) => `R${i.toString(36).padStart(4, '0')}`;
 function contents(core: GhosttyTerminal, index: number) {
   const history = core.getScrollbackLength();
@@ -23,6 +28,56 @@ function feed(core: GhosttyTerminal, rows: GraphicsRows, s: string) {
   core.write(s);
   rows.end();
 }
+
+test('inherited ANSI newline mode cannot move an image from UNIQUE to FIRST', async (t) => {
+  const core = await load(40, 8);
+  t.after(() => core.free());
+  const xt = new headless.Terminal({ cols: 40, rows: 8, allowProposedApi: true });
+  t.after(() => xt.dispose());
+  const rows = new GraphicsRows(core);
+  const write = async (s: string) => {
+    feed(core, rows, s);
+    await new Promise<void>((r) => xt.write(s, r));
+  };
+  await write(`${cs}20h`);
+  await write('FIRST\r\nUNIQUE');
+  const marker = rows.anchor()!,
+    ref = xt.registerMarker(0)!;
+  await write('\r\n'.repeat(6));
+  await write('x'.repeat(39));
+  await write(`\nXY${cs}5GZ`);
+  assert.deepEqual([core.getScrollbackLength(), contents(core, 0), contents(core, 1), ref.line], [1, 'FIRST', 'UNIQUE', 1]);
+  assert.ok(marker.isDisposed || contents(core, marker.line) === 'UNIQUE', `wrong row ${marker.line}: ${contents(core, marker.line)}`);
+});
+
+test('layout guards read inherited modes and wait for a real width resize after DECCOLM', async (t) => {
+  const core = await load(40, 8);
+  t.after(() => core.free());
+  for (const mode of ['4', '20', '?6', '?45', '?1045', '?69', '?40', '?2027']) {
+    core.write('\x1bc');
+    const rows = new GraphicsRows(core),
+      a = rows.anchor()!;
+    core.write(`${cs}${mode}h`); // Native state predates the tracked span.
+    feed(core, rows, 'X');
+    assert.ok(a.isDisposed, mode);
+    core.write(`${cs}${mode}l`);
+    const b = rows.anchor()!;
+    feed(core, rows, 'Y');
+    assert.ok(!b.isDisposed, mode);
+  }
+  const rows = new GraphicsRows(core);
+  core.write(`${cs}?40h`);
+  rows.mode([3], true);
+  core.write(`${cs}?3h${cs}?3l${cs}?40l\x1bc${cs}999G`);
+  assert.deepEqual([core.getMode(3), core.getMode(40), core.cols, core.getCursor().x], [false, false, 40, 79]);
+  rows.reset(true);
+  assert.equal(rows.anchor(), undefined);
+  core.resize(41, 8);
+  rows.resized();
+  core.write(`${cs}999G`);
+  assert.equal(core.getCursor().x, 40);
+  assert.ok(rows.anchor());
+});
 
 test('line and display erases cancel the last-cell wrap without moving neighbouring image rows', async (t) => {
   const core = await load(40, 8);
@@ -119,6 +174,14 @@ test('seeded physical row identity survives or the direct image is dropped', asy
     const normal = numbered.slice(0, height * 2).join('\r\n');
     const tail = numbered.slice(height * 2, firstEviction - 1).join('\r\n');
     const near = `${normal}\r\n${tail}`;
+    const states = [
+      ...['4', '20', '?6', '?45', '?1045', '?69', '?2027'].map((mode) => [`${cs}${mode}h`, `${cs}${mode}l`]),
+      [`${cs}2;${height - 1}r`, `${cs}r`],
+      [`${cs}?69h${cs}2;${cols - 1}s`, `${cs}?69l`],
+      ['\x1b(0', '\x1b(B'],
+      ['\x1b(A', '\x1b(B'],
+      ['\x1b)0\x0e', '\x0f'],
+    ];
     for (let n = 0; n < cases / 4; n++) {
       const atCap = n % 64 === 0;
       const oldMarker = atCap && n % 128 === 0;
@@ -126,10 +189,31 @@ test('seeded physical row identity survives or the direct image is dropped', asy
       const base = core.getScrollbackLength();
       const row = pick(height);
       const origin = base + row;
+      // Place some markers with pre-existing native modes: the tracker never saw
+      // their setters. Region or margin changes go through the production VT hooks.
+      const initial = pick(3) === 0 ? states[pick(states.length)][0] : '';
+      const regional = (s: string) => /\x1b\[[\d;]*r|\x1b\[\?69h/.test(s);
+      const inherited = initial && !regional(initial) && !oldMarker;
+      if (inherited) core.write(initial);
       core.write(`${cs}${row + 1};1H`);
       assert.equal(contents(core, origin), rowName(origin));
       const rows = new GraphicsRows(core),
         marker = rows.anchor()!;
+      const scanner = new VtScanner();
+      scanner.registerCsiHandler({ final: 'r' }, (p) => {
+        rows.setRegion((p[0] || 1) !== 1 || (p[1] || height) !== height);
+        return false;
+      });
+      for (const final of ['h', 'l'])
+        scanner.registerCsiHandler({ prefix: '?', final }, (p) => {
+          rows.mode(p, final === 'h');
+          return false;
+        });
+      const write = (s: string) => {
+        rows.begin(s);
+        scanner.write(s, (raw) => core.write(raw));
+        rows.end();
+      };
       if (oldMarker) {
         feed(core, rows, `${cs}${height};1H`);
         feed(core, rows, `\r\n${tail}`);
@@ -137,28 +221,36 @@ test('seeded physical row identity survives or the direct image is dropped', asy
       const y = pick(2) ? height - 1 : pick(height),
         x = pick(2) ? cols - 1 : pick(cols),
         pending = x === cols - 1 && pick(2) > 0;
-      feed(core, rows, `${cs}${y + 1};${pending ? cols - 1 : x + 1}H`);
-      if (pending) feed(core, rows, 'xx');
+      const position = inherited ? (s: string) => core.write(s) : write;
+      position(`${cs}${y + 1};${pending ? cols - 1 : x + 1}H`);
+      if (pending) position('xx');
       assert.equal(marker.line, origin);
+      if (initial && !inherited) write(initial);
+      let regionalSinceAnchor = regional(initial);
       const spans: string[] = [];
       const limit = 1 + pick(4);
       for (let j = 0; j < limit; j++) {
         let s = '';
         const tokens = 1 + pick(10);
         for (let k = 0; k < tokens; k++) {
-          const kind = pick(12);
+          const kind = pick(14);
           if (kind < 3) s += 'x'.repeat(1 + pick(2 * cols));
           else if (kind === 3) s += `${cs}?${modes[pick(modes.length)]}${pick(2) ? 'h' : 'l'}`;
           else if (kind === 4) s += cs + (1 + pick(cols)) + ['C', 'D', 'G', '`'][pick(4)];
           else if (kind === 5 && !pick(4)) s += cs + ['A', 'B', `${1 + pick(height)};1H`][pick(3)];
-          else s += alphabet[pick(alphabet.length)];
+          else if (kind === 12) s += states[pick(states.length)][pick(2)];
+          else if (kind === 13 && !pick(4)) {
+            const [on, off] = states[pick(states.length)];
+            s += `${on}\nXY${cs}5GZ${off}`;
+          } else s += alphabet[pick(alphabet.length)];
         }
         if (atCap && j === 0) s += '\r\n'.repeat(height + 1);
         if (spans.at(-1)?.endsWith('x') && n % 4 === 0) s = `\u0301${s}`;
         spans.push(s);
       }
       for (const [j, s] of spans.entries()) {
-        feed(core, rows, s);
+        write(s);
+        regionalSinceAnchor ||= regional(s);
         const first = contents(core, 0)!;
         assert.match(first, /^R[0-9a-z]{4}$/);
         const trimmed = parseInt(first.slice(1), 36);
@@ -171,7 +263,11 @@ test('seeded physical row identity survives or the direct image is dropped', asy
         checked++;
         if (marker.isDisposed) continue;
         kept++;
-        assert.equal(marker.line, expected, JSON.stringify({ seed, n, cols, height, origin, x, y, pending, first, j, spans, actual: marker.line, actualText: contents(core, marker.line) }));
+        const context = JSON.stringify({ seed, n, cols, height, origin, x, y, pending, initial, first, j, spans, actual: marker.line, actualText: contents(core, marker.line) });
+        assert.equal(marker.line, expected, context);
+        // Partial scrolling may move visible content without changing history.
+        // In these cases require the actual original label, not just its old index.
+        if (regionalSinceAnchor) assert.equal(contents(core, marker.line), rowName(origin), context);
         if (contents(core, expected) !== rowName(origin)) overwritten++;
       }
       marker.dispose();

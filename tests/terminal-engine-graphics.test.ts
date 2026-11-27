@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import test from 'node:test';
-import { Ghostty } from 'ghostty-web';
+import { Ghostty, type GhosttyTerminal } from 'ghostty-web';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
 import { createServer } from 'vite';
@@ -15,6 +15,12 @@ import { screenSnapshot } from '../src/server/screen.js';
 import { VtScanner } from '../src/shared/vt-scanner.js';
 import { browserStatus, closeBrowser, launchBrowser } from '../src/server/whiteboard-browser.js';
 
+// Match the adapter's native-open configuration before attaching graphics.
+function officeRows(core: GhosttyTerminal) {
+  core.write('\x1b[?2027l');
+  return new GraphicsRows(core);
+}
+
 const apc = (body: string) => `\x1b_G${body}\x1b\\`;
 const cell = (r: number, c: number) => KITTY_PLACEHOLDER_CHAR + String.fromCodePoint(KITTY_DIACRITICS[r], KITTY_DIACRITICS[c]);
 
@@ -22,7 +28,7 @@ test('the zsh prompt preserves a placed image above the cursor on real WASM', as
   const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
   const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(111, 36, { scrollbackLimit: 1000 });
   t.after(() => core.free());
-  const rows = new GraphicsRows(core);
+  const rows = officeRows(core);
   const write = (data: string) => {
     rows.begin(data);
     core.write(data);
@@ -60,7 +66,7 @@ test('autowrap changes do not invent a row trim for an image anchor', async (t) 
   const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
   const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(40, 8);
   t.after(() => core.free());
-  const rows = new GraphicsRows(core);
+  const rows = officeRows(core);
   const write = (data: string) => {
     rows.begin(data);
     core.write(data);
@@ -90,7 +96,7 @@ test('Unicode prompts and output keep direct image rows at the bottom and mid-sc
     for (const input of inputs) {
       const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(80, 24, { scrollbackLimit: 5000 });
       const xt = new headless.Terminal({ cols: 80, rows: 24, scrollback: 5000, allowProposedApi: true });
-      const rows = new GraphicsRows(core);
+      const rows = officeRows(core);
       const write = async (s: string) => {
         rows.begin(s);
         core.write(s);
@@ -142,7 +148,7 @@ test('tabular output and horizontal command edits keep the bottom-row image mark
   for (const [name, chunks] of cases) {
     const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(80, 24, { scrollbackLimit: 5000 });
     const xt = new headless.Terminal({ cols: 80, rows: 24, scrollback: 5000, allowProposedApi: true });
-    const rows = new GraphicsRows(core);
+    const rows = officeRows(core);
     const write = async (s: string) => {
       rows.begin(s);
       core.write(s);
@@ -172,7 +178,7 @@ test('a Unicode line crossing the native trim boundary keeps only the correct nu
   const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
   const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(80, 24, { scrollbackLimit: 5000 });
   t.after(() => core.free());
-  const rows = new GraphicsRows(core);
+  const rows = officeRows(core);
   const write = (s: string) => {
     rows.begin(s);
     core.write(s);
@@ -230,7 +236,7 @@ test('ED2 and ED3 handle screen and history image markers like xterm clear', asy
       core.free();
       server.dispose();
     });
-    const rows = new GraphicsRows(core);
+    const rows = officeRows(core);
     const scanner = new VtScanner();
     scanner.registerCsiHandler({ final: 'J' }, ([mode]) => {
       if (mode !== 2 && mode !== 3) return false;
@@ -256,7 +262,7 @@ test('actual WASM rows follow identical output across history growth and page tr
   const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
   const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(40, 8, { scrollbackLimit: 10 });
   t.after(() => core.free());
-  const rows = new GraphicsRows(core);
+  const rows = officeRows(core);
   const write = (data: string) => {
     rows.begin(data);
     core.write(data);
