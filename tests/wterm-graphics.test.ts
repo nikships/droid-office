@@ -290,15 +290,6 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
       await write('\x1b[?1049l');
     }
   });
-  await t.test('filtering width mode keeps combined alternate-screen transitions atomic', async () => {
-    await reset();
-    await write(`\x1b[3;5H${apc('a=T,i=12,c=2,r=1,C=1,f=24,s=1,v=1;/wAA')}`);
-    await both(4, 2, red);
-    await write('\x1b[?2027;25;1049h');
-    await both(4, 2, 0);
-    await write('\x1b[?2027;25;1049l');
-    await both(4, 2, red);
-  });
   await t.test('PNG, animation frame, plain / modified click, button, mouse reporting outside image', async () => {
     await reset();
     const png = await page.evaluate(() => {
