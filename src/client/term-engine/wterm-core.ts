@@ -13,7 +13,7 @@ export async function warmWterm() {
 export async function loadWterm(adapter: WTermAdapter, element: HTMLElement, onData: (data: string) => void, features: readonly WTermFeature[], onPaint: (discarded: number) => void) {
   const core = await GhosttyCore.load({ wasmPath, scrollbackLines: adapter.options.scrollback, imageStorageLimit: 0 });
   try {
-    const mirror = wtermAppearance(core, adapter);
+    const mirror = wtermAppearance(core);
     // The renderer clears dirty rows when it consumes them. Until then the
     // DOM scroll position is relative to the previous history origin.
     mirror.clearDirty = () => {

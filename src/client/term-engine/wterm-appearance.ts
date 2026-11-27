@@ -1,8 +1,7 @@
 import type { CellData, TerminalCore } from '@wterm/core';
-import type { WTermAdapter } from './wterm';
 
 /** Office owns link activation and Kitty placeholder ink; leave the program's colors alone. */
-export function wtermAppearance(core: TerminalCore, _adapter: WTermAdapter): TerminalCore {
+export function wtermAppearance(core: TerminalCore): TerminalCore {
   function display(cell: CellData): CellData {
     if (cell.linkUri) cell = { ...cell, linkUri: undefined, linkId: undefined, linkKey: undefined };
     if (cell.char === 0x10eeee) return { ...cell, char: 32, chars: undefined, flags: cell.flags & ~8, underlineStyle: 'none' };
