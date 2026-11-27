@@ -60,6 +60,7 @@ test('every setting is in a category', () => {
     ['Scroll speed', 'terminal'],
     ['Option key', 'terminal'],
     ['Restore Terminal defaults', 'terminal'],
+    ['Shell prompt integration', 'terminal'],
     ['Worker labels', 'workers'],
     ['Where fresh workers start', 'workers'],
     ['Prompts', 'workers'],
@@ -179,6 +180,7 @@ test('search finds a setting by name, pane or keyword, every word required', () 
     { pane: 'terminal', title: 'Restore Terminal defaults' },
   ]);
   assert.deepEqual(searchSettings('alt meta'), [{ pane: 'terminal', title: 'Option key' }]);
+  assert.deepEqual(searchSettings('zsh marks'), [{ pane: 'terminal', title: 'Shell prompt integration' }]);
   assert.deepEqual(searchSettings('there is no such setting'), []);
 });
 
@@ -268,6 +270,7 @@ test('the companions leave out what only the 3D office has, and a browser’s Ph
     'Terminal text size',
     'Scroll speed',
     'Restore Terminal defaults',
+    'Shell prompt integration',
     'Workspace folder',
     'Host desktop app',
     'Droid',

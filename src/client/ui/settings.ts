@@ -1,4 +1,5 @@
 import type { Net } from '../net';
+import { guestTokenOn } from '../token';
 import { store, type Settings, type Sidearm } from '../state';
 import { askNotifyPermission, notifyPermission, type DesktopNotifier } from '../notify';
 import { SUBAGENT_MAX_PER_LEAD, type AgentChoice, type SubagentSettings } from '../../shared/protocol';
@@ -200,7 +201,7 @@ function threadRows() {
 }
 
 /** Drawing, scrolling and Option choices update open terminals live. */
-function terminalRows() {
+function terminalRows(net: Net) {
   const choose = <K extends keyof TerminalPrefs>(key: K, label: string, options: readonly (readonly [TerminalPrefs[K], string])[]) =>
     radios<TerminalPrefs[K]>(
       label,
@@ -230,6 +231,13 @@ function terminalRows() {
     ['underline', 'Underline'],
   ]);
   const blink = switchFor('cursorBlink', 'Cursor blink');
+  const shell = guestTokenOn()
+    ? undefined
+    : toggle(
+        'Shell prompt integration',
+        () => store.shellIntegration.on,
+        (on) => net.send({ t: 'shellIntegration.set', on }),
+      );
   const speed = choose('scrollSpeed', 'Scroll speed', [
     ['slow', 'Slow'],
     ['default', 'Default'],
@@ -260,6 +268,14 @@ function terminalRows() {
   };
   paint();
   const offs = [onTerminalPrefs(paint), onTermFontSize(paint)];
+  if (shell) {
+    const paintShell = () => {
+      shell.paint();
+      shell.el.input.disabled = !net.up;
+    };
+    paintShell();
+    offs.push(store.on('shellIntegration', paintShell), net.onStatus(paintShell));
+  }
   return {
     groups: [
       group(
@@ -282,7 +298,10 @@ function terminalRows() {
           control: option.row,
         }),
       ),
-      group(null, card('Restore Terminal defaults', { desc: desc('Put every Terminal setting back to how it came, text size included.'), control: restore })),
+      group(null, card('Restore Terminal defaults', { desc: desc('Reset terminal preferences in this browser, including text size.'), control: restore })),
+      ...(shell
+        ? [group('Office-wide', card('Shell prompt integration', { desc: desc('Mark prompts and command results in new zsh sessions for Boss Shell and shell workers on all floors. Running shells are unchanged.'), control: shell.el }))]
+        : []),
     ],
     dispose: () => {
       for (const off of offs) off();
@@ -998,7 +1017,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   const only = opts.surface === 'office' ? officeRows(net, opts.office) : undefined;
   const appearance = surface === 'office' ? undefined : appearanceSettings();
   const threadPane = threadRows();
-  const terminalPane = terminalRows();
+  const terminalPane = terminalRows(net);
   const shown = settingsPanes(surface);
   // ---- Workers ------------------------------------------------------------------------------------
   // Where a fresh worker starts: the latest main, or the branch the checkout is on.
@@ -1672,7 +1691,7 @@ export function openSettings(net: Net, opts: SettingsOptions) {
   const paintSearch = () => {
     const query = searchInput.value.trim();
     if (!query) return show(lastPane);
-    const hits = searchSettings(query, surface);
+    const hits = searchSettings(query, surface).filter((hit) => rowByTitle.has(hit.title));
     const paneLabel = new Map(SETTINGS_PANES.map((p) => [p.id, p]));
     results.replaceChildren(
       h(

@@ -17,6 +17,14 @@ If Android Find is open when the phone receives a replacement snapshot, it rerun
 - `adapter.native` is the public `WTerm` and `adapter.core` the unmodified pane-owned `GhosttyCore` after open. Features subscribe to `onOpen((native, signal) => …)`, `onBeforeWrite(data)`, `onNativeParsed(chunk)`, `onWriteParsed()`, `onReset()`, `onResize({cols,rows})` and `onOptionChange(key)`. The lifetime signal aborts before native teardown. `onResize` fires synchronously **after** an actual size change, not on a repeated request for the same grid.
 - The runtime installs `wterm-keys.ts` (Office key policy), `wterm-scroll.ts` (navigation and scroll preferences), `wterm-graphics.ts` (shared Kitty overlay), and `wterm-links.ts` (Office link policy and `TerminalFind`). The runtime composes the `wterm-appearance.ts` display view with its response gate. Display-only changes do not modify cells read through `adapter.core`. No package internals are patched.
 
+## Find, prompts and clipboard
+
+In a web or Mac terminal, use **Find**, Cmd+F on Apple devices, or Ctrl+Shift+F elsewhere. Enter and Shift+Enter step through native scrollback matches; Escape closes Find and restores the reader position. `window.office.readTerminal()` reads only visible, already-open web terminals, without attaching to the PTY.
+
+When a shell emits OSC 133 marks, the prompt chip shows its current phase or exit status. Its arrows and Ctrl+Shift+[ / Ctrl+Shift+] move between retained prompts. Reattaching restores text, not old marks. **Settings → Terminal → Shell prompt integration** controls the default zsh hooks for newly started Boss Shell and shell workers across all floors. Alt-drag selects a rectangle; use Shift+Alt-drag when the application tracks the mouse.
+
+A live, writable owner's terminal forwards supported OSC 52 clipboard writes to the platform. The browser decides permission, including whether to ask on the first write. The office never reads the clipboard for an OSC query, retries a denied write, or applies writes while parsing a snapshot or its queued output. A guest, read-only or disconnected terminal cannot write. A local OSC 7 directory report can help resolve relative file links, but cannot add a workspace root or grant access.
+
 ## Web and Mac parity matrix
 
 These results use the shipped 0.6.0 core in Chromium. Where the PTY protocol or public core API limits parity, the table describes what the user sees.
