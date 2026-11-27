@@ -25,13 +25,22 @@ function paneCore(core: GhosttyTerminal) {
   return proxy;
 }
 
+export function paneFactory(ghostty: Ghostty) {
+  const createTerminal: Ghostty['createTerminal'] = (...args) => paneCore(ghostty.createTerminal(...args));
+  return new Proxy(ghostty, {
+    get(target, key) {
+      if (key === 'createTerminal') return createTerminal;
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 /** Only imported by the opted-in renderer. Use the exported binary, not the library's data: URL. */
 export async function createGhostty(options: ITerminalOptions) {
   // Reusing an allocator across disposed terminals traps on subsequent writes in the pinned WASM.
   const ghostty = await Ghostty.load(new URL('ghostty-web/ghostty-vt.wasm', import.meta.url).href);
-  const factory = Object.create(ghostty) as Ghostty;
-  factory.createTerminal = (...args) => paneCore(ghostty.createTerminal(...args));
-  const term = new Terminal({ ...options, ghostty: factory });
+  const term = new Terminal({ ...options, ghostty: paneFactory(ghostty) });
   const fit = new FitAddon();
   term.loadAddon(fit);
   return { term, fit };

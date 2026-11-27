@@ -257,7 +257,9 @@ export class GraphicsRows {
     // absolute positioning and erase-in-line do not themselves add or remove physical rows.
     const plain = data.replace(/\x1b\][^\x07\x18\x1a\x1b\x9c]*(?:\x07|\x1b\\|\x9c)|\x1b\[[\d:;]*m|\x1b\[\?(?:(?:1|7|9|12|25|100[0-7]|101[56]|2004|2027);?)+[hl]|\x1b\[\d*K/g, '');
     const text = plain.replace(/\x1b\[\d*G$/, '');
-    const advances = lineAdvances(text, before.x, this.core.cols, this.core.getMode(7), previous);
+    // getMode(7) describes the end of the span, not the text preceding a DECAWM toggle.
+    const changesWrap = /\x1b\[\?(?:[\d;]*;)?7(?:;[\d;]*)?[hl]/.test(data);
+    const advances = changesWrap ? undefined : lineAdvances(text, before.x, this.core.cols, this.core.getMode(7), previous);
     let trimmed: number;
     if (advances !== undefined && !this.region && !this.horizontalMargins) {
       this.pendingWrap = text === plain && advances.pending;

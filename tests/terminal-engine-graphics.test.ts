@@ -56,6 +56,25 @@ test('the zsh prompt preserves a placed image above the cursor on real WASM', as
   }
 });
 
+test('autowrap changes do not invent a row trim for an image anchor', async (t) => {
+  const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
+  const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(40, 8);
+  t.after(() => core.free());
+  const rows = new GraphicsRows(core);
+  const write = (data: string) => {
+    rows.begin(data);
+    core.write(data);
+    rows.end();
+  };
+  write('\r\n');
+  const image = rows.anchor()!;
+  const text = 'a'.repeat(41);
+  for (const chunks of [[`\x1b[?7l${text}\x1b[?7h`], ['\r\x1b[?7l', text], ['\r', `${text}\x1b[?25;7h`]]) {
+    for (const chunk of chunks) write(chunk);
+    assert.deepEqual([core.getCursor().y, core.getScrollbackLength(), image.line], [1, 0, 1]);
+  }
+});
+
 test('ED2 and ED3 handle screen and history image markers like xterm clear', async (t) => {
   const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
   for (const command of ['\x1b[2J', '\x1b[3J', '\x1b[H\x1b[2J\x1b[3J']) {

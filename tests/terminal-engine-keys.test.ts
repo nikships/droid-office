@@ -1,13 +1,29 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
+import { Ghostty } from 'ghostty-web';
+import { paneFactory } from '../src/client/term-engine/ghostty-runtime.js';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 
 const status = browserStatus();
+test('pane factory calls public core and key constructors on the loaded instance', async (t) => {
+  const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
+  const real = await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`);
+  const terminal = t.mock.method(real, 'createTerminal');
+  const encoder = t.mock.method(real, 'createKeyEncoder');
+  const factory = paneFactory(real);
+  factory.createTerminal().free();
+  factory.createKeyEncoder().dispose();
+  assert.deepEqual(
+    [terminal, encoder].map((method) => method.mock.calls[0].this === real),
+    [true, true],
+  );
+});
+
 test('real terminal key handlers produce the same PTY bytes before and after Kitty negotiation', { skip: !status.installed && `No Chromium in ${status.path}` }, async (t) => {
   const cacheDir = await mkdtemp(join(tmpdir(), 'office-keys-vite-'));
   const server = await createServer({

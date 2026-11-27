@@ -165,14 +165,20 @@ test('Ghostty scrollback preserves the fractional reader, settles and routes app
     assert.deepEqual(
       await page.evaluate(() => {
         const { term } = window as any;
-        term.reset();
-        term.resize(40, 8);
-        term.write('x\r\n'.repeat(40));
-        term.native.scrollToTop();
-        term.resize(40, 10);
-        return [term.native.getViewportY(), term.native.getScrollbackLength(), term.buffer.active.viewportY];
+        return [40, 8].map((lines) => {
+          term.reset();
+          term.resize(40, 8);
+          term.write('x\r\n'.repeat(lines));
+          term.native.scrollToTop();
+          const oldDepth = term.native.getViewportY();
+          term.resize(40, 10);
+          return [oldDepth, term.native.getViewportY(), term.native.getScrollbackLength(), term.buffer.active.viewportY];
+        });
       }),
-      [31, 31, 0],
+      [
+        [33, 31, 31, 0],
+        [1, 0, 0, 0],
+      ],
     );
   });
   await page.evaluate(() => (window as any).term.dispose());

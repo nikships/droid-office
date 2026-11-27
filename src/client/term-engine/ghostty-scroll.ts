@@ -95,7 +95,7 @@ export function attachGhosttyScroll(adapter: GhosttyAdapter) {
       }),
       native.onResize(() => {
         stop();
-        if (native.getViewportY() > history()) native.scrollToTop();
+        if (native.getViewportY() > history()) native.scrollLines(0);
       }),
       adapter.onReset(() => {
         stop();
