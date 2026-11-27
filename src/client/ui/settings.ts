@@ -266,7 +266,13 @@ function terminalRows() {
   const offs = [onTerminalPrefs(paint), onTermFontSize(paint)];
   return {
     groups: [
-      group('Engine', card('Terminal engine', { desc: desc('Applies the next time you open a terminal. Ghostty is experimental; some xterm features are unavailable.'), control: engine.row })),
+      group(
+        'Engine',
+        card('Terminal engine', {
+          desc: desc('Applies the next time you open a terminal. Ghostty uses fixed line spacing and scrolls text in whole rows. Keep xterm for adjustable spacing and pixel-smooth scrolling.'),
+          control: engine.row,
+        }),
+      ),
       group(
         'Text',
         card('Terminal text size', { desc: desc('How big terminal text draws. The A− and A+ buttons over a terminal change it too.'), control: h('div.volume', {}, size, sizeValue) }),
