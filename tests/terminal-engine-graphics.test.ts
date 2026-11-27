@@ -205,9 +205,10 @@ test('a Unicode line crossing the native trim boundary keeps only the correct nu
   );
   // At eviction, a wide glyph wraps from the last cell. The following five hard
   // breaks put that wrap at the farthest row the tab-aware proof needs to inspect.
-  for (const [data, continuation] of [
-    ['日', 23],
-    [`\t日${'\r\n'.repeat(5)}`, 18],
+  for (const [data, continuation, wrapped] of [
+    ['日', 23, true],
+    [`\t日${'\r\n'.repeat(5)}`, 18, true],
+    ['日\r\n\x1b[1J', 22, false], // ED1 clears the earlier continuation flag, not the wrap that occurred.
   ] as const) {
     const uncertain = rows.anchor()!;
     for (let i = 0; i < 6000 && core.getScrollbackLength() < previous; i++) write('fill\r\n');
@@ -215,7 +216,7 @@ test('a Unicode line crossing the native trim boundary keeps only the correct nu
     write('x'.repeat(79));
     write(data);
     assert.ok(core.getScrollbackLength() < previous);
-    assert.ok(core.isRowWrapped(continuation));
+    assert.equal(core.isRowWrapped(continuation), wrapped);
     assert.ok(uncertain.isDisposed);
   }
 });

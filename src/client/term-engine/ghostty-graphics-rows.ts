@@ -4,6 +4,7 @@ import { VtScanner } from '../../shared/vt-scanner';
 import type { KittyRowAnchor } from '../term-kitty-overlay';
 
 const placeholder = KITTY_PLACEHOLDER_CHAR.codePointAt(0);
+const passiveModes = new Set(['1', '7', '9', '12', '25', '1000', '1001', '1002', '1003', '1004', '1005', '1006', '1007', '1015', '1016', '2004', '2027']);
 export const switchesScreen = (params: (number | number[])[]) => params.some((p) => p === 47 || p === 1047 || p === 1049);
 
 /** Read the grapheme at its actual physical cell, including history. Unlike translateToString,
@@ -41,15 +42,26 @@ interface Position {
  * row has identical text and the history limit trims a whole page in a single write. */
 function lineAdvances(data: string, startX: number, cols: number, autowrap: boolean, previous: boolean | undefined) {
   let x = startX;
+  const eraseOrColumn = /\x1b\[(?:[012]?K|[01]?J|(\d{0,4})G)/y;
   // A cursor already on the margin may or may not have a wrap pending from an earlier write.
   let pending = x === cols - 1 ? previous : false;
   let count = 0;
   for (let i = 0; i < data.length; i++) {
     const ch = data[i];
-    if (ch === '\x1b' && (data.startsWith('\x1b[?7h', i) || data.startsWith('\x1b[?7l', i))) {
-      autowrap = data[i + 4] === 'h';
-      i += 4;
-      continue;
+    if (ch === '\x1b') {
+      eraseOrColumn.lastIndex = i;
+      const move = eraseOrColumn.exec(data);
+      if (move) {
+        if (move[1] !== undefined) x = Math.min(cols, Number(move[1]) || 1) - 1;
+        pending = false;
+        i = eraseOrColumn.lastIndex - 1;
+        continue;
+      }
+      if (data.startsWith('\x1b[?7h', i) || data.startsWith('\x1b[?7l', i)) {
+        autowrap = data[i + 4] === 'h';
+        i += 4;
+        continue;
+      }
     }
     if (ch >= ' ' && ch <= '~') {
       if (autowrap && pending === undefined) return undefined;
@@ -67,7 +79,7 @@ function lineAdvances(data: string, startX: number, cols: number, autowrap: bool
     else if (ch === '\b') x = Math.max(0, x - 1);
     else return undefined;
   }
-  return { count, pending };
+  return { count, pending, x };
 }
 
 export class GraphicsRows {
@@ -92,8 +104,9 @@ export class GraphicsRows {
     });
     this.boundaries.registerCsiHandler({ final: 'J' }, ([mode]) => {
       // ED0/1 only erase cells. ED2/3 change markers at this point in the stream.
-      if (mode === 2 || mode === 3) this.spans.push('');
-      return typeof mode === 'number' && mode <= 3;
+      if (mode !== 2 && mode !== 3) return false; // ED0/1 cancel pending wrap in stream order.
+      this.spans.push('');
+      return true;
     });
     for (const final of ['h', 'l'])
       this.boundaries.registerCsiHandler({ prefix: '?', final }, (params) => {
@@ -143,6 +156,7 @@ export class GraphicsRows {
     }
     if (!switchesScreen(params)) return;
     this.advance(this.spans[this.span++] ?? '');
+    this.pendingWrap = undefined;
     if (set && !this.core.isAlternateScreen()) {
       this.checkpoint();
       this.savedPrimary = this.before;
@@ -194,6 +208,7 @@ export class GraphicsRows {
       else this.trim(this.core.getScrollbackLength()); // ED3 drops history but keeps screen rows.
     }
     write();
+    this.pendingWrap = undefined;
     this.checkpoint();
   }
 
@@ -260,28 +275,32 @@ export class GraphicsRows {
     const history = this.core.getScrollbackLength();
     const delta = history - before.history;
     const after = this.core.getCursor();
-    // Styling, OSC titles and shell-integration metadata, private mode toggles, horizontal
-    // absolute positioning and erase-in-line do not themselves add or remove physical rows.
-    const styled = data.replace(/\x1b\][^\x07\x18\x1a\x1b\x9c]*(?:\x07|\x1b\\|\x9c)|\x1b\[[\d:;]*m|\x1b\[\?((?:(?:1|7|9|12|25|100[0-7]|101[56]|2004|2027);?)+)([hl])|\x1b\[\d*K/g, (_, modes: string | undefined, toggle: string) =>
-      modes?.split(';').includes('7') ? `\x1b[?7${toggle}` : '',
-    );
-    const text = styled.replace(/\x1b\[\d*G$/, '');
-    const advances = lineAdvances(text, before.x, this.core.cols, before.autowrap, previous);
+    // Strip only measured wrap-neutral controls. Keep erases, column moves and
+    // DECAWM in stream order; sharing a cursor row is not enough to preserve the latch.
+    const text = data.replace(/\x1b\](?:[01278]|133);[^\x00-\x1f\x7f-\x9f]*(?:\x07|\x1b\\)|\x1b\[[\d:;]*m|\x1b\[\?([\d;]+)([hl])/g, (seq, modes: string | undefined, toggle: string) => {
+      if (!modes) return '';
+      const list = modes.split(';');
+      if (!list.every((m) => passiveModes.has(m))) return seq;
+      return list.includes('7') ? `\x1b[?7${toggle}` : '';
+    });
+    const reverseBackspace = text.includes('\b') && (this.core.getMode(45) || this.core.getMode(1045));
+    const advances = reverseBackspace ? undefined : lineAdvances(text, before.x, this.core.cols, before.autowrap, previous);
     let trimmed: number;
-    if (advances !== undefined && !this.region && !this.horizontalMargins) {
-      this.pendingWrap = text === styled && advances.pending;
+    if (advances !== undefined && advances.x === after.x && !this.region && !this.horizontalMargins) {
+      this.pendingWrap = advances.pending;
       trimmed = before.y + advances.count - after.y - delta;
     } else {
       // The core exposes neither a trim counter nor stable row handles. Only accept a
       // displacement we can prove. Fast path for soft-wrapped output: each printable
       // UTF-16 unit occupies at most two cells; controls below move the cursor but do not
       // scroll. If even the upper bound cannot cross the bottom, no trim was possible.
-      const cursorMotion = /\x1b(?:[78]|\[[\d;]*[GKCDHfABsu])/g;
+      const cursorMotion = /\x1b(?:[78]|\[[\d;]*[GCDHfABsu])/g;
       // zsh can echo a Unicode command after backing up over its first character. A
       // leading BS inside the row cannot reverse-wrap; do not assume that at the margin.
       // For the bound, a tab and a horizontal CSI can both put the next glyph at the
       // last column. CUB under reverse-wrap is not horizontal: it can cross a row.
-      const plain = styled
+      const plain = text
+        .replace(/\x1b\[(?:[012]?K|[01]?J)/g, '')
         .replace(/\x1b\[\?7[hl]/g, '')
         .replace(/^\x08+/, (bs) => (this.horizontalMargins ? bs : bs.slice(before.x)))
         .replace(/\x1b\[\d*([CDG`])/g, (seq, final: string) => (final === 'D' && (this.core.getMode(45) || this.core.getMode(1045)) ? seq : '\t'));
@@ -305,7 +324,8 @@ export class GraphicsRows {
         // Tab-heavy listings can have a bound larger than a screen. If any soft wrap
         // occurred, the last one has at most `breaks` literal newlines after it.
         const check = tabs ? Math.min(max, breaks + 1) : max;
-        if (positions || this.region || this.horizontalMargins || check > after.y + 1) return this.invalidate();
+        // ED1 can erase evidence of a wrap on an earlier row in this same span.
+        if (text.includes('\x1b[1J') || positions || this.region || this.horizontalMargins || check > after.y + 1) return this.invalidate();
         for (let row = after.y - check + 1; row <= after.y; row++) if (this.core.isRowWrapped(row)) return this.invalidate();
         trimmed = before.y + breaks - after.y - delta;
       }
