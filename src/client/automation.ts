@@ -15,6 +15,7 @@ import { missionStand } from './mission-office';
 import type { FrameReport } from './frame-stats';
 import { waitingOnSomeone } from './notify';
 import { EYE_HEIGHT } from './player';
+import { readTerminal } from './term-engine/wterm-search-read';
 import type { InteractKind, Interactable } from './world/office';
 import type { VisitorInfo } from './world/visitors';
 
@@ -458,6 +459,8 @@ export interface GoToOptions {
 }
 
 export interface OfficeAutomation {
+  /** Page-local; terminal contents are not an HTTP automation command. */
+  readTerminal: typeof readTerminal;
   /** Goes to a desk, a worker, a board, a place, a floor or the roof, and resolves once you're there. */
   goTo(target: string, opts?: GoToOptions): Promise<Snapshot>;
   /** Presses a key (E by default) at what you went to, or else at what's nearest, as if you faced it. */
@@ -654,6 +657,7 @@ export function createAutomation(host: AutomationHost): OfficeAutomation {
 
   return {
     goTo,
+    readTerminal,
     interact,
     open,
     closeAll,

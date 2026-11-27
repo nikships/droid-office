@@ -9,6 +9,7 @@ interface LookupResult {
 }
 
 export class TerminalPaths {
+  cwdHint?: string;
   private readonly controller = new AbortController();
   private readonly cache = new Map<string, { at: number; pending: Promise<LookupResult> }>();
 
@@ -23,16 +24,17 @@ export class TerminalPaths {
   async resolveTarget(raw: string, osc8: boolean): Promise<(() => void) | undefined> {
     if (this.context.inert || !terminalPathRef(raw)) return;
     const key = `${this.floor()}\0${osc8 ? 'osc8' : 'path'}\0${raw}`;
-    const { paths, local } = await this.lookup(key, [raw]);
+    const cwdHint = this.cwdHint;
+    const { paths, local } = await this.lookup(key, [raw], cwdHint);
     const resolved = paths[0];
-    if (resolved && !this.controller.signal.aborted) return () => this.openResolved(raw, resolved, local);
+    if (resolved && !this.controller.signal.aborted && cwdHint === this.cwdHint) return () => this.openResolved(raw, resolved, local, cwdHint);
   }
 
   private url(route: string): string {
     return withToken(`${route}?${new URLSearchParams({ floor: this.floor(), worker: this.context.workerId })}`);
   }
 
-  private openResolved(raw: string, resolved: WorkspacePathRef, local: boolean): void {
+  private openResolved(raw: string, resolved: WorkspacePathRef, local: boolean, cwdHint?: string): void {
     // A share link's guest is never on the office's computer: its files open as a preview.
     if (!local || guestTokenOn()) {
       openFilePreviewModal({
@@ -42,6 +44,7 @@ export class TerminalPaths {
         source: 'terminal',
         path: resolved.displayPath ?? resolved.path,
         requestPath: raw,
+        cwdHint,
         line: resolved.line,
         endLine: resolved.endLine,
       });
@@ -50,7 +53,7 @@ export class TerminalPaths {
     void fetch(this.url('/api/term/path/open'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ paths: [raw] }),
+      body: JSON.stringify({ paths: [raw], cwdHint }),
       signal: this.controller.signal,
     })
       .then(async (response) => {
@@ -63,7 +66,8 @@ export class TerminalPaths {
       });
   }
 
-  private lookup(key: string, paths: string[]): Promise<LookupResult> {
+  private lookup(key: string, paths: string[], cwdHint?: string): Promise<LookupResult> {
+    if (cwdHint) key = JSON.stringify([key, cwdHint]);
     const hit = this.cache.get(key);
     if (hit && Date.now() - hit.at < 5000) return hit.pending;
     const entry: { at: number; pending: Promise<LookupResult> } = {
@@ -71,7 +75,7 @@ export class TerminalPaths {
       pending: fetch(this.url('/api/term/paths'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ paths }),
+        body: JSON.stringify({ paths, cwdHint }),
         signal: this.controller.signal,
       })
         .then(async (response) => {

@@ -13,6 +13,7 @@ export interface FilePreviewOptions {
   source?: 'terminal';
   /** Original terminal token, re-resolved by the host rather than trusting its displayed absolute path. */
   requestPath?: string;
+  cwdHint?: string;
   floor: string;
   workerId: string;
   workerName?: string;
@@ -39,7 +40,7 @@ export function formatFilePreviewBytes(bytes: number | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type FilePreviewUrlOptions = Pick<FilePreviewOptions, 'floor' | 'workerId' | 'path' | 'source' | 'requestPath'>;
+type FilePreviewUrlOptions = Pick<FilePreviewOptions, 'floor' | 'workerId' | 'path' | 'source' | 'requestPath' | 'cwdHint'>;
 
 function filePreviewUrl(opts: FilePreviewUrlOptions, raw?: 'image'): string {
   const endpoint = opts.source === 'terminal' ? '/api/term/file' : '/api/thread/file';
@@ -47,6 +48,7 @@ function filePreviewUrl(opts: FilePreviewUrlOptions, raw?: 'image'): string {
     floor: opts.floor,
     worker: opts.workerId,
     path: opts.requestPath ?? opts.path,
+    ...(opts.source === 'terminal' && opts.cwdHint ? { cwdHint: opts.cwdHint } : {}),
     ...(raw ? { raw } : {}),
   });
   return withToken(`${endpoint}?${params}`);

@@ -55,6 +55,7 @@ Every office tab has `window.office`, so an agent or a browser test can check a 
 | `office.interact(key = 'E')` | Presses E, P, R, X, B, C or O at what you went to, or else at the nearest thing in reach, as if you faced it. E at a worker opens its terminal; at a board, it opens the board. On a ladder, E gets you off it as the key does, at the floor or dropping from where you are; it is refused while you go through the hatch. Other keys, `goTo` and riding wait until you're off |
 | `office.open(id)` | Runs a ☰ menu command: `issues`, `pulls`, `pipelines`, `whiteboard`, `search`, `elevator`, `roof`, `decor`, `settings`, `phone`, `help`, `upgrade`, `waiting` |
 | `office.commands()` | Those commands, with whether each is offered here and why one is blocked |
+| `await office.readTerminal()` | Page-local, read-only snapshots of visible terminal panes: `[{ workerId?, text }]`. Text includes retained scrollback, with soft wraps joined. A write, resize, close or competing read can abort a capture; retry once output settles. Not exposed by the HTTP automation relay or WebMCP. |
 | `office.closeAll()` | Closes every open window |
 | `office.ride(floor)` | Takes the elevator to a floor (id or name) or `roof`, and resolves once the doors open there |
 | `office.teleport(floor)` | Instantly switches to a numbered floor (id or name), preserving position and view, like Command+number. Does not target the roof |

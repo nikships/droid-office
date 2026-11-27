@@ -69,7 +69,7 @@ export function createFloorHttp({ floors, orchestrator, workerFloor, workerThrea
     return { q, terminals: shown.hits, more: shown.more };
   };
 
-  return async (req: http.IncomingMessage, res: http.ServerResponse, p: string, url: URL, ownRequest: () => boolean, ownPage: () => boolean = () => false) => {
+  return async (req: http.IncomingMessage, res: http.ServerResponse, p: string, url: URL, ownRequest: () => boolean, ownPage: () => boolean = () => false, allowCwdHint = false) => {
     // Which floor a request is about: its boards and its workers.
     const floor = floors.get(url.searchParams.get('floor') ?? '');
     if (p === '/api/term/paths' || p === '/api/term/path/open' || p === '/api/term/file') {
@@ -85,9 +85,10 @@ export function createFloorHttp({ floors, orchestrator, workerFloor, workerThrea
       const root = workerId === ORCHESTRATOR_ID ? base.cwd : (workerFloor(workerId)?.def.dir ?? floor?.def.dir ?? base.cwd);
       const context = { ...base, root };
       let candidates: string[];
+      let cwdHint: unknown = url.searchParams.get('cwdHint');
       if (preview) candidates = [str(url.searchParams.get('path'), 4096)];
       else {
-        let body: { paths?: unknown };
+        let body: { paths?: unknown; cwdHint?: unknown };
         try {
           body = JSON.parse(await readBody(req, 64 * 1024));
         } catch (err) {
@@ -96,13 +97,14 @@ export function createFloorHttp({ floors, orchestrator, workerFloor, workerThrea
         if (!body || !Array.isArray(body.paths) || body.paths.length === 0 || body.paths.length > 64 || body.paths.some((entry) => typeof entry !== 'string' || entry.length > 4096))
           return send(res, 400, { error: 'Send 1 to 64 file paths.' });
         candidates = body.paths;
+        cwdHint = body.cwdHint;
       }
       if (p === '/api/term/path/open' && candidates.length !== 1) return send(res, 400, { error: 'Send exactly one file path to open.' });
       // Paired devices and proxied companions (non-loopback Host) only see files inside the terminal's roots.
       const ownerPage = ownPage() && loopbackHost(req.headers.host);
       const local = ownerPage && process.platform === 'darwin';
       if (p === '/api/term/path/open' && !local) return send(res, 403, { error: 'Host applications can be opened only from the office on its own Mac.' });
-      const paths = await terminalPaths.resolve(context, candidates, { allowOutside: ownerPage });
+      const paths = await terminalPaths.resolve(context, candidates, { allowOutside: ownerPage, cwdHint: allowCwdHint ? cwdHint : undefined });
       if (p === '/api/term/paths') return send(res, 200, { paths, local });
       const target = paths[0];
       if (!target) return send(res, 404, { error: 'File not found in the terminal workspace.' });

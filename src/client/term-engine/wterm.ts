@@ -132,11 +132,11 @@ export class WTermAdapter {
   }
   /** A fresh attach resets core pins. Save a physical row plus its text and verify
    * the row after replay (find the nearest matching row if history was trimmed). */
-  saveReader(): (() => void) | undefined {
+  saveReader({ explicit = false } = {}): (() => void) | undefined {
     const { baseY, viewportY } = this.buffer.active;
     const c = this.core;
     if (!c || viewportY >= baseY) return;
-    const revision = this.readerRevision;
+    const savedRevision = this.readerRevision;
     const fraction = (this.readerRow ?? 0) % 1;
     const rowText = (row: number, base: number, expected?: string) => {
       const offset = base - 1 - row;
@@ -153,6 +153,8 @@ export class WTermAdapter {
     const label = rowText(viewportY, baseY);
     const next = viewportY + 1 < baseY ? rowText(viewportY + 1, baseY) : undefined;
     return () => {
+      // Closing Find explicitly requests the pre-search position, even after stepping through matches.
+      const revision = explicit ? this.readerRevision : savedRevision;
       const el = this.root;
       if (!el || this.core !== c || revision !== this.readerRevision) return;
       const base = c.getScrollbackCount();

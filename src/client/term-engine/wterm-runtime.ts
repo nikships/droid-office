@@ -1,3 +1,4 @@
+import { attachWtermSearch } from './wterm-search';
 import type { KittyTerminalOptions } from '../term-kitty-overlay';
 import type { TerminalPaths } from '../ui/terminal-path-links';
 import { scrollAtOnce } from '../ui/terminal-prefs';
@@ -11,6 +12,7 @@ import { attachWtermScroll } from './wterm-scroll';
 /** The web/Mac feature list. Other surfaces supply their own list to the same core. */
 export function webFeatures(hooks: WebTerminalFeatures, images?: KittyTerminalOptions, paths?: TerminalPaths): WTermFeature[] {
   return [
+    (adapter) => attachWtermSearch(adapter, paths),
     (adapter) => {
       hooks.keyAction = attachWtermKeys(adapter).keyAction;
     },

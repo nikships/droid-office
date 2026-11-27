@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { readlink, realpath, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import path from 'node:path';
 import { terminalPathRef, type WorkspacePathRef } from '../shared/path-links.js';
 
@@ -19,6 +19,21 @@ const within = (root: string, file: string) => {
   const rel = path.relative(root, file);
   return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
 };
+
+/** OSC 7 is untrusted output. It can select a base, never grant another root. */
+async function hintedDirectory(hint: unknown, roots: string[]) {
+  if (typeof hint !== 'string' || hint.length > 4096 || /[%]2f|[%]5c|[\\?#\s]/i.test(hint)) return;
+  const match = /^file:\/\/([^/]*)(\/.*)$/i.exec(hint);
+  if (!match || (match[1] && !['localhost', hostname().toLowerCase()].includes(match[1].toLowerCase()))) return;
+  try {
+    const decoded = decodeURIComponent(match[2]);
+    if (decoded.startsWith('//') || decoded.includes('\0') || decoded.split('/').includes('..')) return;
+    const dir = await realpath(decoded);
+    if (roots.some((root) => within(root, dir)) && (await stat(dir)).isDirectory()) return dir;
+  } catch {
+    // Malformed escapes, stale directories and permission errors use the ordinary lookup.
+  }
+}
 
 function command(file: string, args: string[], cwd?: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -98,12 +113,13 @@ export class TerminalPaths {
    * Relative paths and tracked basenames never leave the roots. Explicit absolute and `~/` paths resolve anywhere only
    * with `allowOutside`, which callers grant solely to the owner's own page on the host; paired devices stay confined.
    */
-  async resolve(context: TerminalPathContext, candidates: string[], { allowOutside = false }: { allowOutside?: boolean } = {}): Promise<(ResolvedTerminalPath | null)[]> {
+  async resolve(context: TerminalPathContext, candidates: string[], { allowOutside = false, cwdHint }: { allowOutside?: boolean; cwdHint?: unknown } = {}): Promise<(ResolvedTerminalPath | null)[]> {
     const roots = [...new Set(await Promise.all([context.cwd, context.root].map((root) => realpath(root).catch(() => path.resolve(root)))))];
     const rawLive = await this.liveCwd(context.pid);
     const live = rawLive ? await realpath(rawLive).catch(() => path.resolve(rawLive)) : undefined;
     // A shell can cd within its checkout; cd elsewhere must not grant relative-path access outside it.
-    const bases = live && roots.some((root) => within(root, live)) ? [...new Set([live, ...roots])] : roots;
+    const hinted = await hintedDirectory(cwdHint, roots);
+    const bases = [...new Set([...(hinted ? [hinted] : []), ...(live && roots.some((root) => within(root, live)) ? [live] : []), ...roots])];
     const displayOf = (abs: string): string => {
       for (const root of roots) {
         if (within(root, abs)) {

@@ -3,12 +3,14 @@ import { findLine } from '../../shared/search';
 import type { TerminalFind } from './types';
 import type { WTermAdapter } from './wterm';
 import { retainedRows } from './wterm-links-lines';
+import { searchStarting } from './wterm-search-controls';
 
 export const missingLine = 'That line has scrolled out of the terminal since';
 
 export function installFind(adapter: WTermAdapter, core: GhosttyCore, grid: HTMLElement, signal: AbortSignal) {
   const root = grid.parentElement!;
   let clear: (() => void) | undefined;
+  root.addEventListener(searchStarting, () => clear?.(), { signal });
   adapter.onReset(() => clear?.());
   signal.addEventListener('abort', () => clear?.(), { once: true });
   return ({ needle, fromEnd }: TerminalFind) => {
@@ -19,6 +21,7 @@ export function installFind(adapter: WTermAdapter, core: GhosttyCore, grid: HTML
     const marker = core.trackPosition({ row, col: 0 });
     if (!marker) return missingLine;
     adapter.cancelReaderRestore();
+    root.dispatchEvent(new Event(searchStarting));
     const text = rows.logical(row)!.text;
     let previousSize = '',
       scrolled = false;
