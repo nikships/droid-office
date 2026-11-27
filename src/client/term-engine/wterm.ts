@@ -24,6 +24,7 @@ function event<T>() {
 }
 
 export type WTermFeature = (adapter: WTermAdapter) => void;
+type SavedReader = (() => void) & { revision: number };
 
 export class WTermAdapter {
   readonly options: ClientTerminalOptions;
@@ -157,12 +158,16 @@ export class WTermAdapter {
   }
   /** A fresh attach resets core pins. Save a physical row plus its text and verify
    * the row after replay (find the nearest matching row if history was trimmed). */
-  saveReader({ explicit = false } = {}): (() => void) | undefined {
+  saveReader({ explicit = false, pending }: { explicit?: boolean; pending?: SavedReader } = {}): SavedReader | undefined {
     const { baseY, viewportY } = this.buffer.active;
+    if (pending?.revision === this.readerRevision) return pending;
     const c = this.core;
-    if (!c || viewportY >= baseY) return;
+    const el = this.root;
+    if (!c || !el || (!this.paintPending && viewportY >= baseY)) return;
     const savedRevision = this.readerRevision;
-    const fraction = (this.readerRow ?? 0) % 1;
+    const position = this.paintPending ? el.scrollTop / this.rowHeight : viewportY + ((this.readerRow ?? 0) % 1);
+    const startRow = Math.floor(position);
+    const fraction = position % 1;
     const rowText = (row: number, base: number, expected?: string) => {
       const offset = base - 1 - row;
       let text = '';
@@ -175,15 +180,28 @@ export class WTermAdapter {
       }
       return text.trimEnd();
     };
-    const label = rowText(viewportY, baseY);
-    const next = viewportY + 1 < baseY ? rowText(viewportY + 1, baseY) : undefined;
-    return () => {
+    let label: string | undefined;
+    let next: string | undefined;
+    if (this.paintPending) {
+      // The parsed core may be a different grid. Only its retained DOM rows were visible.
+      const origin = el.querySelector<HTMLElement>('.term-scrollback-spacer')?.offsetTop;
+      if (origin === undefined || !el.clientHeight || this.isAtTail()) return;
+      const painted = Array.from(el.querySelectorAll<HTMLElement>('.term-scrollback-row')).find((row) => Math.round((row.offsetTop - origin) / this.rowHeight) === startRow);
+      if (!painted) return;
+      label = painted.textContent.trimEnd();
+      const sibling = painted.nextElementSibling;
+      if (sibling?.classList.contains('term-scrollback-row')) next = sibling.textContent.trimEnd();
+    } else {
+      label = rowText(startRow, baseY);
+      if (startRow + 1 < baseY) next = rowText(startRow + 1, baseY);
+    }
+    const restore = () => {
       // Closing Find explicitly requests the pre-search position, even after stepping through matches.
       const revision = explicit ? this.readerRevision : savedRevision;
       const el = this.root;
       if (!el || this.core !== c || revision !== this.readerRevision) return;
       const base = c.getScrollbackCount();
-      const start = Math.min(viewportY, base - 1);
+      const start = Math.min(startRow, base - 1);
       let row: number | undefined;
       search: for (let d = 0; d < base; d++) {
         for (const candidate of d ? [start - d, start + d] : [start]) {
@@ -204,6 +222,7 @@ export class WTermAdapter {
       if (explicit) requestAnimationFrame(apply);
       else apply();
     };
+    return Object.assign(restore, { revision: savedRevision });
   }
   private rowHeight = 1;
   private lastClientHeight = 0;

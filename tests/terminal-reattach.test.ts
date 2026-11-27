@@ -130,6 +130,70 @@ test('Raw TTY reattaches with a visible reader', { skip: !browserStatus().instal
     await page.close();
   });
 
+  for (const wheel of [false, true])
+    await t.test(`a second reattach before paint preserves ${wheel ? 'the wheeled row on the retained grid' : 'the original reader'}`, async () => {
+      const { page, root, before } = await savedDesk();
+      const raw = page.getByRole('button', { name: 'Raw TTY', exact: true });
+      await page.evaluate(() => ((window as any).delaySnapshot = true));
+      await raw.click();
+      if (!wheel) await page.setViewportSize({ width: 1200, height: 760 });
+      await page.evaluate(async (wheel) => {
+        const w = window as any;
+        if (wheel) {
+          // Stretch the fit across the trusted wheel event; the old rows stay painted.
+          w.hold = true;
+          const move = () => {
+            if (!w.hold) return;
+            window.dispatchEvent(new Event('resize'));
+            requestAnimationFrame(move);
+          };
+          move();
+        }
+        w.resync();
+        // The mirror drains writes and parses the snapshot in two microtasks.
+        await Promise.resolve();
+        await Promise.resolve();
+        Array.from(document.querySelectorAll('button'))
+          .find((b) => b.textContent === 'Thread')!
+          .click();
+      }, wheel);
+      await raw.click();
+      let selected = before.top;
+      if (wheel) {
+        const old = await root.evaluate((el) => el.scrollTop);
+        await root.hover();
+        await page.mouse.wheel(0, before.top + 10 * before.pitch - old);
+        await page.waitForFunction((old) => document.querySelector('.office-wterm')!.scrollTop !== old, old);
+        selected = await root.evaluate((el) => el.scrollTop);
+        const visible = await root.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return document
+            .elementFromPoint(r.left + 15, r.top + 9)
+            ?.closest('.term-row')
+            ?.textContent?.trim();
+        });
+        assert.equal(visible, 'anchor 110');
+      }
+      const actual = await root.evaluate(async (el) => {
+        const w = window as any;
+        w.resync();
+        w.hold = false;
+        for (let i = 0; i < 9; i++) await new Promise(requestAnimationFrame);
+        const r = el.getBoundingClientRect();
+        return {
+          top: el.scrollTop,
+          label: document
+            .elementFromPoint(r.left + 15, r.top + 9)
+            ?.closest('.term-row')
+            ?.textContent?.trim(),
+        };
+      });
+      const expected = { top: selected + (wheel ? 90 * before.pitch : 0), label: `anchor ${wheel ? 110 : 100}` };
+      t.diagnostic(`overlapping reattach (wheel=${wheel}): ${JSON.stringify(actual)} vs ${JSON.stringify(expected)}`);
+      assert.deepEqual(actual, expected);
+      await page.close();
+    });
+
   for (const action of ['scroll', 'type', 'Find']) {
     await t.test(`${action} supersedes the saved reader while reattach paint is pending`, async () => {
       const { page, root, before } = await savedDesk();

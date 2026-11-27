@@ -397,7 +397,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     if (warning) toast(warning, 'warn');
   };
   let pendingFind = find;
-  let restoreReader: (() => void) | undefined;
+  let restoreReader: ReturnType<typeof term.saveReader>;
   let captureRawReader = false;
 
   const offQueries = suppressMirrorQueries(term);
@@ -473,7 +473,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     else if (msg.t === 'term.snapshot' && msg.workerId === workerId) {
       if (captureRawReader) {
         // The retained grid stays navigable until this first snapshot replaces it.
-        restoreReader = term.saveReader();
+        restoreReader = term.saveReader({ pending: restoreReader });
         captureRawReader = false;
       }
       mirror.snapshot(msg);
