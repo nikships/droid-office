@@ -19,7 +19,7 @@ class TermFeedTest {
         val got = mutableListOf<TermEvent>()
         assertTrue(feed.listen { got += it })
         feed.push(TermEvent.Data("c"))
-        assertEquals(listOf(snap, TermEvent.Data("a"), TermEvent.Resize(TermSize(45, 30)), TermEvent.Data("b"), TermEvent.Data("c")), got)
+        assertEquals(listOf(snap, TermEvent.Data("a", replayed = true), TermEvent.Resize(TermSize(45, 30)), TermEvent.Data("b", replayed = true), TermEvent.Data("c")), got)
     }
 
     @Test

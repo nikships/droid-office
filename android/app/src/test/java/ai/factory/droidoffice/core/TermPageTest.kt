@@ -82,6 +82,18 @@ class TermPageTest {
         assertEquals(PictureTransform(), pinchedOut)
     }
 
+    @Test
+    fun clipboardAuthorityIsOnlyCarriedByLiveWritableData() {
+        val data = TermEvent.Data("\u001b]52;c;eA==\u0007")
+        assertNull(message(TermPage.event(data))["writable"])
+        assertNull(message(TermPage.event(data.copy(replayed = true), writable = true))["writable"])
+        assertNull(message(TermPage.event(TermEvent.Snapshot(data.data, 80, 24), writable = true))["writable"])
+        assertEquals("true", message(TermPage.event(data, writable = true))["writable"].toString())
+        assertEquals(PageMsg.ClipboardWrite("x"), TermPage.decode("""{"t":"clipboardWrite","text":"x"}"""))
+        assertNull(TermPage.decode("""{"t":"clipboardRead"}"""))
+        assertNull(TermPage.decode("""{"t":"clipboardWrite","text":"${"é".repeat(32_769)}"}"""))
+    }
+
     /** The message inside `window.office&&office.receive(...)`. */
     private fun message(script: String): JsonObject {
         val prefix = "window.office&&office.receive("

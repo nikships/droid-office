@@ -8,10 +8,16 @@ import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.TermPage
 import ai.factory.droidoffice.core.TermPalette
 import ai.factory.droidoffice.core.TermView
+import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.Palette
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
+import android.os.Build
+import android.os.PersistableBundle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -128,6 +134,12 @@ internal fun Terminal(
                         p.send(latestColors)
                         p.send(TermPage.config(latestScale, latestView))
                         val feed = connection.feed(workerId)
+                        // Only this attached owner stream can write. A queued WebView callback
+                        // may outlive the socket, the worker, or even the office it came from.
+                        p.clipboardWritable = {
+                            latestLive && feed != null && connection.feed(workerId) === feed &&
+                                connection.link.value.phase == Phase.Connected && connection.data.value.synced
+                        }
                         if (feed == null || !feed.listen(p.listener)) connection.resnapshot(workerId)
                     }
                     PageMsg.Drawn -> {
@@ -135,6 +147,17 @@ internal fun Terminal(
                         if (navigation.finding && navigation.query.isNotEmpty()) navigation.find(navigation.query)
                     }
                     is PageMsg.Matches -> navigation.matches = msg
+                    PageMsg.SearchClosed -> navigation.closed()
+                    is PageMsg.ClipboardWrite -> if (p.ready && p.view.isAttachedToWindow && p.clipboardWritable()) {
+                        runCatching {
+                            val clip = ClipData.newPlainText("Terminal", msg.text)
+                            // Android owns the clipboard overlay. Don't preview potentially sensitive shell output.
+                            if (Build.VERSION.SDK_INT >= 33) {
+                                clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
+                            }
+                            context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+                        }
+                    }
                     is PageMsg.Prompts -> navigation.prompts = msg.available
                     PageMsg.Unavailable -> unavailable = true
                     is PageMsg.Bottom -> atBottom = msg.at

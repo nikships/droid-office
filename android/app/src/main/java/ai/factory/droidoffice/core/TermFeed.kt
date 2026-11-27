@@ -3,7 +3,7 @@ package ai.factory.droidoffice.core
 /** What an attached terminal's stream carries: a snapshot to start from, then output and resizes. */
 sealed interface TermEvent {
     data class Snapshot(val data: String, val cols: Int, val rows: Int) : TermEvent
-    data class Data(val data: String) : TermEvent
+    data class Data(val data: String, val replayed: Boolean = false) : TermEvent
     /** The PTY changed size. It travels with the output, so a program's redraw lands on the new grid. */
     data class Resize(val size: TermSize) : TermEvent
 }
@@ -50,7 +50,7 @@ class TermFeed(private val maxPendingChars: Int = MAX_PENDING_CHARS) {
         val s = snapshot
         if (s != null) {
             l(s)
-            pending.forEach(l)
+            pending.forEach { l(if (it is TermEvent.Data) it.copy(replayed = true) else it) }
         }
         snapshot = null
         pending.clear()

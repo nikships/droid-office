@@ -2,6 +2,8 @@ import { TERM_THEME } from '../term-theme';
 import { WTermAdapter } from './wterm';
 import './wterm.css';
 import { attachWtermGraphics } from './wterm-graphics';
+import { attachWtermClipboard } from './wterm-clipboard';
+import { createWtermSearch, useNativeSearchControls } from './wterm-search-controls';
 import type { KittyTerminalOptions } from '../term-kitty-overlay';
 
 /** Android owns IME and PTY transport; the WebView only consumes the stream. */
@@ -28,3 +30,4 @@ export function createAndroidTerminal(images: KittyTerminalOptions) {
 }
 
 export { TERM_THEME };
+export { attachWtermClipboard, createWtermSearch, useNativeSearchControls };

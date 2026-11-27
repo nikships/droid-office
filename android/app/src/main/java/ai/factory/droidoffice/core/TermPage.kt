@@ -21,6 +21,8 @@ enum class TermView(val wire: String) {
 sealed interface PageMsg {
     data object Ready : PageMsg
     data object Unavailable : PageMsg
+    data object SearchClosed : PageMsg
+    data class ClipboardWrite(val text: String) : PageMsg
     data class Matches(val active: Int, val count: Int, val searching: Boolean, val limited: Boolean) : PageMsg
     data class Prompts(val available: Boolean) : PageMsg
     /** A snapshot has been written: the terminal shows something. */
@@ -105,6 +107,8 @@ object TermPage {
         return when (str("t")) {
             "ready" -> PageMsg.Ready
             "unavailable" -> PageMsg.Unavailable
+            "searchClosed" -> PageMsg.SearchClosed
+            "clipboardWrite" -> str("text")?.takeIf { it.length <= 65536 && it.encodeToByteArray().size <= 65536 }?.let(PageMsg::ClipboardWrite)
             "matches" -> {
                 val count = int("count")?.takeIf { it in 0..10_000 } ?: return null
                 val active = int("active")?.takeIf { it in -1 until count } ?: return null
@@ -140,6 +144,7 @@ object TermPage {
     fun view(view: TermView) = call("view") { put("view", view.wire) }
 
     fun search(query: String) = call("search") { put("query", query.take(1024)) }
+    fun closeSearch() = call("searchClose") {}
     fun navigate(prompt: Boolean, forward: Boolean) = call(if (prompt) "prompt" else "match") { put("direction", if (forward) 1 else -1) }
 
     fun colors(foreground: String?, cursor: String?, background: String?, selection: String?, cursorAccent: String? = background) = call("colors") {
@@ -154,13 +159,16 @@ object TermPage {
         }
     }
 
-    fun event(e: TermEvent) = when (e) {
+    fun event(e: TermEvent, writable: Boolean = false) = when (e) {
         is TermEvent.Snapshot -> call("snapshot") {
             put("data", e.data)
             put("cols", e.cols)
             put("rows", e.rows)
         }
-        is TermEvent.Data -> call("data") { put("data", e.data) }
+        is TermEvent.Data -> call("data") {
+            put("data", e.data)
+            if (writable && !e.replayed) put("writable", true)
+        }
         is TermEvent.Resize -> call("size") {
             put("cols", e.size.cols)
             put("rows", e.size.rows)

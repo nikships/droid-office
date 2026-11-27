@@ -218,6 +218,62 @@ test('a swipe starting below the fitted desktop grid scrolls history or its full
   }
 });
 
+test('native Find navigates retained hits and restores the historical reader when closed', browserTest, async (t) => {
+  const { page } = await openPhone(t);
+  const send = (event: Record<string, unknown>) => page.evaluate((event) => (window as any).office.receive(event), event);
+  const history = Array.from({ length: 120 }, (_, i) => `${i % 30 === 0 ? 'needle' : 'line'} ${i}`).join('\r\n');
+  await send({ t: 'snapshot', data: history, cols: 50, rows: 20 });
+  await page.waitForFunction(() => document.querySelector('.wterm')!.scrollTop > 600);
+  const before = await page.locator('.wterm').evaluate((el) => {
+    el.scrollTop = 610;
+    return el.scrollTop;
+  });
+  await send({ t: 'search', query: 'needle' });
+  for (const [direction, active] of [
+    [0, 0],
+    [1, 1],
+    [-1, 0],
+  ]) {
+    if (direction) await send({ t: 'match', direction });
+    await page.waitForFunction((active) => {
+      const msg = (window as any).posted.filter((m: any) => m.t === 'matches').at(-1);
+      return msg?.active === active && msg.count === 4;
+    }, active);
+  }
+  assert.notEqual(await page.locator('.wterm').evaluate((el) => el.scrollTop), before);
+  await send({ t: 'searchClose' });
+  await page.waitForFunction((top) => Math.abs(document.querySelector('.wterm')!.scrollTop - top) < 1, before);
+  assert.equal(await page.evaluate(() => (window as any).posted.some((m: any) => m.t === 'input')), false);
+});
+
+test('the native clipboard accepts only whole live writes and never answers queries', browserTest, async (t) => {
+  const { page } = await openPhone(t);
+  const osc = (text: string) => `\x1b]52;c;${Buffer.from(text).toString('base64')}\x07`;
+  const data = (data: string, writable = false) => ({ t: 'data', data, writable });
+  const denied = osc('split replay');
+  const split = osc('split live');
+  const stream = [
+    { t: 'snapshot', data: osc('snapshot'), cols: 40, rows: 20, writable: true },
+    data(osc('buffered')),
+    data(osc('offline')),
+    data(denied.slice(0, -1)),
+    data(denied.slice(-1), true),
+    data(osc('live'), true),
+    data(split.slice(0, 2), true),
+    data(split.slice(2), true),
+    data('\x1b]52;c;?\x07', true),
+  ];
+  const messages = await page.evaluate((stream) => {
+    const w = window as any;
+    for (const event of stream) w.office.receive(event);
+    return w.posted.filter((m: { t: string }) => ['clipboardWrite', 'input'].includes(m.t));
+  }, stream);
+  assert.deepEqual(messages, [
+    { t: 'clipboardWrite', text: 'live' },
+    { t: 'clipboardWrite', text: 'split live' },
+  ]);
+});
+
 test("the phone's Raw TTY follows a finger pixel for pixel with native scrolling and holds a historical reader", browserTest, async (t) => {
   const { context, page } = await openPhone(t);
   const data = `${Array.from({ length: 200 }, (_, i) => `line ${i}`).join('\r\n')}\r\n`;

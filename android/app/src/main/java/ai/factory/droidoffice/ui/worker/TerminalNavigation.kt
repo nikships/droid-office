@@ -26,21 +26,32 @@ internal class TerminalNavigation {
     var matches by mutableStateOf(PageMsg.Matches(-1, 0, false, false))
     var page by mutableStateOf<TerminalPage?>(null)
 
+    fun open() {
+        finding = true
+        find("")
+    }
+
     fun find(text: String) {
         query = text.take(1024)
         page?.send(TermPage.search(query))
     }
 
     fun close() {
+        page?.send(TermPage.closeSearch())
+        closed()
+    }
+
+    fun closed() {
         finding = false
-        find("")
+        query = ""
+        matches = PageMsg.Matches(-1, 0, false, false)
     }
 }
 
 @Composable
 internal fun TerminalNavActions(nav: TerminalNavigation) {
     Row {
-        IconButton(onClick = { if (nav.finding) nav.close() else nav.finding = true }, enabled = nav.page != null, modifier = Modifier.tagged(Tags.Worker.TERM_FIND)) {
+        IconButton(onClick = { if (nav.finding) nav.close() else nav.open() }, enabled = nav.page != null, modifier = Modifier.tagged(Tags.Worker.TERM_FIND)) {
             Icon(OfficeIcons.Search, "Find in terminal", Modifier.size(18.dp), tint = if (nav.finding) Palette.Accent else Palette.TextSecondary)
         }
         if (nav.prompts) {

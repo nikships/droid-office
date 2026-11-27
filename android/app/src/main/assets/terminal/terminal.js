@@ -28,12 +28,31 @@ async function expandImage({ blob, width, height }) {
 }
 
 export async function start() {
-  const [{ createAndroidTerminal, TERM_THEME }] = await Promise.all([
+  const [{ createAndroidTerminal, TERM_THEME, attachWtermClipboard, createWtermSearch, useNativeSearchControls }] = await Promise.all([
     import('./vendor/android-terminal.js'),
     Promise.allSettled([document.fonts.load(`400 ${READABLE_PX}px 'Geist Mono'`), document.fonts.load(`400 ${READABLE_PX}px 'Droid Office Terminal Symbols'`, '\ue0b0')]),
   ]);
   const host = document.querySelector('#term');
   const { term, expandAtClient } = createAndroidTerminal({ onExpandImage: expandImage });
+  let search;
+  let closingSearch = false;
+  let clipboardWritable = false;
+  useNativeSearchControls(term);
+  term.onOpen((native, signal) => {
+    search = createWtermSearch(term, native, signal, {
+      onChange: ({ activeIndex, count, searching, limited }) => post({ t: 'matches', active: activeIndex, count, searching, limited }),
+      onClose: () => {
+        if (!closingSearch) post({ t: 'searchClosed' });
+      },
+    });
+    attachWtermClipboard(
+      term,
+      native,
+      signal,
+      () => clipboardWritable,
+      (text) => post({ t: 'clipboardWrite', text }),
+    );
+  });
   await term.open(host);
   const { core, native } = term;
   const root = native.element;
@@ -107,7 +126,6 @@ export async function start() {
   }
   term.onWriteParsed(modes);
   modes();
-  native.onSearchChange = ({ activeIndex, count, searching, limited }) => post({ t: 'matches', active: activeIndex, count, searching, limited });
   native.onShellIntegration = (state) => {
     hasMarks = state.phase !== 'unknown';
     updatePrompts(core.usingAltScreen());
@@ -184,15 +202,18 @@ export async function start() {
     receive(msg) {
       switch (msg.t) {
         case 'search':
-          if (msg.query) {
-            term.cancelReaderRestore();
-            native.search(msg.query);
-          } else native.clearSearch();
+          search.open();
+          search.setQuery(msg.query);
+          break;
+        case 'searchClose':
+          // Compose already closed the field. Only a controller-initiated close needs a reply.
+          closingSearch = true;
+          search.close();
+          closingSearch = false;
           break;
         case 'match':
-          term.cancelReaderRestore();
-          if (msg.direction === 1) native.findNext();
-          else native.findPrevious();
+          if (msg.direction === 1) search.next();
+          else search.previous();
           break;
         case 'prompt':
           term.cancelReaderRestore();
@@ -227,7 +248,12 @@ export async function start() {
           break;
         }
         case 'data':
-          term.write(msg.data);
+          clipboardWritable = msg.writable === true;
+          try {
+            term.write(msg.data);
+          } finally {
+            clipboardWritable = false;
+          }
           break;
         case 'size':
           term.resize(msg.cols, msg.rows);

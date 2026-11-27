@@ -33,8 +33,13 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
     var ready = false
         private set
 
+    var clipboardWritable: () -> Boolean = { false }
+    private var hasSnapshot = false
     /** Hands the feed's events to the page, in order. */
-    val listener: (TermEvent) -> Unit = { send(TermPage.event(it)) }
+    val listener: (TermEvent) -> Unit = { event ->
+        if (event is TermEvent.Snapshot) hasSnapshot = true
+        send(TermPage.event(event, hasSnapshot && clipboardWritable()))
+    }
 
     init {
         val loader = WebViewAssetLoader.Builder()
@@ -79,6 +84,7 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
     fun setCsiEnter(enabled: Boolean) { keyboard.csiEnter = enabled }
 
     fun destroy() {
+        clipboardWritable = { false }
         typeDirectly(false)
         ready = false
         (view.parent as? ViewGroup)?.removeView(view)
