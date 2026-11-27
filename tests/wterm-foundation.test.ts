@@ -110,6 +110,40 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       [64, 24],
     ]);
   });
+  await t.test('failed post-animation metrics do not leave pointer input gated', async () => {
+    const blocked = await page.evaluate(async () => {
+      const mod = '/ui/terminal-renderer.ts',
+        { openTerminalRenderer } = await import(mod);
+      const host = document.createElement('section');
+      host.className = 'dash-pane';
+      document.body.append(host);
+      const root = document.createElement('div');
+      host.append(root);
+      const anim = host.animate([{ opacity: 0.9 }, { opacity: 1 }], { duration: 5000 });
+      anim.pause();
+      try {
+        await openTerminalRenderer(
+          {
+            open: async () => {},
+            native: { element: root },
+            refreshMetrics() {
+              throw Error('fixture metrics');
+            },
+          },
+          host,
+          () => true,
+        );
+        if (!root.classList.contains('measuring-cells')) throw Error('pointer gate was never installed');
+        anim.finish();
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        return root.classList.contains('measuring-cells');
+      } finally {
+        host.remove();
+      }
+    });
+    assert.equal(blocked, false);
+  });
   await t.test('a focused Changes Log gives T and Escape to the window and Tab to the browser', async () => {
     const pane = await context.newPage();
     try {

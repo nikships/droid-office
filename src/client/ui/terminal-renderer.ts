@@ -15,8 +15,13 @@ export async function openTerminalRenderer(term: WTermAdapter, host: HTMLElement
         // write and fit the PTY immediately, then measure the unscaled cells once.
         root.classList.add('measuring-cells');
         void Promise.allSettled(opening.map((a) => a.finished)).then(() => {
-          if (alive() && term.native?.element === root) term.refreshMetrics();
-          root.classList.remove('measuring-cells');
+          try {
+            if (alive() && term.native?.element === root) term.refreshMetrics();
+          } catch (error) {
+            console.warn('Could not refresh terminal cell metrics', error);
+          } finally {
+            root.classList.remove('measuring-cells');
+          }
         });
       }
       return;
