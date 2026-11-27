@@ -488,7 +488,10 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       const prompt = officePrompt('changes.ship', shipPromptVars(store.project?.forge, { title, summary, branch: branchName, base: prBase, folder, pr: s.pr?.number }));
       net.send({ t: 'worker.prompt', workerId, prompt, queue: w.status === 'working' });
       toast(`🌿 Asked ${w.name} to commit${s.pr ? ` and push to ${words().pr} ${words().ref(s.pr.number)}` : ` and open a ${words().pull}`}`);
-      setView('log');
+      if (view !== 'log') {
+        setView('log');
+        scrollToBottom();
+      }
     };
     const name = w.task?.name.trim() ?? '';
     const about = w.task?.summary.trim() ?? '';

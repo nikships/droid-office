@@ -144,6 +144,66 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
     });
     assert.equal(blocked, false);
   });
+  await t.test('asking a worker to ship opens its Changes Log at the new output, not the historical reader', async () => {
+    const pane = await context.newPage();
+    try {
+      await pane.route('**/command-fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/style.css"><div id="modal-root"></div><div id="toasts"></div>' }));
+      await pane.goto(`http://127.0.0.1:${address.port}/command-fixture`);
+      await pane.addScriptTag({ content: 'window.__name=fn=>fn' });
+      await pane.evaluate(async () => {
+        const ui = '/ui/changes.ts',
+          model = '/state.ts';
+        const { openChanges, routeChangesMessage } = await import(ui),
+          { store } = await import(model);
+        const workerId = 'reader';
+        store.workers.set(workerId, { id: workerId, name: 'Reader', kind: 'agent', status: 'idle', deskId: 'desk', color: '#89d9ed', cols: 80, rows: 24, task: { name: 'Local check', summary: 'Test the log' } });
+        const w = window as any;
+        w.attached = false;
+        w.asked = 0;
+        openChanges(
+          {
+            send(m: { t: string }) {
+              if (m.t === 'worker.attach') w.attached = true;
+              if (m.t === 'worker.prompt') w.asked++;
+              return true;
+            },
+          },
+          workerId,
+        );
+        routeChangesMessage({ t: 'changes', state: { workerId, dir: 'work', branch: 'topic', base: 'main', ahead: 1, files: [], more: 0, prBase: 'main', at: Date.now() } });
+        w.replay = () =>
+          routeChangesMessage({
+            t: 'term.snapshot',
+            workerId,
+            cols: 80,
+            rows: 24,
+            data: Array.from({ length: 120 }, (_, i) => `labeled line ${i}`)
+              .concat('END-OF-LOG')
+              .join('\r\n'),
+          });
+        w.tailVisible = () => {
+          const port = document.querySelector('.changes-log .office-wterm,.changes-log .xterm-screen');
+          if (!port) return false;
+          const rect = port.getBoundingClientRect();
+          return [...port.querySelectorAll('.term-row,.xterm-rows > div')].some((n) => n.textContent?.includes('END-OF-LOG') && n.getBoundingClientRect().top >= rect.top - 1 && n.getBoundingClientRect().top < rect.bottom);
+        };
+      });
+      const log = pane.getByRole('button', { name: /^Log/ });
+      await log.click();
+      await pane.waitForFunction(() => (window as any).attached);
+      await pane.evaluate(() => (window as any).replay());
+      await pane.waitForFunction(() => (window as any).tailVisible());
+      await pane.locator('.changes-log .office-wterm,.changes-log .xterm-screen').hover();
+      await pane.mouse.wheel(0, -1000);
+      await pane.waitForFunction(() => !(window as any).tailVisible());
+      await pane.getByRole('button', { name: /^Diff/ }).click();
+      await pane.getByRole('button', { name: /^Commit & open/ }).click();
+      await pane.waitForFunction(() => (window as any).asked === 1);
+      await pane.waitForFunction(() => (window as any).tailVisible(), undefined, { timeout: 1500 });
+    } finally {
+      await pane.close();
+    }
+  });
   await t.test('a focused Changes Log gives T and Escape to the window and Tab to the browser', async () => {
     const pane = await context.newPage();
     try {
