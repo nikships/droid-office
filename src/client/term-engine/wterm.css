@@ -1,0 +1,14 @@
+@import '@wterm/dom/css';
+
+.office-wterm.wterm {
+  box-sizing: border-box;
+  width: 100%;
+  /* WTerm locks height to its initial row count when autoResize is off. The host
+     owns the viewport box, separately from the dimensions of the shared PTY. */
+  height: 100% !important;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.modal.term .office-wterm { padding: 8px 4px 4px 10px; }
+.office-wterm ::selection { background: var(--term-selection-bg); }

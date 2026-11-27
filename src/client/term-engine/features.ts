@@ -5,10 +5,10 @@ import { attachPixelScroll } from '../term-pixel-scroll';
 import { attachTerminalScrollbar } from '../term-scrollbar';
 import type { TerminalPathLinksAddon } from '../ui/terminal-path-links';
 import { scrollAtOnce } from '../ui/terminal-prefs';
-import { attachGhosttyKeys } from './ghostty-keys';
-import { attachGhosttyScroll } from './ghostty-scroll';
-import { attachGhosttyGraphics } from './ghostty-graphics';
-import { attachGhosttyLinks } from './ghostty-links';
+import { attachWtermKeys } from './wterm-keys';
+import { attachWtermScroll } from './wterm-scroll';
+import { attachWtermGraphics } from './wterm-graphics';
+import { attachWtermLinks } from './wterm-links';
 import { findInXterm } from './xterm-find';
 import type { TerminalFind } from './types';
 import type { TerminalEngine } from './index';
@@ -19,10 +19,10 @@ export function attachEngineFeatures(engine: TerminalEngine, images?: KittyTermi
   const term = engine.xterm;
   if (!term) {
     const adapter = engine.ghostty;
-    const keys = attachGhosttyKeys(adapter);
-    attachGhosttyGraphics(adapter, images);
-    const scroll = attachGhosttyScroll(adapter);
-    const links = attachGhosttyLinks(adapter, paths);
+    const keys = attachWtermKeys(adapter);
+    attachWtermGraphics(adapter, images);
+    const scroll = attachWtermScroll(adapter);
+    const links = attachWtermLinks(adapter, paths);
     return { keyAction: keys.keyAction, handleKey: scroll.handleKey, find: links.find, scrollAtOnce: (move: () => void) => scrollAtOnce(adapter, move, scroll.snap) };
   }
   if (paths) {
