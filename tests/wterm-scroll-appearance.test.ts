@@ -753,6 +753,35 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       );
     }
   });
+  await t.test('tracked wheel chooses the same cell as xterm at a fractional column boundary', async () => {
+    const reports = await page.evaluate(async () => {
+      const { a, x, input, write } = window as any;
+      await write('\x1b[?1000;1006h');
+      const result = [];
+      for (const [i, t] of [a, x].entries()) {
+        const node = i ? x.element.querySelector('.xterm-screen') : a.native.element.querySelector('.term-row:not(.term-scrollback-row)');
+        const before = node.getBoundingClientRect();
+        const pitch = i ? before.width / t.cols : parseFloat(a.native.element.style.getPropertyValue('--term-cell-width'));
+        const offset = (pitch + Math.ceil(pitch)) / 2;
+        const clientX = Math.ceil(before.left + offset);
+        const previous = node.style.translate;
+        node.style.translate = `${clientX - before.left - offset}px 0px`;
+        try {
+          const rect = node.getBoundingClientRect();
+          input[i].length = 0;
+          node.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 1, deltaY: -1, clientX, clientY: rect.top + 3 }));
+          result.push({ pitch, offset: clientX - rect.left, report: input[i].join('') });
+        } finally {
+          node.style.translate = previous;
+        }
+      }
+      await write('\x1b[?1000;1006l');
+      return result;
+    });
+    t.diagnostic(JSON.stringify(reports));
+    assert.equal(reports[1].report, '\x1b[<64;2;1M');
+    assert.equal(reports[0].report, reports[1].report);
+  });
   await t.test('legacy wheel reports at the byte-coordinate boundaries', async () => {
     const comparisons = await page.evaluate(async () => {
       const { a, x, el, frame, write, input } = window as any;

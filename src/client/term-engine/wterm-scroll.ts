@@ -96,14 +96,14 @@ export function attachWtermScroll(adapter: WTermAdapter) {
             const encoding = core.mouseEncoding();
             const rect = el.querySelector('.term-row:not(.term-scrollback-row)')?.getBoundingClientRect();
             if (!rect) return cancel();
-            const x = Math.floor(e.clientX - rect.left);
-            const y = Math.floor(e.clientY - rect.top);
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
             const code = (e.deltaY < 0 ? 64 : 65) + (e.altKey ? 8 : 0) + (e.ctrlKey ? 16 : 0);
             const width = parseFloat(el.style.getPropertyValue('--term-cell-width'));
             if (x >= 0 && y >= 0 && x < adapter.cols * width && y < adapter.rows * height()) {
               const col = Math.floor(x / width) + 1;
               const row = Math.floor(y / height()) + 1;
-              if (encoding === 'sgr-pixels') adapter.input(`\x1b[<${code};${x};${y}M`);
+              if (encoding === 'sgr-pixels') adapter.input(`\x1b[<${code};${Math.floor(x)};${Math.floor(y)}M`);
               else if (encoding === 'sgr') adapter.input(`\x1b[<${code};${col};${row}M`);
               // xterm ignores 1005/1015 and stays in legacy encoding. The PTY
               // takes UTF-8 strings: forward the complete ASCII report or nothing.
