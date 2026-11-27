@@ -398,6 +398,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   };
   let pendingFind = find;
   let restoreReader: (() => void) | undefined;
+  let captureRawReader = false;
 
   const offQueries = suppressMirrorQueries(term);
   const mirror = new TerminalMirror(
@@ -469,7 +470,14 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   const onMsg = (msg: ServerMsg) => {
     if (!opened || threadView) return;
     if (msg.t === 'term.data' && msg.workerId === workerId) mirror.data(msg.data);
-    else if (msg.t === 'term.snapshot' && msg.workerId === workerId) mirror.snapshot(msg);
+    else if (msg.t === 'term.snapshot' && msg.workerId === workerId) {
+      if (captureRawReader) {
+        // The retained grid stays navigable until this first snapshot replaces it.
+        restoreReader = term.saveReader();
+        captureRawReader = false;
+      }
+      mirror.snapshot(msg);
+    }
   };
   listeners.add(onMsg);
   // A building agent (the Orchestrator) comes and goes with Mission Control state, not the floor's workers.
@@ -581,7 +589,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     } catch {}
     setThreadView = (next, focus = true) => {
       if (!thread || !threadHost || threadView === (next === 'thread')) return;
-      if (!threadView && next === 'thread') restoreReader = term.saveReader();
       threadView = next === 'thread';
       threadHost.hidden = !threadView;
       host.hidden = threadView;
@@ -599,6 +606,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       } else {
         thread.activate(false);
         mirror.disconnect();
+        captureRawReader = true;
         net.send({ t: 'worker.attach', workerId });
         if (focus) setTimeout(() => alive && term.focus(), 0);
       }

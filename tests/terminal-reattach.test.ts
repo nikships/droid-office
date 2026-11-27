@@ -34,7 +34,7 @@ test('Raw TTY reattaches with a visible reader', { skip: !browserStatus().instal
           if (msg.t === 'term.input') w.inputs.push(msg.data);
           if (this.up && msg.t === 'worker.attach' && msg.stream !== false) {
             if (w.fitDuringAttach) window.dispatchEvent(new Event('resize'));
-            queueMicrotask(w.resync);
+            if (!w.delaySnapshot) queueMicrotask(w.resync);
             if (w.doubleSnapshot) requestAnimationFrame(() => requestAnimationFrame(w.resync));
           }
           return this.up;
@@ -108,6 +108,28 @@ test('Raw TTY reattaches with a visible reader', { skip: !browserStatus().instal
       }
       await page.close();
     });
+  await t.test('scrolling the retained Raw grid before its snapshot arrives keeps the newly selected row', async () => {
+    const { page, root, before } = await savedDesk();
+    await page.evaluate(() => {
+      const w = window as any;
+      w.snapshots = 0;
+      w.delaySnapshot = true;
+    });
+    await page.getByRole('button', { name: 'Raw TTY', exact: true }).click();
+    await root.hover();
+    await page.mouse.wheel(0, 190);
+    await page.waitForFunction((top) => document.querySelector('.office-wterm')!.scrollTop > top, before.top);
+    const selected = await root.evaluate((el) => el.scrollTop);
+    assert.equal(await page.evaluate(() => (window as any).snapshots), 0);
+    const restored = await root.evaluate(async (el) => {
+      (window as any).resync();
+      for (let i = 0; i < 9; i++) await new Promise(requestAnimationFrame);
+      return el.scrollTop;
+    });
+    assert.equal(restored, selected + 90 * before.pitch);
+    await page.close();
+  });
+
   for (const action of ['scroll', 'type', 'Find']) {
     await t.test(`${action} supersedes the saved reader while reattach paint is pending`, async () => {
       const { page, root, before } = await savedDesk();
