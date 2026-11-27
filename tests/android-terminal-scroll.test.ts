@@ -70,6 +70,46 @@ test('fitting a wide desktop grid keeps the reader through landscape and keyboar
   assert.ok(Math.abs((await position()) - before) < 0.5);
 });
 
+test('a reveal after fitting owns the viewport when the next frame paints', browserTest, async (t) => {
+  const { page } = await openPhone(t);
+  const send = (msg: Record<string, unknown>) => page.evaluate((m) => (window as any).office.receive(m), msg);
+  const data = Array.from({ length: 220 }, (_, row) => `${row % 60 === 20 ? '\x1b]133;A\x07hit' : 'line'} ${row}\r\n`).join('');
+  await send({ t: 'snapshot', cols: 40, rows: 16, data });
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'drawn'));
+  await send({ t: 'search', query: 'hit' });
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.t === 'matches' && m.count === 4 && !m.searching));
+  await send({ t: 'match', direction: 1 });
+  for (const [label, msg, target, active] of [
+    ['Find Next', { t: 'match', direction: 1 }, 'hit 140', 2],
+    ['Find Previous', { t: 'match', direction: -1 }, 'hit 80', 1],
+    ['Find query', { t: 'search', query: 'line 211' }, 'line 211', 0],
+    ['previous prompt', { t: 'prompt', direction: -1 }, 'hit 20', null],
+    ['next prompt', { t: 'prompt', direction: 1 }, 'hit 80', null],
+    ['Latest', { t: 'bottom' }, 'line 219', null],
+  ] as const) {
+    await t.test(label, async () => {
+      const result = await page.evaluate(
+        async ({ msg, target }) => {
+          const w = window as any;
+          const root = document.querySelector<HTMLElement>('.wterm')!;
+          root.scrollTop = parseFloat(root.style.getPropertyValue('--term-row-height')) * 60.55;
+          await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+          w.office.receive({ t: 'config', fontScale: 1.1, view: 'desktop' });
+          w.office.receive(msg);
+          await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+          const height = parseFloat(root.style.getPropertyValue('--term-row-height'));
+          const row = [...root.querySelectorAll('.term-row')].find((r) => r.textContent?.trim() === target);
+          const top = row ? row.getBoundingClientRect().top - root.getBoundingClientRect().top : -Infinity;
+          return { visible: top > -height && top < height * 16, reader: root.scrollTop / height, active: w.posted.filter((m: any) => m.t === 'matches').at(-1)?.active };
+        },
+        { msg, target },
+      );
+      if (active !== null) assert.equal(result.active, active);
+      assert.ok(result.visible, `${target} was off screen at reader row ${result.reader}`);
+    });
+  }
+});
+
 test('unavailable fonts fall back to monospace but the renderer is mandatory', browserTest, async (t) => {
   for (const [missing, expected] of [
     ['fonts', 'ready'],

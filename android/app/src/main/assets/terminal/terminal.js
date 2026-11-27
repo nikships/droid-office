@@ -184,14 +184,18 @@ export async function start() {
     receive(msg) {
       switch (msg.t) {
         case 'search':
-          if (msg.query) native.search(msg.query);
-          else native.clearSearch();
+          if (msg.query) {
+            term.cancelReaderRestore();
+            native.search(msg.query);
+          } else native.clearSearch();
           break;
         case 'match':
+          term.cancelReaderRestore();
           if (msg.direction === 1) native.findNext();
           else native.findPrevious();
           break;
         case 'prompt':
+          term.cancelReaderRestore();
           native.scrollToPrompt(msg.direction);
           break;
         case 'colors': {
