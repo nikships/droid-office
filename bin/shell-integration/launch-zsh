@@ -1,4 +1,8 @@
 # Run with /bin/sh. Only the final zsh inherits this one-shot startup directory.
+readable_file() { [ -f "$1" ] && [ -r "$1" ]; }
+if ! readable_file "${0%/*}/zsh/.zshenv" || ! readable_file "${0%/*}/zsh/_office_prompt"; then
+    exec "$@"
+fi
 if [ "${ZDOTDIR+x}" = x ]; then
     export _office_original_zdotdir="$ZDOTDIR"
 else

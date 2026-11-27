@@ -7,7 +7,7 @@ else
     'builtin' 'unset' ZDOTDIR
 fi
 {
-    if [[ -r ${ZDOTDIR-$HOME}/.zshenv ]]; then
+    if [[ -r ${ZDOTDIR-$HOME}/.zshenv || -r ${ZDOTDIR-$HOME}/.zshenv.zwc ]]; then
         'builtin' 'source' -- "${ZDOTDIR-$HOME}/.zshenv"
     fi
 } always {

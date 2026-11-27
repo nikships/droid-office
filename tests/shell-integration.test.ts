@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -13,8 +14,8 @@ const marks = (text: string) => [...text.matchAll(mark)].map((m) => m[1]);
 
 // Wait for the actual ZLE bracketed-paste enable on each prompt, not a
 // timer. Keep the full PTY stream for byte comparison with an unwrapped zsh.
-async function session(home: string, wrapped: boolean, commands: string[], extra: Record<string, string> = {}) {
-  const { file, args } = wrapped ? interactiveShell(zsh, ['-l'], true) : { file: zsh, args: ['-l'] };
+async function session(home: string, wrapped: boolean | ReturnType<typeof interactiveShell>, commands: string[], extra: Record<string, string> = {}) {
+  const { file, args } = typeof wrapped === 'boolean' ? interactiveShell(zsh, ['-l'], wrapped) : wrapped;
   const proc = pty.spawn(file, args, { cwd: home, cols: 100, rows: 24, env: { HOME: home, PATH: '/usr/bin:/bin', TERM: 'xterm-256color', LANG: 'C', ...extra } });
   let chunk = '';
   const prompts: string[] = [];
@@ -56,6 +57,37 @@ test('an incomplete integration bundle starts the native zsh with its normal sta
     await writeFile(path.join(dir, file), '');
   }
   if (process.platform !== 'win32') assert.deepEqual(launch(), { file: '/bin/sh', args: [path.join(dir, 'launch-zsh'), zsh, '-l'] });
+});
+
+test('a compiled-only user .zshenv loads in both native and wrapped login shells', { skip: !existsSync(zsh) }, async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'office-compiled-zsh-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const source = path.join(home, '.zshenv');
+  await writeFile(source, 'export STARTUP_MARKER=compiled-only\n');
+  execFileSync(zsh, ['-fc', 'zcompile .zshenv'], { cwd: home, env: { HOME: home } });
+  await rm(source);
+  for (const wrapped of [false, true]) {
+    const output = await session(home, wrapped, ['print -r -- "marker=$STARTUP_MARKER"']);
+    assert.match(output[1], /marker=compiled-only\r\n/);
+  }
+});
+
+test('a saved launcher preserves the user startup directory when a companion disappears before exec', { skip: !existsSync(zsh) }, async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'office-delayed-zsh-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const user = path.join(home, 'user config');
+  await mkdir(user);
+  await writeFile(path.join(user, '.zshenv'), 'export STARTUP_MARKER=native-startup\n');
+  for (const missing of ['.zshenv', '_office_prompt']) {
+    const bundle = path.join(home, `bundle-${missing}`);
+    await cp(new URL('../bin/shell-integration/', import.meta.url), bundle, { recursive: true });
+    const saved = interactiveShell(zsh, ['-l'], true, [bundle]);
+    assert.equal(saved.file, '/bin/sh');
+    await rm(path.join(bundle, 'zsh', missing));
+    const output = await session(home, saved, ['print -r -- "$STARTUP_MARKER:$ZDOTDIR"'], { ZDOTDIR: user });
+    assert.ok(output[1].includes(`native-startup:${user}\r\n`), missing);
+    assert.deepEqual(output.flatMap(marks), []);
+  }
 });
 
 test('real zsh login prompts and status equal native, apart from the semantic marks', { skip: !existsSync(zsh) }, async (t) => {

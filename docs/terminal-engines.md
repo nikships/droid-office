@@ -6,7 +6,7 @@ Both web entry points warm the runtime when idle. Concurrent loads of the same h
 
 Android Raw TTY packages the JavaScript, CSS and WASM inside the APK. The native input connection owns Direct input. On the stock Android 9 (API 28) emulator, Chrome WebView 66 fetched all 599,627 WASM bytes with the correct MIME type, but the embedder disallowed WebAssembly compilation. Raw TTY shows **Unavailable** on that provider; there is no alternate renderer. See [the Android app guide](../android/README.md) for Phone and Desktop sizing, input and navigation.
 
-A replacement snapshot closes Find on Android, web and Mac. Android clears the query and keeps the reading position when the line is still in history; it does not jump back to the first match.
+A replacement snapshot closes Find on web and Mac. On Android, a replacement snapshot on an existing renderer closes Find, clears the query and keeps the reading position when the line is still in history. A fresh Android renderer can rerun a preserved query.
 
 ## Adapter contract
 
