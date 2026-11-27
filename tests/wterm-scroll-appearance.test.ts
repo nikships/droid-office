@@ -504,72 +504,90 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
     await pane.route('**/classic', (r) => r.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/style.css">' }));
     await pane.addInitScript('window.__name = fn => fn');
     await pane.goto(`http://127.0.0.1:${address.port}/classic`);
-    const result = await pane.evaluate(async () => {
-      const engine = '/term-engine/web-terminal.ts';
-      const { createWebTerminal } = await import(engine);
-      const host = document.createElement('div');
-      host.style.cssText = 'position:fixed;inset:0;width:566px;height:152px';
-      document.body.append(host);
-      const { term } = createWebTerminal({ fontFamily: 'monospace', fontSize: 14, lineHeight: 1.1 });
-      host.id = 'classic-fit';
-      await term.open(host);
-      term.resize(64, 8);
-      const frame = () => new Promise(requestAnimationFrame).then(() => new Promise(requestAnimationFrame));
-      const read = () =>
-        Array.from({ length: 16 }, (_, i) => {
-          host.style.width = `${557 + i}px`;
-          return [term.proposeDimensions().cols, term.native.element.offsetWidth - term.native.element.clientWidth];
-        });
-      await frame();
-      const before = read();
-      term.write('row\r\n'.repeat(50));
-      await frame();
-      const after = read();
-      const boundary = after.findIndex(([cols], i) => i > 0 && cols > after[i - 1][0]);
-      if (boundary < 0) throw new Error('No column boundary in width sweep');
-      host.style.width = `${557 + boundary}px`;
-      const cols = term.proposeDimensions().cols;
-      term.resize(cols, 8);
-      term.write(`\x1b[?25l\x1b[2J\x1b[4;${cols}H\x1b[38;2;255;0;0m█\x1b[0m`);
-      await frame();
-      const glyph = [...host.querySelectorAll('.term-row span')].find((el) => el.textContent === '█')!;
-      const row = glyph.closest('.term-row')!.getBoundingClientRect();
-      const right = Math.round(host.getBoundingClientRect().right);
-      return { before, after, history: term.buffer.active.baseY, clip: { x: right - 22, y: Math.round(row.y), width: 26, height: Math.ceil(row.height) } };
-    });
-    const ink = async () => {
-      const png = await pane.screenshot({ clip: result.clip });
-      return pane.evaluate(async (data) => {
-        const image = new Image();
-        image.src = `data:image/png;base64,${data}`;
-        await image.decode();
-        const canvas = document.createElement('canvas');
-        canvas.width = image.width;
-        canvas.height = image.height;
-        const ctx = canvas.getContext('2d')!;
-        ctx.drawImage(image, 0, 0);
-        const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-        const red = [];
-        for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 170 && pixels[i + 1] < 60 && pixels[i + 2] < 60) red.push(i / 4);
-        return red;
-      }, png.toString('base64'));
-    };
-    const actual = await ink();
-    // Widen only the viewport, not the PTY grid: the same glyph at the same
-    // position now paints unobstructed. Compare the actual raster, not its box.
-    await pane.evaluate(() => {
-      document.getElementById('classic-fit')!.style.width = '590px';
-    });
-    const reference = await ink();
-    assert.ok(reference.length > 0);
-    assert.deepEqual(actual, reference, 'the classic scrollbar clipped the last-column full block');
-    assert.ok(result.history > 0);
-    assert.deepEqual([result.before[0][1], result.after[0][1]], [3, 3]);
-    t.diagnostic(JSON.stringify(result));
-    assert.deepEqual(
-      result.after.map((v) => v[0]),
-      result.before.map((v) => v[0]),
-    );
+    for (const modal of [false, true]) {
+      const result = await pane.evaluate(async (modal) => {
+        const engine = '/term-engine/web-terminal.ts';
+        const { createWebTerminal } = await import(engine);
+        const host = document.createElement('div');
+        host.style.cssText = `position:fixed;inset:0;width:566px;height:${modal ? 769 : 152}px`;
+        const wrapper = document.createElement('div');
+        wrapper.style.display = 'contents';
+        if (modal) {
+          wrapper.className = 'modal term inline';
+          host.className = 'term-host';
+        }
+        document.body.replaceChildren(wrapper);
+        wrapper.append(host);
+        const fontFamily = modal ? '"Geist Mono", "Droid Office Terminal Symbols", monospace' : 'monospace';
+        await document.fonts.load(`14px ${fontFamily}`);
+        const { term } = createWebTerminal({ fontFamily, fontSize: 14, lineHeight: 1.1 });
+        host.id = 'classic-fit';
+        await term.open(host);
+        term.resize(64, modal ? 39 : 8);
+        const frame = () => new Promise(requestAnimationFrame).then(() => new Promise(requestAnimationFrame));
+        const read = () =>
+          Array.from({ length: 16 }, (_, i) => {
+            host.style.width = `${557 + i}px`;
+            return [term.proposeDimensions().cols, term.native.element.offsetWidth - term.native.element.clientWidth];
+          });
+        await frame();
+        const before = read();
+        term.write('row\r\n'.repeat(50));
+        await frame();
+        const after = read();
+        const boundary = after.findIndex(([cols], i) => i > 0 && cols > after[i - 1][0]);
+        if (boundary < 0) throw new Error('No column boundary in width sweep');
+        host.style.width = `${modal ? 566 : 557 + boundary}px`;
+        const fit = term.proposeDimensions();
+        const cols = fit.cols;
+        term.resize(cols, modal ? 39 : 8);
+        term.write(`\x1b[?25l\x1b[2J\x1b[4;${cols}H\x1b[38;2;255;0;0m█\x1b[0m`);
+        await frame();
+        const glyph = [...host.querySelectorAll('.term-row span')].find((el) => el.textContent === '█')!;
+        const row = glyph.closest('.term-row')!.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(glyph);
+        const rect = range.getBoundingClientRect();
+        const right = Math.round(rect.right);
+        const hit = glyph.contains(document.elementFromPoint(rect.right - 1, row.y + row.height / 2));
+        return { before, after, fit, hit, history: term.buffer.active.baseY, clip: { x: right - 18, y: Math.round(row.y), width: 26, height: Math.ceil(row.height) } };
+      }, modal);
+      const ink = async () => {
+        const png = await pane.screenshot({ clip: result.clip });
+        return pane.evaluate(async (data) => {
+          const image = new Image();
+          image.src = `data:image/png;base64,${data}`;
+          await image.decode();
+          const canvas = document.createElement('canvas');
+          canvas.width = image.width;
+          canvas.height = image.height;
+          const ctx = canvas.getContext('2d')!;
+          ctx.drawImage(image, 0, 0);
+          const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+          const red = [];
+          for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 170 && pixels[i + 1] < 60 && pixels[i + 2] < 60) red.push(i / 4);
+          return red;
+        }, png.toString('base64'));
+      };
+      const actual = await ink();
+      // Widen only the viewport, not the PTY grid: the same glyph at the same
+      // position now paints unobstructed. Compare the actual raster, not its box.
+      await pane.evaluate(() => {
+        document.getElementById('classic-fit')!.style.width = '590px';
+      });
+      const reference = await ink();
+      assert.ok(reference.length > 0);
+      if (modal) assert.deepEqual(result.fit, { cols: 64, rows: 39 });
+      assert.deepEqual(actual, reference, 'the classic scrollbar clipped the last-column full block');
+      assert.ok(result.hit, 'the final pixel must hit the last glyph');
+      assert.ok(result.history > 0);
+      assert.deepEqual([result.before[0][1], result.after[0][1]], [3, 3]);
+      t.diagnostic(JSON.stringify(result));
+      assert.deepEqual(
+        result.after.map((v) => v[0]),
+        result.before.map((v) => v[0]),
+      );
+    }
   });
   await t.test('legacy wheel reports at the byte-coordinate boundaries', async () => {
     const comparisons = await page.evaluate(async () => {
