@@ -1,4 +1,5 @@
-import { createTerminalEngine } from '../term-engine';
+import { openTerminalRenderer } from './terminal-renderer';
+import { createTerminalEngine, type TerminalEngine } from '../term-engine';
 import { attachEngineFeatures } from '../term-engine/features';
 import type { ClientTerminal } from '../term-engine';
 import { changedImageType, type ChangedFile, type ChangesState, type ServerMsg } from '../../shared/protocol';
@@ -212,25 +213,37 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
       },
       terminalPrefs().engine,
     );
-    const { term: t } = engine;
-    const offPrefs = followTerminalPrefs(t, { fixed });
-    // The log keeps its PTY's rows and columns; only its cells grow or shrink.
-    const offFont = onTermFontSize((px) => (t.options.fontSize = px));
-    const offTheme = onTermTheme(() => (t.options.theme = termTheme()));
-    unfollow = () => {
-      offPrefs();
-      offFont();
-      offTheme();
+    const bind = (next: TerminalEngine) => {
+      const { term: t } = next;
+      const offPrefs = followTerminalPrefs(t, { fixed });
+      // The log keeps its PTY's rows and columns; only its cells grow or shrink.
+      const offFont = onTermFontSize((px) => (t.options.fontSize = px));
+      const offTheme = onTermTheme(() => (t.options.theme = termTheme()));
+      unfollow = () => {
+        offPrefs();
+        offFont();
+        offTheme();
+      };
+      const features = attachEngineFeatures(next);
+      scrollToBottom = () => features.scrollAtOnce(() => t.scrollToBottom());
+      // Keys belong to the window (T, Esc), never to the program in the terminal.
+      t.attachCustomKeyEventHandler(() => false);
+      term = t;
+      return t;
     };
-    const features = attachEngineFeatures(engine);
-    scrollToBottom = () => features.scrollAtOnce(() => t.scrollToBottom());
-    // Keys belong to the window (T, Esc), never to the program in the terminal.
-    t.attachCustomKeyEventHandler(() => false);
-    term = t;
+    let t = bind(engine);
     void loadFonts()
       .then(async () => {
         if (current?.modal !== modal || term !== t) return;
-        await t.open(logHost);
+        await openTerminalRenderer(
+          engine,
+          logHost,
+          () => current?.modal === modal && term === t,
+          (replacement) => {
+            unfollow();
+            t = bind(replacement);
+          },
+        );
         if (current?.modal !== modal || term !== t) return;
         // The PTY is shared and sized by whoever types to it, so this view takes its size rather than fitting.
         const w = store.workers.get(workerId);

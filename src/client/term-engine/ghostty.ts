@@ -5,6 +5,7 @@ import type { ClientTerminal, ClientTerminalOptions } from './types';
 
 // The authoritative xterm Unicode 11 PTY measures code points, not grapheme clusters.
 const serverWidths = '\x1b[?2027l';
+const ignoreKey = () => false;
 
 function event<T>() {
   const listeners = new Set<(data: T) => void>();
@@ -39,6 +40,7 @@ export class GhosttyAdapter implements ClientTerminal {
   private readonly opened = event<Terminal>();
   private readonly lifetime = new AbortController();
   private closed = false;
+  private parsing = false;
   private fit?: FitAddon;
   private keyHandler?: (event: KeyboardEvent) => boolean;
   private root?: HTMLElement;
@@ -62,6 +64,7 @@ export class GhosttyAdapter implements ClientTerminal {
       });
     }
     this.parser.registerEscHandler({ final: 'c' }, () => {
+      this.native?.clearSelection();
       this.native?.write(`\x1bc${serverWidths}`);
       return true;
     });
@@ -140,17 +143,27 @@ export class GhosttyAdapter implements ClientTerminal {
     term.open(root);
     term.write(serverWidths);
     root.tabIndex = -1;
-    term.onData((d) => this.data.fire(d));
+    term.onData((d) => {
+      if (!this.parsing) this.data.fire(d);
+    });
     term.attachCustomKeyEventHandler((e) => (this.keyHandler ? !this.keyHandler(e) : false));
     const report = (focused: boolean) => {
       if (!this.closed && !this.options.disableStdin && term.hasFocusEvents()) this.data.fire(focused ? '\x1b[I' : '\x1b[O');
     };
-    root.addEventListener('focusin', (e) => {
-      if (!root.contains(e.relatedTarget as Node | null)) report(true);
-    });
-    root.addEventListener('focusout', (e) => {
-      if (!root.contains(e.relatedTarget as Node | null)) report(false);
-    });
+    root.addEventListener(
+      'focusin',
+      (e) => {
+        if (!root.contains(e.relatedTarget as Node | null)) report(true);
+      },
+      { signal: this.lifetime.signal },
+    );
+    root.addEventListener(
+      'focusout',
+      (e) => {
+        if (!root.contains(e.relatedTarget as Node | null)) report(false);
+      },
+      { signal: this.lifetime.signal },
+    );
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     root.inert = false;
     if (!this.closed) this.opened.fire(term);
@@ -180,7 +193,12 @@ export class GhosttyAdapter implements ClientTerminal {
     if (!this.closed) {
       const reporting = this.native?.hasFocusEvents();
       this.beforeWrite.fire(data);
-      this.parser.write(data, (chunk) => this.native?.write(chunk));
+      this.parsing = true;
+      try {
+        this.parser.write(data, (chunk) => this.native?.write(chunk));
+      } finally {
+        this.parsing = false;
+      }
       if (!reporting && this.native?.hasFocusEvents() && !this.options.disableStdin && this.textarea === document.activeElement) this.data.fire('\x1b[I');
       this.parsed.fire();
       // Ghostty parses synchronously. Never pass write('') to its WASM allocator.
@@ -194,7 +212,13 @@ export class GhosttyAdapter implements ClientTerminal {
     this.resetting.fire();
     this.parser.reset();
     // RIS resets in place: native.reset() frees the core retained by the selection manager.
-    this.native?.write(`\x1bc\x1b[3J${serverWidths}`);
+    this.native?.clearSelection();
+    this.parsing = true;
+    try {
+      this.native?.write(`\x1bc\x1b[3J${serverWidths}`);
+    } finally {
+      this.parsing = false;
+    }
     this.native?.scrollToBottom();
   }
   resize(cols: number, rows: number) {
@@ -216,6 +240,7 @@ export class GhosttyAdapter implements ClientTerminal {
     this.closed = true;
     this.lifetime.abort();
     this.opened.clear();
+    this.native?.attachCustomKeyEventHandler(ignoreKey);
     this.native?.dispose();
     this.native = undefined;
     this.root?.remove();

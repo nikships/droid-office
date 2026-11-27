@@ -161,6 +161,20 @@ test('Ghostty scrollback preserves the fractional reader, settles and routes app
     }),
     ['\x1b[A', '\x1bOB', '\x1b[<64;3;2M', '\x1b[<73;3;2M'],
   );
+  await t.test('top-of-history height growth clamps the native viewport', async () => {
+    assert.deepEqual(
+      await page.evaluate(() => {
+        const { term } = window as any;
+        term.reset();
+        term.resize(40, 8);
+        term.write('x\r\n'.repeat(40));
+        term.native.scrollToTop();
+        term.resize(40, 10);
+        return [term.native.getViewportY(), term.native.getScrollbackLength(), term.buffer.active.viewportY];
+      }),
+      [31, 31, 0],
+    );
+  });
   await page.evaluate(() => (window as any).term.dispose());
   assert.deepEqual(errors, []);
 });

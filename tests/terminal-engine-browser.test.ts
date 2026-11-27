@@ -143,5 +143,106 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
     }),
     [[4, 4, 4, 4, 4], true, true, 4],
   );
+  await t.test('a failed Ghostty WASM request keeps the shell window and opens xterm once', async () => {
+    const p = await context.newPage();
+    await p.route('**/fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<div id="modal-root"></div><div id="toasts"></div>' }));
+    let blocked = 0;
+    await p.route('**/*.wasm*', (r) => {
+      blocked++;
+      return r.abort();
+    });
+    await p.goto(page.url());
+    await p.evaluate(async () => {
+      localStorage.setItem('droid-office.terminal', JSON.stringify({ engine: 'ghostty' }));
+      const url = '/ui/terminal.ts';
+      const { openOfficeShell } = await import(url);
+      openOfficeShell({ up: true, send: Boolean });
+      (window as any).shell = document.querySelector('.modal.term');
+    });
+    await p.locator('#toasts .toast').waitFor({ timeout: 8000 });
+    assert.ok(blocked);
+    assert.deepEqual(
+      await p.evaluate(() => [
+        (window as any).shell === document.querySelector('.modal.term'),
+        !!document.querySelector('.modal.term .xterm textarea'),
+        document.querySelectorAll('#toasts .toast').length,
+        document.querySelector('#toasts')?.textContent,
+      ]),
+      [true, true, 1, 'Ghostty could not load. Using xterm for this terminal.'],
+    );
+    await p.close();
+  });
+  await t.test('display writes never forward a native DA reply as user input', async () => {
+    assert.deepEqual(
+      await page.evaluate(async () => {
+        const url = '/term-engine/ghostty.ts',
+          { GhosttyAdapter } = await import(url);
+        const a = new GhosttyAdapter({});
+        await a.open(document.getElementById('host'));
+        const sent: string[] = [];
+        a.onData((s: string) => sent.push(s));
+        a.write('\x1bZ');
+        a.input('user');
+        a.dispose();
+        return sent;
+      }),
+      ['user'],
+    );
+  });
+  await t.test('snapshot reset and streamed RIS clear the selection', async () => {
+    assert.deepEqual(
+      await page.evaluate(async () => {
+        const url = '/term-engine/ghostty.ts',
+          { GhosttyAdapter } = await import(url);
+        const a = new GhosttyAdapter({});
+        await a.open(document.getElementById('host'));
+        const selected = [];
+        for (const reset of [() => a.reset(), () => a.write('\x1bc')]) {
+          a.write('old');
+          a.native.select(0, 0, 3);
+          selected.push(a.native.hasSelection());
+          reset();
+          selected.push(a.native.hasSelection());
+        }
+        a.dispose();
+        return selected;
+      }),
+      [true, false, true, false],
+    );
+  });
+  await t.test('closing 30 panes releases their adapters and reports native WASM retention', async () => {
+    const p = await context.newPage();
+    await p.route('**/fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<div id="host"></div>' }));
+    await p.goto(page.url());
+    const cdp = await context.newCDPSession(p);
+    const measure = async () => {
+      await cdp.send('HeapProfiler.collectGarbage');
+      const { result } = await cdp.send('Runtime.evaluate', { expression: 'WebAssembly.Memory.prototype', objectGroup: 'measurement' });
+      const { objects } = await cdp.send('Runtime.queryObjects', { prototypeObjectId: result.objectId!, objectGroup: 'measurement' });
+      const mem = await cdp.send('Runtime.callFunctionOn', { objectId: objects.objectId, functionDeclaration: 'function(){return this.reduce((sum,m)=>sum+m.buffer.byteLength,0)}', returnByValue: true });
+      await cdp.send('Runtime.releaseObjectGroup', { objectGroup: 'measurement' });
+      const counts = await p.evaluate(() => ((window as any).refs ?? []).reduce(([a, n]: number[], [adapter, native]: WeakRef<object>[]) => [a + Number(!!adapter.deref()), n + Number(!!native.deref())], [0, 0]));
+      return { adapters: counts[0], native: counts[1], wasmBytes: mem.result.value };
+    };
+    const before = await measure();
+    await p.evaluate(async () => {
+      const mod = '/term-engine/ghostty.ts',
+        features = '/term-engine/features.ts';
+      const { GhosttyAdapter } = await import(mod),
+        { attachEngineFeatures } = await import(features);
+      const refs = ((window as any).refs = [] as WeakRef<object>[][]);
+      for (let i = 0; i < 30; i++) {
+        const a = new GhosttyAdapter({ allowProposedApi: true });
+        attachEngineFeatures({ term: a, ghostty: a });
+        await a.open(document.getElementById('host'));
+        refs.push([new WeakRef(a), new WeakRef(a.native)]);
+        a.dispose();
+      }
+    });
+    const after = await measure();
+    t.diagnostic(JSON.stringify({ before, after }));
+    await p.close();
+    assert.equal(after.adapters, 0);
+  });
   assert.deepEqual(errors, []);
 });

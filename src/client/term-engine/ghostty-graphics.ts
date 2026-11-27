@@ -46,21 +46,18 @@ export function attachGhosttyGraphics(adapter: GhosttyAdapter, images: KittyTerm
     images,
   );
   let virtual = false;
-  const reset = () => {
+  const reset = (snapshot: boolean) => {
     overlay.graphics.reset();
     overlay.clearPlacements();
     overlay.clearDecoded();
-    rows?.setRegion(false);
+    rows?.reset(snapshot);
     virtual = false;
     overlay.schedulePaint();
   };
   const hooks = [
-    adapter.onReset(() => {
-      reset();
-      rows?.reset();
-    }),
+    adapter.onReset(() => reset(true)),
     adapter.parser.registerEscHandler({ final: 'c' }, () => {
-      reset();
+      reset(false);
       return false;
     }),
     adapter.parser.registerApcHandler((body) => {

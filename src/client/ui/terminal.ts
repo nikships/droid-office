@@ -1,4 +1,5 @@
 import type { TerminalFind } from '../term-engine/types';
+import { openTerminalRenderer } from './terminal-renderer';
 import { createTerminalEngine } from '../term-engine';
 import { attachEngineFeatures } from '../term-engine/features';
 import { TerminalPathLinksAddon } from './terminal-path-links';
@@ -269,7 +270,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   };
 
   const pathLinks = new TerminalPathLinksAddon({ floor: () => store.floor ?? '', workerId, workerName: info.name, inert: readOnly });
-  const engine = createTerminalEngine(
+  let engine = createTerminalEngine(
     {
       ...terminalOptions(),
       fontFamily: TERM_FONT,
@@ -284,26 +285,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     },
     terminalPrefs().engine,
   );
-  const { term } = engine;
+  let { term } = engine;
   let opened = false;
   let alive = true;
   const expanded = { modal: null as Modal | null };
-  const features = attachEngineFeatures(
-    engine,
-    {
-      onExpandImage: (img) =>
-        openKittyPicture(
-          img,
-          store.worker(workerId)?.name ?? info.name,
-          () => alive,
-          () => term.focus(),
-          expanded,
-        ),
-    },
-    pathLinks,
-  );
-
-  const offQueries = suppressMirrorQueries(term);
   const focus = focusReports();
   let lastSentSize = '';
   let lastPtySize = '';
@@ -398,24 +383,82 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   };
   let pendingFind = find;
 
-  const mirror = new TerminalMirror(
-    term,
-    (snapshot) => {
-      adoptSharedSize = snapshot.shared ?? adoptSharedSize;
-      const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
-      if (focusIn && !readOnly) net.send({ t: 'term.input', workerId, data: focusIn });
-      lastSentSize = '';
-      pendingSizes.length = 0;
-      term.options.disableStdin = readOnly || !net.up;
-      disconnected.classList.add('hidden');
-      sendSize();
-      features.scrollAtOnce(() => term.scrollToBottom());
-      refresh();
-      if (pendingFind) jumpTo(pendingFind);
-      pendingFind = undefined;
-    },
-    () => net.send({ t: 'worker.attach', workerId }),
-  );
+  const bindRenderer = () => {
+    const features = attachEngineFeatures(
+      engine,
+      {
+        onExpandImage: (img) =>
+          openKittyPicture(
+            img,
+            store.worker(workerId)?.name ?? info.name,
+            () => alive,
+            () => term.focus(),
+            expanded,
+          ),
+      },
+      pathLinks,
+    );
+    const offQueries = suppressMirrorQueries(term);
+    const mirror = new TerminalMirror(
+      term,
+      (snapshot) => {
+        adoptSharedSize = snapshot.shared ?? adoptSharedSize;
+        const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
+        if (focusIn && !readOnly) net.send({ t: 'term.input', workerId, data: focusIn });
+        lastSentSize = '';
+        pendingSizes.length = 0;
+        term.options.disableStdin = readOnly || !net.up;
+        disconnected.classList.add('hidden');
+        sendSize();
+        features.scrollAtOnce(() => term.scrollToBottom());
+        refresh();
+        if (pendingFind) jumpTo(pendingFind);
+        pendingFind = undefined;
+      },
+      () => net.send({ t: 'worker.attach', workerId }),
+    );
+    const offPrefs = followTerminalPrefs(term, {
+      resized: () => {
+        paneSizeChanged = true;
+        sendSize();
+      },
+    });
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.ctrlKey && e.key === ']' && (!inline || inline.onLeave)) {
+        if (e.type === 'keydown') {
+          if (inline) inline.onLeave?.();
+          else modal.close();
+        }
+        return false;
+      }
+      if (!inline && e.key === 'Escape' && e.shiftKey) return false;
+      const action = features.keyAction(e, csiEnter());
+      if (action.do === 'default') return !features.handleKey(e);
+      if (action.do === 'send') {
+        e.preventDefault();
+        term.input(action.data);
+      }
+      return false;
+    });
+    term.onData((data) => {
+      if (readOnly || !mirror.ready || !net.up) return;
+      const kind = focus.classify(data);
+      if (kind === 'repeat') return;
+      // Focus moving is not typing, so it leaves the shared PTY at its size.
+      if (kind === 'input') sendSize(true);
+      net.send({ t: 'term.input', workerId, data });
+    });
+    return {
+      features,
+      mirror,
+      unbind() {
+        offQueries();
+        offPrefs();
+        mirror.disconnect();
+      },
+    };
+  };
+  let { features, mirror, unbind } = bindRenderer();
   // Keep a scrolled-up reader's exact history. Only a following companion terminal can discard
   // invisible output and return to the latest snapshot, without retaining an unbounded backlog.
   const visibility = () => {
@@ -473,10 +516,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     unsub();
     unsubCredits();
     offStatus();
-    offQueries();
-    mirror.disconnect();
+    unbind();
     offFont();
-    offPrefs();
     offTheme();
     ro.disconnect();
     net.send({ t: 'worker.detach', workerId });
@@ -593,39 +634,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     paneSizeChanged = true;
     sendSize();
   });
-  const offPrefs = followTerminalPrefs(term, {
-    resized: () => {
-      paneSizeChanged = true;
-      sendSize();
-    },
-  });
   const offTheme = onTermTheme(() => (term.options.theme = termTheme()));
-
-  term.attachCustomKeyEventHandler((e) => {
-    if (e.ctrlKey && e.key === ']' && (!inline || inline.onLeave)) {
-      if (e.type === 'keydown') {
-        if (inline) inline.onLeave?.();
-        else modal.close();
-      }
-      return false;
-    }
-    if (!inline && e.key === 'Escape' && e.shiftKey) return false;
-    const action = features.keyAction(e, csiEnter());
-    if (action.do === 'default') return !features.handleKey(e);
-    if (action.do === 'send') {
-      e.preventDefault();
-      term.input(action.data);
-    }
-    return false;
-  });
-  term.onData((data) => {
-    if (readOnly || !mirror.ready || !net.up) return;
-    const kind = focus.classify(data);
-    if (kind === 'repeat') return;
-    // Focus moving is not typing, so it leaves the shared PTY at its size.
-    if (kind === 'input') sendSize(true);
-    net.send({ t: 'term.input', workerId, data });
-  });
 
   // Files dropped in, or a screenshot pasted, go up to the office's machine and the terminal types
   // where they are, as a terminal does with a file dragged into it: Droid attaches a picture.
@@ -694,7 +703,17 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   void loadFonts()
     .then(async () => {
       if (!alive) return;
-      await term.open(host);
+      await openTerminalRenderer(
+        engine,
+        host,
+        () => alive,
+        (replacement) => {
+          unbind();
+          engine = replacement;
+          term = engine.term;
+          ({ features, mirror, unbind } = bindRenderer());
+        },
+      );
       if (!alive) return;
       opened = true;
       ro.observe(host);
@@ -741,7 +760,7 @@ export function openOfficeShell(net: Net) {
   const el = h('div.modal.full.term', { role: 'dialog', 'aria-label': 'Shell' }, h('header', {}, colorDot('#8d99ae'), h('div.titles', {}, h('div.term-title', {}, title, pill), sub), h('div.actions', {}, zoom), closeBtn), host);
 
   const pathLinks = new TerminalPathLinksAddon({ floor: () => store.floor ?? '', workerId: OFFICE_SHELL_ID });
-  const engine = createTerminalEngine(
+  let engine = createTerminalEngine(
     {
       ...terminalOptions(),
       fontFamily: TERM_FONT,
@@ -755,24 +774,9 @@ export function openOfficeShell(net: Net) {
     },
     terminalPrefs().engine,
   );
-  const { term } = engine;
+  let { term } = engine;
   let shellAlive = true;
   const expanded = { modal: null as Modal | null };
-  const features = attachEngineFeatures(
-    engine,
-    {
-      onExpandImage: (img) =>
-        openKittyPicture(
-          img,
-          'Shell',
-          () => shellAlive,
-          () => term.focus(),
-          expanded,
-        ),
-    },
-    pathLinks,
-  );
-
   let opened = false;
   let shared = false;
   let lastSentSize = '';
@@ -781,9 +785,7 @@ export function openOfficeShell(net: Net) {
   const pendingSizes: string[] = [];
   let box: { width: number; height: number } | undefined;
   let boxChanged = false;
-  const offQueries = suppressMirrorQueries(term);
   const focus = focusReports();
-  let mirror: TerminalMirror | undefined;
 
   const sendSize = (typing = false) => {
     if (!mirror?.ready || !opened || !net.up || !host.clientWidth || !host.clientHeight) return;
@@ -809,21 +811,74 @@ export function openOfficeShell(net: Net) {
     }
   };
 
-  mirror = new TerminalMirror(
-    term,
-    (snapshot) => {
-      shared = snapshot.shared === true;
-      const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
-      if (focusIn) net.send({ t: 'shell.input', data: focusIn });
-      ptyCols = snapshot.cols;
-      ptyRows = snapshot.rows;
-      lastSentSize = '';
-      pendingSizes.length = 0;
-      sendSize();
-      features.scrollAtOnce(() => term.scrollToBottom());
-    },
-    () => net.send({ t: 'shell.attach' }),
-  );
+  function bindRenderer() {
+    const features = attachEngineFeatures(
+      engine,
+      {
+        onExpandImage: (img) =>
+          openKittyPicture(
+            img,
+            'Shell',
+            () => shellAlive,
+            () => term.focus(),
+            expanded,
+          ),
+      },
+      pathLinks,
+    );
+    const offQueries = suppressMirrorQueries(term);
+    const mirror = new TerminalMirror(
+      term,
+      (snapshot) => {
+        shared = snapshot.shared === true;
+        const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
+        if (focusIn) net.send({ t: 'shell.input', data: focusIn });
+        ptyCols = snapshot.cols;
+        ptyRows = snapshot.rows;
+        lastSentSize = '';
+        pendingSizes.length = 0;
+        sendSize();
+        features.scrollAtOnce(() => term.scrollToBottom());
+      },
+      () => net.send({ t: 'shell.attach' }),
+    );
+    const offPrefs = followTerminalPrefs(term, {
+      resized: () => {
+        boxChanged = true;
+        sendSize();
+      },
+    });
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.ctrlKey && e.key === ']') {
+        if (e.type === 'keydown') modal.close();
+        return false;
+      }
+      if (e.key === 'Escape' && e.shiftKey) return false;
+      const action = features.keyAction(e, false);
+      if (action.do === 'default') return !features.handleKey(e);
+      if (action.do === 'send') {
+        e.preventDefault();
+        term.input(action.data);
+      }
+      return false;
+    });
+    term.onData((data) => {
+      if (!mirror?.ready || !net.up) return;
+      const kind = focus.classify(data);
+      if (kind === 'repeat') return;
+      if (kind === 'input') sendSize(true);
+      net.send({ t: 'shell.input', data });
+    });
+    return {
+      mirror,
+      unbind() {
+        offQueries();
+        offPrefs();
+        mirror.disconnect();
+      },
+    };
+  }
+  let { mirror, unbind } = bindRenderer();
   const onMsg = (msg: ServerMsg) => {
     if (engine.ghostty && !opened) return;
     if (msg.t === 'term.data' && msg.workerId === OFFICE_SHELL_ID) mirror?.data(msg.data);
@@ -878,10 +933,8 @@ export function openOfficeShell(net: Net) {
       shellAlive = false;
       listeners.delete(onMsg);
       unsub();
-      offQueries();
-      mirror?.disconnect();
+      unbind();
       offFont();
-      offPrefs();
       offTheme();
       ro.disconnect();
       net.send({ t: 'shell.detach' });
@@ -902,12 +955,6 @@ export function openOfficeShell(net: Net) {
     boxChanged = true;
     sendSize();
   });
-  const offPrefs = followTerminalPrefs(term, {
-    resized: () => {
-      boxChanged = true;
-      sendSize();
-    },
-  });
   const offTheme = onTermTheme(() => (term.options.theme = termTheme()));
   const zoomBy = (dir: 1 | -1) => {
     setTermFontSize(stepTermFont(term.options.fontSize ?? termFontSize(), dir));
@@ -916,28 +963,6 @@ export function openOfficeShell(net: Net) {
   smaller.addEventListener('click', () => zoomBy(-1));
   bigger.addEventListener('click', () => zoomBy(1));
   closeBtn.addEventListener('click', () => modal.close());
-
-  term.attachCustomKeyEventHandler((e) => {
-    if (e.ctrlKey && e.key === ']') {
-      if (e.type === 'keydown') modal.close();
-      return false;
-    }
-    if (e.key === 'Escape' && e.shiftKey) return false;
-    const action = features.keyAction(e, false);
-    if (action.do === 'default') return !features.handleKey(e);
-    if (action.do === 'send') {
-      e.preventDefault();
-      term.input(action.data);
-    }
-    return false;
-  });
-  term.onData((data) => {
-    if (!mirror?.ready || !net.up) return;
-    const kind = focus.classify(data);
-    if (kind === 'repeat') return;
-    if (kind === 'input') sendSize(true);
-    net.send({ t: 'shell.input', data });
-  });
 
   let uploading = 0;
   const insertFiles = async (files: File[]) => {
@@ -996,7 +1021,17 @@ export function openOfficeShell(net: Net) {
   void loadFonts()
     .then(async () => {
       if (current?.modal !== modal) return;
-      await term.open(host);
+      await openTerminalRenderer(
+        engine,
+        host,
+        () => shellAlive,
+        (replacement) => {
+          unbind();
+          engine = replacement;
+          term = engine.term;
+          ({ mirror, unbind } = bindRenderer());
+        },
+      );
       if (!shellAlive) return;
       opened = true;
       ro.observe(host);

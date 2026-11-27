@@ -93,7 +93,10 @@ export function attachGhosttyScroll(adapter: GhosttyAdapter) {
         stop(); // Search, native selection autoscroll or the canvas scrollbar takes ownership.
         settle();
       }),
-      native.onResize(stop),
+      native.onResize(() => {
+        stop();
+        if (native.getViewportY() > history()) native.scrollToTop();
+      }),
       adapter.onReset(() => {
         stop();
         program.reset();

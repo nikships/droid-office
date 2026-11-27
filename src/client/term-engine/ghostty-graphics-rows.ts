@@ -36,24 +36,37 @@ interface Position {
   history: number;
 }
 
-/** ASCII shell output without soft wraps has an exact line-advance count, even when every
+/** ASCII shell output has an exact line-advance count, even when every
  * row has identical text and the history limit trims a whole page in a single write. */
-function lineAdvances(data: string, startX: number, cols: number) {
+function lineAdvances(data: string, startX: number, cols: number, autowrap: boolean, previous: boolean | undefined) {
   let x = startX;
+  // A cursor already on the margin may or may not have a wrap pending from an earlier write.
+  let pending = x === cols - 1 && autowrap ? previous : false;
   let count = 0;
   for (const ch of data) {
+    if (ch >= ' ' && ch <= '~') {
+      if (pending === undefined) return undefined;
+      if (pending) {
+        count++;
+        x = 0;
+      }
+      pending = x === cols - 1 && autowrap;
+      x = Math.min(cols - 1, x + 1);
+      continue;
+    }
+    pending = false;
     if (ch === '\n' || ch === '\v' || ch === '\f') count++;
     else if (ch === '\r') x = 0;
     else if (ch === '\b') x = Math.max(0, x - 1);
-    else if (ch >= ' ' && ch <= '~' && x < cols - 1) x++;
     else return undefined;
   }
-  return count;
+  return { count, pending };
 }
 
 export class GraphicsRows {
   private readonly anchors = new Set<{ line: number }>();
   private before?: Position;
+  private pendingWrap?: boolean;
   private readonly boundaries = new VtScanner();
   private spans: string[] = [];
   private span = 0;
@@ -61,6 +74,8 @@ export class GraphicsRows {
   private horizontalMargins = false;
   private savedPrimary?: Position;
   private safeWidth = Infinity;
+  private lastCols = 0;
+  private lastTotalRows = 0;
   constructor(private readonly core: GhosttyTerminal) {
     // onBeforeWrite brackets the complete write, not each native text span. Use the same
     // framing rules to account for only the text between callbacks, including split APC/ST.
@@ -182,9 +197,10 @@ export class GraphicsRows {
     this.rememberWidth();
   }
 
-  reset() {
+  reset(snapshot: boolean) {
+    this.pendingWrap = undefined;
     this.invalidate();
-    this.boundaries.reset();
+    if (snapshot) this.boundaries.reset(); // Streamed RIS can be followed by a partial control in this write.
     this.region = false;
     this.horizontalMargins = false;
     this.savedPrimary = undefined;
@@ -194,6 +210,8 @@ export class GraphicsRows {
   /** With no history and no wrapped rows, a grid wide enough to contain every used cell
    * cannot reflow any preceding line. Otherwise we have no public old-to-new line mapping. */
   private rememberWidth() {
+    this.lastCols = this.core.cols;
+    this.lastTotalRows = this.core.rows + this.core.getScrollbackLength();
     this.safeWidth = Infinity;
     if (!this.anchors.size || this.core.isAlternateScreen() || this.core.getScrollbackLength()) return;
     this.core.update();
@@ -213,6 +231,9 @@ export class GraphicsRows {
   }
 
   resized() {
+    this.pendingWrap = undefined;
+    const totalRows = this.core.rows + this.core.getScrollbackLength();
+    if (this.core.cols === this.lastCols && totalRows === this.lastTotalRows) return;
     if (this.core.getScrollbackLength() || this.core.cols < this.safeWidth) this.invalidate();
     else
       for (const a of this.anchors)
@@ -225,17 +246,22 @@ export class GraphicsRows {
 
   private advance(data: string) {
     const before = this.before;
-    if (!before || !data || !this.anchors.size || this.core.isAlternateScreen()) return;
+    if (!data) return;
+    const previous = this.pendingWrap;
+    this.pendingWrap = undefined;
+    if (!before || !this.anchors.size || this.core.isAlternateScreen()) return;
     const history = this.core.getScrollbackLength();
     const delta = history - before.history;
     const after = this.core.getCursor();
     // Styling, OSC titles and shell-integration metadata, private mode toggles, horizontal
     // absolute positioning and erase-in-line do not themselves add or remove physical rows.
     const plain = data.replace(/\x1b\][^\x07\x18\x1a\x1b\x9c]*(?:\x07|\x1b\\|\x9c)|\x1b\[[\d:;]*m|\x1b\[\?(?:(?:1|7|9|12|25|100[0-7]|101[56]|2004|2027);?)+[hl]|\x1b\[\d*K/g, '');
-    const advances = lineAdvances(plain.replace(/\x1b\[\d*G$/, ''), before.x, this.core.cols);
+    const text = plain.replace(/\x1b\[\d*G$/, '');
+    const advances = lineAdvances(text, before.x, this.core.cols, this.core.getMode(7), previous);
     let trimmed: number;
     if (advances !== undefined && !this.region && !this.horizontalMargins) {
-      trimmed = before.y + advances - after.y - delta;
+      this.pendingWrap = text === plain && advances.pending;
+      trimmed = before.y + advances.count - after.y - delta;
     } else {
       // The core exposes neither a trim counter nor stable row handles. Only accept a
       // displacement we can prove. Fast path for soft-wrapped output: each printable

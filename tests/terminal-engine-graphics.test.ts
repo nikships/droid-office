@@ -32,12 +32,27 @@ test('the zsh prompt preserves a placed image above the cursor on real WASM', as
   const image = rows.anchor()!;
   write('\r\n'.repeat(11));
   assert.deepEqual([core.getScrollbackLength(), core.getCursor().y, image.line], [465, 12, 466]);
+  write('\r\n'.repeat(23));
+  assert.equal(core.getCursor().y, 35);
   // zsh paints a reverse-video %, pads the row, then erases below its prompt.
   write(`\x1b[1m\x1b[7m%\x1b[27m\x1b[1m\x1b[0m${' '.repeat(110)}\r \r`);
   for (const ed of ['\x1b[J', '\x1b[0J', '\x1b[1J']) {
     write(`\r\x1b[0m\x1b[27m\x1b[24m${ed}user@host droid-office % \x1b[K`);
     write('\x1b[?2004h');
     assert.equal(image.line, 466, JSON.stringify(ed));
+  }
+  for (const [control, expected] of [
+    ['', 1],
+    ['\r', 0],
+    ['\n', 1],
+    ['\b', 0],
+  ] as const) {
+    const history = core.getScrollbackLength();
+    write(`\r${'x'.repeat(110)}`);
+    write('x'); // Transport split immediately before and after filling the margin.
+    write(`${control}Y`);
+    assert.equal(core.getScrollbackLength() - history, expected);
+    assert.equal(image.line, 466);
   }
 });
 
@@ -106,6 +121,15 @@ test('actual WASM rows follow identical output across history growth and page tr
       .join(''),
     'UNIQUE',
   );
+  await t.test('unchanged column count keeps absolute anchors on height growth and shrink', () => {
+    const original = next.line;
+    for (const height of [12, 6]) {
+      core.resize(48, height);
+      rows.resized();
+      assert.equal(next.line, original, 'height-only resize preserved absolute marker');
+      assert.equal(core.getScrollbackLine(next.line)?.[0].codepoint, 85);
+    }
+  });
   core.resize(30, 8);
   rows.resized();
   assert.ok(next.isDisposed);
@@ -188,6 +212,12 @@ test('Ghostty graphics: ordered split APC, actual snapshot, Retina pixels, scrol
     );
   };
   const packed = deflateSync(Buffer.from([255, 0, 0])).toString('base64');
+  await t.test('streamed RIS clears margins without dropping an incomplete APC', async () => {
+    await write('\x1b[?69h\x1bc\x1b_G'); // RIS followed by a still-incomplete APC in the same write.
+    await write('a=T,f=24,s=1,v=1,i=87;/wAA\x1b\\');
+    await painted(0, 0, true);
+    await write('\x1bc');
+  });
   await write(`${apc('a=q,i=99,f=24,s=1,v=1;AAAA')}label\r\n${apc(`a=t,i=2,f=24,s=1,v=1,o=z,m=1;${packed.slice(0, 4)}`)}`);
   const tail = apc(`m=0;${packed.slice(4)}`) + apc('a=p,i=2,p=7,c=4,r=3');
   for (const chunk of [tail.slice(0, 2), tail.slice(2, -1), tail.slice(-1)]) await write(chunk);
