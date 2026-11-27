@@ -10,10 +10,16 @@ export async function warmWterm() {
   core.dispose();
 }
 
-export async function loadWterm(adapter: WTermAdapter, element: HTMLElement, onData: (data: string) => void, features: readonly WTermFeature[]) {
+export async function loadWterm(adapter: WTermAdapter, element: HTMLElement, onData: (data: string) => void, features: readonly WTermFeature[], onPaint: (discarded: number) => void) {
   const core = await GhosttyCore.load({ wasmPath, scrollbackLines: adapter.options.scrollback, imageStorageLimit: 0 });
   try {
     const mirror = wtermAppearance(core, adapter);
+    // The renderer clears dirty rows when it consumes them. Until then the
+    // DOM scroll position is relative to the previous history origin.
+    mirror.clearDirty = () => {
+      onPaint(core.getScrollbackDiscardedCount());
+      core.clearDirty();
+    };
     // Always drain (not just hide) pending replies, including asynchronous paint/theme drains.
     mirror.getResponse = () => {
       while (core.getResponse() !== null) {

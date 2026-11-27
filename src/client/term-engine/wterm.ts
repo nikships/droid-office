@@ -46,6 +46,8 @@ export class WTermAdapter {
   private metricsPending = true;
   // History index including discarded rows, or undefined when following the tail.
   private readerRow?: number;
+  private paintedDiscarded = 0;
+  private restoreFrame = 0;
   private keyHandler?: (e: KeyboardEvent) => boolean;
 
   constructor(
@@ -94,16 +96,16 @@ export class WTermAdapter {
       mouseTrackingMode: c?.mouseTracking() === 1003 ? 'any' : c?.mouseTracking() === 1002 ? 'drag' : c?.mouseTracking() === 1000 ? 'vt200' : 'none',
     } as const;
   }
-  private sampleReader(discarded = this.core?.getScrollbackDiscardedCount() ?? 0) {
+  private sampleReader() {
     const el = this.root;
     // display:none collapses every DOM scroll metric to zero. Keep the last visible
     // position and subtract history evicted while painting was paused.
-    if (el?.clientHeight) this.readerRow = el.scrollHeight - el.clientHeight - el.scrollTop < 1 ? undefined : discarded + el.scrollTop / this.rowHeight;
+    if (el?.clientHeight && !this.restoreFrame) this.readerRow = el.scrollHeight - el.clientHeight - el.scrollTop < 1 ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;
   }
   get buffer() {
     const baseY = this.core?.getScrollbackCount() ?? 0;
     const discarded = this.core?.getScrollbackDiscardedCount() ?? 0;
-    this.sampleReader(discarded);
+    this.sampleReader();
     const viewportY = this.readerRow === undefined ? baseY : Math.min(baseY, Math.max(0, Math.floor(this.readerRow - discarded)));
     return { active: { baseY, viewportY } };
   }
@@ -157,6 +159,12 @@ export class WTermAdapter {
   refreshMetrics() {
     const el = this.root;
     if (!el) return;
+    if (this.native && !el.clientWidth) {
+      this.metricsPending = true;
+      return;
+    }
+    this.sampleReader();
+    const previousHeight = this.rowHeight;
     if (this.options.fontFamily) el.style.setProperty('--term-font-family', this.options.fontFamily);
     const size = this.options.fontSize ?? 14;
     el.style.setProperty('--term-font-size', `${size}px`);
@@ -193,6 +201,22 @@ export class WTermAdapter {
         this.metricsPending = false;
       } finally {
         el.style.width = width;
+      }
+      if (previousHeight !== this.rowHeight && this.readerRow !== undefined) {
+        const reader = this.readerRow;
+        const offset = () => Math.max(0, (reader - this.paintedDiscarded) * this.rowHeight);
+        el.scrollTop = offset();
+        cancelAnimationFrame(this.restoreFrame);
+        this.restoreFrame = 0;
+        // A virtual history spacer can still have its old height, clamping
+        // the requested offset. Restore the rest after the new layout paints.
+        if (offset() - el.scrollTop > 1) {
+          const clamped = el.scrollTop;
+          this.restoreFrame = requestAnimationFrame(() => {
+            this.restoreFrame = 0;
+            if (el.scrollTop === clamped) el.scrollTop = offset();
+          });
+        }
       }
     }
   }
@@ -233,6 +257,9 @@ export class WTermAdapter {
           if (!this.displayWrite && !this.options.disableStdin && !signal.aborted) this.data.fire(d);
         },
         features,
+        (discarded) => {
+          this.paintedDiscarded = discarded;
+        },
       );
       if (signal.aborted) {
         native.destroy();
@@ -390,11 +417,14 @@ export class WTermAdapter {
     this.native?.setRenderingPaused(paused || !this.inViewport);
   }
   scrollToBottom() {
+    if (this.restoreFrame) cancelAnimationFrame(this.restoreFrame);
+    this.restoreFrame = 0;
     if (this.root) this.root.scrollTop = this.root.scrollHeight;
   }
   dispose() {
     if (this.lifetime.signal.aborted) return;
     this.lifetime.abort();
+    if (this.restoreFrame) cancelAnimationFrame(this.restoreFrame);
     this.native?.destroy();
     this.core?.dispose();
     this.root?.remove();

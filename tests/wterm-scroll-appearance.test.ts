@@ -257,6 +257,56 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       assert.equal(sample.cols, sample.expectedCols, JSON.stringify(sample));
     }
   });
+  await t.test('font changes and unpainted evictions preserve the same fractional reader row at a fixed PTY size', async () => {
+    const result = await page.evaluate(async () => {
+      const engine = '/term-engine/web-terminal.ts';
+      const { createWebTerminal } = await import(engine);
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;inset:0;width:500px;height:152px;z-index:50';
+      document.body.append(host);
+      const { term } = createWebTerminal({ fontSize: 14, fontFamily: 'monospace', lineHeight: 1.1, scrollback: 64 });
+      try {
+        await term.open(host);
+        term.resize(40, 8);
+        term.write(Array.from({ length: 80 }, (_, i) => `line ${i}\r\n`).join(''));
+        const { frame } = window as any;
+        await frame();
+        const el = term.native.element;
+        const height = () => parseFloat(getComputedStyle(el).getPropertyValue('--term-row-height'));
+        const topText = () => document.elementFromPoint(5, 1)?.closest('.term-row')?.textContent?.trim();
+        el.scrollTop = 31.25 * height();
+        await frame();
+        const first = topText(),
+          fraction = el.scrollTop / height();
+        const samples = [];
+        for (const [size, spacing] of [
+          [20, 1.1],
+          [20, 1.4],
+          [14, 1.1],
+        ]) {
+          term.options.fontSize = size;
+          term.options.lineHeight = spacing;
+          await frame();
+          samples.push({ text: topText(), row: el.scrollTop / height(), viewport: term.buffer.active.viewportY });
+        }
+        term.write('new\r\n'.repeat(7));
+        const pending = term.buffer.active.viewportY;
+        await frame();
+        return { first, fraction, samples, pending, painted: term.buffer.active.viewportY, final: topText(), grid: [term.cols, term.rows] };
+      } finally {
+        term.dispose();
+        host.remove();
+      }
+    });
+    assert.ok(result.first?.startsWith('line '));
+    assert.deepEqual(result.grid, [40, 8]);
+    for (const sample of result.samples) {
+      assert.equal(sample.text, result.first);
+      assert.ok(Math.abs(sample.row - result.fraction) < 0.07);
+      assert.equal(sample.viewport, 31);
+    }
+    assert.deepEqual([result.pending, result.painted, result.final], [24, 24, result.first]);
+  });
   await t.test('holds retained content through cap, resize and new output; typing and paste follow again', async () => {
     const result = await page.evaluate(async () => {
       const { a, x, write, frame, el } = window as any;
