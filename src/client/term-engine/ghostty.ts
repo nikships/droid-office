@@ -114,6 +114,14 @@ export class GhosttyAdapter implements ClientTerminal {
     // open() focuses both immediately and on its next timer. Neither may steal focus from a
     // sibling pane. The owning window explicitly focuses interactive terminals when ready.
     root.inert = true;
+    // Ghostty calls its custom handler on keydown only. The view also needs releases
+    // for Kitty and must be able to swallow a keypress after replacing its keydown.
+    const forward = (event: KeyboardEvent) => {
+      if (this.keyHandler?.(event) !== false) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    for (const phase of ['keypress', 'keyup'] as const) root.addEventListener(phase, forward, { capture: true, signal: this.lifetime.signal });
     term.open(root);
     root.tabIndex = -1;
     term.onData((d) => this.data.fire(d));

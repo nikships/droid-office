@@ -57,7 +57,12 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
     });
     term.onData((d: string) => w.sent.push(d));
     term.onWriteParsed(() => w.parsed++);
-    term.attachCustomKeyEventHandler((e: KeyboardEvent) => e.key !== 'b');
+    w.events = [];
+    term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      w.events.push(`${e.type}:${e.key}`);
+      if (e.type === 'keyup' && e.key === 'b') term.input('release');
+      return e.key !== 'b';
+    });
     await term.open(document.getElementById('host'));
     await new Promise((r) => setTimeout(r, 15));
     term.resize(40, 8);
@@ -68,6 +73,19 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
   await page.evaluate(() => (window as any).term.focus());
   await page.keyboard.press('a');
   await page.keyboard.press('b');
+  assert.deepEqual(await page.evaluate(() => (window as any).events), ['keydown:a', 'keyup:a', 'keydown:b', 'keyup:b']);
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const { term } = window as any;
+      const bubbled: string[] = [];
+      for (const phase of ['keypress', 'keyup']) {
+        term.native.element.addEventListener(phase, (e: KeyboardEvent) => bubbled.push(`${phase}:${e.key}`));
+        for (const key of ['a', 'b']) term.textarea.dispatchEvent(new KeyboardEvent(phase, { key, bubbles: true, cancelable: true }));
+      }
+      return bubbled;
+    }),
+    ['keypress:a', 'keyup:a'],
+  );
   await page.evaluate(() => {
     const { term } = window as any;
     term.paste('p');
@@ -76,7 +94,7 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
     term.paste('ignored');
   });
   await page.keyboard.press('c');
-  assert.deepEqual(await page.evaluate(() => (window as any).sent), ['\x1b[I', 'a', '\x1b[200~p\x1b[201~', 'i']);
+  assert.deepEqual(await page.evaluate(() => (window as any).sent), ['\x1b[I', 'a', 'release', 'release', '\x1b[200~p\x1b[201~', 'i']);
   assert.deepEqual(
     await page.evaluate(async () => {
       const { term } = window as any;
@@ -90,7 +108,11 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
       term.options.theme = { foreground: '#ffffff', background: '#121212' };
       term.options.scrollSensitivity = 2;
       const after = { history: term.buffer.active.baseY, parsed: (window as any).parsed, scroll: scrolled.viewportY === 0 && scrolled.baseY > 0, focusMode: term.modes.sendFocusMode, font: term.native.options.fontSize };
+      const root = term.native.element;
       term.dispose();
+      const count = (window as any).events.length;
+      root.dispatchEvent(new KeyboardEvent('keyup', { key: 'b', bubbles: true }));
+      if ((window as any).events.length !== count) throw Error('Disposed terminal received a release');
       return after;
     }),
     { history: 0, parsed: 3, scroll: true, focusMode: false, font: 19 },
