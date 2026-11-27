@@ -6,6 +6,8 @@ Both web entry points warm the runtime when idle. Concurrent loads of the same h
 
 Android Raw TTY packages the JavaScript, CSS and WASM inside the APK. The native input connection owns Direct input. On the stock Android 9 (API 28) emulator, Chrome WebView 66 fetched all 599,627 WASM bytes with the correct MIME type, but the embedder disallowed WebAssembly compilation. Raw TTY shows **Unavailable** on that provider; there is no alternate renderer. See [the Android app guide](../android/README.md) for Phone and Desktop sizing, input and navigation.
 
+If Android Find is open when the phone receives a replacement snapshot, it reruns the search and scrolls to the first match, even if the text is unchanged. The public wterm search API cannot restore the previous active match without moving the viewport.
+
 ## Adapter contract
 
 - Each window owns a `WTermAdapter`. Await `openTerminalRenderer(term, host, alive)` after `loadFonts()` and recheck the view’s lifetime before attaching. The engine opens in an inert root so no pane steals focus. Mount, attach and first paint do not wait for the opening animation. Canvas font metrics and layout dimensions determine the PTY grid even during a scale transform. Only pointer hit testing is held until the opening transform finishes (240 ms dashboard, 160 ms modal), when a single DOM metrics refresh restores the settled cell geometry. Keyboard input and output remain live. `proposeDimensions()` only reads layout; `resize(cols, rows)` applies the size the office negotiates. Web terminal windows keep the previous 14 px scrollbar gutter; a 566×769 px terminal host at the default text settings fits 64×39. Changes Log adopts the shared PTY size, even when its font changes.
