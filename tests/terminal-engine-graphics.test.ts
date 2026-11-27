@@ -411,15 +411,15 @@ test('Ghostty graphics: ordered split APC, actual snapshot, Retina pixels, scrol
     const mod = '/term-mirror.ts';
     await page.evaluate(async (m) => (await import(m)).suppressMirrorQueries((window as any).term), mod);
     const results = [];
-    for (const probe of [apc('i=31,s=1,v=1,a=q,t=d,f=24;AAAA') + '\x1b[c', '\x1b[6n', '\x1b[14t', '\x1b[>c\x1b[?u\x1b[>q\x1b[?7$p\x1bP$qm\x1b\\\x1b]10;?\x07']) {
-      await write('\x1bc' + apc('a=T,i=82,f=24,s=1,v=1,C=1;/wAA'));
+    for (const probe of [`${apc('i=31,s=1,v=1,a=q,t=d,f=24;AAAA')}\x1b[c`, '\x1b[6n', '\x1b[14t', '\x1b[>c\x1b[?u\x1b[>q\x1b[?7$p\x1bP$qm\x1b\\\x1b]10;?\x07']) {
+      await write(`\x1bc${apc('a=T,i=82,f=24,s=1,v=1,C=1;/wAA')}`);
       await painted(0, 0, true);
       await page.evaluate(() => {
         const w = window as any;
         w.nativeSpans = [];
         w.trace = w.term.onNativeParsed((s: string) => w.nativeSpans.push(s));
       });
-      await write('\r\n' + probe + apc('a=T,i=83,f=24,s=1,v=1,C=1;/wAA'));
+      await write(`\r\n${probe}${apc('a=T,i=83,f=24,s=1,v=1,C=1;/wAA')}`);
       await painted(0, 1, true);
       results.push(
         await page.evaluate(() => {

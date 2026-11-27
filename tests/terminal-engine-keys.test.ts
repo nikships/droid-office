@@ -166,11 +166,13 @@ test('real terminal key handlers produce the same PTY bytes before and after Kit
     );
     if (name === 'ghostty')
       await t.test('Ctrl letters follow Dvorak even across the physical paste key', async () => {
-        for (const [key, code, expected] of [
-          ['k', 'KeyV', '\x0b'],
-          ['v', 'Period', '\x16'],
-        ]) {
-          const event = { key, code, modifiers: 2, windowsVirtualKeyCode: key.toUpperCase().charCodeAt(0) };
+        for (const [key, code, keyCode, expected] of [
+          ['k', 'KeyV', 75, '\x0b'],
+          ['v', 'Period', 86, '\x16'],
+          ['м', 'KeyV', 86, '\x16'],
+          ['f', 'KeyY', 70, '\x06'],
+        ] as const) {
+          const event = { key, code, modifiers: 2, windowsVirtualKeyCode: keyCode };
           await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...event });
           await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
           assert.equal(await drain(), expected, key);

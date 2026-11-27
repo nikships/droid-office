@@ -115,10 +115,10 @@ export class VtScanner {
         continue;
       }
       const string = this.state !== 'csi' && this.state !== 'esc';
-      // C0 executes immediately, even if the CSI continues in the next write. CAN and
-      // SUB cancel it instead; ESC starts a fresh sequence below.
-      if (this.state === 'csi' && ch < ' ' && ch !== ESC && ch !== '\x18' && ch !== '\x1a') {
-        output += ch;
+      // In ESC and CSI, native ignores DEL and executes other C0 controls in place.
+      // CAN/SUB cancel the sequence; ESC starts a new one below.
+      if (!string && (ch < ' ' || ch === '\x7f') && ch !== ESC && ch !== '\x18' && ch !== '\x1a') {
+        if (ch !== '\x7f') output += ch;
         start = i + 1;
         continue;
       }

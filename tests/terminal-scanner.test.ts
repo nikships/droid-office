@@ -1,9 +1,59 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { Ghostty } from 'ghostty-web';
 import test from 'node:test';
 import { VtScanner } from '../src/shared/vt-scanner.js';
 import { suppressMirrorQueries } from '../src/client/term-mirror.js';
 
 const esc = '\x1b';
+test('ESC and CSI hooks match native actions across C0, DEL and transport splits', async (t) => {
+  const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
+  const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(20, 8);
+  t.after(() => core.free());
+  const controls = [...Array.from({ length: 32 }, (_, i) => i), 0x7f];
+  let checked = 0;
+  for (const [name, prefix, suffix] of [
+    ['width', '\x1b[?20', '27h'],
+    ['region', '\x1b[2;', '5r'],
+    ['reset', '\x1b', 'c'],
+  ] as const) {
+    for (const n of controls) {
+      const byte = String.fromCharCode(n);
+      const stream = `${prefix}${byte}${suffix}`;
+      for (const chunks of [[stream], [prefix, `${byte}${suffix}`], [`${prefix}${byte}`, suffix]]) {
+        const scanner = new VtScanner();
+        const hits: string[] = [];
+        const hit = (id: string) => {
+          hits.push(id);
+          return true;
+        };
+        scanner.registerCsiHandler({ prefix: '?', final: 'h' }, (p) => hit(`width:${p.join(';')}`));
+        scanner.registerCsiHandler({ final: 'r' }, (p) => hit(`region:${p.join(';')}`));
+        scanner.registerEscHandler({ final: 'c' }, () => hit('reset'));
+        core.write(name === 'reset' ? '\x1bc\x1b[?1049h' : '\x1bc\x1b[?2027l');
+        for (const chunk of chunks) {
+          core.write(chunk);
+          scanner.write(chunk, () => {});
+        }
+        let acted: boolean;
+        if (name === 'width') acted = core.getMode(2027);
+        else if (name === 'reset') acted = !core.isAlternateScreen();
+        else {
+          core.write('\x1b[5;1H\n'); // At the region's bottom LF scrolls without advancing y.
+          acted = core.getCursor().y === 4;
+        }
+        const context = `${name}, byte ${n}, chunks ${chunks.length}`;
+        // ESC cancels the old sequence, but ESC ESC c starts a new RIS.
+        if (n === 0x18 || n === 0x1a || n === 0x1b) assert.equal(acted, n === 0x1b && name === 'reset', context);
+        const id = { width: 'width:2027', region: 'region:2;5', reset: 'reset' }[name];
+        assert.deepEqual(hits, acted ? [id] : [], context);
+        checked++;
+      }
+    }
+  }
+  assert.equal(checked, 297);
+  t.diagnostic(`${checked} native/scanner comparisons`);
+});
 test('C0 inside a split CSI executes in order without defeating CAN or SUB', () => {
   for (const cancel of ['\x18', '\x1a']) {
     const parser = new VtScanner();

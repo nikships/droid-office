@@ -269,8 +269,8 @@ test('Ghostty link policy, search reflow, glass, selection, fonts and cursor on 
         return null;
       };
       for (const [cols, height, text] of [
-        [23, 8, 'https://example.com/docs' + '\r\n'.repeat(10)],
-        [23, 24, 'https://example.com/' + 'x'.repeat(23 * 18)],
+        [23, 8, `https://example.com/docs${'\r\n'.repeat(10)}`],
+        [23, 24, `https://example.com/${'x'.repeat(23 * 18)}`],
       ] as const) {
         term.reset();
         term.resize(cols, height);

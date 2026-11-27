@@ -173,6 +173,8 @@ test('seeded physical row identity survives or the direct image is dropped', asy
     'ö\b!界',
     `${cs}20\rh`,
     `${cs}2;\x073r`,
+    `${cs}2;\x7f3r`,
+    '\x1b\r(B',
     `${cs}?20\r27h`,
     `${cs}6n`,
     `${cs}14t`,
@@ -231,7 +233,7 @@ test('seeded physical row identity survives or the direct image is dropped', asy
       // Place some markers with pre-existing native modes: the tracker never saw
       // their setters. Region or margin changes go through the production VT hooks.
       const initial = pick(3) === 0 ? states[pick(states.length)][0] : '';
-      const regional = (s: string) => /\x1b\[[\d;]*r|\x1b\[\?69h/.test(s.replace(/[\r\x07]/g, ''));
+      const regional = (s: string) => /\x1b\[[\d;]*r|\x1b\[\?69h/.test(s.replace(/[\r\x07\x7f]/g, ''));
       const inherited = initial && !regional(initial) && !oldMarker;
       if (inherited) core.write(initial);
       core.write(`${cs}${row + 1};1H`);
