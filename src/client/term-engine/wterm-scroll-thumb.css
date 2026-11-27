@@ -1,0 +1,14 @@
+/* Keep the browser's actual drag target, with one hairline thumb and no second scrollbar. */
+.office-wterm.wterm::-webkit-scrollbar {
+  width: 3px;
+  background: transparent;
+}
+.office-wterm.wterm::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+}
+.office-wterm.wterm.wterm-scrolling::-webkit-scrollbar-thumb,
+.office-wterm.wterm::-webkit-scrollbar-thumb:hover,
+.office-wterm.wterm::-webkit-scrollbar-thumb:active {
+  background: rgb(155 155 155 / 65%);
+}

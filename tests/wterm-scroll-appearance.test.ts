@@ -1,0 +1,368 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'vite';
+import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
+
+const status = browserStatus();
+test('wterm scroll and appearance against xterm in Chromium', { skip: !status.installed && `No Chromium in ${status.path}` }, async (t) => {
+  const cacheDir = await mkdtemp(join(tmpdir(), 'wterm-scroll-'));
+  const server = await createServer({
+    root: fileURLToPath(new URL('../src/client', import.meta.url)),
+    cacheDir,
+    configFile: false,
+    logLevel: 'error',
+    appType: 'custom',
+    server: { host: '127.0.0.1', port: 0, hmr: false },
+    optimizeDeps: { noDiscovery: true, include: ['@xterm/xterm', '@xterm/addon-fit'] },
+  });
+  t.after(async () => {
+    await server.close();
+    await rm(cacheDir, { recursive: true, force: true });
+  });
+  await server.listen();
+  const address = server.httpServer!.address();
+  assert.ok(address && typeof address === 'object');
+  const browser = await launchBrowser();
+  t.after(closeBrowser);
+  const context = await newIsolatedContext(browser);
+  t.after(() => context.close());
+  const page = await context.newPage();
+  await page.addInitScript('window.__name = fn => fn'); // tsx's function-name helper inside page.evaluate
+  page.setDefaultTimeout(4000);
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.route('**/fixture', (route) => route.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/style.css"><div id="x"></div><div id="w" style="width:600px;height:128px"></div>' }));
+  await page.goto(`http://127.0.0.1:${address.port}/fixture`);
+  await page.evaluate(async () => {
+    const w = window as any;
+    const path = '/term-engine/index.ts',
+      scrolling = '/term-engine/wterm-scroll.ts',
+      pixel = '/term-pixel-scroll.ts',
+      theme = '/term-theme.ts';
+    const { createTerminalEngine } = await import(path);
+    const options = {
+      allowProposedApi: true,
+      allowTransparency: true,
+      minimumContrastRatio: 4.5,
+      fontFamily: '"Geist Mono", "Droid Office Terminal Symbols", monospace',
+      fontSize: 14,
+      lineHeight: 1.1,
+      smoothScrollDuration: 125,
+      scrollback: 64,
+      theme: (await import(theme)).TERM_THEME,
+    };
+    await Promise.all([document.fonts.load('14px "Geist Mono"'), document.fonts.load('14px "Droid Office Terminal Symbols"', '\ue0b0')]);
+    const a = (w.a = createTerminalEngine(options, 'ghostty').term);
+    const x = (w.x = createTerminalEngine(options, 'xterm').term);
+    w.scrollApi = (await import(scrolling)).attachWtermScroll(a);
+    await a.open(document.querySelector('#w'));
+    x.open(document.querySelector('#x'));
+    const xp = (await import(pixel)).attachPixelScroll(x);
+    for (const [term, controls] of [
+      [a, w.scrollApi],
+      [x, xp],
+    ]) {
+      term.resize(40, 8);
+      term.attachCustomKeyEventHandler((e: KeyboardEvent) => !controls.handleKey(e));
+    }
+    w.input = [[], []];
+    [a, x].forEach((term, i) => term.onData((d: string) => w.input[i].push(d)));
+    w.frame = async () => {
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+    };
+    w.write = async (s: string) => {
+      await Promise.all([a, x].map((term) => new Promise((resolve) => term.write(s, resolve))));
+      await w.frame();
+    };
+    w.el = a.native.element;
+    w.wheel = (term: any, deltaY: number, opts: WheelEventInit = {}) => {
+      const node = term === a ? w.el.querySelector('.term-row:not(.term-scrollback-row)') : x.element.querySelector('.xterm-screen');
+      const rect = node.getBoundingClientRect();
+      node.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: rect.left + 1, clientY: rect.top + 1, deltaY, ...opts }));
+    };
+  });
+  await t.test('holds retained content through cap, resize and new output; typing and paste follow again', async () => {
+    const result = await page.evaluate(async () => {
+      const { a, x, write, frame, el } = window as any;
+      const positions = () => [a, x].map((t) => [t.buffer.active.viewportY, t.buffer.active.baseY]);
+      await write(Array.from({ length: 55 }, (_, i) => `row ${i}\r\n`).join(''));
+      const bottom = positions();
+      const top = 36;
+      el.scrollTop = top * 16;
+      x.options.smoothScrollDuration = 0;
+      x.scrollToLine(top);
+      await frame();
+      x.options.smoothScrollDuration = 125;
+      const rowText = () => [
+        document
+          .elementFromPoint(el.getBoundingClientRect().left + 1, el.getBoundingClientRect().top + 1)
+          ?.closest('.term-row')
+          ?.textContent?.trim(),
+        x.buffer.active.getLine(x.buffer.active.viewportY).translateToString(true),
+      ];
+      const before = rowText();
+      await write('another\r\n'.repeat(22));
+      const capped = positions(),
+        after = rowText();
+      el.parentElement.style.height = '160px';
+      for (const term of [a, x]) term.resize(40, 10);
+      await frame();
+      const resized = rowText();
+      const reading = a.buffer.active;
+      el.parentElement.style.display = 'none';
+      const hidden = a.buffer.active;
+      el.parentElement.style.display = '';
+      for (const term of [a, x]) term.paste('paste');
+      await frame();
+      return { bottom, before, capped, after, resized, reading, hidden, pasted: positions() };
+    });
+    t.diagnostic(JSON.stringify(result));
+    assert.deepEqual(result.bottom[0], result.bottom[1]);
+    assert.deepEqual(result.before, ['row 36', 'row 36']);
+    assert.deepEqual(result.after, result.before);
+    assert.equal(result.resized[0], result.resized[1]);
+    assert.deepEqual(result.capped[0], result.capped[1]);
+    for (const [v, b] of result.pasted) assert.equal(v, b);
+    await page.evaluate(() => {
+      const { el, a } = window as any;
+      el.scrollTop = 0;
+      a.focus();
+    });
+    await page.keyboard.press('a');
+    await page.waitForFunction(() => {
+      const { viewportY, baseY } = (window as any).a.buffer.active;
+      return viewportY === baseY;
+    });
+  });
+  await t.test('accumulated page keys, snap, notch glide, precise deltas, speed and thumb visibility', async () => {
+    await page.evaluate(async () => {
+      const { a, x, input, frame } = window as any;
+      for (const [term, i] of [
+        [a, 0],
+        [x, 1],
+      ]) {
+        term.focus();
+        input[i].length = 0;
+        for (const key of ['PageUp', 'PageUp', 'PageUp', 'PageDown']) term.textarea.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey: true, bubbles: true, cancelable: true }));
+      }
+      await frame();
+    });
+    await page.waitForFunction(() => {
+      const { a, x } = window as any;
+      return [a, x].every((t) => t.buffer.active.baseY - t.buffer.active.viewportY === 2 * (t.rows - 1));
+    });
+    assert.deepEqual(await page.evaluate(() => (window as any).input), [[], []]);
+    const gestures = await page.evaluate(async () => {
+      const { a, el, wheel, scrollApi } = window as any;
+      a.scrollToBottom();
+      const bottom = el.scrollTop;
+      a.options.scrollSensitivity = 2;
+      wheel(a, -3);
+      const precise = bottom - el.scrollTop;
+      wheel(a, -3, { altKey: true });
+      const fast = bottom - el.scrollTop - precise;
+      wheel(a, -6, { deltaX: 22 });
+      const horizontal = bottom - el.scrollTop - precise - fast;
+      const thumb = getComputedStyle(el, '::-webkit-scrollbar-thumb').backgroundColor;
+      a.scrollToBottom();
+      wheel(a, -1, { deltaMode: 1 });
+      const immediate = el.scrollTop;
+      a.options.smoothScrollDuration = 0;
+      a.scrollToBottom();
+      a.options.smoothScrollDuration = 125;
+      scrollApi.snap();
+      return { precise, fast, horizontal, thumb, immediate, bottom };
+    });
+    assert.deepEqual([gestures.precise, gestures.fast, gestures.horizontal], [6, 30, 0]);
+    assert.equal(gestures.immediate, gestures.bottom);
+    assert.notEqual(gestures.thumb, 'rgba(0, 0, 0, 0)');
+    await page.waitForFunction(() => !(window as any).el.classList.contains('wterm-scrolling'));
+    assert.equal(await page.evaluate(() => (window as any).el.scrollTop), gestures.bottom);
+    await page.locator('#w').hover();
+    await page.mouse.wheel(0, -540);
+    await page.waitForFunction((before) => before - (window as any).el.scrollTop === 96, gestures.bottom); // 2×50 px, settled to 16px rows
+  });
+  await t.test('alternate arrows and SGR wheel bytes, including sub-line and horizontal swipes', async () => {
+    const output = await page.evaluate(async () => {
+      const { a, x, write, wheel, input } = window as any;
+      for (const t of [x, a]) {
+        t.options.scrollSensitivity = 1;
+        t.scrollToBottom();
+      }
+      await write('\x1b[?1049h');
+      input.forEach((d: string[]) => (d.length = 0));
+      for (const t of [a, x]) {
+        const h = t === a ? 16 : x.element.querySelector('.xterm-rows > div').getBoundingClientRect().height;
+        for (let i = 0; i < 4; i++) wheel(t, -h);
+      }
+      await write('\x1b[?1h');
+      for (const t of [a, x]) wheel(t, 1, { deltaMode: 1 });
+      await write('\x1b[?1000h\x1b[?1006h');
+      for (const t of [a, x]) {
+        wheel(t, -80);
+        wheel(t, 80, { altKey: true });
+        wheel(t, 80, { shiftKey: true });
+      }
+      wheel(a, -40, { deltaX: 80 });
+      await write('\x1b[?1016h');
+      for (const t of [a, x]) wheel(t, 1, { deltaMode: 1 });
+      return input;
+    });
+    assert.deepEqual(output[0], output[1]);
+    assert.equal(output[0].length, 5);
+  });
+  await t.test('minimum contrast in both directions and reverse video; retain existing ANSI, truecolor and glyph styling', async () => {
+    const rows = await page.evaluate(async () => {
+      const { a, x, write } = window as any;
+      a.reset();
+      x.reset();
+      await write('\x1b[2J\x1b[H');
+      const entries = ['38;2;40;40;40', '38;2;210;210;210;48;2;255;255;255', '7;38;2;40;40;40;48;2;30;30;30', '38;2;188;220;188', '1', '3', '2', '4:1', '4:2', '4:3', '4:4', '4:5', '4;58;2;7;133;245'];
+      await write(`${entries.map((s, i) => `\x1b[0;${s}m${String.fromCharCode(65 + i)}`).join('')}\x1b[0m`);
+      return [a.native.element, x.element].map((el, i) =>
+        entries.map((_, j) => {
+          const nodes = el.querySelectorAll(i ? '.xterm-rows span' : '.term-row span');
+          const n = Array.from(nodes as NodeListOf<HTMLElement>).find((n) => n.textContent === String.fromCharCode(65 + j))!;
+          const s = getComputedStyle(n);
+          return [s.color, s.fontWeight, s.fontStyle, s.opacity, s.textDecorationStyle, s.textDecorationColor];
+        }),
+      );
+    });
+    for (let i = 0; i < 4; i++) assert.equal(rows[0][i][0], rows[1][i][0]);
+    assert.equal(rows[0][4][1], rows[1][4][1]);
+    assert.equal(rows[0][5][2], rows[1][5][2]);
+    assert.equal(rows[0][6][3], '0.5');
+    assert.match(rows[1][6][0], /0\.5\)/);
+    assert.deepEqual(
+      rows[0].slice(7, 12).map((r) => r[4]),
+      ['solid', 'double', 'wavy', 'dotted', 'dashed'],
+    );
+    assert.equal(rows[0][12][5], 'rgb(7, 133, 245)');
+  });
+  await t.test('display-only link and combining Kitty masks on screen and in retained history', async () => {
+    const result = await page.evaluate(async () => {
+      const { a, write } = window as any;
+      await write('\x1b[H\x1b]8;id=sample;https://example.org\x1b\\L\x1b]8;;\x1b\\\x1b[4;58;2;5;6;7m\u{10eeee}\u0301\x1b[0m');
+      const values = (method: string, row: number) => {
+        const raw = a.core,
+          shown = a.native.bridge;
+        const link = shown[method](row, 0),
+          original = raw[method](row, 1),
+          mask = shown[method](row, 1);
+        return [!!raw[method](row, 0).linkUri, !!(link.linkUri || link.linkKey || link.linkId), original.char, original.chars, mask.char, mask.chars ?? null, mask.width === original.width, mask.underlineStyle];
+      };
+      const live = values('getCell', 0),
+        anchors = a.native.element.querySelectorAll('a').length;
+      await write('\r\n'.repeat(a.rows));
+      return { live, history: values('getScrollbackCell', 0), anchors };
+    });
+    assert.deepEqual(result.live, [true, false, 0x10eeee, '\u{10eeee}\u0301', 32, null, true, 'none']);
+    assert.deepEqual(result.history, result.live);
+    assert.equal(result.anchors, 0);
+  });
+  await t.test('live theme recolors existing text; transparent glass, selection, cursor and font metrics', async () => {
+    const observed = await page.evaluate(async () => {
+      const { a, x, write, el, frame } = window as any;
+      await write('\x1bc\x1b[HA\x1b[31mR\x1b[0m\ue0b0漢🙂\x1b[7mI\x1b[0m');
+      const spans = () => [...el.querySelectorAll('.term-row:not(.term-scrollback-row) span')] as HTMLElement[];
+      const colors = () =>
+        [el, x.element].map((root, i) =>
+          ['A', 'R'].map((cp) => {
+            const span = Array.from(root.querySelectorAll(i ? '.xterm-rows span' : '.term-row:not(.term-scrollback-row) span') as NodeListOf<HTMLElement>).find((n) => n.textContent === cp)!;
+            return getComputedStyle(span).color;
+          }),
+        );
+      const initial = colors();
+      for (const term of [a, x]) term.options.theme = { ...term.options.theme, background: 'rgba(0, 0, 0, 0)', foreground: '#12de80', red: '#89abcd', selectionBackground: '#123456' };
+      await frame();
+      const live = colors();
+      const inverseInk = getComputedStyle(spans().find((n) => n.textContent === 'I')!).color;
+      const metrics = ['A', '\ue0b0', '漢', '🙂'].map(
+        (cp) =>
+          spans()
+            .find((n) => n.textContent === cp)!
+            .getBoundingClientRect().width,
+      );
+      const font = getComputedStyle(el).fontFamily;
+      const selection = getComputedStyle(spans()[0], '::selection').backgroundColor;
+      const cursor = [];
+      a.focus();
+      for (const blink of [false, true])
+        for (const style of ['block', 'bar', 'underline']) {
+          a.options.cursorBlink = blink;
+          a.options.cursorStyle = style;
+          await frame();
+          const c = getComputedStyle(el.querySelector('.term-cursor'));
+          cursor.push([el.querySelector('.term-grid').dataset.cursorShape, style === 'block' ? c.backgroundColor : c.boxShadow, c.animationName]);
+        }
+      return { initial, live, inverseInk, font, selection, metrics, cursor, glass: getComputedStyle(el).backgroundColor };
+    });
+    assert.deepEqual(observed.initial[0], observed.initial[1]);
+    assert.deepEqual(observed.live[0], observed.live[1]);
+    assert.notDeepEqual(observed.initial, observed.live);
+    assert.equal(observed.glass, 'rgba(0, 0, 0, 0)');
+    assert.equal(observed.inverseInk, 'rgb(0, 0, 0)');
+    assert.equal(observed.selection, 'rgb(18, 52, 86)');
+    assert.match(observed.font, /Geist Mono.*Droid Office Terminal Symbols/);
+    const [latin, icon, ...wide] = observed.metrics;
+    assert.ok(latin > 0 && icon === latin && wide.every((w) => Math.abs(w - 2 * latin) < 0.05));
+    for (const [i, [shape, paint, animation]] of observed.cursor.entries()) {
+      assert.equal(shape, ['block', 'bar', 'underline'][i % 3]);
+      assert.match(paint, /rgb\(238, 96, 24\)/);
+      assert.equal(animation === 'none', i < 3);
+    }
+  });
+  await t.test('full-screen true-color repaint measurement', async () => {
+    const times = await page.evaluate(async () => {
+      const { a, el, frame } = window as any;
+      const cols = 120,
+        rows = 40;
+      a.resize(cols, rows);
+      el.parentElement.style.height = `${16 * rows}px`;
+      el.parentElement.style.width = '1100px';
+      await frame();
+      const samples: { off: number[]; on: number[] } = { off: [], on: [] };
+      for (let j = 0; j < 24; j++) {
+        const on = j % 4 === 1 || j % 4 === 2;
+        a.options.minimumContrastRatio = on ? 4.5 : 1;
+        // Distinct, mostly low-contrast pairs, different from the preceding repaint.
+        const screen = `\x1b[H${Array.from({ length: rows }, (_, y) => Array.from({ length: cols }, (_, x) => `\x1b[38;2;${x};${y + j};${x + y};48;2;${x + j};${y};${x}m${j % 2 ? 'x' : 'z'}`).join('')).join('\r\n')}`;
+        let start = 0;
+        requestAnimationFrame(() => {
+          start = performance.now();
+        });
+        a.write(screen);
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => {
+            el.getBoundingClientRect(); // include synchronous DOM layout
+            samples[on ? 'on' : 'off'].push(performance.now() - start);
+            resolve();
+          }),
+        );
+      }
+      const reads = [];
+      let checksum = 0;
+      for (const ratio of [1, 4.5, 4.5, 1]) {
+        a.options.minimumContrastRatio = ratio;
+        const start = performance.now();
+        for (let pass = 0; pass < 10; pass++) for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) checksum += a.native.bridge.getCell(y, x).fgRgb ?? 0;
+        reads.push((performance.now() - start) / 10);
+      }
+      return { samples, reads, checksum, painted: el.querySelectorAll('.term-row:not(.term-scrollback-row)').length };
+    });
+    assert.equal(times.painted, 40);
+    assert.ok(times.checksum > 0);
+    t.diagnostic(`120x40 distinct true-color cells, render + layout ms: ${JSON.stringify(times.samples)}; full-screen cell reads, ABBA (off/on/on/off) ms: ${JSON.stringify(times.reads)}`);
+  });
+  await page.evaluate(() => {
+    const { a, x } = window as any;
+    a.dispose();
+    x.dispose();
+  });
+  assert.deepEqual(errors, []);
+});
