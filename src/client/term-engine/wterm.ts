@@ -335,6 +335,14 @@ export class WTermAdapter {
   attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean) {
     this.keyHandler = fn;
   }
+  /** A display-only log leaves the focused window and browser in charge of keys.
+   * Unlike a handled terminal shortcut, these events keep their default action. */
+  useWindowKeyboard() {
+    this.onOpen(({ element }) => {
+      if (this.textarea) this.textarea.disabled = true;
+      element.tabIndex = 0;
+    });
+  }
   onOpen(fn: (native: WTerm, signal: AbortSignal) => void) {
     if (this.native && !this.root?.inert) fn(this.native, this.lifetime.signal);
     return this.opened.on((t) => fn(t, this.lifetime.signal));

@@ -218,7 +218,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     };
     scrollToBottom = () => features.scrollAtOnce(() => t.scrollToBottom());
     // Keys belong to the window (T, Esc), never to the program in the terminal.
-    t.attachCustomKeyEventHandler(() => false);
+    t.useWindowKeyboard();
     term = t;
 
     void loadFonts()

@@ -110,6 +110,44 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
       [64, 24],
     ]);
   });
+  await t.test('a focused Changes Log gives T and Escape to the window and Tab to the browser', async () => {
+    const pane = await context.newPage();
+    try {
+      await pane.route('**/changes-fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/style.css"><div id="modal-root"></div><div id="toasts"></div>' }));
+      await pane.goto(`http://127.0.0.1:${address.port}/changes-fixture`);
+      await pane.addScriptTag({ content: 'window.__name=fn=>fn' });
+      await pane.evaluate(async () => {
+        const ui = '/ui/changes.ts',
+          state = '/state.ts';
+        const { openChanges } = await import(ui),
+          { store } = await import(state);
+        store.workers.set('pixel', { id: 'pixel', name: 'Pixel', kind: 'shell', deskId: 'desk', status: 'idle', color: '#89d9ed', cols: 80, rows: 24 });
+        openChanges({ send: () => true }, 'pixel');
+      });
+      const log = pane.getByRole('button', { name: /^Log/ }),
+        root = pane.locator('.changes-log .office-wterm');
+      await log.click();
+      const focusLog = async () => {
+        await root
+          .locator('.term-row')
+          .first()
+          .click({ position: { x: 5, y: 5 } });
+        assert.ok(await root.evaluate((el) => el.contains(document.activeElement)));
+      };
+      await focusLog();
+      await pane.keyboard.press('Tab');
+      const tabLeaves = await root.evaluate((el) => !el.contains(document.activeElement));
+      await focusLog();
+      await pane.keyboard.press('t');
+      const toggled = (await log.getAttribute('aria-pressed')) === 'false';
+      if (toggled) await log.click();
+      await focusLog();
+      await pane.keyboard.press('Escape');
+      assert.deepEqual([tabLeaves, toggled, await pane.getByRole('dialog').count()], [true, true, 0]);
+    } finally {
+      await pane.close();
+    }
+  });
   await t.test('a scrolled Raw TTY returns to the same line after Thread and a fresh attach snapshot', async () => {
     const pane = await context.newPage();
     try {
