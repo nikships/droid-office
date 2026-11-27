@@ -154,7 +154,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   // An external bot runs elsewhere and has no terminal here: its card in Mission Control stands in.
   if (!info || info.remote) return;
   const canThread = !inline && info.kind === 'agent' && !info.cloud;
-  const readOnly = !!inline?.readOnly || guestTokenOn();
+  const readOnly = !!inline?.readOnly;
   let thread: WorkerThread | undefined;
   let threadView = false;
   let setThreadView = (_next: 'thread' | 'raw', _focus = true) => {};

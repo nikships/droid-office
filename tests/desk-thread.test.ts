@@ -102,5 +102,26 @@ test('the desk window switches Thread and Raw TTY without remounting either view
   await page.evaluate(() => (window as any).mission('idle'));
   assert.equal(await animation(), 'orc-dispatch', 'the same badge animates when ready again');
   assert.equal(await badge.getAttribute('data-status'), 'idle');
+  await t.test('edit guest Thread sends cancel without a terminal stream and closes when the worker leaves', async () => {
+    await page.locator('.modal.term > header > button.close').click();
+    await page.evaluate(async () => {
+      const mod = '/token.ts';
+      (await import(mod)).setGuestAuth('fixture-edit-guest');
+      const w = window as any;
+      const { store, openTerminal } = w.TerminalUI;
+      const worker = { ...store.workers.get('pixel'), id: 'shared-worker', status: 'working' };
+      store.workers.set(worker.id, worker);
+      // Guest sockets receive the worker, but no term.snapshot or term.data.
+      w.net.send = (msg: any) => {
+        w.messages.push(msg);
+        return true;
+      };
+      openTerminal(w.net, worker.id);
+    });
+    await page.getByRole('button', { name: 'Stop turn' }).click();
+    assert.deepEqual(await page.evaluate(() => (window as any).messages.filter((msg: any) => msg.t === 'term.input' && msg.workerId === 'shared-worker')), [{ t: 'term.input', workerId: 'shared-worker', data: '\x1b' }]);
+    await page.evaluate(() => (window as any).TerminalUI.store.apply({ t: 'worker.remove', workerId: 'shared-worker' }));
+    assert.equal(await page.locator('.modal.term').count(), 0);
+  });
   assert.deepEqual(errors, []);
 });
