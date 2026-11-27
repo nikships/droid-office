@@ -25,7 +25,8 @@ test('wterm owns desktop keyboard negotiation, selection and text input', { skip
         w.bytes = [];
         w.agent = true;
         term.onData((data: string) => w.bytes.push(data));
-        term.attachCustomKeyEventHandler((e: KeyboardEvent) => !features.keyException(e, w.agent) && !features.handleKey(e));
+        w.deskKeys = (e: KeyboardEvent) => !features.keyException(e, w.agent) && !features.handleKey(e);
+        term.attachCustomKeyEventHandler(w.deskKeys);
         await term.open(document.querySelector('#host'));
         term.resize(40, 8);
         term.focus();
@@ -62,6 +63,66 @@ test('wterm owns desktop keyboard negotiation, selection and text input', { skip
             },
             { type, props },
           );
+        await sub.test('Escape cancels a pending history selection without interrupting the program', async () => {
+          await reset(1);
+          await page.evaluate(() => {
+            const { native } = (window as any).term;
+            native.setScrollbackLines(5000);
+            native.write(
+              Array.from({ length: 5000 }, (_, i) => `history ${i}`)
+                .concat('last row')
+                .join('\r\n'),
+            );
+          });
+          const copy = () =>
+            page.evaluate(() => {
+              const t = (window as any).term;
+              const clipboardData = new DataTransfer();
+              const e = new ClipboardEvent('copy', { bubbles: true, cancelable: true, clipboardData });
+              t.textarea.dispatchEvent(e);
+              return { handled: e.defaultPrevented, text: clipboardData.getData('text/plain') };
+            });
+          // WTerm starts the scan after paint. Pause only painting so trusted key events
+          // hit the real pending state independently of machine speed.
+          await page.evaluate(() => (window as any).term.native.setRenderingPaused(true));
+          // Count actual public calls, including native's own shortcut, without replacing the method.
+          await cdp.send('Debugger.enable');
+          const { result } = await cdp.send('Runtime.evaluate', { expression: 'window.scanCalls = 0; window.term.native.selectAll' });
+          await cdp.send('Debugger.setBreakpointOnFunctionCall', { objectId: result.objectId!, condition: '(++window.scanCalls, false)' });
+          try {
+            assert.equal(await key('Meta+a'), '');
+            assert.equal(await key('Meta+a'), '');
+            assert.equal(await page.evaluate(() => (window as any).scanCalls), 1);
+            assert.deepEqual(await copy(), { handled: true, text: '' });
+            assert.equal(await key('Escape'), '');
+            assert.deepEqual(await copy(), { handled: false, text: '' });
+            assert.equal(await key('Tab'), '');
+            assert.equal(await page.evaluate(() => document.activeElement?.id), 'next');
+          } finally {
+            await cdp.send('Debugger.disable');
+            await page.evaluate(() => (window as any).term.native.setRenderingPaused(false));
+          }
+          await page.locator('#host textarea').focus();
+          assert.equal(await key('Tab'), '\t');
+          const selected = [];
+          for (const desk of [false, true]) {
+            await page.evaluate((desk) => {
+              const w = window as any;
+              w.term.attachCustomKeyEventHandler(desk ? w.deskKeys : () => true);
+            }, desk);
+            assert.equal(await key('Meta+a'), '');
+            await page.waitForFunction(() => (window as any).term.native.getSelectionText() !== null);
+            const text = await page.evaluate(() => (window as any).term.native.getSelectionText());
+            assert.match(text, /history 0\n/);
+            assert.match(text, /history 4999\nlast row/);
+            assert.deepEqual(await copy(), { handled: true, text });
+            selected.push(text);
+            await page.evaluate(() => (window as any).term.native.clearSelection());
+          }
+          assert.equal(selected[1], selected[0]);
+          assert.equal(await key('Escape'), '\x1b[27u');
+          assert.equal(await key('Tab'), '\t');
+        });
         await sub.test('Escape clears empty and unserializable terminal selections before interrupting', async () => {
           await reset(1);
           const seen = [];
@@ -85,6 +146,25 @@ test('wterm owns desktop keyboard negotiation, selection and text input', { skip
             ['', true],
             ['', true],
           ]);
+        });
+        await sub.test('Select All leaves Kitty-owned repeats and composing keys alone', async () => {
+          await reset(11);
+          const held = { key: 'a', code: 'KeyA' };
+          await event('keydown', held);
+          await event('keydown', { ...held, repeat: true, metaKey: true });
+          await event('keyup', held);
+          assert.equal(await sent(), '\x1b[97u\x1b[97;9:2u\x1b[97;1:3u');
+          await reset(1);
+          await cdp.send('Input.imeSetComposition', { text: 'に', selectionStart: 1, selectionEnd: 1 });
+          await event('keydown', { ...held, metaKey: true });
+          await cdp.send('Input.insertText', { text: '日' });
+          assert.equal(await sent(), '日');
+          assert.equal(await key('Escape'), '\x1b[27u');
+          assert.equal(await key('Control+Shift+a'), '');
+          assert.equal(await key('Escape'), '');
+          assert.equal(await key('Tab'), '');
+          assert.equal(await page.evaluate(() => document.activeElement?.id), 'next');
+          await page.locator('#host textarea').focus();
         });
         await sub.test('a composed or missed keyup cannot rename the next plain key', async () => {
           const seen = [];

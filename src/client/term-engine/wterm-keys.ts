@@ -15,18 +15,36 @@ function optionBase(e: KeyboardEvent) {
 
 export function deskKeyExceptions(adapter: WTermAdapter) {
   let tabTraversalArmed = false;
+  let selecting: Promise<boolean> | undefined;
+  let composing = false;
+  const delivered = new Set<string>();
   const forwarded = new WeakSet<KeyboardEvent>();
   const pressed = new Map<string, string>();
   const disarm = () => {
     tabTraversalArmed = false;
   };
+  const clearSelection = () => {
+    selecting = undefined;
+    adapter.native?.clearSelection();
+  };
   adapter.onOpen((native, signal) => {
     const textarea = adapter.textarea!;
+    // Only an actual Kitty key delivery owns later repeats. A browser copy shortcut also cancels the event.
+    let press: KeyboardEvent | undefined;
+    textarea.addEventListener('keydown', (e) => (press = e), { capture: true, signal });
+    const input = adapter.onData(() => {
+      if (press?.currentTarget === textarea && press.cancelBubble && adapter.core?.kittyKeyboardFlags()) delivered.add(press.code || press.key);
+    });
+    signal.addEventListener('abort', () => input.dispose(), { once: true });
+    textarea.addEventListener('compositionstart', () => (composing = true), { signal });
+    textarea.addEventListener('compositionend', () => (composing = false), { signal });
     for (const phase of ['compositionstart', 'input', 'paste', 'pointerdown']) native.element.addEventListener(phase, disarm, { capture: true, signal });
     textarea.addEventListener(
       'blur',
       () => {
         disarm();
+        composing = false;
+        delivered.clear();
         pressed.clear();
       },
       { signal },
@@ -39,7 +57,7 @@ export function deskKeyExceptions(adapter: WTermAdapter) {
         // Without bracket delimiters the receiving shell expects Return for each line.
         e.preventDefault();
         e.stopImmediatePropagation();
-        native.clearSelection();
+        clearSelection();
         adapter.input(text.replace(/\r?\n/g, '\r'));
       },
       { capture: true, signal },
@@ -49,6 +67,7 @@ export function deskKeyExceptions(adapter: WTermAdapter) {
     if (forwarded.has(e)) return false;
     if ((e.type !== 'keydown' && e.type !== 'keyup') || e.target !== adapter.textarea) return false;
     const down = e.type === 'keydown';
+    if (!down) delivered.delete(e.code || e.key);
     const heldKey = !down || e.repeat ? pressed.get(e.code) : undefined;
     // End the old pairing even when the IME owns this event or its last release was lost.
     if (!down || !e.repeat) pressed.delete(e.code);
@@ -62,12 +81,31 @@ export function deskKeyExceptions(adapter: WTermAdapter) {
       }
     }
     let key: string | undefined;
+    if (
+      down &&
+      e.key.toLowerCase() === 'a' &&
+      !composing &&
+      !e.altKey &&
+      ((e.metaKey && !e.ctrlKey && !e.shiftKey) || (e.ctrlKey && e.shiftKey && !e.metaKey && !e.getModifierState('AltGraph'))) &&
+      !delivered.has(e.code || e.key) &&
+      adapter.native
+    ) {
+      if (!selecting) {
+        // Native's shortcut discards this promise; keep it so Escape can cancel before the first row is available.
+        const scan = (selecting = adapter.native.selectAll());
+        const settled = () => {
+          if (selecting === scan) selecting = undefined;
+        };
+        void scan.then(settled, settled);
+      }
+      return true;
+    }
     if (e.key === 'Escape' && unmodified) {
       if (down && !e.repeat && adapter.native) {
         const root = adapter.native.element;
         const selection = root.ownerDocument.getSelection();
-        if (adapter.native.getSelectionText() !== null || (selection && !selection.isCollapsed && root.contains(selection.anchorNode) && root.contains(selection.focusNode))) {
-          adapter.native.clearSelection();
+        if (selecting || adapter.native.getSelectionText() !== null || (selection && !selection.isCollapsed && root.contains(selection.anchorNode) && root.contains(selection.focusNode))) {
+          clearSelection();
           tabTraversalArmed = true;
           return true;
         }
@@ -98,7 +136,7 @@ export function deskKeyExceptions(adapter: WTermAdapter) {
         else if (e.keyCode >= 65 && e.keyCode <= 90) ch = String.fromCharCode(e.keyCode + 32);
         key = ch;
       }
-      if (ch === 'c' && down) adapter.native?.clearSelection(); // Command+C, not Control+C, copies on Mac.
+      if (ch === 'c' && down) clearSelection(); // Command+C, not Control+C, copies on Mac.
       if (ch === 'v') key = 'V'; // wterm #267 reserves lowercase Ctrl+v for browser paste even on Mac.
     }
     if (isMac && e.altKey && !e.metaKey && !e.ctrlKey && !e.getModifierState('AltGraph') && (e.key === 'Dead' || [...e.key].length === 1)) {
