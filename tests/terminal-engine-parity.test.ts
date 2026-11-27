@@ -14,7 +14,12 @@ test('actual headless Unicode 11 attach snapshots replay in the Ghostty core', a
     ['VT cursor moves and styled text', 'alpha\r\n\x1b[32mbravo\x1b[0m\x1b[2DZ', 4, 4],
     ['CJK', 'A漢B', 4, 4],
     ['combining mark', 'e\u0301', 1, 1],
-    ['ZWJ width divergence', 'A漢e\u0301👩‍💻!', 9, 7],
+    ['ZWJ', '👩‍💻', 4, 4],
+    ['mixed precomposed text', 'A漢é👩‍💻!', 9, 9],
+    ['mixed combining text', 'A漢e\u0301👩‍💻!', 9, 9],
+    ['flag width divergence', '🇺🇸', 2, 4],
+    ['skin tone', '👍🏽', 4, 4],
+    ['variation selector', '❤️', 1, 1],
   ] as const)
     await t.test(label, async () => {
       const server = new headless.Terminal({ cols: 40, rows: 8, allowProposedApi: true });
@@ -25,6 +30,7 @@ test('actual headless Unicode 11 attach snapshots replay in the Ghostty core', a
       const ghost = (await Ghostty.load(url)).createTerminal(40, 8);
       try {
         await new Promise<void>((done) => server.write(bytes, done));
+        ghost.write('\x1b[?2027l');
         ghost.write(snapshot.serialize());
         ghost.update();
         assert.equal(server.buffer.active.cursorX, serverX);

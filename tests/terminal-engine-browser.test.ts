@@ -120,5 +120,28 @@ test('real Ghostty dev asset, passive focus, mirror/input gates, scroll geometry
   assert.equal(await page.locator('#host canvas').count(), 0);
   assert.deepEqual(await page.evaluate(() => [(window as any).opened, (window as any).released]), [true, true]);
   assert.deepEqual(await page.evaluate(() => (window as any).hooks), ['before', 'parsed', 'disableStdin', 'before', 'parsed', 'reset', 'before', 'parsed', 'fontSize', 'cursorStyle', 'theme', 'scrollSensitivity']);
+  assert.deepEqual(
+    await page.evaluate(async () => {
+      const url = '/term-engine/ghostty.ts';
+      const { GhosttyAdapter } = await import(url);
+      const term = new GhosttyAdapter({});
+      await term.open(document.getElementById('host'));
+      try {
+        const widths = [];
+        for (const mode of ['', '\x1b[?2027h', '\x1b[?2027l', '\x1bc', '\x1b[?1;2027;2004h']) {
+          term.write(`\r${mode}👩‍💻`);
+          widths.push(term.native.wasmTerm.getCursor().x);
+        }
+        const { applicationCursorKeysMode, bracketedPasteMode } = term.modes;
+        term.native.write('\x1b[?2027h'); // Ensure adapter.reset restores the pinned mode itself.
+        term.reset();
+        term.write('👩‍💻');
+        return [widths, applicationCursorKeysMode, bracketedPasteMode, term.native.wasmTerm.getCursor().x];
+      } finally {
+        term.dispose();
+      }
+    }),
+    [[4, 4, 4, 4, 4], true, true, 4],
+  );
   assert.deepEqual(errors, []);
 });

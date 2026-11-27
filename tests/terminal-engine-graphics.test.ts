@@ -12,10 +12,65 @@ import { createServer } from 'vite';
 import { GraphicsRows, placeholderRow } from '../src/client/term-engine/ghostty-graphics-rows.js';
 import { KITTY_DIACRITICS, KITTY_PLACEHOLDER_CHAR } from '../src/shared/kitty.js';
 import { screenSnapshot } from '../src/server/screen.js';
+import { VtScanner } from '../src/shared/vt-scanner.js';
 import { browserStatus, closeBrowser, launchBrowser } from '../src/server/whiteboard-browser.js';
 
 const apc = (body: string) => `\x1b_G${body}\x1b\\`;
 const cell = (r: number, c: number) => KITTY_PLACEHOLDER_CHAR + String.fromCodePoint(KITTY_DIACRITICS[r], KITTY_DIACRITICS[c]);
+
+test('the zsh prompt preserves a placed image above the cursor on real WASM', async (t) => {
+  const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
+  const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(111, 36, { scrollbackLimit: 1000 });
+  t.after(() => core.free());
+  const rows = new GraphicsRows(core);
+  const write = (data: string) => {
+    rows.begin(data);
+    core.write(data);
+    rows.end();
+  };
+  write(`${'row\r\n'.repeat(500)}\x1b[2J\x1b[HInline PNG\r\n`);
+  const image = rows.anchor()!;
+  write('\r\n'.repeat(11));
+  assert.deepEqual([core.getScrollbackLength(), core.getCursor().y, image.line], [465, 12, 466]);
+  // zsh paints a reverse-video %, pads the row, then erases below its prompt.
+  write(`\x1b[1m\x1b[7m%\x1b[27m\x1b[1m\x1b[0m${' '.repeat(110)}\r \r`);
+  for (const ed of ['\x1b[J', '\x1b[0J', '\x1b[1J']) {
+    write(`\r\x1b[0m\x1b[27m\x1b[24m${ed}user@host droid-office % \x1b[K`);
+    write('\x1b[?2004h');
+    assert.equal(image.line, 466, JSON.stringify(ed));
+  }
+});
+
+test('ED2 and ED3 handle screen and history image markers like xterm clear', async (t) => {
+  const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));
+  for (const command of ['\x1b[2J', '\x1b[3J', '\x1b[H\x1b[2J\x1b[3J']) {
+    const server = new headless.Terminal({ cols: 111, rows: 36, allowProposedApi: true });
+    const core = (await Ghostty.load(`data:application/wasm;base64,${binary.toString('base64')}`)).createTerminal(111, 36, { scrollbackLimit: 1000 });
+    t.after(() => {
+      core.free();
+      server.dispose();
+    });
+    const rows = new GraphicsRows(core);
+    const scanner = new VtScanner();
+    scanner.registerCsiHandler({ final: 'J' }, ([mode]) => {
+      if (mode !== 2 && mode !== 3) return false;
+      rows.erase(mode, () => core.write(`\x1b[${mode}J`));
+      return true;
+    });
+    const write = async (data: string) => {
+      await new Promise<void>((resolve) => server.write(data, resolve));
+      rows.begin(data);
+      scanner.write(data, (chunk) => core.write(chunk));
+      rows.end();
+    };
+    await write('image\r\n');
+    const historic = [rows.anchor()!, server.registerMarker(0)!];
+    await write('row\r\n'.repeat(500));
+    const visible = [rows.anchor()!, server.registerMarker(0)!];
+    await write(command);
+    for (const [ghost, xterm] of [historic, visible]) assert.equal(ghost.line, xterm.line, JSON.stringify(command));
+  }
+});
 
 test('actual WASM rows follow identical output across history growth and page trims; uncertain reflow drops direct anchors', async (t) => {
   const binary = await readFile(new URL(import.meta.resolve('ghostty-web/ghostty-vt.wasm')));

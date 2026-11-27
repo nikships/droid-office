@@ -68,6 +68,11 @@ export class GraphicsRows {
       this.spans.push('');
       return true;
     });
+    this.boundaries.registerCsiHandler({ final: 'J' }, ([mode]) => {
+      // ED0/1 only erase cells. ED2/3 change markers at this point in the stream.
+      if (mode === 2 || mode === 3) this.spans.push('');
+      return typeof mode === 'number' && mode <= 3;
+    });
     for (const final of ['h', 'l'])
       this.boundaries.registerCsiHandler({ prefix: '?', final }, (params) => {
         if (!switchesScreen(params)) return false;
@@ -159,6 +164,17 @@ export class GraphicsRows {
     this.checkpoint();
   }
 
+  erase(mode: 2 | 3, write: () => void) {
+    this.advance(this.spans[this.span++] ?? '');
+    if (!this.core.isAlternateScreen()) {
+      if (mode === 2)
+        this.invalidate(true); // xterm removes screen markers, not history.
+      else this.trim(this.core.getScrollbackLength()); // ED3 drops history but keeps screen rows.
+    }
+    write();
+    this.checkpoint();
+  }
+
   end() {
     this.advance(this.spans[this.span] ?? '');
     this.spans = [];
@@ -215,7 +231,7 @@ export class GraphicsRows {
     const after = this.core.getCursor();
     // Styling, OSC titles and shell-integration metadata, private mode toggles, horizontal
     // absolute positioning and erase-in-line do not themselves add or remove physical rows.
-    const plain = data.replace(/\x1b\][^\x07\x18\x1a\x1b\x9c]*(?:\x07|\x1b\\|\x9c)|\x1b\[[\d:;]*m|\x1b\[\?(?:(?:1|7|9|12|25|100[0-7]|101[56]|2004);?)+[hl]|\x1b\[\d*K/g, '');
+    const plain = data.replace(/\x1b\][^\x07\x18\x1a\x1b\x9c]*(?:\x07|\x1b\\|\x9c)|\x1b\[[\d:;]*m|\x1b\[\?(?:(?:1|7|9|12|25|100[0-7]|101[56]|2004|2027);?)+[hl]|\x1b\[\d*K/g, '');
     const advances = lineAdvances(plain.replace(/\x1b\[\d*G$/, ''), before.x, this.core.cols);
     let trimmed: number;
     if (advances !== undefined && !this.region && !this.horizontalMargins) {
@@ -242,8 +258,12 @@ export class GraphicsRows {
       this.invalidate();
       return;
     }
+    this.trim(trimmed);
+  }
+
+  private trim(count: number) {
     for (const a of this.anchors) {
-      a.line -= trimmed;
+      a.line = Math.max(-1, a.line - count);
       if (a.line < 0) this.anchors.delete(a);
     }
   }

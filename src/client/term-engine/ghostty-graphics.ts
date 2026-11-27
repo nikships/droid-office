@@ -91,9 +91,10 @@ export function attachGhosttyGraphics(adapter: GhosttyAdapter, images: KittyTerm
       rows?.setRegion((params[0] || 1) !== 1 || (params[1] || adapter.rows) !== adapter.rows);
       return false;
     }),
-    adapter.parser.registerCsiHandler({ final: 'J' }, (params) => {
-      if (!adapter.native?.wasmTerm?.isAlternateScreen() && (params[0] === 2 || params[0] === 3)) rows?.invalidate(params[0] === 2);
-      return false;
+    adapter.parser.registerCsiHandler({ final: 'J' }, ([mode]) => {
+      if (!rows || (mode !== 2 && mode !== 3)) return false;
+      rows.erase(mode, () => adapter.native?.write(`\x1b[${mode}J`));
+      return true;
     }),
     ...['L', 'M', 'S', 'T'].map((final) =>
       adapter.parser.registerCsiHandler({ final }, () => {

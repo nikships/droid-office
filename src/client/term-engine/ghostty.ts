@@ -3,6 +3,9 @@ import { VtScanner } from '../../shared/vt-scanner';
 import { ghosttyTheme } from './ghostty-links';
 import type { ClientTerminal, ClientTerminalOptions } from './types';
 
+// The authoritative xterm Unicode 11 PTY measures code points, not grapheme clusters.
+const serverWidths = '\x1b[?2027l';
+
 function event<T>() {
   const listeners = new Set<(data: T) => void>();
   return {
@@ -50,6 +53,18 @@ export class GhosttyAdapter implements ClientTerminal {
     return this.opened.on((native) => install(native, this.lifetime.signal));
   }
   constructor(options: ClientTerminalOptions) {
+    for (const final of ['h', 'l']) {
+      this.parser.registerCsiHandler({ prefix: '?', final }, (params) => {
+        if (!params.includes(2027)) return false;
+        // DECSET/DECRST may name multiple independent modes in one CSI.
+        for (const mode of params) if (typeof mode === 'number' && mode !== 2027) this.native?.write(`\x1b[?${mode}${final}`);
+        return true;
+      });
+    }
+    this.parser.registerEscHandler({ final: 'c' }, () => {
+      this.native?.write(`\x1bc${serverWidths}`);
+      return true;
+    });
     this.options = new Proxy(
       { ...options },
       {
@@ -123,6 +138,7 @@ export class GhosttyAdapter implements ClientTerminal {
     };
     for (const phase of ['keypress', 'keyup'] as const) root.addEventListener(phase, forward, { capture: true, signal: this.lifetime.signal });
     term.open(root);
+    term.write(serverWidths);
     root.tabIndex = -1;
     term.onData((d) => this.data.fire(d));
     term.attachCustomKeyEventHandler((e) => (this.keyHandler ? !this.keyHandler(e) : false));
@@ -178,7 +194,7 @@ export class GhosttyAdapter implements ClientTerminal {
     this.resetting.fire();
     this.parser.reset();
     // RIS resets in place: native.reset() frees the core retained by the selection manager.
-    this.native?.write('\x1bc\x1b[3J');
+    this.native?.write(`\x1bc\x1b[3J${serverWidths}`);
     this.native?.scrollToBottom();
   }
   resize(cols: number, rows: number) {
