@@ -69,7 +69,8 @@ export class WTermAdapter {
     for (const final of ['h', 'l'])
       this.parser.registerCsiHandler({ prefix: '?', final }, (params) => {
         if (!params.includes(2027)) return false;
-        for (const mode of params) if (typeof mode === 'number' && mode !== 2027) this.writeNative(`\x1b[?${mode}${final}`);
+        const modes = params.filter((mode) => mode !== 2027).map((mode) => (Array.isArray(mode) ? mode.join(':') : mode));
+        if (modes.length) this.writeNative(`\x1b[?${modes.join(';')}${final}`);
         return true;
       });
     this.parser.registerEscHandler({ final: 'c' }, () => {
