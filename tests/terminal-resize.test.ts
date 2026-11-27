@@ -506,9 +506,16 @@ test('inline terminals follow pane geometry without focus or stale size rollback
           offsets: number[] = [];
         w.messages = [];
         const observation = term.onFit(() => offsets.push(offset()));
-        const shrink = pane.animate([{ height: '350px' }, { height: '210px' }], { duration: 320, fill: 'forwards' });
-        await shrink.ready;
-        term.write('in flight\r\n');
+        pane.style.transition = 'height 320ms ease';
+        pane.style.height = '210px';
+        const shrink = pane.getAnimations()[0];
+        // rAF runs before ResizeObserver. The first shrinking frame must already be pinned.
+        let frames = 0;
+        while (shrink.playState === 'running') {
+          await new Promise(requestAnimationFrame);
+          offsets.push(offset());
+          if (++frames === 3) term.write('in flight\r\n');
+        }
         await shrink.finished;
         await w.frames();
         observation.dispose();
@@ -685,6 +692,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       handle.className = 'dash-handle col';
       handle.style.setProperty('--at', '.5');
       raw.after(handle);
+      await Promise.all(raw.getAnimations().map((a) => a.finished));
       const offset = () => handle.getBoundingClientRect().left + 4 - raw.getBoundingClientRect().right;
       const offsets = [offset()];
       raw.style.setProperty('--w', '.7');

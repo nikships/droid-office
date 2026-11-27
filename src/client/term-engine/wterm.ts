@@ -425,6 +425,16 @@ export class WTermAdapter {
       let cell: DOMRectReadOnly | undefined;
       let lastGeometry: string | undefined;
       this.lastClientHeight = root.clientHeight;
+      // CSS transition events run before animation-frame clients read the first
+      // changed box. ResizeObserver alone pins that first shrink one phase late.
+      root.ownerDocument.addEventListener(
+        'transitionstart',
+        (e) => {
+          if (e.target instanceof Element && e.target.contains(root)) this.keepTailOnShrink();
+        },
+        { capture: true, signal },
+      );
+      window.addEventListener('resize', () => this.keepTailOnShrink(), { signal });
       const observer = new ResizeObserver((entries) => {
         this.keepTailOnShrink();
         for (const entry of entries) {
