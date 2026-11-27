@@ -7,6 +7,8 @@ import { searchStarting } from './wterm-search-controls';
 export function attachWtermPrompts(adapter: WTermAdapter) {
   adapter.onOpen((native, signal) => {
     const root = native.element;
+    const host = root.parentElement!;
+    const keyTarget = adapter.textarea?.disabled ? host : adapter.textarea;
     const label = h('span', { role: 'status' });
     const jump = (direction: -1 | 1) => {
       root.dispatchEvent(new Event(searchStarting));
@@ -16,6 +18,7 @@ export function attachWtermPrompts(adapter: WTermAdapter) {
     const arrow = (direction: -1 | 1) => {
       const name = direction === -1 ? 'Previous prompt' : 'Next prompt';
       const el = h('button', { type: 'button', 'aria-label': name, title: `${name} (Ctrl+Shift+${direction === -1 ? '[' : ']'})` }, direction === -1 ? '↑' : '↓');
+      if (keyTarget === host) el.tabIndex = -1;
       el.addEventListener('click', () => jump(direction), { signal });
       return el;
     };
@@ -24,9 +27,8 @@ export function attachWtermPrompts(adapter: WTermAdapter) {
     root.prepend(overlay);
     // The controls are inside the scrolling pane but are not cells or terminal input.
     for (const type of ['mousedown', 'mouseup', 'mousemove', 'click', 'wheel']) overlay.addEventListener(type, (e) => e.stopPropagation(), { signal });
-    const host = root.parentElement!;
     const held = new Set<string>();
-    adapter.textarea?.addEventListener('blur', () => held.clear(), { signal });
+    host.addEventListener('focusout', () => held.clear(), { signal });
     for (const type of ['keydown', 'keypress', 'keyup'] as const) {
       host.addEventListener(
         type,
@@ -35,7 +37,7 @@ export function attachWtermPrompts(adapter: WTermAdapter) {
             e.stopPropagation();
             return;
           }
-          if (e.target !== adapter.textarea) return;
+          if (e.target !== keyTarget && !(keyTarget === host && e.target === root)) return;
           const dir = e.code === 'BracketLeft' ? -1 : e.code === 'BracketRight' ? 1 : 0;
           if (!dir) return;
           if (e.type === 'keydown') {

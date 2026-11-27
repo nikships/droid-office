@@ -225,13 +225,28 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
         root = pane.locator('.changes-log .office-wterm');
       await log.click();
       const focusLog = async () => {
-        await root
-          .locator('.term-row')
-          .first()
-          .click({ position: { x: 5, y: 5 } });
+        await root.locator('.term-row').nth(2).click();
         assert.ok(await logHost.evaluate((el) => el.contains(document.activeElement)));
       };
       await focusLog();
+      await pane.evaluate(async () => {
+        const ui = '/ui/changes.ts';
+        (await import(ui)).routeChangesMessage({ t: 'term.data', workerId: 'pixel', data: `\x1b]133;A\x07logged prompt\r\n${'output\r\n'.repeat(120)}` });
+      });
+      await pane.getByRole('button', { name: 'Previous prompt' }).waitFor();
+      await pane.waitForFunction(() => {
+        const el = document.querySelector('.changes-log .office-wterm')!;
+        return el.scrollTop > 0 && el.scrollHeight - el.clientHeight - el.scrollTop < 1;
+      });
+      const tail = await root.evaluate((el) => el.scrollTop);
+      await pane.keyboard.press('Control+Shift+BracketLeft');
+      await pane.waitForFunction((prev) => document.querySelector('.changes-log .office-wterm')!.scrollTop < prev, tail);
+      const apple = await pane.evaluate(() => /Mac|iPhone|iPad/.test(navigator.platform));
+      await pane.keyboard.press(apple ? 'Meta+f' : 'Control+Shift+f');
+      await pane.getByRole('textbox', { name: 'Find in terminal' }).fill('logged');
+      await pane.getByText('1 of 1', { exact: true }).waitFor();
+      await pane.keyboard.press('Escape');
+      assert.ok(await logHost.evaluate((el) => document.activeElement === el), 'closing Find returns focus to the read-only Log host');
       await pane.keyboard.press('Tab');
       const tabLeaves = await logHost.evaluate((el) => !el.contains(document.activeElement));
       await log.focus();
@@ -284,7 +299,7 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
         );
       });
       await pane.locator('.office-wterm textarea').waitFor({ state: 'attached' });
-      assert.equal(await pane.locator('.term-host').getAttribute('data-worker-id'), null);
+      assert.equal(await pane.locator('.term-host').getAttribute('data-worker-id'), 'pixel');
       const raw = pane.getByRole('button', { name: 'Raw TTY', exact: true });
       await raw.click();
       await pane.waitForFunction(() => document.querySelector('.wterm.has-scrollback'));

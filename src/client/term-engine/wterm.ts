@@ -366,8 +366,10 @@ export class WTermAdapter {
   /** A display-only log leaves the focused window and browser in charge of keys.
    * Unlike a handled terminal shortcut, these events keep their default action. */
   useWindowKeyboard() {
-    this.onOpen(() => {
+    this.onOpen((native) => {
       if (this.textarea) this.textarea.disabled = true;
+      // A scrollable div is otherwise an implicit tab stop in Chromium.
+      native.element.tabIndex = -1;
     });
   }
   onOpen(fn: (native: WTerm, signal: AbortSignal) => void) {

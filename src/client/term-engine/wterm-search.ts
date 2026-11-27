@@ -1,5 +1,5 @@
 import type { SearchState } from '@wterm/dom';
-import { h } from '../ui/dom';
+import { claimEscape, h } from '../ui/dom';
 import type { WTermAdapter } from './wterm';
 import type { TerminalPaths } from '../ui/terminal-path-links';
 import { attachCwd } from './wterm-cwd';
@@ -12,6 +12,8 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
     registerTerminalReader(native, signal);
     if (hasNativeSearchControls(adapter)) return;
     const root = native.element;
+    // Changes Log has a disabled terminal input: its host is the single tab stop.
+    const keyboardHost = adapter.textarea?.disabled ? root.parentElement : null;
     const mac = /Mac|iPhone|iPad/.test(navigator.platform);
     const button = (label: string, text: string, click: () => void) => {
       const el = h('button', { type: 'button', title: label, 'aria-label': label }, text);
@@ -31,6 +33,7 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
     const prev = button('Previous match (Shift+Enter)', '↑', () => controller.previous());
     const next = button('Next match (Enter)', '↓', () => controller.next());
     const launcher = button(`Find in terminal (${mac ? '⌘F' : 'Ctrl+Shift+F'})`, 'Find', open);
+    if (keyboardHost) launcher.tabIndex = -1;
     const bar = h(
       'div.wterm-search-bar',
       { role: 'search', 'aria-label': 'Terminal scrollback', hidden: true },
@@ -49,7 +52,10 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
         const focused = panel.contains(document.activeElement);
         bar.hidden = true;
         launcher.hidden = false;
-        if (focused) adapter.focus();
+        if (focused) {
+          if (keyboardHost) keyboardHost.focus({ preventScroll: true });
+          else adapter.focus();
+        }
       },
     });
     function render(state: SearchState) {
@@ -72,12 +78,20 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
     // The terminal owns capture-phase keyboard handling, including Kitty releases.
     // Claim only keys in this pane before that boundary; leave browser text editing intact.
     const swallowed = new Set<string>();
+    const ownsFocus = (target: Element) => root.contains(target) || target === keyboardHost || (target === root.closest('.modal') && root.checkVisibility());
+    // A read-only window would close on Esc before the Find field saw it.
+    const releaseEscape = keyboardHost
+      ? claimEscape(panel, () => {
+          if (bar.hidden || !document.activeElement || !ownsFocus(document.activeElement)) return false;
+          swallowed.add('Escape');
+          controller.close();
+          return true;
+        })
+      : undefined;
     const keyboard = (e: KeyboardEvent) => {
       if (!(e.target instanceof Element)) return;
       const isPanel = panel.contains(e.target);
-      const inTerminal = root.contains(e.target);
-      const modalFocus = e.target === root.closest('.modal') && root.checkVisibility();
-      if (!inTerminal && !modalFocus) return;
+      if (!ownsFocus(e.target)) return;
       if (e.type === 'keyup' && swallowed.delete(e.code)) {
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -111,6 +125,7 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
     signal.addEventListener(
       'abort',
       () => {
+        releaseEscape?.();
         panel.remove();
       },
       { once: true },
