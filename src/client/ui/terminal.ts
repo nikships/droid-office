@@ -382,6 +382,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     if (warning) toast(warning, 'warn');
   };
   let pendingFind = find;
+  let restoreReader: (() => void) | undefined;
 
   const bindRenderer = () => {
     const features = attachEngineFeatures(
@@ -410,7 +411,9 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         term.options.disableStdin = readOnly || !net.up;
         disconnected.classList.add('hidden');
         sendSize();
-        features.scrollAtOnce(() => term.scrollToBottom());
+        if (restoreReader && !pendingFind) restoreReader();
+        else features.scrollAtOnce(() => term.scrollToBottom());
+        restoreReader = undefined;
         refresh();
         if (pendingFind) jumpTo(pendingFind);
         pendingFind = undefined;
@@ -602,6 +605,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     } catch {}
     setThreadView = (next, focus = true) => {
       if (!thread || !threadHost) return;
+      if (!threadView && next === 'thread') restoreReader = term.saveReader?.();
       threadView = next === 'thread';
       threadHost.hidden = !threadView;
       host.hidden = threadView;

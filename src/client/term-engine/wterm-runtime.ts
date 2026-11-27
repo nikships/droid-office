@@ -44,7 +44,19 @@ export async function loadWterm(adapter: WTermAdapter, element: HTMLElement, onD
         return method;
       },
     });
-    const native = new WTerm(element, { core: mirror, cols: 80, rows: 24, autoResize: false, cursorBlink: adapter.options.cursorBlink, onData, onBinary: (bytes) => onData(String.fromCharCode(...bytes)) });
+    const native = new WTerm(element, {
+      core: mirror,
+      cols: 80,
+      rows: 24,
+      autoResize: false,
+      cursorBlink: adapter.options.cursorBlink,
+      onData,
+      onBinary: (bytes) => {
+        // Our PTY transport encodes strings as UTF-8. A high-bit byte would be
+        // expanded to two bytes and the trailing byte interpreted as fresh input.
+        if (bytes.every((byte) => byte < 0x80)) onData(String.fromCharCode(...bytes));
+      },
+    });
     return { native, core };
   } catch (error) {
     core.dispose();

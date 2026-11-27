@@ -196,7 +196,10 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
   let view: 'diff' | 'log' = 'diff';
 
   const openLog = () => {
-    if (term) return scrollToBottom();
+    if (term) {
+      if (!term.saveReader) scrollToBottom();
+      return;
+    }
     const fixed = { cursorBlink: false };
     const engine = createTerminalEngine(
       {

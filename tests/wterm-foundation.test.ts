@@ -73,6 +73,140 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
     widths: [4, 4, 4, 4, 4],
     children: 0,
   });
+  await t.test('a hidden reader retains its viewport while output arrives and after reveal', async () => {
+    const positions = await page.evaluate(async () => {
+      const mod = '/term-engine/wterm.ts',
+        { WTermAdapter } = await import(mod);
+      const host = document.getElementById('host')!,
+        a = new WTermAdapter({ scrollback: 64 });
+      await a.open(host);
+      a.resize(40, 12);
+      const frame = async () => {
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+      };
+      const write = (start: number, n: number) => a.write(Array.from({ length: n }, (_, i) => `row ${start + i}\r\n`).join(''));
+      write(0, 76);
+      await frame();
+      a.native.element.scrollTop = 30 * 16;
+      await frame();
+      const visible = a.buffer.active;
+      host.hidden = true;
+      const hidden = a.buffer.active;
+      a.setRenderingPaused(true);
+      write(76, 6);
+      const hiddenAfterTrim = a.buffer.active;
+      host.hidden = false;
+      a.setRenderingPaused(false);
+      await frame();
+      const revealed = a.buffer.active;
+      a.dispose();
+      return [visible, hidden, hiddenAfterTrim, revealed].map((s) => [s.baseY, s.viewportY]);
+    });
+    assert.deepEqual(positions, [
+      [64, 30],
+      [64, 30],
+      [64, 24],
+      [64, 24],
+    ]);
+  });
+  await t.test('a scrolled Raw TTY returns to the same line after Thread and a fresh attach snapshot', async () => {
+    const pane = await context.newPage();
+    try {
+      await pane.route('**/thread-fixture', (r) => r.fulfill({ contentType: 'text/html', body: '<link rel="stylesheet" href="/style.css"><div id="modal-root"></div><div id="toasts"></div>' }));
+      await pane.goto(`http://127.0.0.1:${address.port}/thread-fixture`);
+      await pane.addScriptTag({ content: 'window.__name=fn=>fn' });
+      await pane.evaluate(async () => {
+        localStorage.setItem('droid-office.terminal', '{"engine":"ghostty"}');
+        const ui = '/ui/terminal.ts',
+          state = '/state.ts';
+        const { openTerminal, routeTerminalMessage } = await import(ui),
+          { store } = await import(state);
+        // Same local agent and attach contract as the mounted desk-thread fixture.
+        const worker = { id: 'pixel', name: 'Pixel', kind: 'agent', deskId: 'desk', color: '#89d9ed', status: 'idle', sessionId: 'session', cols: 120, rows: 40, open: true };
+        store.workers.set(worker.id, worker);
+        let snapshots = 0;
+        openTerminal(
+          {
+            up: true,
+            send(msg: { t: string; stream?: boolean }) {
+              if (msg.t === 'worker.attach' && msg.stream !== false) {
+                const start = snapshots++ ? 7 : 0;
+                // Row 37 repeats row 30, so its label alone is not a stable identity after trimming seven rows.
+                const data = Array.from({ length: 150 }, (_, i) => `history row ${start + i === 37 ? 30 : start + i}\r\n`).join('');
+                queueMicrotask(() => routeTerminalMessage({ t: 'term.snapshot', workerId: worker.id, data, cols: 120, rows: 40, shared: true }));
+              }
+              return true;
+            },
+            request: async () => ({ t: 'action.result', requestId: 'r', ok: true }),
+            onMessage: () => () => {},
+            onStatus: () => () => {},
+          },
+          worker.id,
+        );
+      });
+      await pane.locator('.office-wterm textarea').waitFor({ state: 'attached' });
+      const raw = pane.getByRole('button', { name: 'Raw TTY', exact: true });
+      await raw.click();
+      await pane.waitForFunction(() => document.querySelector('.wterm.has-scrollback'));
+      const element = pane.locator('.office-wterm');
+      await element.evaluate((el) => {
+        el.scrollTop = 30 * parseFloat(getComputedStyle(el).getPropertyValue('--term-row-height'));
+      });
+      const top = () =>
+        element.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return document
+            .elementFromPoint(r.left + 15, r.top + 9)
+            ?.closest('.term-row')
+            ?.textContent?.trim();
+        });
+      await pane.waitForFunction(() => {
+        const el = document.querySelector('.office-wterm')!,
+          r = el.getBoundingClientRect();
+        return document
+          .elementFromPoint(r.left + 15, r.top + 9)
+          ?.closest('.term-row')
+          ?.textContent?.includes('history row 30');
+      });
+      await pane.getByRole('button', { name: 'Thread', exact: true }).click();
+      await raw.click();
+      await pane.waitForFunction(() => document.querySelector('.wterm')?.textContent?.includes('history row 156'));
+      await pane.evaluate(async () => {
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+      });
+      assert.equal(await top(), 'history row 30');
+      assert.equal(await element.evaluate((el) => Math.floor(el.scrollTop / parseFloat(getComputedStyle(el).getPropertyValue('--term-row-height')))), 23);
+    } finally {
+      await pane.close();
+    }
+  });
+  await t.test('default mouse reports pass exactly when all bytes survive UTF-8 transport', async () => {
+    const sent = await page.evaluate(async () => {
+      const mod = '/term-engine/wterm.ts',
+        { WTermAdapter } = await import(mod);
+      const host = document.getElementById('host')!,
+        a = new WTermAdapter({});
+      host.style.width = '1250px';
+      const data: string[] = [];
+      a.onData((s: string) => data.push(s));
+      await a.open(host);
+      a.resize(140, 12);
+      a.write('\x1b[?1000h');
+      await new Promise(requestAnimationFrame);
+      const el = a.native.element,
+        rect = el.querySelector('.term-grid').getBoundingClientRect(),
+        width = parseFloat(el.style.getPropertyValue('--term-cell-width'));
+      for (const col of [10, 120])
+        for (const phase of ['mousedown', 'mouseup'])
+          el.dispatchEvent(new MouseEvent(phase, { bubbles: true, cancelable: true, buttons: phase === 'mousedown' ? 1 : 0, button: 0, clientX: rect.left + (col - 0.5) * width, clientY: rect.top + 4 }));
+      a.dispose();
+      host.style.width = '640px';
+      return data;
+    });
+    assert.deepEqual(sent, ['\x1b[M *!', '\x1b[M#*!']);
+  });
   await t.test('every whole and split query and unsolicited theme report is silent; real input still arrives', async () => {
     const queryCount = await page.evaluate(async () => {
       const mod = '/term-engine/wterm.ts',

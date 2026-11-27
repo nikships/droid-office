@@ -43,6 +43,8 @@ export class WTermAdapter implements ClientTerminal {
   private paused = false;
   private inViewport = true;
   private metricsPending = true;
+  // History index including discarded rows, or undefined when following the tail.
+  private readerRow?: number;
   private keyHandler?: (e: KeyboardEvent) => boolean;
 
   constructor(options: ClientTerminalOptions) {
@@ -88,11 +90,62 @@ export class WTermAdapter implements ClientTerminal {
       mouseTrackingMode: c?.mouseTracking() === 1003 ? 'any' : c?.mouseTracking() === 1002 ? 'drag' : c?.mouseTracking() === 1000 ? 'vt200' : 'none',
     };
   }
+  private sampleReader(discarded = this.core?.getScrollbackDiscardedCount() ?? 0) {
+    const el = this.root;
+    // display:none collapses every DOM scroll metric to zero. Keep the last visible
+    // position and subtract history evicted while painting was paused.
+    if (el?.clientHeight) this.readerRow = el.scrollHeight - el.clientHeight - el.scrollTop < 1 ? undefined : discarded + el.scrollTop / this.rowHeight;
+  }
   get buffer() {
     const baseY = this.core?.getScrollbackCount() ?? 0;
-    const el = this.root;
-    const viewportY = !el || el.scrollHeight - el.clientHeight - el.scrollTop < 1 ? baseY : Math.min(baseY, Math.max(0, Math.floor(el.scrollTop / this.rowHeight)));
+    const discarded = this.core?.getScrollbackDiscardedCount() ?? 0;
+    this.sampleReader(discarded);
+    const viewportY = this.readerRow === undefined ? baseY : Math.min(baseY, Math.max(0, Math.floor(this.readerRow - discarded)));
     return { active: { baseY, viewportY } };
+  }
+  /** A fresh attach resets core pins. Save a physical row plus its text and verify
+   * the row after replay (find the nearest matching row if history was trimmed). */
+  saveReader(): (() => void) | undefined {
+    const { baseY, viewportY } = this.buffer.active;
+    const c = this.core;
+    if (!c || viewportY >= baseY) return;
+    const fraction = (this.readerRow ?? 0) % 1;
+    const rowText = (row: number, base: number, expected?: string) => {
+      const offset = base - 1 - row;
+      let text = '';
+      for (let col = 0, len = c.getScrollbackLineLen(offset); col < len; col++) {
+        const cell = c.getScrollbackCell(offset, col);
+        if (cell.width === 0) continue;
+        const chars = cell.chars ?? String.fromCodePoint(cell.char || 32);
+        if (expected !== undefined && (text.length < expected.length ? !expected.startsWith(chars, text.length) : chars.trimEnd())) return;
+        text += chars;
+      }
+      return text.trimEnd();
+    };
+    const label = rowText(viewportY, baseY);
+    const next = viewportY + 1 < baseY ? rowText(viewportY + 1, baseY) : undefined;
+    return () => {
+      const el = this.root;
+      if (!el || this.core !== c) return;
+      const base = c.getScrollbackCount();
+      const start = Math.min(viewportY, base - 1);
+      let row: number | undefined;
+      search: for (let d = 0; d < base; d++) {
+        for (const candidate of d ? [start - d, start + d] : [start]) {
+          if (candidate < 0 || candidate >= base || rowText(candidate, base, label) !== label) continue;
+          row ??= candidate;
+          if (next === undefined || (candidate + 1 < base && rowText(candidate + 1, base, next) === next)) {
+            row = candidate;
+            break search;
+          }
+        }
+      }
+      const target = row ?? start;
+      // The DOM spacer and native pin-to-bottom policy update in wterm's render frame.
+      requestAnimationFrame(() => {
+        if (this.root === el && el.clientHeight && target >= 0) el.scrollTop = (target + fraction) * this.rowHeight;
+      });
+    };
   }
   private get rowHeight() {
     return Math.ceil((this.options.fontSize ?? 14) * (this.options.lineHeight ?? 1.1));
@@ -177,6 +230,7 @@ export class WTermAdapter implements ClientTerminal {
     this.applyOption('cursorStyle');
     native.write(widths);
     root.inert = false;
+    root.addEventListener('scroll', () => this.sampleReader(), { passive: true, signal });
     native.setRenderingPaused(this.paused);
     const observer = new ResizeObserver(() => {
       if (root.clientWidth > 0 && this.metricsPending) this.typography();
@@ -258,6 +312,7 @@ export class WTermAdapter implements ClientTerminal {
       });
   }
   reset() {
+    this.readerRow = undefined;
     this.resetting.fire();
     this.parser.reset();
     this.native?.clearSelection();

@@ -32,6 +32,7 @@ export interface ClientTerminal extends Pick<Terminal, 'cols' | 'rows' | 'focus'
   readonly buffer: { readonly active: { readonly viewportY: number; readonly baseY: number } };
   readonly textarea?: HTMLTextAreaElement;
   setRenderingPaused?(paused: boolean): void;
+  saveReader?(): (() => void) | undefined;
   open(host: HTMLElement): void | Promise<void>;
   write(data: string, done?: () => void): void;
   onData(fn: (data: string) => void): { dispose(): void };
