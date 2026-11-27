@@ -74,6 +74,16 @@ export class TerminalPathLinksAddon implements ITerminalAddon {
     return typeof this.context.floor === 'function' ? this.context.floor() : this.context.floor;
   }
 
+  /** A cell-based client already knows the candidate under the pointer. Confirm just
+   * that target, so unrelated text changes do not invalidate its pending activation. */
+  async resolveTarget(raw: string, osc8: boolean): Promise<(() => void) | undefined> {
+    if (this.context.inert || !terminalPathRef(raw)) return;
+    const key = `${this.floor()}\0${osc8 ? 'osc8' : 'path'}\0${raw}`;
+    const { paths, local } = await this.lookup(key, [raw]);
+    const resolved = paths[0];
+    if (resolved && !this.controller.signal.aborted) return () => this.openResolved(raw, resolved, local);
+  }
+
   private url(route: string): string {
     return withToken(`${route}?${new URLSearchParams({ floor: this.floor(), worker: this.context.workerId })}`);
   }

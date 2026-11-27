@@ -1,0 +1,20 @@
+.office-wterm .term-row.wterm-find-line,
+.office-wterm .term-row.wterm-find-line span {
+  color: #000 !important;
+  background: #ffd166 !important;
+  -webkit-text-fill-color: #000 !important;
+  opacity: 1 !important;
+}
+.office-wterm .wterm-link-range { position: relative; }
+.office-wterm .wterm-link-range::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--link-start) * var(--term-cell-width));
+  width: calc(var(--link-length) * var(--term-cell-width));
+  bottom: 1px;
+  border-bottom: 1px solid currentColor;
+  pointer-events: none;
+}
+.office-wterm.wterm-link-hover .term-row { cursor: pointer; }
+/* Native OSC 8 anchors must never be an alternative input route to the office policy. */
+.office-wterm .term-link { pointer-events: none; text-decoration: none; }
