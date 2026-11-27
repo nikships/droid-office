@@ -532,7 +532,8 @@ export function decodePlaceholderCell(chars: string, fgLow24: number, underlineL
 
 export type KittyStreamSegment = { type: 'text'; data: string } | { type: 'apc'; body: string };
 
-const MAX_APC_LEN = 16 * 1024 * 1024;
+/** UTF-16 code units after Kitty's `G`, excluding the introducer and terminator. */
+export const MAX_KITTY_APC_BODY = 16 * 1024 * 1024;
 
 /**
  * Splits arbitrary terminal output chunks into interleaved `'text'` and `'apc'` (`ESC _ G ... ST/BEL`)
@@ -614,7 +615,7 @@ export class KittyApcSplitter {
             this.state = 'ground';
           } else {
             this.apcBuf += chunk[i];
-            if (this.apcBuf.length > MAX_APC_LEN) {
+            if (this.apcBuf.length > MAX_KITTY_APC_BODY) {
               this.apcBuf = '';
               textStart = i + 1;
               this.state = 'ground';

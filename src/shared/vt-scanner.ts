@@ -1,5 +1,8 @@
 // Synchronous VT hooks for a display mirror. Unknown sequences pass through unchanged.
 // Bound unfinished strings (including graphics) and discard an oversized control, never its tail as text.
+import { MAX_KITTY_APC_BODY } from './kitty.js';
+
+const SEQUENCE_LIMIT = 8 * 1024 * 1024;
 interface Id {
   prefix?: string;
   intermediates?: string;
@@ -20,6 +23,8 @@ export class VtScanner {
   private sequence = '';
   private oversized = false;
   private stPending = false;
+  /** For Kitty only: end of the allowed body, including its ESC _ G or C1 APC G prefix. */
+  private kittyLimit = 0;
 
   private register(key: string, handler: Handler) {
     const list = this.handlers.get(key) ?? [];
@@ -53,6 +58,7 @@ export class VtScanner {
     this.state = 'text';
     this.sequence = '';
     this.stPending = false;
+    this.kittyLimit = 0;
     this.oversized = false;
   }
 
@@ -109,14 +115,16 @@ export class VtScanner {
         continue;
       }
       const string = this.state !== 'csi' && this.state !== 'esc';
+      if (this.state === 'apc' && ch === 'G' && (this.sequence === '\x1b_' || this.sequence === '\x9f')) this.kittyLimit = this.sequence.length + 1 + MAX_KITTY_APC_BODY;
+      const acceptsBell = this.state === 'osc' || this.kittyLimit !== 0;
       if (string && !this.stPending) {
         // Kitty payloads can span megabytes. Retain slices, not one string node per byte.
-        const control = this.state === 'osc' ? /[\u0007\u0018\u001a\u001b\u009c]/g : /[\u0018\u001a\u001b\u009c]/g;
+        const control = acceptsBell ? /[\u0007\u0018\u001a\u001b\u009c]/g : /[\u0018\u001a\u001b\u009c]/g;
         control.lastIndex = i;
         const end = control.exec(input)?.index ?? input.length;
         if (end > i) {
           if (!this.oversized) {
-            if (this.sequence.length + end - i > 8 * 1024 * 1024) {
+            if (this.sequence.length + end - i > (this.kittyLimit || SEQUENCE_LIMIT)) {
               this.oversized = true;
               this.sequence = '';
             } else this.sequence += input.slice(i, end);
@@ -140,7 +148,8 @@ export class VtScanner {
       }
       if (!this.oversized) {
         this.sequence += ch;
-        if (this.sequence.length > 8 * 1024 * 1024) {
+        // For Kitty the slice check above counted all body characters; don't charge ST/BEL.
+        if (!this.kittyLimit && this.sequence.length > SEQUENCE_LIMIT) {
           this.oversized = true;
           this.sequence = '';
         }
@@ -152,7 +161,7 @@ export class VtScanner {
       } else if (this.state === 'esc' && this.sequence.length === 2 && introducers[ch]) this.state = introducers[ch];
       else {
         const st = this.stPending && ch === '\\';
-        const end = string ? st || ch === '\x9c' || (this.state === 'osc' && ch === '\x07') : ch >= (this.state === 'esc' ? '0' : '@') && ch <= '~';
+        const end = string ? st || ch === '\x9c' || (acceptsBell && ch === '\x07') : ch >= (this.state === 'esc' ? '0' : '@') && ch <= '~';
         if (end) {
           if (!this.oversized && !this.dispatch(string ? (st ? 2 : 1) : 0, flush)) output += this.sequence;
           this.reset();

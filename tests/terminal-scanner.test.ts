@@ -82,3 +82,45 @@ test('bounded partial strings discard to ST; cancellations and reset do not leak
   scanner.write(`${esc}_untouched${esc}\\`, put);
   assert.equal(output, `okagain${esc}_abort\x18${esc}_untouched${esc}\\`);
 });
+
+test('Kitty APC accepts BEL, C1 ST and split ESC-ST; BEL inside another APC stays data', () => {
+  for (const intro of [`${esc}_`, '\x9f']) {
+    for (const terminator of ['\x07', '\x9c', `${esc}\\`]) {
+      const stream = `a${intro}Gx${terminator}b${intro}other\x07stuff${esc}\\c`;
+      for (let split = 0; split <= stream.length; split++) {
+        const scanner = new VtScanner();
+        const payloads: string[] = [];
+        scanner.registerApcHandler((body) => {
+          payloads.push(body);
+          return true;
+        });
+        let text = '';
+        for (const part of [stream.slice(0, split), stream.slice(split)])
+          scanner.write(part, (s) => {
+            text += s;
+          });
+        assert.deepEqual(payloads, ['Gx', 'other\x07stuff']);
+        assert.equal(text, 'abc');
+      }
+    }
+  }
+});
+
+test('the 16 Mi Kitty bound counts only the body after G, not the introducer or split terminator', () => {
+  const body = 'z'.repeat(16 * 1024 * 1024);
+  for (const intro of [`${esc}_`, '\x9f']) {
+    const scanner = new VtScanner();
+    const lengths: number[] = [];
+    scanner.registerApcHandler((data) => {
+      lengths.push(data.length - 1);
+      return true;
+    });
+    let text = '';
+    const put = (s: string) => {
+      text += s;
+    };
+    for (const part of [intro, 'G', body, esc, '\\', 'a', intro, 'G', body, 'x', '\x07', 'b']) scanner.write(part, put);
+    assert.deepEqual(lengths, [body.length]);
+    assert.equal(text, 'ab');
+  }
+});
