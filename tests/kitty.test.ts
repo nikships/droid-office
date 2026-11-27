@@ -67,6 +67,21 @@ test('KittyKeyboardState maintains independent main and alternate buffer stacks 
   assert.equal(a.serialize(), '');
 });
 
+test('worker accounting ignores only Caps Lock and Num Lock in Kitty modifiers', () => {
+  for (const lock of [64, 128, 192]) {
+    assert.equal(countCtrlEnterInputs(`\x1b[13;${5 + lock}u\x1b[57414;${5 + lock}:2u`), 2);
+    assert.ok(isClearQueueInput(`\x1b[120;${5 + lock}u`));
+    assert.ok(isCancelInput(`\x1b[27;${1 + lock}u`));
+    assert.ok(isCancelInput(`\x1b[99;${5 + lock}u`));
+    for (const mod of [2, 5, 6, 9, 257]) assert.equal(isCancelInput(`\x1b[27;${lock + mod}u`), false);
+    for (const suffix of [`${5 + lock}:3`, `${7 + lock}`, `${261 + lock}`]) {
+      assert.equal(countCtrlEnterInputs(`\x1b[13;${suffix}u`), 0);
+      assert.equal(isClearQueueInput(`\x1b[120;${suffix}u`), false);
+      assert.equal(isCancelInput(`\x1b[99;${suffix}u`), false);
+    }
+  }
+});
+
 test('worker input counters recognize both legacy and Kitty CSI u queue, clear and cancel keys', () => {
   assert.equal(countCtrlEnterInputs('\x1b[13;5u'), 1);
   assert.equal(countCtrlEnterInputs('\x1b[13;5:2;13u\x1b[57414;5u'), 2);

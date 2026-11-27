@@ -6,7 +6,7 @@ import type { Net } from '../net';
 import { store } from '../state';
 import { guestTokenOn, withToken } from '../token';
 import { onTermTheme, termTheme } from '../term-theme';
-import { focusReports, suppressMirrorQueries, TerminalMirror } from '../term-mirror';
+import { isFocusReport, snapshotFocusReport, suppressMirrorQueries, TerminalMirror } from '../term-mirror';
 import { h, hintToast, openModal, STATUS_LABEL, toast, type Modal } from './dom';
 import { orchestratorIcon } from './icons';
 import { colorDot } from './kit';
@@ -294,7 +294,6 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   let opened = false;
   let alive = true;
   const expanded = { modal: null as Modal | null };
-  const focus = focusReports();
   let lastSentSize = '';
   let lastPtySize = '';
   const pendingSizes: string[] = [];
@@ -394,7 +393,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     term,
     (snapshot) => {
       adoptSharedSize = snapshot.shared ?? adoptSharedSize;
-      const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
+      const focusIn = snapshotFocusReport(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
       if (focusIn && !term.options.disableStdin) net.send({ t: 'term.input', workerId, data: focusIn });
       lastSentSize = '';
       pendingSizes.length = 0;
@@ -429,10 +428,8 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   });
   term.onData((data) => {
     if (readOnly || !mirror.ready || !net.up) return;
-    const kind = focus.classify(data);
-    if (kind === 'repeat') return;
     // Focus moving is not typing, so it leaves the shared PTY at its size.
-    if (kind === 'input') sendSize(true);
+    if (!isFocusReport(data)) sendSize(true);
     net.send({ t: 'term.input', workerId, data });
   });
   const unbind = () => {
@@ -760,7 +757,6 @@ export function openOfficeShell(net: Net) {
   const pendingSizes: string[] = [];
   let box: { width: number; height: number } | undefined;
   let boxChanged = false;
-  const focus = focusReports();
 
   const sendSize = (typing = false) => {
     if (term.options.disableStdin || !mirror?.ready || !opened || !net.up || !host.clientWidth || !host.clientHeight) return;
@@ -791,7 +787,7 @@ export function openOfficeShell(net: Net) {
     term,
     (snapshot) => {
       shared = snapshot.shared === true;
-      const focusIn = focus.reset(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
+      const focusIn = snapshotFocusReport(document.hasFocus() && document.activeElement === term.textarea, term.modes.sendFocusMode);
       if (focusIn && !term.options.disableStdin) net.send({ t: 'shell.input', data: focusIn });
       ptyCols = snapshot.cols;
       ptyRows = snapshot.rows;
@@ -819,9 +815,7 @@ export function openOfficeShell(net: Net) {
   });
   term.onData((data) => {
     if (term.options.disableStdin || !mirror?.ready || !net.up) return;
-    const kind = focus.classify(data);
-    if (kind === 'repeat') return;
-    if (kind === 'input') sendSize(true);
+    if (!isFocusReport(data)) sendSize(true);
     net.send({ t: 'shell.input', data });
   });
   const offStatus = net.onStatus((up) => {

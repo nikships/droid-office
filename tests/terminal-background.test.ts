@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { focusReports, TerminalMirror } from '../src/client/term-mirror.js';
+import { isFocusReport, snapshotFocusReport, TerminalMirror } from '../src/client/term-mirror.js';
 
 function rig() {
   const writes: string[] = [];
@@ -92,20 +92,12 @@ test('disconnect while hidden does not resume parsing before a new visible snaps
   assert.equal(r.mirror.ready, true);
 });
 
-test('focus reports pass only when the window focus changes', () => {
-  const focus = focusReports();
-  assert.equal(focus.classify('x'), 'input');
-  assert.equal(focus.classify('\x1b[O'), 'repeat', 'a window that never had focus does not report losing it');
-  assert.equal(focus.classify('\x1b[I'), 'focus');
-  assert.equal(focus.classify('\x1b[I'), 'repeat', 'focus reporting turned on again must not echo focus-in back');
-  assert.equal(focus.classify('\x1b[Ix'), 'input');
-  assert.equal(focus.classify('\x1b[O'), 'focus');
-  assert.equal(focus.classify('\x1b[O'), 'repeat');
-  focus.classify('\x1b[I');
-  assert.equal(focus.reset(), undefined);
-  assert.equal(focus.classify('\x1b[I'), 'focus', 'after a fresh snapshot the next focus-in is sent again');
-  assert.equal(focus.reset(true, false), undefined, 'no report for a program that has not asked for them');
-  assert.equal(focus.classify('\x1b[I'), 'focus', 'so the focus-in xterm sends when it turns reporting on goes through');
-  assert.equal(focus.reset(true, true), '\x1b[I', 'a window still focused through a snapshot tells the program again');
-  assert.equal(focus.classify('\x1b[O'), 'focus', 'and its next blur reaches the program');
+test('only focus notifications bypass input sizing and a focused reporting snapshot reasserts focus', () => {
+  assert.equal(isFocusReport('x'), false);
+  assert.equal(isFocusReport('\x1b[Ix'), false);
+  assert.equal(isFocusReport('\x1b[O'), true);
+  assert.equal(isFocusReport('\x1b[I'), true);
+  assert.equal(snapshotFocusReport(true, false), undefined);
+  assert.equal(snapshotFocusReport(false, true), undefined);
+  assert.equal(snapshotFocusReport(true, true), '\x1b[I');
 });

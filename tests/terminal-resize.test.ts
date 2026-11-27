@@ -164,8 +164,17 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       assert.deepEqual(await reports(3), { input: [], sizes: [] }, 'an unfocused window stays silent when focus reporting turns on');
       await page.evaluate(() => (window as any).term.focus());
       assert.deepEqual(await reports(3), { input: ['\x1b[I'], sizes: [] }, 'focus-in is sent once, not echoed for every re-enable');
+      // No notification is emitted for a blur while reporting is off. The next real focus-in still counts.
+      await page.evaluate(async () => {
+        const w = window as any;
+        await new Promise<void>((resolve) => w.term.write('\x1b[?1004l', resolve));
+        document.getElementById('focus')!.focus();
+      });
+      assert.deepEqual(await reports(1), { input: ['\x1b[I'], sizes: [] });
+      await page.evaluate(() => (window as any).term.focus());
+      assert.deepEqual(await reports(), { input: ['\x1b[I', '\x1b[I'], sizes: [] }, 'off/on between transitions does not suppress the next focus-in');
       await page.evaluate(() => document.getElementById('focus')!.focus());
-      assert.deepEqual(await reports(2), { input: ['\x1b[I', '\x1b[O'], sizes: [] });
+      assert.deepEqual(await reports(2), { input: ['\x1b[I', '\x1b[I', '\x1b[O'], sizes: [] });
       await page.evaluate(() => (window as any).term.input('x'));
       assert.equal((await reports()).sizes.length, 1, 'typing still claims the size');
     });
@@ -186,16 +195,16 @@ test('inline terminals follow pane geometry without focus or stale size rollback
         document.getElementById('focus')!.focus();
       });
       await page.evaluate(() => (window as any).frames());
-      assert.deepEqual(await sent(), ['\x1b[I']);
+      assert.deepEqual(await sent(), ['\x1b[O', '\x1b[I'], 'first blur after mode enable is a real transition');
       await page.evaluate(async () => {
         const w = window as any;
         w.term.focus();
         await new Promise<void>((resolve) => w.term.write('\x1b[?1004h', resolve));
       });
-      assert.deepEqual(await sent(), ['\x1b[I'], 'enabling focus mode on an already-focused terminal is not a focus transition');
+      assert.deepEqual(await sent(), ['\x1b[O', '\x1b[I'], 'enabling focus mode on an already-focused terminal is not a focus transition');
       await page.locator('#focus').focus();
       await page.evaluate(() => (window as any).term.focus());
-      assert.deepEqual(await sent(), ['\x1b[I', '\x1b[I'], 'the returning focus-in is not mistaken for a repeat');
+      assert.deepEqual(await sent(), ['\x1b[O', '\x1b[I', '\x1b[O', '\x1b[I'], 'both real transitions reach the program');
     });
 
     await t.test(`${mode} keeps forwarding focus when it stays focused through a snapshot`, async () => {

@@ -88,36 +88,14 @@ export class TerminalMirror {
 const FOCUS_IN = '\x1b[I';
 const FOCUS_OUT = '\x1b[O';
 
-/**
- * Sorts what xterm sends into typing, a focus report to forward, or a repeat to drop. xterm also
- * reports focus each time a program turns focus reporting on (DECSET 1004), and Droid turns it on
- * again whenever it regains focus. With several windows open, the focused one answers focus-in and
- * the others focus-out, which can bounce through the PTY without end, and each answer used to take
- * the PTY's size. Only a change in this window's own focus goes through; a window that never had
- * focus stays silent.
- */
-export function focusReports() {
-  let focused = false;
-  return {
-    classify(data: string): 'input' | 'focus' | 'repeat' {
-      if (data !== FOCUS_IN && data !== FOCUS_OUT) return 'input';
-      const now = data === FOCUS_IN;
-      if (now === focused) return 'repeat';
-      focused = now;
-      return 'focus';
-    },
-    /**
-     * A fresh snapshot: reports dropped while disconnected or loading never reached the program, so
-     * start again from this window's own focus. Returns the focus-in to send when this window has
-     * focus and the program asks for reports; an unfocused window stays silent.
-     */
-    reset(hasFocus = false, reporting = false): string | undefined {
-      // Tracked as focused only once the program has heard so; with reporting off, the focus-in
-      // xterm sends when it is turned on is the first the program hears.
-      focused = hasFocus && reporting;
-      return focused ? FOCUS_IN : undefined;
-    },
-  };
+/** Real focus transitions are not keystrokes and never take ownership of the PTY size. */
+export function isFocusReport(data: string): boolean {
+  return data === FOCUS_IN || data === FOCUS_OUT;
+}
+
+/** Replay lost any live focus transition: reassert focus only if the program requested it. */
+export function snapshotFocusReport(hasFocus: boolean, reporting: boolean): string | undefined {
+  return hasFocus && reporting ? FOCUS_IN : undefined;
 }
 
 /** The server's headless terminal already answers TUI queries. A passive mirror must not send

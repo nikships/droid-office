@@ -339,17 +339,11 @@ export class WTermAdapter {
         );
 
       // A focus report is not typing: wterm 0.6.0's normal input callback also scrolls to the tail.
-      for (const [phase, data] of [
-        ['focus', '\x1b[I'],
-        ['blur', '\x1b[O'],
-      ] as const)
-        this.textarea?.addEventListener(
-          phase,
-          () => {
-            if (core.focusEvents() && !this.options.disableStdin) this.data.fire(data);
-          },
-          { signal },
-        );
+      const reportFocus = (event: FocusEvent) => {
+        if (core.focusEvents() && !this.options.disableStdin) this.data.fire(event.type === 'focus' ? '\x1b[I' : '\x1b[O');
+      };
+      this.textarea?.addEventListener('focus', reportFocus, { signal });
+      this.textarea?.addEventListener('blur', reportFocus, { signal });
       root.addEventListener(
         'scroll',
         (e) => {

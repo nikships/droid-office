@@ -12,7 +12,7 @@ test('wterm owns desktop keyboard negotiation, selection and text input', { skip
   t.after(() => context.close());
   const mount = await terminalFixture(t);
   for (const platform of ['MacIntel', 'Win32']) {
-    await t.test(platform, async () => {
+    await t.test(platform, async (sub) => {
       const page = await context.newPage();
       const cdp = await context.newCDPSession(page);
       await page.addInitScript((value) => Object.defineProperty(navigator, 'platform', { value }), platform);
@@ -41,10 +41,141 @@ test('wterm owns desktop keyboard negotiation, selection and text input', { skip
         await cdp.send('Input.dispatchKeyEvent', { ...event, type: text ? 'keyDown' : 'rawKeyDown', text });
         await cdp.send('Input.dispatchKeyEvent', { ...event, type: 'keyUp' });
       };
+      if (platform === 'MacIntel') {
+        const reset = async (flags: number, agent = true) => {
+          await page.evaluate(
+            ({ flags, agent }) => {
+              const w = window as any;
+              w.agent = agent;
+              w.term.reset();
+              w.term.write(`\x1b[=${flags}ux`);
+              w.term.focus();
+              w.bytes.length = 0;
+            },
+            { flags, agent },
+          );
+        };
+        const event = (type: string, props: KeyboardEventInit & { keyCode?: number }) =>
+          page.evaluate(
+            ({ type, props }) => {
+              (window as any).term.textarea.dispatchEvent(new KeyboardEvent(type, { bubbles: true, cancelable: true, ...props }));
+            },
+            { type, props },
+          );
+        await sub.test('plain Escape keeps Tab and Shift+Tab in the program', async () => {
+          const seen = [];
+          for (const flags of [0, 1, 3])
+            for (const tab of ['Tab', 'Shift+Tab']) {
+              await reset(flags);
+              seen.push([await key('Escape'), await key(tab)]);
+            }
+          assert.deepEqual(seen, [
+            ['\x1b', '\t'],
+            ['\x1b', '\x1b[Z'],
+            ['\x1b[27u', '\t'],
+            ['\x1b[27u', '\x1b[9;2u'],
+            ['\x1b[27u\x1b[27;1:3u', '\t'],
+            ['\x1b[27u\x1b[27;1:3u', '\x1b[9;2u\x1b[9;2:3u'],
+          ]);
+          await reset(1);
+          assert.equal(await key('Alt+Enter'), '\x1b[13;3u');
+        });
+        await sub.test('Mac Control chords use Latin shortcuts on Cyrillic and Caps Lock layouts', async () => {
+          const seen = [];
+          for (const flags of [0, 1]) {
+            await reset(flags);
+            for (const [ch, code, vk] of [
+              ['C', 'KeyC', 67],
+              ['с', 'KeyC', 67],
+              ['м', 'KeyV', 86],
+              ['ф', 'KeyA', 65],
+            ] as const) {
+              if (code === 'KeyC') await page.evaluate(() => (window as any).term.native.selectAll());
+              await layout(ch, code, vk, 2);
+              seen.push(await sent());
+            }
+          }
+          assert.deepEqual(seen, ['\x03', '\x03', '\x16', '\x01', '\x1b[99;5u', '\x1b[99;5u', '\x1b[118;5u', '\x1b[97;5u']);
+          await page.evaluate(() => (window as any).term.native.selectAll());
+          for (const key of ['C', 'V']) {
+            const ev = { key, code: 'Key' + key, ctrlKey: true, modifierCapsLock: true };
+            await event('keydown', ev);
+            await event('keyup', ev);
+          }
+          assert.equal(await sent(), '\x1b[99;69u\x1b[118;69u');
+        });
+        await sub.test('text commits, paste and pointer presses cancel selection traversal', async () => {
+          const seen = [];
+          for (const activity of ['compositionstart', 'input', 'paste', 'pointerdown']) {
+            await reset(1);
+            await page.evaluate(() => {
+              const sel = document.getSelection()!,
+                r = document.createRange();
+              r.selectNodeContents(document.querySelector('.term-row')!);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            });
+            await key('Escape');
+            await page.evaluate((activity) => {
+              const { textarea } = (window as any).term;
+              textarea.dispatchEvent(new Event(activity, { bubbles: true }));
+              if (activity === 'compositionstart') textarea.dispatchEvent(new CompositionEvent('compositionend', { data: '日' }));
+            }, activity);
+            await sent();
+            seen.push(await key('Tab'));
+          }
+          assert.deepEqual(seen, ['\t', '\t', '\t', '\t']);
+        });
+        await sub.test('only unnegotiated shell Shift+Enter submits a CR', async () => {
+          const seen = [];
+          for (const [flags, agent] of [
+            [0, false],
+            [0, true],
+            [1, false],
+            [1, true],
+          ] as const) {
+            await reset(flags, agent);
+            seen.push(await key('Shift+Enter'));
+          }
+          assert.deepEqual(seen, ['\r', '\x1b[13;2u', '\x1b[13;2u', '\x1b[13;2u']);
+        });
+        await sub.test('clipboard and programmatic paste normalize only outside bracketed mode', async () => {
+          await reset(0, false);
+          const seen = [];
+          for (const mode of ['l', 'h']) {
+            await write('\x1b[?2004' + mode);
+            await page.evaluate(() => {
+              const t = (window as any).term,
+                text = 'a\nb\r\nc',
+                clipboardData = new DataTransfer();
+              clipboardData.setData('text/plain', text);
+              t.textarea.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+              t.paste(text);
+            });
+            seen.push(await sent());
+          }
+          assert.deepEqual(seen, ['a\rb\rc'.repeat(2), '\x1b[200~a\nb\r\nc\x1b[201~'.repeat(2)]);
+        });
+        await sub.test('Option Meta uses base Space and dead key without a virtual key', async () => {
+          await reset(1);
+          await layout('\u00a0', 'Space', 32, 1, '\u00a0');
+          await event('keydown', { key: 'Dead', code: 'KeyE', keyCode: 0, altKey: true });
+          await event('keyup', { key: 'Dead', code: 'KeyE', keyCode: 0, altKey: true });
+          assert.equal(await sent(), '\x1b[32;3u\x1b[101;3u');
+        });
+        await sub.test('remapped Option repeats and releases retain the pressed key', async () => {
+          await reset(3);
+          await event('keydown', { key: '@', code: 'Digit2', keyCode: 50, altKey: true, shiftKey: true });
+          await event('keydown', { key: '™', code: 'Digit2', keyCode: 50, altKey: true, repeat: true });
+          await event('keyup', { key: '2', code: 'Digit2', keyCode: 50, altKey: true });
+          assert.equal(await sent(), '\x1b[64;4u\x1b[64;3:2u\x1b[64;3:3u');
+        });
+        await reset(0);
+      }
       assert.equal(await key('Control+Enter'), '\x1b[13;5u');
       await page.evaluate(() => ((window as any).agent = false));
       assert.equal(await key('Control+Enter'), '\r');
-      assert.equal(await key('Shift+Enter'), '\x1b[13;2u');
+      assert.equal(await key('Shift+Enter'), '\r');
       if (platform === 'MacIntel') assert.equal(await key('Control+v'), '\x16');
       await write('\x1b[>');
       await write('3u\x1b[>4;2m');
@@ -116,7 +247,7 @@ test('wterm owns desktop keyboard negotiation, selection and text input', { skip
       assert.equal(await sent(), "\x1b[200~'file name'\x1b[201~");
       await write('\x1b[?2004l');
       await paste('a\nb');
-      assert.equal(await sent(), 'a\nb');
+      assert.equal(await sent(), 'a\rb');
       await write('\r\n' + 'reader text\r\n'.repeat(80));
       await page.waitForFunction(() => document.querySelector('#host .wterm')!.scrollHeight > 500);
       await write('\x1b[?1004h');
