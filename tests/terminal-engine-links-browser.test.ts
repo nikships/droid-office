@@ -133,6 +133,13 @@ test('Ghostty link policy, search reflow, glass, selection, fonts and cursor on 
     await term.open(document.querySelector('#host'));
     const { native } = term;
     const { renderer } = native;
+    // Chromium reports the resolved faces for DOM text, not canvas. Use the same
+    // terminal font stack and glyph pair to distinguish the bundled faces from fallbacks.
+    const fontProbe = document.createElement('span');
+    fontProbe.id = 'terminal-font-probe';
+    fontProbe.style.font = `14px ${native.options.fontFamily}`;
+    fontProbe.textContent = 'M';
+    document.body.append(fontProbe);
     const canvas: HTMLCanvasElement = renderer.getCanvas();
     const ctx = canvas.getContext('2d')!;
     const pixel = (x: number, y: number) => [...ctx.getImageData(Math.floor(x * devicePixelRatio), Math.floor(y * devicePixelRatio), 1, 1).data];
@@ -169,7 +176,7 @@ test('Ghostty link policy, search reflow, glass, selection, fonts and cursor on 
       native.clearSelection();
       const styles = ['normal', 'bold', 'italic'].map((style) => {
         ctx.font = `${style} ${size}px ${TERM_FONT}`;
-        return [ctx.measureText('M').width, ctx.measureText('').width];
+        return { style, textWidth: ctx.measureText('M').width, iconWidth: ctx.measureText('').width };
       });
       const facePixels = [0, 1, 3].map((sgr) => {
         term.write(`\x1b[H\x1b[0;${sgr}mM\x1b[0m\r\n`);
@@ -209,27 +216,49 @@ test('Ghostty link policy, search reflow, glass, selection, fonts and cursor on 
     (window as any).rig = { term, links };
     return { geometry, opened, placeholderAlpha, corePlaceholder, liveCursor, hiddenCursor, result: links.find({ needle: 'marker needle', fromEnd: 22 }), missing: links.find({ needle: 'missing result', fromEnd: 1 }) };
   });
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('DOM.enable');
+  await cdp.send('CSS.enable');
+  const { root } = await cdp.send('DOM.getDocument');
+  const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#terminal-font-probe' });
+  const { fonts } = await cdp.send('CSS.getPlatformFontsForNode', { nodeId });
+  await cdp.detach();
+  assert.deepEqual(
+    fonts
+      .filter((f) => f.isCustomFont && f.glyphCount === 1)
+      .map((f) => f.familyName)
+      .sort(),
+    ['Droid Office Terminal Symbols', 'Geist Mono'],
+    `Rendered faces: ${JSON.stringify(fonts)}`,
+  );
   assert.deepEqual(metrics.opened, [
     ['https://example.com', '_blank', 'noopener,noreferrer'],
     ['https://example.com/osc', '_blank', 'noopener,noreferrer'],
   ]);
   assert.equal(metrics.result, undefined);
   assert.equal(metrics.missing, 'That line has scrolled out of the terminal since');
-  assert.equal(metrics.placeholderAlpha, 0);
-  assert.equal(metrics.corePlaceholder, '\u{10eeee}\u0301');
-  assert.deepEqual(metrics.liveCursor, [0, 255, 0, 255]);
-  assert.deepEqual(metrics.hiddenCursor, [0, 0, 0, 0]);
+  assert.equal(metrics.placeholderAlpha, 0, `Placeholder alpha: ${metrics.placeholderAlpha}`);
+  assert.equal(metrics.corePlaceholder, '\u{10eeee}\u0301', `Core placeholder: ${JSON.stringify(metrics.corePlaceholder)}`);
+  assert.deepEqual(metrics.liveCursor, [0, 255, 0, 255], `Live cursor RGBA: ${metrics.liveCursor}`);
+  assert.deepEqual(metrics.hiddenCursor, [0, 0, 0, 0], `Hidden cursor RGBA: ${metrics.hiddenCursor}`);
   for (const m of metrics.geometry) {
-    assert.deepEqual(m.cursor, [238, 96, 24, 255]);
-    assert.deepEqual(m.blank, [0, 0, 0, 0]);
-    assert.deepEqual(m.selection, [42, 42, 42, 255]);
-    assert.equal(new Set(m.facePixels).size, 3);
-    assert.ok(m.brightest >= 116, `SGR #282828 on black reaches 4.5:1 (${m.brightest})`);
-    for (const [textWidth, iconWidth] of m.styles) {
-      assert.ok(Math.abs(textWidth - m.size * 0.6) < 0.02);
-      assert.ok(Math.abs(iconWidth - textWidth) < 0.02);
+    const measured = JSON.stringify(m);
+    t.diagnostic(measured);
+    assert.deepEqual(m.cursor, [238, 96, 24, 255], `Cursor RGBA: ${measured}`);
+    assert.deepEqual(m.blank, [0, 0, 0, 0], `Blank RGBA: ${measured}`);
+    assert.deepEqual(m.selection, [42, 42, 42, 255], `Selection RGBA: ${measured}`);
+    assert.equal(new Set(m.facePixels).size, 3, `Normal, bold and italic ink: ${measured}`);
+    assert.ok(m.brightest >= 116, `SGR #282828 on black must reach 4.5:1: ${measured}`);
+    for (const { style, textWidth, iconWidth } of m.styles) {
+      const ideal = m.size * 0.6;
+      // Linux Chromium can quantize the advance to a whole CSS pixel.
+      assert.ok(Math.abs(textWidth - ideal) < 0.02 || textWidth === Math.round(ideal), `${style} advance, expected ${ideal} or ${Math.round(ideal)}: ${measured}`);
+      // The variable bold text face can differ from the icon by a fraction of a
+      // layout unit on macOS. Both must have the same advance at 1/64 CSS px.
+      assert.equal(Math.round(iconWidth * 64), Math.round(textWidth * 64), `${style} icon/text advances: ${measured}`);
+      assert.equal(m.width, Math.ceil(textWidth), `${style} text cell width: ${measured}`);
+      assert.equal(m.width, Math.ceil(iconWidth), `${style} icon cell width: ${measured}`);
     }
-    t.diagnostic(JSON.stringify(m));
   }
   await page.clock.install();
   await page.evaluate(() => {
@@ -242,9 +271,10 @@ test('Ghostty link policy, search reflow, glass, selection, fonts and cursor on 
     const render = (window as any).rig.term.native.renderer;
     return (parseFloat((document.querySelector('.ghostty-find-line') as HTMLElement).style.top) - render.getCanvas().offsetTop) / render.charHeight;
   });
-  assert.equal(row, 4);
+  assert.equal(row, 4, `Search highlight row after resize: ${row}`);
   await page.clock.fastForward(8100);
-  assert.equal(await page.locator('.ghostty-find-line').count(), 0);
+  const highlights = await page.locator('.ghostty-find-line').count();
+  assert.equal(highlights, 0, `Highlights after expiry: ${highlights}`);
   // Same remote response shape used by the paired-client path endpoint in terminal-paths.test.
   await page.route('**/api/term/paths?**', (r) => r.fulfill({ json: { paths: [{ path: '/checkout/src/server.ts', displayPath: 'src/server.ts', line: 120 }], local: false } }));
   await page.route('**/api/term/file?**', (r) => r.fulfill({ json: { path: 'src/server.ts', text: 'server.ts' } }));
@@ -259,7 +289,8 @@ test('Ghostty link policy, search reflow, glass, selection, fonts and cursor on 
     canvas.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: true, clientX: rect.left + renderer.charWidth * 2.5, clientY: rect.top + renderer.charHeight * 1.5 }));
   });
   await page.locator('[aria-label="File preview: src/server.ts"]').waitFor({ state: 'attached', timeout: 4000 });
-  assert.match(await page.locator('.wt-file-modal').innerText(), /Line 120/);
+  const preview = await page.locator('.wt-file-modal').innerText();
+  assert.match(preview, /Line 120/, `File preview: ${preview}`);
   await t.test('history and scan cutoffs never open a URL fragment', async () => {
     const opened = await page.evaluate(() => {
       const { term } = (window as any).rig;
@@ -283,7 +314,7 @@ test('Ghostty link policy, search reflow, glass, selection, fonts and cursor on 
       }
       return opened;
     });
-    assert.deepEqual(opened, []);
+    assert.deepEqual(opened, [], `URLs opened at cutoffs: ${JSON.stringify(opened)}`);
   });
   await page.evaluate(() => (window as any).rig.term.dispose());
 });
