@@ -121,6 +121,10 @@ export interface InlineTerminal {
   hideTeam?: boolean;
   /** Watch only: no keystrokes, pastes, drops, focus reports or resizes reach the worker's terminal; it follows the terminal's own size. */
   readOnly?: boolean;
+  /** The containing pane provides its own Find button, so omit the floating in-pane Find launcher. */
+  externalFind?: boolean;
+  /** Notifies the containing pane when the terminal's Find bar opens or closes. */
+  onFindChange?: (open: boolean) => void;
 }
 
 /**
@@ -131,6 +135,8 @@ export interface InlineTerminalHandle {
   workerId: string;
   close(): void;
   focus(): void;
+  /** Opens or closes the terminal's Find bar. */
+  toggleFind(): void;
   /** Asks the office for a fresh snapshot, after a reconnect. */
   attach(): void;
 }
@@ -270,6 +276,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   };
 
   const pathLinks = new TerminalPaths({ floor: () => store.floor ?? '', workerId, workerName: info.name, inert: readOnly });
+  let findOpen = false;
   const { term, features } = createWebTerminal(
     {
       ...terminalOptions(),
@@ -290,6 +297,13 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
         ),
     },
     pathLinks,
+    {
+      externalLauncher: inline?.externalFind,
+      onOpenChange: (open) => {
+        findOpen = open;
+        inline?.onFindChange?.(open);
+      },
+    },
   );
   let opened = false;
   let alive = true;
@@ -686,7 +700,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       adoptSharedSize = store.worker(workerId)?.open === true;
       if (!threadView && (!inline || !document.hidden)) net.send({ t: 'worker.attach', workerId });
       setTimeout(() => {
-        if (alive && inline?.focus !== false && !threadView) term.focus();
+        if (alive && inline?.focus !== false && !threadView && !findOpen) term.focus();
       }, 50);
     })
     .catch((error: unknown) => {
@@ -700,6 +714,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     workerId,
     close: () => modal.close(),
     focus: () => term.focus(),
+    toggleFind: () => features.toggleSearch(),
     attach: () => {
       if (alive && opened && !document.hidden) net.send({ t: 'worker.attach', workerId });
     },

@@ -223,6 +223,27 @@ export function createPane(host: PaneHost, index: number): Pane {
   const views = h('div.seg.dash-pane-views', { role: 'group' });
   const flip = h('button.btn.icon.sm.ghost.dash-pane-flip', { type: 'button' });
   const actions = h('div.dash-pane-actions', { role: 'group', 'aria-label': 'Worker actions' });
+  const findShortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘F' : 'Ctrl+Shift+F';
+  const findLabel = `Find in terminal (${findShortcut})`;
+  let pendingFind = false;
+  const findBtn = h(
+    'button.btn.icon.sm.ghost.dash-pane-find',
+    {
+      type: 'button',
+      title: findLabel,
+      'aria-label': findLabel,
+      'aria-pressed': 'false',
+      onclick: () => {
+        if (term) term.toggleFind();
+        else if (mode === 'terminal') pendingFind = !pendingFind;
+      },
+    },
+    icon('search', 14),
+  );
+  const setFindOpen = (open: boolean) => {
+    findBtn.classList.toggle('on', open);
+    findBtn.setAttribute('aria-pressed', String(open));
+  };
   const maxBtn = h('button.btn.icon.sm.ghost', { type: 'button', onclick: () => host.toggleMax(index) });
   const closeBtn = h('button.btn.icon.sm.ghost.dash-pane-close', { type: 'button', 'aria-label': 'Close pane', title: 'Close pane', onclick: () => host.close(index) }, icon('x', 14));
   const head = h('header.dash-pane-head', {}, badge, who, h('span.dash-pane-titles', {}, name, task, model), state, views, flip, actions, maxBtn, closeBtn);
@@ -312,6 +333,8 @@ export function createPane(host: PaneHost, index: number): Pane {
     }
     term?.close();
     term = undefined;
+    pendingFind = false;
+    setFindOpen(false);
     opening = false;
     info = undefined;
     emptyKey = '';
@@ -434,7 +457,18 @@ export function createPane(host: PaneHost, index: number): Pane {
     const terminal = await host.terminal();
     opening = false;
     if (disposed || mode !== 'terminal' || id !== wid || term || !stage.isConnected || !host.usable(wid, intended)) return;
-    term = terminal.openTerminal(host.net, wid, undefined, undefined, { mount: stage, focus: takeFocus, hideTeam: true, readOnly: !works });
+    term = terminal.openTerminal(host.net, wid, undefined, undefined, {
+      mount: stage,
+      focus: takeFocus,
+      hideTeam: true,
+      readOnly: !works,
+      externalFind: true,
+      onFindChange: setFindOpen,
+    });
+    if (pendingFind) {
+      pendingFind = false;
+      term?.toggleFind();
+    }
   }
 
   /** The Orchestrator's empty conversation: what it's for, and (for a page that can prompt it) prompts that fill the composer. */
@@ -684,17 +718,20 @@ export function createPane(host: PaneHost, index: number): Pane {
     if (key === actionsKey) return;
     actionsKey = key;
     if (!w) return actions.replaceChildren();
+    const find = mode === 'terminal' ? [findBtn] : [];
     const btn = (label: string, glyph: IconName, ok: boolean, run: () => void, cls = '', tip = '') =>
       h('button.btn.icon.sm.ghost', { type: 'button', class: cls, title: tip || label, 'aria-label': label, disabled: !enabled || !ok, onclick: run }, icon(glyph, 14));
     // A building agent has no desk to send it home from, no branch to open a PR for, and nothing to fork.
     if (w.id === ORCHESTRATOR_ID)
       return actions.replaceChildren(
+        ...find,
         ...(works ? [btn('New conversation', 'refresh', started, () => host.resetOrchestrator(), 'dash-orc-reset', started ? 'Start a new conversation' : 'No conversation yet')] : []),
         ...(owns ? [btn('Orchestrator settings', 'settings', true, () => host.settings('orchestrator'), 'dash-orc-settings', 'Settings → Orchestrator')] : []),
       );
     if (w.remote) return actions.replaceChildren();
     if (!works)
       return actions.replaceChildren(
+        ...find,
         ...(w.pr ? [h('a.btn.sm.ghost.dash-pane-pr', { href: safeLink(w.pr.url), target: '_blank', rel: 'noopener noreferrer', title: `Pull request #${w.pr.number}` }, icon('pr', 13), h('span', {}, `#${w.pr.number}`))] : []),
       );
     const asleep = isAsleep(w.status);
@@ -702,6 +739,7 @@ export function createPane(host: PaneHost, index: number): Pane {
     const intended = host.floor();
     const fork = local && w.kind === 'agent' ? forkRefusal(w) : 'none';
     actions.replaceChildren(
+      ...find,
       ...(w.cloud && w.sessionId ? [h('a.btn.icon.sm.ghost', { href: sessionWebUrl(w.sessionId), target: '_blank', rel: 'noopener noreferrer', title: 'Factory session', 'aria-label': 'Factory session' }, icon('external', 14))] : []),
       ...(asleep
         ? [

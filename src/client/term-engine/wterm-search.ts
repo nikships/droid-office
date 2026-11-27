@@ -6,7 +6,16 @@ import { attachCwd } from './wterm-cwd';
 import { registerTerminalReader } from './wterm-search-read';
 import { createWtermSearch, hasNativeSearchControls } from './wterm-search-controls';
 
-export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) {
+export interface WtermSearchOptions {
+  /** Host renders its own Find trigger (e.g. a pane header button); omit the floating in-pane Find button. */
+  externalLauncher?: boolean;
+  /** Notifies the host when the search bar opens or closes. */
+  onOpenChange?: (open: boolean) => void;
+}
+
+export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths, options?: WtermSearchOptions) {
+  let toggleCurrent: (() => void) | undefined;
+  let pendingOpen = false;
   adapter.onOpen((native, signal) => {
     if (paths) attachCwd(native, paths, signal);
     registerTerminalReader(adapter, signal);
@@ -32,8 +41,8 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
     matchCase.setAttribute('aria-pressed', 'false');
     const prev = button('Previous match (Shift+Enter)', '↑', () => controller.previous());
     const next = button('Next match (Enter)', '↓', () => controller.next());
-    const launcher = button(`Find in terminal (${mac ? '⌘F' : 'Ctrl+Shift+F'})`, 'Find', open);
-    if (keyboardHost) launcher.tabIndex = -1;
+    const launcher = options?.externalLauncher ? null : button(`Find in terminal (${mac ? '⌘F' : 'Ctrl+Shift+F'})`, 'Find', open);
+    if (keyboardHost && launcher) launcher.tabIndex = -1;
     const bar = h(
       'div.wterm-search-bar',
       { role: 'search', 'aria-label': 'Terminal scrollback', hidden: true },
@@ -46,16 +55,19 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
     );
     const panel = h('div.wterm-search-panel', {}, launcher, bar);
     root.prepend(panel);
+    let restoreFocus = false;
     const controller = createWtermSearch(adapter, native, signal, {
       onChange: render,
       onClose() {
-        const focused = panel.contains(document.activeElement);
+        const focused = restoreFocus || panel.contains(document.activeElement);
+        restoreFocus = false;
         bar.hidden = true;
-        launcher.hidden = false;
+        if (launcher) launcher.hidden = false;
         if (focused) {
           if (keyboardHost) keyboardHost.focus({ preventScroll: true });
           else adapter.focus();
         }
+        options?.onOpenChange?.(false);
       },
     });
     function render(state: SearchState) {
@@ -66,13 +78,26 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
     function open() {
       if (bar.hidden) {
         controller.open();
-        launcher.hidden = true;
+        if (launcher) launcher.hidden = true;
         bar.hidden = false;
+        options?.onOpenChange?.(true);
         search();
         render(controller.getState());
       }
       field.focus({ preventScroll: true });
       field.select();
+    }
+    toggleCurrent = () => {
+      if (signal.aborted) return;
+      if (bar.hidden) open();
+      else {
+        restoreFocus = true;
+        controller.close();
+      }
+    };
+    if (pendingOpen) {
+      pendingOpen = false;
+      open();
     }
     field.addEventListener('input', search, { signal });
     // The terminal owns capture-phase keyboard handling, including Kitty releases.
@@ -130,10 +155,19 @@ export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) 
     signal.addEventListener(
       'abort',
       () => {
+        toggleCurrent = undefined;
+        pendingOpen = false;
+        if (!bar.hidden) options?.onOpenChange?.(false);
         releaseEscape?.();
         panel.remove();
       },
       { once: true },
     );
   });
+  return {
+    toggle() {
+      if (toggleCurrent) toggleCurrent();
+      else pendingOpen = !pendingOpen;
+    },
+  };
 }

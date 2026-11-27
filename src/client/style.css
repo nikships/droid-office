@@ -2407,7 +2407,7 @@ body.themed { background: transparent; }
 .themed .dash-pane-head { border-bottom-color: var(--border); }
 .themed .dash-pane.focused .dash-pane-no { color: var(--th-accent-ink); }
 .themed .dash-pane-head .dash-pane-views.seg > .btn:is(.on, [aria-pressed=true]) { color: var(--text); }
-.themed .dash-pane-head .btn.ghost:where(:not(:hover, :focus-visible)) { color: var(--text-secondary); }
+.themed .dash-pane-head .btn.ghost:where(:not(:hover, :focus-visible, .on, [aria-pressed=true])) { color: var(--text-secondary); }
 .themed .dash-pane-body, .themed .dash-pane[data-mode=terminal] .dash-pane-body { background: transparent; }
 /* One layer of glass per pane: a terminal pane trades the pane's tint for the terminal's, rather than stacking both. */
 .themed .dash-pane[data-mode=terminal] { background: var(--th-term); }
@@ -2867,7 +2867,7 @@ body.themed { background: transparent; }
 .dash-pane-head .dash-pane-views.seg > .btn:is(.on, [aria-pressed=true]) { background: none; box-shadow: inset 0 0 0 1px var(--border-strong); color: #fff; }
 .dash-pane-flip { display: none; }
 .dash-pane-actions { flex: none; display: flex; align-items: center; gap: 2px; }
-.dash-pane-head .btn.ghost:where(:not(:hover, :focus-visible)) { color: #8c8c8c; }
+.dash-pane-head .btn.ghost:where(:not(:hover, :focus-visible, .on, [aria-pressed=true])) { color: #8c8c8c; }
 .dash-pane-actions:empty { display: none; }
 .btn.dash-home:hover:where(:not(:disabled)) { color: var(--danger); }
 @container pane (max-width: 600px) {

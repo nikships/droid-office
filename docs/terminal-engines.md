@@ -21,7 +21,7 @@ Web and Mac terminals keep the invisible keyboard input out of the history's scr
 
 ## Find, prompts and clipboard
 
-In a web or Mac terminal, use **Find**, Cmd+F on Apple devices, or Ctrl+Shift+F elsewhere. Enter and Shift+Enter step through native scrollback matches; Escape closes Find and restores the reader position. `window.office.readTerminal()` reads only visible, already-open web terminals, without attaching to the PTY.
+In a web or Mac terminal, use **Find** (or the magnifying glass button next to the other tools in the web/Mac companion pane header), Cmd+F on Apple devices, or Ctrl+Shift+F elsewhere. Enter and Shift+Enter step through native scrollback matches; Escape closes Find and restores the reader position. `window.office.readTerminal()` reads only visible, already-open web terminals, without attaching to the PTY.
 
 When a shell emits OSC 133 marks, the prompt chip shows its current phase or exit status. Its arrows and Ctrl+Shift+[ / Ctrl+Shift+] move between retained prompts. Reattaching restores text, not old marks. **Settings → Terminal → Shell prompt integration** controls the default zsh hooks for newly started Boss Shell and shell workers across all floors. Alt-drag selects a rectangle; use Shift+Alt-drag when the application tracks the mouse.
 

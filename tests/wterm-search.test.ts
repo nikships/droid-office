@@ -6,6 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
+import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 
 test('native terminal search, working directory and read-only snapshots in Chromium', { skip: !browserStatus().installed }, async (t) => {
   const cacheDir = await mkdtemp(join(tmpdir(), 'office-find-'));
@@ -484,5 +485,152 @@ test('native terminal search, working directory and read-only snapshots in Chrom
       return result;
     });
     assert.deepEqual(measured, [2, 0, 1, 0, 1, 0]);
+  });
+  await t.test('externalLauncher omits the floating Find button and syncs toggleSearch/onOpenChange including before open', async () => {
+    const measured = await page.evaluate(async () => {
+      const load = (p: string) => import(p);
+      const { createWebTerminal } = await load('/term-engine/web-terminal.ts');
+      const host = document.createElement('div');
+      host.className = 'host';
+      document.body.append(host);
+      const events: boolean[] = [];
+      const { term, features } = createWebTerminal({ scrollback: 200, fontSize: 14, fontFamily: 'monospace' }, undefined, undefined, {
+        externalLauncher: true,
+        onOpenChange: (open: boolean) => events.push(open),
+      });
+      // Request Find before open() finishes to verify deferred open works without races.
+      features.toggleSearch();
+      try {
+        await term.open(host);
+        term.resize(20, 5);
+        term.write('alpha beta alpha');
+        await new Promise((r) => requestAnimationFrame(r));
+        const launcherCount = host.querySelectorAll('.wterm-search-panel > button').length;
+        const field = host.querySelector<HTMLInputElement>('input[aria-label="Find in terminal"]');
+        const bar = host.querySelector<HTMLElement>('.wterm-search-bar')!;
+        const openedBeforeClick = !!field && !bar.hidden && document.activeElement === field;
+        features.toggleSearch();
+        const closedAfterToggle = bar.hidden && document.activeElement === term.textarea;
+        features.toggleSearch();
+        const reopened = !bar.hidden && document.activeElement === field;
+        term.reset();
+        const closedOnReset = bar.hidden;
+        return { launcherCount, openedBeforeClick, closedAfterToggle, reopened, closedOnReset, events };
+      } finally {
+        term.dispose();
+        host.remove();
+      }
+    });
+    assert.deepEqual(measured, {
+      launcherCount: 0,
+      openedBeforeClick: true,
+      closedAfterToggle: true,
+      reopened: true,
+      closedOnReset: true,
+      events: [true, false, true, false],
+    });
+  });
+  await t.test('companion pane places a magnifying glass next to other tools instead of the floating Find button', async () => {
+    await page.evaluate(async (orchestratorId) => {
+      const load = (p: string) => import(p);
+      const [{ createPane }, { store }, terminal] = await Promise.all([load('/dashboard-pane.ts'), load('/state.ts'), load('/ui/terminal.ts')]);
+      const wrap = document.createElement('div');
+      wrap.id = 'companion-find-wrap';
+      wrap.style.cssText = 'position:fixed;inset:0;width:800px;height:400px;display:flex;z-index:200';
+      document.body.append(wrap);
+      const worker = { id: 'w-pane', name: 'Nibble', color: '#89d9ed', kind: 'agent', status: 'ready', acked: true, cols: 40, rows: 10 };
+      const orch = { id: orchestratorId, name: 'Orchestrator', color: '#ef6f2e', kind: 'agent', status: 'ready', acked: true, cols: 40, rows: 10, sessionId: 'orc-1' };
+      store.workers.set(worker.id, worker);
+      const mission = { orchestrator: { settings: { on: true }, agent: { worker: orch, team: [] } }, bots: [] };
+      store.missionControl = mission;
+      const noop = () => {};
+      const net = { up: true, send: () => true, onStatus: () => noop, onMessage: () => noop };
+      const host = {
+        net,
+        live: () => true,
+        floor: () => 'floor',
+        busy: () => false,
+        action: async () => undefined,
+        usable: () => true,
+        read: () => '',
+        remember: noop,
+        terminal: async () => terminal,
+        setView: noop,
+        focus: noop,
+        close: noop,
+        toggleMax: noop,
+        assign: noop,
+        swap: noop,
+        openBeside: noop,
+        sendHome: noop,
+        hire: noop,
+        worker: (id: string) => (id === orchestratorId ? orch : store.workers.get(id)),
+        mission: () => mission,
+        openAcross: noop,
+        resetOrchestrator: noop,
+        settings: noop,
+      };
+      const pane = createPane(host, 0);
+      pane.el.style.cssText = 'position:relative;width:100%;height:100%;animation:none;transition:none';
+      wrap.append(pane.el);
+      (window as any).companionRig = { pane, worker, orch, wrap };
+      pane.update({ worker: orch, view: 'terminal', focused: true, maximized: false, canMaximize: false, covered: false, candidates: [], anyone: true, takeFocus: false });
+    }, ORCHESTRATOR_ID);
+    const wrap = page.locator('#companion-find-wrap');
+    try {
+      await wrap.locator('.office-wterm').waitFor();
+      await frame();
+      // Orchestrator TTY pane: magnifying glass sits right next to refresh + settings, no floating Find button.
+      assert.equal(await wrap.locator('.wterm-search-panel > button').count(), 0);
+      const orchActions = await wrap.locator('.dash-pane-actions > *').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label') ?? ''));
+      assert.match(orchActions[0], /^Find in terminal \(/);
+      assert.deepEqual(orchActions.slice(1), ['New conversation', 'Orchestrator settings']);
+      const findBtn = wrap.locator('.dash-pane-actions button.dash-pane-find');
+      assert.equal(await findBtn.locator('svg').count(), 1);
+      assert.equal(await findBtn.getAttribute('aria-pressed'), 'false');
+
+      // Clicking the magnifying glass opens the search bar and highlights the button; clicking again closes and returns focus.
+      await findBtn.click();
+      const input = wrap.locator('input[aria-label="Find in terminal"]');
+      await input.waitFor({ state: 'visible' });
+      assert.equal(await findBtn.getAttribute('aria-pressed'), 'true');
+      assert.equal(await findBtn.evaluate((el) => el.classList.contains('on')), true);
+      assert.equal(await input.evaluate((el) => el === document.activeElement), true);
+      await findBtn.click();
+      assert.equal(await input.isVisible(), false);
+      assert.equal(await findBtn.getAttribute('aria-pressed'), 'false');
+      assert.equal(await wrap.locator('.office-wterm textarea').evaluate((el) => el === document.activeElement), true);
+
+      // Keyboard shortcut and Esc stay synced with the header button.
+      await page.keyboard.press(shortcut);
+      assert.equal(await input.isVisible(), true);
+      assert.equal(await findBtn.getAttribute('aria-pressed'), 'true');
+      await page.keyboard.press('Escape');
+      assert.equal(await input.isVisible(), false);
+      assert.equal(await findBtn.getAttribute('aria-pressed'), 'false');
+
+      // Regular worker TTY pane keeps the magnifying glass next to Send home; switching to Thread removes it.
+      const showView = (view: 'terminal' | 'thread') =>
+        page.evaluate((v) => {
+          const { pane, worker } = (window as any).companionRig;
+          pane.update({ worker, view: v, focused: true, maximized: false, canMaximize: false, covered: false, candidates: [], anyone: true, takeFocus: false });
+        }, view);
+      await showView('terminal');
+      await wrap.locator('.office-wterm').waitFor();
+      assert.equal(await wrap.locator('.wterm-search-panel > button').count(), 0);
+      const workerActions = await wrap.locator('.dash-pane-actions > *').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label') ?? ''));
+      assert.match(workerActions[0], /^Find in terminal \(/);
+      assert.ok(workerActions.includes('Send home'), workerActions.join());
+
+      await showView('thread');
+      assert.equal(await wrap.locator('button.dash-pane-find').count(), 0);
+    } finally {
+      await page.evaluate(() => {
+        const rig = (window as any).companionRig;
+        rig?.pane.dispose();
+        rig?.wrap.remove();
+        delete (window as any).companionRig;
+      });
+    }
   });
 });
