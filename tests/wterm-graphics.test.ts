@@ -318,6 +318,20 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
     await write(apc('a=d,d=A'));
     await both(1, 1, 0);
   });
+  await t.test('alternate-screen image parity: both overlays draw a placeholder but not a new direct placement', async () => {
+    await reset();
+    const cell = KITTY_PLACEHOLDER_CHAR + String.fromCodePoint(KITTY_DIACRITICS[0], KITTY_DIACRITICS[0]);
+    await write(`\x1b[?1049h\x1b[2;3H${apc('a=T,i=40,c=2,r=1,C=1,f=24,s=1,v=1;/wAA')}\x1b[4;7H${apc('a=T,i=41,U=1,c=1,r=1,f=24,s=1,v=1;AAD/')}\x1b[38;2;0;0;41m${cell}\x1b[0m`);
+    await both(6, 3, blue);
+    const pixels = await page.evaluate(() => ['x', 'w'].map((k) => [(window as any).pixel(k, 2, 1), (window as any).pixel(k, 6, 3)]));
+    t.diagnostic(JSON.stringify({ xterm: pixels[0], wterm: pixels[1] }));
+    assert.deepEqual(pixels, [
+      [0, blue],
+      [0, blue],
+    ]);
+    await write(`\x1b[?1049l\x1b[2;3H${apc('a=p,i=40,c=2,r=1,C=1')}`);
+    await both(2, 1, red);
+  });
   await t.test('native tap uses painted coordinates and not desktop mouse policy', async () => {
     await reset();
     const cell = KITTY_PLACEHOLDER_CHAR + String.fromCodePoint(KITTY_DIACRITICS[0], KITTY_DIACRITICS[0]);
