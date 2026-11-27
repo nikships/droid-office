@@ -14,7 +14,7 @@ export interface KittyRowAnchor {
 }
 
 export interface KittyOverlayView {
-  /** The native canvas may capture clicks/mouse reports before a child button sees them. */
+  /** Intercept image-button gestures before the native mouse reporter. */
   capturePointer?: boolean;
   moveWithoutAnchor?: boolean;
   readonly cols: number;
@@ -211,6 +211,7 @@ export function createKittyOverlay(view: KittyOverlayView, opts: KittyTerminalOp
 
   let canvas: HTMLCanvasElement | null = null;
   let ctx: CanvasRenderingContext2D | null = null;
+  let underlay: HTMLCanvasElement | undefined;
   let expandBtn: HTMLButtonElement | null = null;
   let cleanupScreenListeners: (() => void) | null = null;
   let screenEl: HTMLElement | null = null;
@@ -546,6 +547,7 @@ export function createKittyOverlay(view: KittyOverlayView, opts: KittyTerminalOp
         canvas.width = 0;
         canvas.height = 0;
       }
+      if (underlay?.width) underlay.width = underlay.height = 0;
       return;
     }
     const geom = cellGeometry();
@@ -570,6 +572,20 @@ export function createKittyOverlay(view: KittyOverlayView, opts: KittyTerminalOp
     canvas.style.top = `${-pad}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, pad * dpr);
     ctx.clearRect(0, -pad, geom.cssW, cssH);
+    // A DOM terminal can sandwich its text between two layers. Canvas terminals
+    // keep the original single canvas and draw order.
+    let behind: CanvasRenderingContext2D | null = null;
+    if (underlay && (underlay.width || visibleRects.some((r) => r.z < 0))) {
+      if (underlay.width !== devW || underlay.height !== devH) {
+        underlay.width = devW;
+        underlay.height = devH;
+        underlay.style.width = `${geom.cssW}px`;
+        underlay.style.height = `${cssH}px`;
+      }
+      behind = underlay.getContext('2d');
+      behind?.setTransform(dpr, 0, 0, dpr, 0, pad * dpr);
+      behind?.clearRect(0, -pad, geom.cssW, cssH);
+    }
     drawnRects = [];
     if (!visibleRects.length) {
       syncHoverAfterPaint();
@@ -614,7 +630,7 @@ export function createKittyOverlay(view: KittyOverlayView, opts: KittyTerminalOp
       const dw = r.cols * geom.cellW;
       const dh = r.rows * geom.cellH;
       if (sw > 0 && sh > 0 && dw > 0 && dh > 0) {
-        ctx.drawImage(bmp, sx, sy, sw, sh, dx, dy, dw, dh);
+        (r.z < 0 && behind ? behind : ctx).drawImage(bmp, sx, sy, sw, sh, dx, dy, dw, dh);
         drawnRects.push({ imageId: r.imageId, placementId: r.placementId, dx, dy, dw, dh, z: r.z });
       }
     }
@@ -648,12 +664,13 @@ export function createKittyOverlay(view: KittyOverlayView, opts: KittyTerminalOp
     return cursorMove;
   };
 
-  const mount = (screen: HTMLElement, pointer: HTMLElement) => {
+  const mount = (screen: HTMLElement, pointer: HTMLElement, backgroundLayer?: HTMLCanvasElement) => {
     cleanupScreenListeners?.();
     cleanupScreenListeners = null;
 
     screenEl = screen;
     pointerEl = pointer;
+    underlay = backgroundLayer;
 
     canvas?.remove();
     expandBtn?.remove();
