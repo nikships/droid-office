@@ -62,7 +62,7 @@ test("the phone's Raw TTY follows a finger pixel for pixel with native scrolling
     await page.evaluate(() => new Promise(requestAnimationFrame));
   }
   const moved = await rowTop(190);
-  assert.ok(moved !== null && moved > before! + 15 && moved <= before! + 60, 'text moves with the native pan after browser touch slop');
+  assert.ok(moved !== null && moved > before! + 15 && moved <= before! + 60, `text moves with the native pan after browser touch slop (${before} to ${moved})`);
   await page.waitForTimeout(300);
   assert.equal(await rowTop(190), moved, 'holding the finger holds the reader');
   await touch('touchEnd', 200, 236);

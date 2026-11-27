@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { fitGrid, fitScale, MAX_STEPS, RowAccumulator, SGR, swipeInput, URXVT, UTF8 } from '../android/app/src/main/assets/terminal/input.js';
+import { fitFont, fitGrid, fitScale, MAX_STEPS, RowAccumulator, SGR, swipeInput, URXVT, UTF8 } from '../android/app/src/main/assets/terminal/input.js';
 import { minimumContrast } from '../android/app/src/main/assets/terminal/theme.js';
 import { builtFiles, vendoredPaths } from '../tools/android-terminal.mjs';
 
@@ -35,6 +35,23 @@ test('fitScale shows the whole grid: the desktop view fits it, the phone view on
   assert.equal(fitScale('phone', 344, 600, 172, 100, 1.92), 1);
   assert.equal(fitScale('phone', 344, 600, 688, 100, 1.92), 0.5);
   assert.equal(fitScale('desktop', 344, 600, 0, 0, 2), 1);
+});
+
+test('desktop fitting accounts for a rounded row-height plateau in landscape', () => {
+  const measured: number[] = [];
+  fitFont(2.1, (font) => {
+    measured.push(font);
+    const rowHeight = font >= 1.6 ? 3.42857 : 2.28571;
+    return rowHeight * 39 <= 122;
+  });
+  assert.equal(measured.at(-1), 1.5);
+  assert.ok(measured.length < 8);
+  const fits: number[] = [];
+  fitFont(12.5, (font) => {
+    fits.push(font);
+    return true;
+  });
+  assert.deepEqual(fits, [12.5]);
 });
 
 const normal = { alternate: false, mouse: 'none', appCursor: false, encoding: 0 };

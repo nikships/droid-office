@@ -32,6 +32,19 @@ export function fitScale(view, viewW, viewH, gridW, gridH, maxScale) {
   return view === 'phone' ? Math.min(1, s) : Math.min(maxScale, s);
 }
 
+/** Rendered row heights jump by device pixels. Find a font that actually fits. */
+export function fitFont(ideal, measureFits) {
+  if (measureFits(ideal)) return;
+  let low = 10;
+  let high = Math.floor(ideal * 10);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (measureFits(mid / 10)) low = mid;
+    else high = mid - 1;
+  }
+  measureFits(low / 10);
+}
+
 /**
  * The bytes for scrolling a program by `rows` (negative is up, toward older lines), at cell
  * `col`, `row` (1-based): wheel events in the program's mouse encoding when it reports the mouse,

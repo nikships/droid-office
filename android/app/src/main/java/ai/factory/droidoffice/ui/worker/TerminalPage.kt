@@ -48,6 +48,9 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
             // The page lays text out at the phone's font scale itself (TermPage.config); the system
             // scaling it again would grow the glyphs past the measured cells.
             textZoom = 100
+            // Desktop view can fit a wide PTY below WebView's default 8px glyph floor.
+            minimumFontSize = 1
+            minimumLogicalFontSize = 1
             setSupportZoom(false)
             builtInZoomControls = false
             displayZoomControls = false

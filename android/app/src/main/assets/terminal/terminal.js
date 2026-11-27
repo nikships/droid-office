@@ -1,4 +1,4 @@
-import { fitGrid, fitScale, RowAccumulator, SGR, swipeInput, URXVT, UTF8 } from './input.js';
+import { fitFont, fitGrid, fitScale, RowAccumulator, SGR, swipeInput, URXVT, UTF8 } from './input.js';
 import { minimumContrast } from './theme.js';
 
 const READABLE_PX = 12.5;
@@ -45,27 +45,25 @@ export async function start() {
   let baseW = parseFloat(root.style.getPropertyValue('--term-cell-width'));
   let baseH = parseFloat(root.style.getPropertyValue('--term-row-height'));
   let lastFit = '';
+  let lastLayout = '';
   let cellW = 0;
   let cellH = 0;
   function layout() {
     const availW = innerWidth - PAD * 2;
     const availH = innerHeight - PAD * 2;
     if (!(baseW > 0 && availW > 0 && availH > 0)) return;
+    const dimensions = `${availW},${availH},${term.cols},${term.rows},${view}`;
+    if (dimensions === lastLayout) return;
+    lastLayout = dimensions;
     // Size the actual glyphs rather than transforming their parent. WTerm measures
     // a rendered glyph in viewport pixels for its cursor, hit targets and rows.
     const scale = fitScale(view, availW, availH, term.cols * baseW, term.rows * baseH, 24 / READABLE_PX);
-    const font = baseFont * scale;
-    term.options.fontSize = font;
-    cellW = parseFloat(root.style.getPropertyValue('--term-cell-width'));
-    cellH = parseFloat(root.style.getPropertyValue('--term-row-height'));
-    // Font metrics round to device pixels. If the rounded grid overflows,
-    // shrink the font by its measured excess, not the scrollable viewport.
-    if (cellW * term.cols > availW || cellH * term.rows > availH) {
-      const correction = Math.min(availW / (cellW * term.cols), availH / (cellH * term.rows));
-      term.options.fontSize = Math.max(1, Math.floor(font * correction * 10) / 10);
+    fitFont(baseFont * scale, (font) => {
+      term.options.fontSize = font;
       cellW = parseFloat(root.style.getPropertyValue('--term-cell-width'));
       cellH = parseFloat(root.style.getPropertyValue('--term-row-height'));
-    }
+      return cellW * term.cols <= availW && cellH * term.rows <= availH;
+    });
     host.style.width = `${term.cols * cellW}px`;
     host.style.height = `${term.rows * cellH}px`;
     const fit = fitGrid(availW, availH, baseW, baseH);
@@ -187,6 +185,7 @@ export async function start() {
           break;
         }
         case 'config':
+          lastLayout = '';
           baseFont = READABLE_PX * (msg.fontScale > 0 ? msg.fontScale : 1);
           term.options.fontSize = baseFont;
           baseW = parseFloat(root.style.getPropertyValue('--term-cell-width'));
@@ -203,9 +202,9 @@ export async function start() {
           term.reset();
           term.resize(msg.cols, msg.rows);
           term.write(msg.data, () => {
+            layout();
             if (restore) restore();
             else term.scrollToBottom();
-            layout();
             post({ t: 'drawn' });
           });
           break;
