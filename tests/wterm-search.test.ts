@@ -191,6 +191,102 @@ test('native terminal search, working directory and read-only snapshots in Chrom
     assert.ok((await mark.allTextContents()).join('').startsWith('beginning'));
     assert.equal(await page.locator('#host .wterm').evaluate((e) => e.scrollTop), 0);
   });
+  await t.test('readTerminal skips offscreen and explicitly paused panes without waiting for a paint', async () => {
+    const log = page.locator('#log .wterm');
+    await log.evaluate((el) => {
+      el.parentElement!.style.transform = 'translateY(200vh)';
+    });
+    await frame();
+    assert.equal(await log.evaluate((el) => el.checkVisibility() && el.getBoundingClientRect().top > innerHeight), true);
+    const readWorkers = async () => {
+      await page.evaluate(() => {
+        const w = window as any;
+        w.readIds = null;
+        void w.office.readTerminal().then((rows: { workerId?: string }[]) => {
+          w.readIds = rows.map((r) => r.workerId);
+        });
+      });
+      await page.waitForFunction(() => (window as any).readIds !== null, undefined, { timeout: 2000 });
+      return page.evaluate(() => (window as any).readIds);
+    };
+    try {
+      assert.deepEqual(await readWorkers(), ['w']);
+      await log.evaluate((el) => {
+        el.parentElement!.style.transform = '';
+      });
+      await frame();
+      await page.evaluate(async () => {
+        const w = window as any;
+        w.interruptedRead = null;
+        void w.office.readTerminal().then((rows: { workerId?: string }[]) => {
+          w.interruptedRead = rows.map((r) => r.workerId);
+        });
+        await Promise.resolve(); // Pause after capture was requested but before the native paint.
+        w.logRig.term.setRenderingPaused(true);
+      });
+      await page.waitForFunction(() => (window as any).interruptedRead !== null, undefined, { timeout: 2000 });
+      assert.deepEqual(await page.evaluate(() => (window as any).interruptedRead), ['w']);
+      assert.deepEqual(await readWorkers(), ['w']);
+    } finally {
+      await log.evaluate((el) => {
+        el.parentElement!.style.transform = '';
+      });
+      await page.evaluate(() => (window as any).logRig.term.setRenderingPaused(false));
+      await frame();
+    }
+  });
+  await t.test('concurrent page-local reads each finish with both terminal snapshots', async () => {
+    const results = await page.evaluate(() => {
+      const w = window as any;
+      return Promise.all([w.office.readTerminal(), w.office.readTerminal()]);
+    });
+    assert.equal(results[0].length, 2);
+    assert.match(results[0][0].text, /beginning/);
+    assert.deepEqual(results[1], results[0]);
+  });
+  await t.test('a covered dashboard pane is mounted but not readable', async () => {
+    const host = page.locator('#log');
+    try {
+      await host.evaluate((el) => {
+        el.classList.add('dash-pane', 'covered');
+        el.setAttribute('inert', '');
+      });
+      assert.equal(await host.evaluate((el) => getComputedStyle(el).opacity), '0');
+      const rows = await page.evaluate(() => (window as any).office.readTerminal());
+      assert.deepEqual(
+        rows.map((r: { workerId?: string }) => r.workerId),
+        ['w'],
+      );
+    } finally {
+      await host.evaluate((el) => {
+        el.classList.remove('dash-pane', 'covered');
+        el.removeAttribute('inert');
+      });
+    }
+  });
+  await t.test('disposing one pane during capture leaves the other panes readable', async () => {
+    const results = await page.evaluate(async () => {
+      const mod = '/term-engine/web-terminal.ts';
+      const { createWebTerminal } = await import(mod);
+      const host = document.createElement('div');
+      host.className = 'host';
+      document.body.prepend(host);
+      const { term } = createWebTerminal({});
+      try {
+        await term.open(host);
+        await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+        const reading = (window as any).office.readTerminal();
+        await Promise.resolve();
+        term.dispose();
+        return await reading;
+      } finally {
+        term.dispose();
+        host.remove();
+      }
+    });
+    assert.equal(results.length, 2);
+    assert.match(results[0].text, /beginning/);
+  });
   await t.test('latest OSC 7 URI follows lookup, remote preview and reset; readTerminal excludes hidden and disposed views', async () => {
     const bodies: unknown[] = [];
     await page.route('**/api/term/paths?**', (r) => {

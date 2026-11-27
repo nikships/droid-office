@@ -43,6 +43,7 @@ export class WTermAdapter {
   private displayWrite = false;
   private paused = false;
   private inViewport = true;
+  private paintLifetime?: AbortController;
   private metricsPending = true;
   // History index including discarded rows, or undefined when following the tail.
   private readerRow?: number;
@@ -312,16 +313,17 @@ export class WTermAdapter {
         );
 
       root.addEventListener('scroll', () => this.sampleReader(true), { passive: true, signal });
-      native.setRenderingPaused(this.paused);
+      this.syncRendering();
       const observer = new ResizeObserver(() => {
         if (root.clientWidth > 0 && this.metricsPending) this.refreshMetrics();
       });
       observer.observe(root);
       const visibility = new IntersectionObserver(([entry]) => {
         this.inViewport = entry.isIntersecting;
-        native.setRenderingPaused(this.paused || !this.inViewport);
+        this.syncRendering();
       });
       visibility.observe(root);
+      root.ownerDocument.addEventListener('visibilitychange', () => this.syncRendering(), { signal });
       signal.addEventListener(
         'abort',
         () => {
@@ -453,7 +455,23 @@ export class WTermAdapter {
   }
   setRenderingPaused(paused: boolean) {
     this.paused = paused;
-    this.native?.setRenderingPaused(paused || !this.inViewport);
+    this.syncRendering();
+  }
+  private get renderingPaused() {
+    return this.paused || !this.inViewport || !!this.root?.ownerDocument.hidden;
+  }
+  /** Read operations waiting for a paint must stop if this pane can no longer paint. */
+  get paintSignal() {
+    if (this.renderingPaused || this.lifetime.signal.aborted) return undefined;
+    return (this.paintLifetime ??= new AbortController()).signal;
+  }
+  private syncRendering() {
+    const paused = this.renderingPaused;
+    this.native?.setRenderingPaused(paused);
+    if (paused) {
+      this.paintLifetime?.abort();
+      this.paintLifetime = undefined;
+    }
   }
   scrollToBottom() {
     this.readerRevision++;
@@ -470,6 +488,7 @@ export class WTermAdapter {
   dispose() {
     if (this.lifetime.signal.aborted) return;
     this.lifetime.abort();
+    this.paintLifetime?.abort();
     this.pendingRestore = undefined;
     this.native?.destroy();
     this.core?.dispose();

@@ -9,7 +9,7 @@ import { createWtermSearch, hasNativeSearchControls } from './wterm-search-contr
 export function attachWtermSearch(adapter: WTermAdapter, paths?: TerminalPaths) {
   adapter.onOpen((native, signal) => {
     if (paths) attachCwd(native, paths, signal);
-    registerTerminalReader(native, signal);
+    registerTerminalReader(adapter, signal);
     if (hasNativeSearchControls(adapter)) return;
     const root = native.element;
     // Changes Log has a disabled terminal input: its host is the single tab stop.
