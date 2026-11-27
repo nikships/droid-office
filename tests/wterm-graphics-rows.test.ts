@@ -16,15 +16,19 @@ const load = async (cols: number, rows: number) => {
   return c;
 };
 
-test('tracks follow history and reflow, refuse exhausted slots and never resurrect after a screen switch', async () => {
+test('tracks follow history and reflow, reserve four slots and refuse to resurrect unobserved pins', async () => {
   const core = await load(24, 6);
   const anchors = graphicsAnchors(core, new VtScanner());
   try {
     core.writeString('long line that wraps twice with a narrower grid\r\nHERE');
     const pinned = anchors.anchor()!;
-    const rest = Array.from({ length: 63 }, () => anchors.anchor());
+    const rest = Array.from({ length: 59 }, () => anchors.anchor());
     assert.ok(rest.every(Boolean));
     assert.equal(anchors.anchor(), undefined);
+    const other = Array.from({ length: 4 }, () => core.trackPosition({ row: 0, col: 0 }));
+    assert.ok(other.every(Boolean));
+    assert.equal(core.trackPosition({ row: 0, col: 0 }), null);
+    for (const h of other) h!.dispose();
     rest[0]!.dispose();
     assert.ok(anchors.anchor());
     core.writeString('\r\n'.repeat(8));
@@ -35,6 +39,64 @@ test('tracks follow history and reflow, refuse exhausted slots and never resurre
   } finally {
     anchors.dispose();
     core.dispose();
+  }
+});
+
+test('saved normal pins respect deletion, app-driven resize and margins left by the alternate program', async () => {
+  const core = await load(20, 6);
+  const parser = new VtScanner();
+  const anchors = graphicsAnchors(core, parser);
+  const write = (s: string) =>
+    parser.write(s, (data) => {
+      core.writeString(data);
+      anchors.parsed();
+    });
+  try {
+    write('history');
+    const old = anchors.anchor()!;
+    write(`${'\r\n'.repeat(9)}live`);
+    const live = anchors.anchor()!,
+      deleted = anchors.anchor()!;
+    write(`${cs}?1049h${cs}2;4r`);
+    deleted.dispose();
+    write(`${cs}?1049l`);
+    assert.deepEqual([old.line, live.line, deleted.line], [0, -1, -1]);
+    write(`${cs}r${cs}?47h${cs}?40h${cs}?3h${cs}?3l${cs}?47l`);
+    assert.equal(old.line, -1);
+    write(`${cs}?47s`);
+    const implicit = anchors.anchor()!;
+    write(`${cs}?47h${cs}?47r${cs}?47h${cs}?47l`);
+    assert.equal(implicit.line, -1);
+  } finally {
+    anchors.dispose();
+    core.dispose();
+  }
+});
+
+test('a restored pin cannot survive an ambiguous right-edge ED0 followed by xterm erasing its marker', async () => {
+  const core = await load(8, 4),
+    xt = new headless.Terminal({ cols: 8, rows: 4, allowProposedApi: true });
+  const parser = new VtScanner(),
+    anchors = graphicsAnchors(core, parser);
+  const write = async (s: string) => {
+    parser.write(s, (data) => {
+      core.writeString(data);
+      anchors.parsed();
+    });
+    await new Promise<void>((done) => xt.write(s, done));
+  };
+  try {
+    await write(`FIRST\r\nUNIQUE${cs}2;1H`);
+    const pin = anchors.anchor()!,
+      ref = xt.registerMarker(0)!;
+    await write(`${cs}2;5H${cs}?1049h${cs}?1049l`);
+    assert.equal(pin.line, ref.line);
+    await write(`\te\u0301${cs}?1000l${cs}0Je\u0301${cs}1K\r${cs}1J${cs}1K`);
+    assert.deepEqual([pin.line, ref.line], [-1, -1]);
+  } finally {
+    anchors.dispose();
+    core.dispose();
+    xt.dispose();
   }
 });
 
@@ -86,7 +148,11 @@ test('seeded direct-placement row identity against real xterm markers', async (t
     const untrimmed = new headless.Terminal({ cols, rows: height, scrollback: 1000, allowProposedApi: true });
     const parser = new VtScanner();
     const anchors = graphicsAnchors(core, parser);
-    const write = (s: string) => parser.write(s, (data) => core.writeString(data));
+    const write = (s: string) =>
+      parser.write(s, (data) => {
+        core.writeString(data);
+        anchors.parsed();
+      });
     const expected: { row: number; text: string }[] = [];
     const physical: number[] = [];
     let witness: ReturnType<typeof xt.registerMarker>;

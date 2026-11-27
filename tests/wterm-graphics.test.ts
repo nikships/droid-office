@@ -166,11 +166,11 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
     const front = await ink();
     assert.ok(front.blue > 0 && front.white === 0, JSON.stringify(front));
   });
-  await t.test('65th placement without a handle stays invisible, advances the cursor and can be retried after deletion', async () => {
+  await t.test('61st placement stays invisible, advances the cursor and can be retried after deletion', async () => {
     await reset();
-    await write(apc('a=t,i=9,f=24,s=1,v=1;/wAA') + Array.from({ length: 64 }, (_, i) => apc(`a=p,i=9,p=${i + 1},c=1,r=1,C=1`)).join(''));
+    await write(apc('a=t,i=9,f=24,s=1,v=1;/wAA') + Array.from({ length: 60 }, (_, i) => apc(`a=p,i=9,p=${i + 1},c=1,r=1,C=1`)).join(''));
     await both(0, 0, red);
-    await write(`\x1b[3;5H${apc('a=p,i=9,p=65,c=2,r=2')}`);
+    await write(`\x1b[3;5H${apc('a=p,i=9,p=61,c=2,r=2')}`);
     await page.waitForFunction(() => {
       const { pixel } = window as any;
       return pixel('x', 4, 2) === 0xff0000ff && pixel('w', 4, 2) === 0;
@@ -188,7 +188,7 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
         [3, 6],
       ],
     );
-    await write(`${apc('a=d,d=i,i=9,p=1')}\x1b[3;5H${apc('a=p,i=9,p=65,c=2,r=2,C=1')}`);
+    await write(`${apc('a=d,d=i,i=9,p=1')}\x1b[3;5H${apc('a=p,i=9,p=61,c=2,r=2,C=1')}`);
     await both(4, 2, red);
   });
   await t.test('replayed direct and virtual placements, clipping, overwritten placeholder, reset', async () => {
@@ -210,11 +210,7 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
       await both(0, 1, 0);
       await write('\x1b[?1049l');
       await both(38, 3, blue);
-      // wterm explicitly invalidates normal-screen handles across the switch.
-      await page.waitForFunction(() => {
-        const { pixel } = window as any;
-        return pixel('w', 1, 1) === 0 && pixel('x', 1, 1) === 0xff0000ff;
-      });
+      await both(1, 1, red);
       await write('\x1bc');
       await both(38, 3, 0);
       await write(`\x1bc${apc('a=T,i=5,U=1,c=1,r=1,f=24,s=1,v=1;AAD/')}\x1b[38;2;0;0;5m${cell(0)}`);
@@ -224,7 +220,54 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
       host.dispose();
     }
   });
+  await t.test('alternate-screen applications preserve normal history pins unless resized, including ED 3 in alternate', async () => {
+    for (const mode of [47, 1047, 1049]) {
+      await reset();
+      await write(`FIRST\r\nUNIQUE${apc('a=T,i=12,c=2,r=1,C=1,f=24,s=1,v=1;/wAA')}${'\r\nother'.repeat(12)}`);
+      await page.waitForFunction(() => (window as any).wt.native.element.scrollTop > 0);
+      const scrollUp = () =>
+        page.evaluate(() => {
+          const { wt, xt } = window as any;
+          wt.native.element.scrollTop = 0;
+          xt.scrollToTop();
+        });
+      await scrollUp();
+      await both(6, 1, red);
+      await write(`\x1b[?${mode}h${'alt\r\n'.repeat(20)}\x1b[2J\x1b[3J`);
+      await both(6, 1, 0);
+      await write(`\x1b[?${mode}l`);
+      await page.waitForFunction(() => (window as any).wt.native.element.scrollTop > 0);
+      await scrollUp();
+      await both(6, 1, red);
+      assert.deepEqual(
+        await page.evaluate(() => {
+          const { wt, xt } = window as any;
+          const c = wt.core;
+          return [Array.from({ length: 6 }, (_, i) => String.fromCodePoint(c.getScrollbackCell(c.getScrollbackCount() - 2, i).char)).join(''), xt.buffer.active.getLine(1).translateToString(true)];
+        }),
+        ['UNIQUE', 'UNIQUE'],
+      );
+      // The final grid and history count match: the intermediate resize is the
+      // only reason the recorded row is unsafe, even with no intervening paint.
+      await write(`\x1b[?${mode}h`);
+      await page.evaluate(() => {
+        const { wt, xt } = window as any;
+        for (const term of [wt, xt]) {
+          term.resize(33, 7);
+          term.resize(40, 8);
+        }
+      });
+      await write(`\x1b[?${mode}l`);
+      await scrollUp();
+      await page.waitForFunction(() => {
+        const { pixel } = window as any;
+        const c = document.querySelector<HTMLCanvasElement>('.wterm .term-kitty-layer')!;
+        return !c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data.some(Boolean) && pixel('x', 6, 1) === 0xff0000ff;
+      });
+    }
+  });
   await t.test('PNG, animation frame, plain / modified click, button, mouse reporting outside image', async () => {
+    await reset();
     const png = await page.evaluate(() => {
       const c = document.createElement('canvas');
       c.width = c.height = 1;

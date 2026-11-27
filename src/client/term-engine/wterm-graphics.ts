@@ -23,6 +23,14 @@ export function attachWtermGraphics(adapter: WTermAdapter, images: KittyTerminal
     screen.append(behind);
 
     const anchors = graphicsAnchors(core, adapter.parser);
+    // Observe every native resize synchronously, including a resize away and
+    // back inside the same turn (a ResizeObserver only sees the final box).
+    const priorResize = term.onResize;
+    const resized = (cols: number, rows: number) => {
+      anchors.resized();
+      priorResize?.(cols, rows);
+    };
+    term.onResize = resized;
     let virtual = false;
     let top = 0;
     let rows = 0;
@@ -92,6 +100,7 @@ export function attachWtermGraphics(adapter: WTermAdapter, images: KittyTerminal
         return true;
       }),
       adapter.onNativeParsed((s) => {
+        anchors.parsed();
         if (!virtual && s.includes(KITTY_PLACEHOLDER_CHAR)) virtual = true;
       }),
       adapter.onWriteParsed(() => {
@@ -116,6 +125,7 @@ export function attachWtermGraphics(adapter: WTermAdapter, images: KittyTerminal
       size.disconnect();
       rebuilt.disconnect();
       for (const h of hooks) h.dispose();
+      if (term.onResize === resized) term.onResize = priorResize;
       overlay.dispose();
       anchors.dispose();
       screen.remove();
