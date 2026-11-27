@@ -43,6 +43,21 @@ test('only the final interactive zsh is wrapped, and the off switch bypasses the
   assert.deepEqual(interactiveShell(zsh, ['-l'], false), { file: zsh, args: ['-l'] });
 });
 
+test('an incomplete integration bundle starts the native zsh with its normal startup files', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'office-incomplete-zsh-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await mkdir(path.join(dir, 'zsh'));
+  const files = ['launch-zsh', 'zsh/.zshenv', 'zsh/_office_prompt'];
+  const launch = () => interactiveShell(zsh, ['-l'], true, [dir]);
+  for (const file of files) await writeFile(path.join(dir, file), '');
+  for (const file of files) {
+    await rm(path.join(dir, file));
+    assert.deepEqual(launch(), { file: zsh, args: ['-l'] }, file);
+    await writeFile(path.join(dir, file), '');
+  }
+  if (process.platform !== 'win32') assert.deepEqual(launch(), { file: '/bin/sh', args: [path.join(dir, 'launch-zsh'), zsh, '-l'] });
+});
+
 test('real zsh login prompts and status equal native, apart from the semantic marks', { skip: !existsSync(zsh) }, async (t) => {
   const home = await mkdtemp(path.join(tmpdir(), 'office-shell-'));
   t.after(() => rm(home, { recursive: true, force: true }));
