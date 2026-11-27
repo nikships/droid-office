@@ -99,6 +99,30 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
     });
     assert.deepEqual(counts, [0, 0, 0]);
   });
+  await t.test('one pixel of scroll-end allowance does not cost a row at a fit boundary', async () => {
+    const rows = await page.evaluate(async () => {
+      const url = '/term-engine/wterm.ts';
+      const { WTermAdapter } = await import(url);
+      const host = document.createElement('div');
+      host.style.cssText = 'width:500px;height:200px;--office-tail-allowance:1px';
+      document.body.append(host);
+      const term = new WTermAdapter({ fontSize: 14 });
+      try {
+        await term.open(host);
+        const el = term.native.element;
+        const pitch = parseFloat(el.style.getPropertyValue('--term-row-height'));
+        el.style.paddingBottom = '1px';
+        host.style.height = `${9 * pitch}px`;
+        await new Promise(requestAnimationFrame);
+        await new Promise(requestAnimationFrame);
+        return term.proposeDimensions().rows;
+      } finally {
+        term.dispose();
+        host.remove();
+      }
+    });
+    assert.equal(rows, 9);
+  });
   await t.test('a hidden reader retains its viewport while output arrives and after reveal', async () => {
     const positions = await page.evaluate(async () => {
       const mod = '/term-engine/wterm.ts',

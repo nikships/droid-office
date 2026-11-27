@@ -341,6 +341,12 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       }
     });
     assert.deepEqual(await settle(), [], 'a live divider drag does not repeatedly reflow the PTY');
+    await page.evaluate(async () => {
+      const w = window as any;
+      w.term.write('output during drag');
+      await w.frames();
+    });
+    assert.ok(!(await page.locator('.term-grid').innerText()).includes('output during drag'), 'the previous complete grid stays painted');
     await page.evaluate(() => {
       const workspace = document.querySelector('.dash-workspace')!;
       workspace.classList.remove('resizing');
@@ -350,6 +356,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       handle.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
     });
     assert.equal((await settle()).length, 1, 'release commits the last observed box even when the pointer stopped moving');
+    assert.match(await page.locator('.term-grid').innerText(), /output during drag/);
   });
 
   await t.test('shared attachment stays passive, but each pane size change claims its new box', async () => {

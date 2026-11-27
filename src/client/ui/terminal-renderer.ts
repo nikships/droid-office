@@ -6,9 +6,17 @@ import { h, toast } from './dom';
 export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: () => void, workspace?: Element | null) {
   let frame = 0;
   let task = 0;
+  let viewportChanging = false;
   const cancel = () => {
     cancelAnimationFrame(frame);
     clearTimeout(task);
+  };
+  const commit = () => {
+    cancel();
+    if (workspace?.classList.contains('resizing')) return;
+    viewportChanging = false;
+    fit();
+    term.setFitPending(false);
   };
   const settle = () => {
     cancel();
@@ -18,16 +26,21 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     let remaining = 3;
     const tick = () => {
       if (--remaining) frame = requestAnimationFrame(tick);
-      else task = window.setTimeout(fit, 0);
+      else task = window.setTimeout(commit, 0);
     };
     frame = requestAnimationFrame(tick);
   };
   term.onFit((resized) => {
     if (!resized) return fit();
     changed();
+    // Terminal layouts don't tween. A discrete split, font or spacing change
+    // already has its final box; continuous window and pointer drags do not.
+    if (!viewportChanging && !workspace?.classList.contains('resizing')) return commit();
+    term.setFitPending(true);
     settle();
   });
   term.onOpen((_native, signal) => {
+    window.addEventListener('resize', () => (viewportChanging = true), { signal });
     // A divider can stop moving before release, with no final box observation.
     for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'])
       workspace?.addEventListener(

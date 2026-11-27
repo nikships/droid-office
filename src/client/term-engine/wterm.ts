@@ -46,6 +46,7 @@ export class WTermAdapter {
   private root?: HTMLDivElement;
   private displayWrite = false;
   private paused = false;
+  private fitting = false;
   private inViewport = true;
   private paintLifetime?: AbortController;
   private metricsPending = true;
@@ -370,6 +371,8 @@ export class WTermAdapter {
       // The content box excludes padding, borders and the actual scrollbar. The
       // native font probe survives grid rebuilds and also observes web-font loads.
       const probe = root.querySelector('.term-size-probe')!;
+      // The scroll-end rounding allowance is real padding but not a fit inset.
+      const tailAllowance = parseFloat(getComputedStyle(root).getPropertyValue('--office-tail-allowance')) || 0;
       let box: DOMRectReadOnly | undefined;
       let cell: DOMRectReadOnly | undefined;
       let lastGeometry: string | undefined;
@@ -390,7 +393,7 @@ export class WTermAdapter {
         }
         const geometry = `${box.width},${box.height},${cell.width},${cell.height}`;
         if (this.proposal && geometry === lastGeometry) return;
-        this.proposal = { cols: Math.floor(box.width / cell.width), rows: Math.floor(box.height / cell.height) };
+        this.proposal = { cols: Math.floor(box.width / cell.width), rows: Math.floor((box.height + tailAllowance) / cell.height) };
         const changed = lastGeometry !== undefined && lastGeometry !== geometry;
         lastGeometry = geometry;
         this.fit.fire(changed);
@@ -543,8 +546,15 @@ export class WTermAdapter {
     this.paused = paused;
     this.syncRendering();
   }
+  /** Keep the last drawn rows while a changing box has no settled PTY size.
+   * Live data still parses, and the final grid and its accumulated output paint together. */
+  setFitPending(fitting: boolean) {
+    if (this.fitting === fitting) return;
+    this.fitting = fitting;
+    this.syncRendering();
+  }
   private get renderingPaused() {
-    return this.paused || !this.inViewport || !!this.root?.ownerDocument.hidden;
+    return this.paused || this.fitting || !this.inViewport || !!this.root?.ownerDocument.hidden;
   }
   /** Read operations waiting for a paint must stop if this pane can no longer paint. */
   get paintSignal() {
