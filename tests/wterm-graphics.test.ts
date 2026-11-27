@@ -270,6 +270,26 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
       });
     }
   });
+  await t.test('an alternate-screen direct placement leaves subsequent text in the same cell as xterm', async () => {
+    await reset();
+    try {
+      await write(`\x1b[?1049h\x1b[3;5H${apc('a=T,i=47,c=3,r=2,f=24,s=1,v=1;/wAA')}X`);
+      const values = await page.evaluate(() => {
+        const { wt, xt } = window as any;
+        const xc = xt.buffer.active.cursorX - 1,
+          xr = xt.buffer.active.cursorY;
+        return [
+          [wt.core.getCursor().row, wt.core.getCursor().col, wt.core.getCell(xr, xc).char],
+          [xt.buffer.active.cursorY, xt.buffer.active.cursorX, xt.buffer.active.getLine(xr).getCell(xc).getCode()],
+        ];
+      });
+      t.diagnostic(JSON.stringify(values));
+      assert.equal(values[1][2], 88);
+      assert.deepEqual(values[0], values[1]);
+    } finally {
+      await write('\x1b[?1049l');
+    }
+  });
   await t.test('filtering width mode keeps combined alternate-screen transitions atomic', async () => {
     await reset();
     await write(`\x1b[3;5H${apc('a=T,i=12,c=2,r=1,C=1,f=24,s=1,v=1;/wAA')}`);
