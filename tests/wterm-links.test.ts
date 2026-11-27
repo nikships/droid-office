@@ -339,6 +339,32 @@ test('wterm links and find against the xterm pane', { skip: !browserStatus().ins
     });
     assert.deepEqual(result, { answer: undefined, inView: true, top: 0 });
   });
+  await t.test('Find keeps its match in view when an older saved reader is restored', async () => {
+    await write(Array.from({ length: 80 }, (_, i) => `history row ${i}`).join('\r\n'));
+    const result = await page.evaluate(async () => {
+      const { w, findw } = window as any;
+      const root: HTMLElement = w.native.element;
+      root.scrollTop = 8 * parseFloat(getComputedStyle(root).getPropertyValue('--term-row-height'));
+      const oldTop = root.scrollTop;
+      const restore = w.saveReader();
+      if (!restore) throw Error('expected a saved historical reader');
+      const answer = findw({ needle: 'history row 55', fromEnd: 25 });
+      await new Promise(requestAnimationFrame);
+      const matchTop = root.scrollTop;
+      restore();
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      const hit = root.querySelector('.wterm-find-line');
+      const rect = hit?.getBoundingClientRect();
+      const view = root.getBoundingClientRect();
+      return { answer, oldTop, matchTop, finalTop: root.scrollTop, text: hit?.textContent?.trim(), visible: !!rect && rect.top >= view.top && rect.bottom <= view.bottom };
+    });
+    assert.equal(result.answer, undefined);
+    assert.ok(result.matchTop > result.oldTop);
+    assert.equal(result.finalTop, result.matchTop);
+    assert.equal(result.text, 'history row 55');
+    assert.ok(result.visible);
+  });
   await t.test('find agrees on missing and repeated wrapped lines, tracks reflow, replacement, reset and expiry', async () => {
     const needle = '漢e\u0301 disk full';
     const label = 'A long repeated hit: 漢e\u0301 disk    FULL';
