@@ -95,7 +95,7 @@ Every change to the app that lands on `main` is published as a GitHub release by
 
 The checked-in workflow runs the Node suite (`release`) on the owner's Mac Mini for pull requests from branches in this repository, except those opened by Dependabot. Fork and Dependabot pull requests run the suite on GitHub-hosted `macos-26`, a slower Mac where timing-sensitive tests may fail. All pull requests use GitHub-hosted `macos-26` for native Mac presenter checks and `ubuntu-latest` for change detection, website and Android checks. Pushes to `main` and manual runs use the Mac Mini. See [CI on the Mac Mini](#ci-on-the-mac-mini) for its toolchain and repair instructions.
 
-Same-repository PRs routed to the Mac Mini automatically run their install scripts and tests under the login that signs releases. The publishing steps stay off, but the processes are not isolated from that login or from `main` jobs on the Mini's three shared runner instances.
+Same-repository PRs from any author except Dependabot, including other GitHub Apps and bots, run their install scripts and tests under the login that signs releases when the workflow runs. Coverage and the checkout startup check use temporary home directories so test transcripts and bundled skills do not land in the signing login's home. The publishing steps stay off, but the processes are not isolated from that login or from `main` jobs on the Mini's three shared runner instances.
 
 A fork can change the workflow, including its runner labels. The repository's fork pull-request approval setting (**Settings → Actions → General**) controls which runs need approval. Review workflow changes before approving a run: an approved or exempt run can target the Mac Mini.
 
@@ -117,7 +117,7 @@ Because the jobs share one machine, the workflow is written so they can run side
 
 - An office the workflow starts listens on a free port picked at run time (`.github/scripts/free-port.mjs`), not on 4700.
 - Gradle's build cache in `~/.gradle` carries over between runs. Its daemon doesn't: the runner kills what it spawned when a job ends.
-- The built app and APK go from the platform jobs to `publish` through `~/ci-artifacts/run-<run id>` on the machine's disk, instead of being uploaded to and downloaded from GitHub's artifact service. The last published set is kept in `~/ci-artifacts/latest-release`, so a release that rebuilt only one platform reuses the other's assets instead of downloading 400 MB. `publish` clears the run's folder in a final `always()` step, and the `changes` job sweeps folders older than two days.
+- Every job, including `publish`, checks out the triggering revision before running repository scripts. The built app and APK go from the platform jobs to `publish` through `~/ci-artifacts/run-<run id>` on the machine's disk, instead of being uploaded to and downloaded from GitHub's artifact service. The last published set is kept in `~/ci-artifacts/latest-release`, so a release that rebuilt only one platform reuses the other's assets instead of downloading 400 MB. `publish` clears the run's folder in a final `always()` step, and the `changes` job sweeps folders older than two days.
 
 The machine, not the workflow, provides the toolchain. A job that needs another tool adds it here rather than to the workflow:
 

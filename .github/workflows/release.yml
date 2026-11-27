@@ -171,13 +171,13 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Check the runner's toolchain
-        if: runner.environment == 'self-hosted'
-        run: .github/scripts/runner-toolchain.sh node
-
       - name: Keep the Mac Mini PR browser separate from release builds
         if: runner.environment == 'self-hosted' && github.event_name == 'pull_request'
         run: echo "DROID_OFFICE_BROWSERS_PATH=$RUNNER_TEMP/browsers" >> "$GITHUB_ENV"
+
+      - name: Check the runner's toolchain
+        if: runner.environment == 'self-hosted'
+        run: .github/scripts/runner-toolchain.sh node
 
       - name: Install and build
         run: npm ci --prefer-offline --no-audit --no-fund # its prepare script builds the client and the server
@@ -219,7 +219,12 @@ jobs:
           JS
 
       - name: Test with coverage
-        run: npm run test:coverage # fails below the line and function thresholds in package.json
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            export HOME="$RUNNER_TEMP/test-home"
+            mkdir -p "$HOME"
+          fi
+          npm run test:coverage
 
       - name: Test the Office performance proof contract
         env:
@@ -227,10 +232,12 @@ jobs:
         run: python3 -B -m unittest discover -s .agents/skills/performance-proof/tests -p 'test*.py' -v
 
       - name: Verify prop geometry and embedded textures
+        env:
+          TMPDIR: ${{ runner.temp }}
         run: node tools/props/verify.mjs
 
       - name: Set the release version
-        if: env.PUBLISHING == 'true'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         id: version
         run: |
           version="${{ needs.changes.outputs.version }}"
@@ -245,6 +252,10 @@ jobs:
           DROID_OFFICE_TAILNET_HTTPS: 'off'
         run: |
           cd "$RUNNER_TEMP"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            export HOME="$RUNNER_TEMP/smoke-home"
+            mkdir -p "$HOME"
+          fi
           # A free port: more than one job can be running on this Mac at once.
           port="$(node "$GITHUB_WORKSPACE/.github/scripts/free-port.mjs")"
           node "$GITHUB_WORKSPACE/bin/droid-office.js" --host 127.0.0.1 --port "$port" > office.log 2>&1 &
@@ -607,6 +618,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       # `gh` is what the release is published with, so this job checks for it specifically.
       - name: Check the runner's toolchain
         run: .github/scripts/runner-toolchain.sh gh

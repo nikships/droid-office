@@ -252,8 +252,11 @@ function stepRuns(step: string, event = 'pull_request', ref = 'refs/pull/1/merge
 }
 
 test('release versions, packages, signing, bundle smoke checks and uploads only run on main', () => {
+  const version = jobSteps('release').find((step) => step.includes('name: Set the release version'));
+  assert.ok(version);
+  assert.match(version, /^ {8}if: github\.event_name != 'pull_request' && github\.ref == 'refs\/heads\/main'$/m);
   const releaseSteps = [
-    ...jobSteps('release').filter((step) => step.includes('name: Set the release version')),
+    version,
     ...jobSteps('mac').filter(
       (step) =>
         !/actions\/checkout|actions\/setup-node|name: Install and build|name: Recover a keychain left by an interrupted run|name: Check the runner's toolchain|name: Restore the runner's keychains|name: Check the native Metal presenter/.test(
@@ -298,6 +301,16 @@ test('only change detection fetches history, and website checks are not repeated
     assert.ok(step);
     assert.equal(stepRuns(step, 'pull_request', 'refs/pull/1/merge', 'true'), false);
     assert.equal(stepRuns(step, 'pull_request', 'refs/pull/1/merge', 'false'), true);
+  }
+});
+
+test('each job checks out the triggering revision before running workspace code', () => {
+  const jobs = [...workflow.split('\njobs:\n')[1].matchAll(/^ {2}([\w-]+):$/gm)].map((match) => match[1]);
+  assert.ok(jobs.includes('publish'));
+  for (const job of jobs) {
+    const first = jobSteps(job)[0];
+    assert.match(first, /^ {6}- uses: actions\/checkout@v7\n/, job);
+    assert.doesNotMatch(first, /^ {8}if:|^ {10}(?:ref|repository|path|sparse-checkout):/m, job);
   }
 });
 
@@ -400,7 +413,7 @@ test('CI caches hosted Chromium, isolates Mac Mini PR installs and checks render
   assert.match(miniPrFolder, /^ {8}if: runner\.environment == 'self-hosted' && github\.event_name == 'pull_request'$/m);
   const useTempFolder = /^ {8}run: echo "DROID_OFFICE_BROWSERS_PATH=\$RUNNER_TEMP\/browsers" >> "\$GITHUB_ENV"$/m;
   assert.match(miniPrFolder, useTempFolder);
-  assert.ok(steps.indexOf(miniPrFolder) < steps.findIndex((step) => step.includes('name: Install and build')));
+  assert.ok(steps.indexOf(miniPrFolder) < steps.findIndex((step) => step.includes("name: Check the runner's toolchain")));
   const folder = steps.find((step) => step.includes('name: Choose the shared Chromium folder'));
   assert.ok(folder);
   assert.match(folder, useTempFolder);
@@ -495,6 +508,19 @@ test('jobs that can run at once do not fight over a port or a Gradle daemon', ()
   // claim about it; the build cache on disk is what carries over.
   assert.doesNotMatch(workflow, /Gradle's daemon is kept|warm JVM/);
   assert.doesNotMatch(workflow, /gradlew --no-daemon/);
+});
+
+test('PR coverage writes session fixtures and the checkout smoke syncs skills into temporary homes', () => {
+  const steps = jobSteps('release');
+  for (const [name, home, command] of [
+    ['Test with coverage', 'test-home', 'npm run test:coverage'],
+    ['Start the office from the checkout', 'smoke-home', 'node "$GITHUB_WORKSPACE/bin/droid-office.js"'],
+  ]) {
+    const step = steps.find((s) => s.includes(`name: ${name}\n`));
+    assert.ok(step, name);
+    const guard = `if [ "$GITHUB_EVENT_NAME" = pull_request ]; then\n            export HOME="$RUNNER_TEMP/${home}"\n            mkdir -p "$HOME"\n          fi`;
+    assert.ok(step.includes(guard) && step.indexOf(command) > step.indexOf(guard), name);
+  }
 });
 
 test('build-tools is chosen with the sort macOS actually has', () => {
