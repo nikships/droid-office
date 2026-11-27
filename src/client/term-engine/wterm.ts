@@ -107,8 +107,13 @@ export class WTermAdapter {
     if (this.pendingRestore) {
       // Do not sample our own (possibly clamped) metric compensation as a new
       // reader. A later wheel, thumb drag or reveal is a new scroll position.
-      if (el.scrollTop === this.pendingRestore.appliedTop || (this.pendingRestore.appliedTop === undefined && !scrolled)) return;
+      const applied = this.pendingRestore.appliedTop;
+      if (el.scrollTop === applied || (applied === undefined && !scrolled)) return;
       this.pendingRestore.appliedTop = el.scrollTop;
+      // Shrinking the scroll range can force a formerly valid offset down to
+      // its new maximum. Ordinary navigation to the bottom approaches from below.
+      const max = el.scrollHeight - el.clientHeight;
+      if (applied !== undefined && applied > max && el.scrollTop < applied && Math.abs(max - el.scrollTop) < 1) return;
       this.readerRevision++;
     }
     this.readerRow = el.scrollHeight - el.clientHeight - el.scrollTop < 1 ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;

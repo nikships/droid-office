@@ -369,7 +369,7 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
   });
   await t.test('scrolling during a zoom supersedes the pending reader restore when paint resumes', async () => {
     const samples = [];
-    for (const held of ['synchronized', 'paused']) {
+    for (const held of ['synchronized', 'paused', 'wheel to bottom']) {
       const original = await page.evaluate(async (held) => {
         const engine = '/term-engine/web-terminal.ts';
         const { createWebTerminal } = await import(engine);
@@ -399,6 +399,16 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
           await root.hover();
           await page.mouse.wheel(0, -50);
           await page.waitForFunction((old) => (window as any).heldReader.native.element.scrollTop < old, original);
+        } else if (held === 'wheel to bottom') {
+          await root.evaluate((el) => {
+            el.scrollTop = el.scrollHeight - el.clientHeight - 9;
+          });
+          await root.hover();
+          await page.mouse.wheel(0, 50);
+          await page.waitForFunction(() => {
+            const el = (window as any).heldReader.native.element;
+            return el.scrollHeight - el.clientHeight - el.scrollTop < 1;
+          });
         } else {
           // A scrollbar drag or a Find/prompt reveal changes the scrollport
           // directly, without going through the terminal wheel handler.
@@ -415,7 +425,10 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
           else term.setRenderingPaused(false);
           await w.frame();
           await w.frame();
-          return { held, requested, actual: el.scrollTop };
+          const actual = el.scrollTop;
+          term.write('later output\r\n'.repeat(15));
+          await w.frame();
+          return { held, requested, actual, gap: el.scrollHeight - el.clientHeight - el.scrollTop };
         }, held);
         samples.push({ original, ...sample });
       } finally {
@@ -426,9 +439,14 @@ test('wterm scroll and appearance against xterm in Chromium', { skip: !status.in
       }
     }
     t.diagnostic(JSON.stringify(samples));
-    for (const { original, requested, actual } of samples) {
-      assert.ok(requested < original);
-      assert.equal(actual, requested);
+    for (const { held, original, requested, actual, gap } of samples) {
+      if (held === 'wheel to bottom') {
+        assert.ok(requested > original);
+        assert.ok(gap < 1, 'scrolling to the old maximum follows the new tail');
+      } else {
+        assert.ok(requested < original);
+        assert.equal(actual, requested);
+      }
     }
   });
   await t.test('an explicit reveal or Latest supersedes saved reader callbacks from an older layout', async () => {

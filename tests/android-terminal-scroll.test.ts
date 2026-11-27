@@ -70,6 +70,38 @@ test('fitting a wide desktop grid keeps the reader through landscape and keyboar
   assert.ok(Math.abs((await position()) - before) < 0.5);
 });
 
+test('rotating a near-tail reader at fractional density does not resume following new output', browserTest, async (t) => {
+  const { page } = await openPhone(t, undefined, 2.625);
+  const portrait = { width: 420, height: 700 };
+  const root = page.locator('.wterm');
+  const settle = () =>
+    page.evaluate(async () => {
+      for (let i = 0; i < 6; i++) await new Promise(requestAnimationFrame);
+    });
+  const position = () => root.evaluate((el) => ({ top: el.scrollTop, gap: el.scrollHeight - el.clientHeight - el.scrollTop }));
+  const send = (msg: Record<string, unknown>) => page.evaluate((m) => (window as any).office.receive(m), msg);
+  await page.setViewportSize(portrait);
+  await send({ t: 'snapshot', cols: 136, rows: 39, data: Array.from({ length: 1000 }, (_, i) => `row ${i}\r\n`).join('') });
+  await settle();
+  await root.evaluate((el) => {
+    el.scrollTop = el.scrollHeight - el.clientHeight - 9;
+  });
+  await settle();
+  const before = await position();
+  assert.ok(before.top > 0 && Math.abs(before.gap - 9) < 1);
+  await page.setViewportSize({ width: 899, height: 260 });
+  await settle();
+  await page.setViewportSize(portrait);
+  await settle();
+  const rotated = await position();
+  await send({ t: 'data', data: 'new output\r\n'.repeat(50) });
+  await settle();
+  const after = await position();
+  t.diagnostic(JSON.stringify({ before, rotated, after }));
+  assert.ok(Math.abs(rotated.top - before.top) < 2, 'rotation restores the reader');
+  assert.ok(Math.abs(after.top - before.top) < 2 && after.gap > 50, 'new lines stay below the reader');
+});
+
 test('a reveal after fitting owns the viewport when the next frame paints', browserTest, async (t) => {
   const { page } = await openPhone(t);
   const send = (msg: Record<string, unknown>) => page.evaluate((m) => (window as any).office.receive(m), msg);
