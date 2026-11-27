@@ -2,10 +2,11 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer, request, type IncomingMessage, type RequestListener, type ServerResponse } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { guestBackendListener, type GuestFunnel } from '../src/server/guest-funnel.js';
 import { GUEST_FAILS_PER_SOURCE, GuestLinks } from '../src/server/guest-links.js';
 import { GuestAudit } from '../src/server/guest-audit.js';
@@ -15,6 +16,7 @@ import { isGuestClient, ownerDevices } from '../src/server/server-runtime/access
 import { loadConfig } from '../src/server/config.js';
 import { startServer } from '../src/server/server.js';
 import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
+import { OFFICE_SHELL_ID } from '../src/shared/office-shell.js';
 import type { GuestLinkCreated, GuestLinksState, GuestPreset, GuestTransportState } from '../src/shared/guest-links.js';
 import { tailnetProxy } from './tailnet-proxy.js';
 
@@ -496,6 +498,47 @@ test('in a running office, guest tokens work only on the guest backend and manag
   assert.equal((await g(`/api/mobile/pairing?t=${office.lanToken}`)).status, 404);
   assert.equal((await g('/api/guest/hello', { headers: { authorization: `Bearer ${device}` } })).status, 401, 'device tokens do not open the guest backend');
   assert.equal((await g('/api/guest/hello')).status, 401, 'loopback is not trusted there');
+  await t.test('terminal cwd hints stay within paired-device roots and do not grant guest path access', async (t) => {
+    const root = realpathSync(home);
+    const inside = path.join(root, 'inside');
+    const outside = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'outside-floor-')));
+    t.after(() => rmSync(outside, { recursive: true, force: true }));
+    mkdirSync(inside);
+    const file = 'source.ts';
+    for (const [dir, text] of [
+      [root, 'floor'],
+      [inside, 'inside'],
+      [outside, 'outside'],
+    ])
+      writeFileSync(path.join(dir, file), text);
+    const resource = async (base: string, headers: Record<string, string>, preview: boolean, cwdHint?: string) => {
+      const query = new URLSearchParams({ floor: floorId, worker: OFFICE_SHELL_ID });
+      if (preview) {
+        query.set('path', file);
+        if (cwdHint) query.set('cwdHint', cwdHint);
+        return call(base, `/api/term/file?${query}`, { headers });
+      }
+      return call(base, `/api/term/paths?${query}`, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ paths: [file], cwdHint }) });
+    };
+    const guestHeaders = { ...bearer, host: HOST, origin: ORIGIN };
+    for (const preview of [false, true]) {
+      const denied = await resource(guest, guestHeaders, preview);
+      assert.equal(denied.status, 404);
+      for (const [hint, expectedDir, expectedText] of [
+        [undefined, root, 'floor'],
+        [inside, inside, 'inside'],
+        [outside, root, 'floor'],
+      ] as const) {
+        const uri = hint && pathToFileURL(hint).href;
+        const paired = await resource(local, phone, preview, uri);
+        assert.equal(paired.status, 200);
+        if (preview) assert.equal(paired.json().text, expectedText);
+        else assert.equal(paired.json().paths[0].path, path.join(expectedDir, file));
+        const actual = await resource(guest, guestHeaders, preview, uri);
+        assert.deepEqual([actual.status, actual.json()], [denied.status, denied.json()]);
+      }
+    }
+  });
   const upload = await g(`/api/prompt/image?floor=${encodeURIComponent(floorId)}&name=shot.png`, { method: 'POST', headers: { ...bearer, origin: ORIGIN }, body: PNG });
   assert.equal(upload.status, 200);
   assert.match(upload.json().id, /^[0-9a-f]{16}$/);
