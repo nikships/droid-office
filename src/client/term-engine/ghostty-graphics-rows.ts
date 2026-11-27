@@ -303,15 +303,12 @@ export class GraphicsRows {
       // UTF-16 unit occupies at most two cells; controls below move the cursor but do not
       // scroll. If even the upper bound cannot cross the bottom, no trim was possible.
       const cursorMotion = /\x1b(?:[78]|\[[\d;]*[GCDHfABsu])/g;
-      // zsh can echo a Unicode command after backing up over its first character. A
-      // leading BS inside the row cannot reverse-wrap; do not assume that at the margin.
-      // For the bound, a tab and a horizontal CSI can both put the next glyph at the
-      // last column. The layout check above excludes reverse-wrap and restricted margins.
+      // With reverse-wrap and restricted margins excluded, BS anywhere in a zsh redraw
+      // is horizontal only. Bound it like a tab or horizontal CSI, without guessing x.
       const plain = text
         .replace(/\x1b\[(?:[012]?K|[01]?J)/g, '')
         .replace(/\x1b\[\?7[hl]/g, '')
-        .replace(/^\x08+/, (bs) => bs.slice(before.x))
-        .replace(/\x1b\[\d*[CDG`]/g, '\t');
+        .replace(/\x08|\x1b\[\d*[CDG`]/g, '\t');
       const rest = plain.replace(cursorMotion, '');
       const positions = rest !== plain;
       const pieces = plain.split(cursorMotion).flatMap((s) => s.split(/[\r\n]/));

@@ -29,6 +29,23 @@ function feed(core: GhosttyTerminal, rows: GraphicsRows, s: string) {
   rows.end();
 }
 
+test('zsh mid-line Unicode edit keeps the original image row through the repainted suffix', async (t) => {
+  const core = await load(129, 49);
+  t.after(() => core.free());
+  core.write(`${'\r\n'.repeat(58)}${cs}10;1HUNIQUE`);
+  const rows = new GraphicsRows(core),
+    marker = rows.anchor()!;
+  feed(core, rows, `${cs}49;1H`);
+  feed(core, rows, '➜ droid-office ');
+  // Captured as nine writes from the real zsh PTY: Up, seven Lefts, then "!".
+  const writes = ["repeat 5 print 'héllo wörld'", ...Array<string>(7).fill('\b'), `! wörld'${'\b'.repeat(7)}`];
+  for (const data of writes) {
+    feed(core, rows, data);
+    assert.deepEqual([core.getScrollbackLength(), core.getCursor().y, marker.line, contents(core, 19)], [10, 48, 19, 'UNIQUE'], JSON.stringify(data));
+  }
+  assert.match(contents(core, 58)!, /repeat 5 print 'héllo! wörld'/);
+});
+
 test('inherited ANSI newline mode cannot move an image from UNIQUE to FIRST', async (t) => {
   const core = await load(40, 8);
   t.after(() => core.free());
@@ -149,7 +166,21 @@ test('seeded physical row identity survives or the direct image is dropped', asy
     state = (Math.imul(1664525, state) + 1013904223) >>> 0;
     return Math.floor((state / 2 ** 32) * n);
   };
-  const alphabet = ['é', '日本', '👩‍💻', 'e\u0301', '\t', '\r', '\n', '\v', '\f', '\b', ...['K', '0K', '1K', '2K', 'J', '0J', '1J', '?7h', '?7l', '0m', '38;2;190;30;5m', 'C', '3D', '1G', '1`'].map((s) => cs + s), '\x1b]2;row test\x07'];
+  const alphabet = [
+    'é',
+    'ö\b!界',
+    '日本',
+    '👩‍💻',
+    'e\u0301',
+    '\t',
+    '\r',
+    '\n',
+    '\v',
+    '\f',
+    '\b',
+    ...['K', '0K', '1K', '2K', 'J', '0J', '1J', '?7h', '?7l', '0m', '38;2;190;30;5m', 'C', '3D', '1G', '1`'].map((s) => cs + s),
+    '\x1b]2;row test\x07',
+  ];
   for (const [cols, height] of [
     [8, 4],
     [20, 6],
