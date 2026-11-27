@@ -57,7 +57,8 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
       win.expanded = [img.imageId, bmp.width, bmp.height];
       bmp.close();
     };
-    attachWtermGraphics(w, { onExpandImage: win.expandImage });
+    win.graphics = attachWtermGraphics(w, { onExpandImage: win.expandImage });
+    if (win.graphics.expandAtClient(0, 0)) throw new Error('expanded before open');
     attachKittyTerminal(x, { onExpandImage: win.expandImage });
     x.open(document.querySelector('#x'));
     const pitch = x.element.querySelector('.xterm-rows > div').getBoundingClientRect().height;
@@ -317,6 +318,47 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
     await write(apc('a=d,d=A'));
     await both(1, 1, 0);
   });
+  await t.test('native tap uses painted coordinates and not desktop mouse policy', async () => {
+    await reset();
+    const cell = KITTY_PLACEHOLDER_CHAR + String.fromCodePoint(KITTY_DIACRITICS[0], KITTY_DIACRITICS[0]);
+    await write(`\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[3;14H${apc('a=T,i=41,U=1,c=1,r=1,f=24,s=1,v=1;/wAA')}\x1b[38;2;0;0;41m${cell}\x1b[0m`);
+    await page.waitForFunction(() => (window as any).pixel('w', 13, 2) === 0xff0000ff);
+    const tapped = await page.evaluate(() => {
+      const w = window as any,
+        host = document.querySelector<HTMLElement>('#w')!;
+      const canvas = host.querySelector<HTMLCanvasElement>('.term-kitty-layer')!;
+      const before = canvas.toDataURL();
+      host.style.transformOrigin = 'top left';
+      host.style.transform = 'scale(.625,.75)';
+      const rect = canvas.getBoundingClientRect(),
+        style = getComputedStyle(w.wt.native.element);
+      const col = parseFloat(style.getPropertyValue('--term-cell-width')) * 0.625;
+      const row = parseFloat(style.getPropertyValue('--term-row-height')) * 0.75;
+      const x = rect.left + 13.5 * col,
+        y = rect.top + 2.5 * row;
+      w.sent.length = 0;
+      return {
+        x,
+        y,
+        miss: w.graphics.expandAtClient(rect.left + 15.5 * col, y),
+        hit: w.graphics.expandAtClient(x, y),
+        sameCanvas: canvas.toDataURL() === before,
+      };
+    });
+    assert.ok(tapped.hit && !tapped.miss && tapped.sameCanvas);
+    await page.waitForFunction(() => (window as any).expanded?.[0] === 41);
+    assert.deepEqual(await page.evaluate(() => (window as any).sent), []);
+    await page.evaluate(() => {
+      (window as any).expanded = null;
+    });
+    await page.mouse.click(tapped.x, tapped.y);
+    assert.ok(await page.evaluate(() => (window as any).sent.some((s: string) => s.startsWith('\x1b[<')) && !(window as any).expanded));
+    await write(apc('a=d,d=A'));
+    assert.equal(await page.evaluate(({ x, y }) => (window as any).graphics.expandAtClient(x, y), tapped), false);
+    await page.evaluate(() => {
+      document.querySelector<HTMLElement>('#w')!.style.transform = '';
+    });
+  });
   await t.test('native fractional scroll, partly shown top row, metrics changes, selection outside image', async () => {
     await reset();
     await write(`START\r\n${apc('a=T,i=8,c=6,r=3,C=1,f=24,s=1,v=1;/wAA')}${'row\r\n'.repeat(16)}`);
@@ -361,6 +403,7 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
     const { wt, xt } = window as any;
     wt.dispose();
     xt.dispose();
+    if ((window as any).graphics.expandAtClient(0, 0)) throw new Error('expanded after dispose');
   });
   assert.equal(await page.locator('canvas.term-kitty-layer,.wterm-kitty-screen').count(), 0);
   assert.deepEqual(errors, []);

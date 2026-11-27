@@ -3,7 +3,8 @@ import { createKittyOverlay, type KittyTerminalOptions } from '../term-kitty-ove
 import type { WTermAdapter } from './wterm';
 import { graphicsAnchors, placeholderCells } from './wterm-graphics-cells';
 
-export function attachWtermGraphics(adapter: WTermAdapter, images: KittyTerminalOptions = {}): void {
+export function attachWtermGraphics(adapter: WTermAdapter, images: KittyTerminalOptions = {}) {
+  let expand: ((clientX: number, clientY: number) => boolean) | undefined;
   adapter.onOpen((term, signal) => {
     const core = adapter.core!;
     const root = term.element;
@@ -76,6 +77,7 @@ export function attachWtermGraphics(adapter: WTermAdapter, images: KittyTerminal
       images,
     );
     overlay.mount(screen, root, behind);
+    expand = overlay.expandAtClient;
     screen.querySelector<HTMLCanvasElement>('.term-kitty-layer')!.style.cssText = 'position:absolute;left:0;z-index:1;pointer-events:none';
     const button = screen.querySelector('button');
     if (button) Object.assign(button.style, { position: 'absolute', pointerEvents: 'auto', zIndex: '3' });
@@ -127,8 +129,10 @@ export function attachWtermGraphics(adapter: WTermAdapter, images: KittyTerminal
       for (const h of hooks) h.dispose();
       if (term.onResize === resized) term.onResize = priorResize;
       overlay.dispose();
+      expand = undefined;
       anchors.dispose();
       screen.remove();
     });
   });
+  return { expandAtClient: (clientX: number, clientY: number) => expand?.(clientX, clientY) ?? false };
 }

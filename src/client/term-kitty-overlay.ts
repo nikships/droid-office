@@ -472,13 +472,17 @@ export function createKittyOverlay(view: KittyOverlayView, opts: KittyTerminalOp
   };
 
   const hitAtClient = (clientX: number, clientY: number): DrawnKittyRect | undefined => {
-    if (!screenEl || !drawnRects.length) return undefined;
+    if (!screenEl || !canvas || !drawnRects.length) return undefined;
     const r = screenEl.getBoundingClientRect();
     // Part of the row above or below the screen shows inside the clipping box while it sits between rows.
     const box = extraRows() && pointerEl ? pointerEl.getBoundingClientRect() : r;
     if (clientX < r.left || clientX >= r.right || clientY < box.top || clientY >= box.bottom) return undefined;
-    const px = clientX - r.left;
-    const py = clientY - r.top;
+    // Canvas CSS sizes retain fractional cells; clientWidth/offsetHeight round them.
+    // Map the painted surface back to its local pixels (including fractional scroll padding).
+    const surface = canvas.getBoundingClientRect();
+    if (!surface.width || !surface.height) return undefined;
+    const px = ((clientX - surface.left) * parseFloat(canvas.style.width)) / surface.width;
+    const py = ((clientY - surface.top) * parseFloat(canvas.style.height)) / surface.height + parseFloat(canvas.style.top);
     const hit = hitTestKittyRect(drawnRects, px, py);
     if (!hit || !graphics.get(hit.imageId) || !decoded.get(hit.imageId)?.root) return undefined;
     return hit;
@@ -861,5 +865,28 @@ export function createKittyOverlay(view: KittyOverlayView, opts: KittyTerminalOp
     pointerEl = null;
   };
 
-  return { graphics, mount, handleApcBody, dispose, paintNow, schedulePaint, clearPlacements, clearDecoded, needsPaint: () => view.hasPlaceholder() || graphics.size > 0 || directPlacements.length > 0 || drawnRects.length > 0 };
+  // Native touch callers already classified this gesture as a tap, not a selection,
+  // drag or pinch. Desktop mouse events continue through their existing policies.
+  const expandAtClient = (clientX: number, clientY: number): boolean => {
+    if (!opts.onExpandImage || expanding || !pointerEl) return false;
+    const clip = pointerEl.getBoundingClientRect();
+    if (clientX < clip.left || clientX >= clip.right || clientY < clip.top || clientY >= clip.bottom) return false;
+    const hit = hitAtClient(clientX, clientY);
+    if (!hit) return false;
+    void expandImage(hit.imageId);
+    return true;
+  };
+
+  return {
+    graphics,
+    mount,
+    handleApcBody,
+    dispose,
+    paintNow,
+    schedulePaint,
+    clearPlacements,
+    clearDecoded,
+    expandAtClient,
+    needsPaint: () => view.hasPlaceholder() || graphics.size > 0 || directPlacements.length > 0 || drawnRects.length > 0,
+  };
 }
