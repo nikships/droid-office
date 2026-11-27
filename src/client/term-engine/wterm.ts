@@ -195,10 +195,13 @@ export class WTermAdapter {
         }
       }
       const target = row ?? start;
-      // The DOM spacer and native pin-to-bottom policy update in wterm's render frame.
-      requestAnimationFrame(() => {
+      const apply = () => {
         if (this.root === el && revision === this.readerRevision && el.clientHeight && target >= 0) el.scrollTop = (target + fraction) * this.rowHeight;
-      });
+      };
+      // Find may close before the next native paint. Reattach calls us after
+      // paint, so apply now rather than racing a superseding snapshot next frame.
+      if (explicit) requestAnimationFrame(apply);
+      else apply();
     };
   }
   private rowHeight = 1;
@@ -457,6 +460,9 @@ export class WTermAdapter {
   }
   endSnapshot(afterPaint?: () => void) {
     this.afterSnapshotPaint = afterPaint;
+    // The retained grid can still scroll before the replacement paints. Use
+    // the same navigation-versus-clamp check as an outstanding metric restore.
+    if (afterPaint && this.root) this.pendingRestore = { appliedTop: this.root.scrollTop };
     this.replay = this.root?.classList.contains('replaying') ? 'parsed' : undefined;
     this.syncRendering();
   }

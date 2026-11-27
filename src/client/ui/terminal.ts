@@ -410,10 +410,17 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       pendingSizes.length = 0;
       disconnected.classList.add('hidden');
       requestFit();
-      const restore = pendingFind ? undefined : restoreReader;
+      if (pendingFind) restoreReader = undefined;
+      const restore = restoreReader;
       if (!restore) term.scrollToBottom();
-      term.endSnapshot(restore);
-      restoreReader = undefined;
+      term.endSnapshot(
+        restore &&
+          (() => {
+            if (restore !== restoreReader) return;
+            restoreReader = undefined;
+            restore();
+          }),
+      );
       refresh();
       if (pendingFind) jumpTo(pendingFind);
       pendingFind = undefined;
@@ -436,7 +443,10 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
   term.onData((data) => {
     if (readOnly || !mirror.ready || !net.up) return;
     // Focus moving is not typing, so it leaves the shared PTY at its size.
-    if (!isFocusReport(data) && (adoptSharedSize || paneSizeChanged)) requestFit(true);
+    if (!isFocusReport(data)) {
+      restoreReader = undefined;
+      if (adoptSharedSize || paneSizeChanged) requestFit(true);
+    }
     net.send({ t: 'term.input', workerId, data });
   });
   const unbind = () => {
