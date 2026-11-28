@@ -949,6 +949,53 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     for (const frame of result.frames) assert.deepEqual(frame, frame[0] === '14px' ? result.before : result.after);
   });
 
+  for (const layout of ['font only', 'pane resize', 'same column count']) {
+    await t.test(`a font step keeps the same visible history row on every paint: ${layout}`, async () => {
+      const page = await rig(false);
+      const result = await page.evaluate(async (layout) => {
+        const w = window as any;
+        const root: HTMLElement = w.term.native.element;
+        const sample = () => {
+          const y = root.getBoundingClientRect().top + 2;
+          const row = [...root.querySelectorAll<HTMLElement>('.term-row')].find((el) => {
+            const box = el.getBoundingClientRect();
+            return box.top <= y && box.bottom > y;
+          });
+          return row?.textContent.trim();
+        };
+        if (layout === 'same column count') {
+          w.resize(140, 350);
+          await w.frames();
+        }
+        const cols = w.term.cols;
+        w.term.write(Array.from({ length: 250 }, (_, i) => (i < 80 ? `${i} ${'long prefix '.repeat(6)}` : `passage ${i}`)).join('\r\n'));
+        await w.frames();
+        const height = Number.parseFloat(getComputedStyle(root).getPropertyValue('--term-row-height'));
+        root.scrollTop = root.scrollHeight - root.clientHeight - 35.5 * height;
+        await w.frames();
+        const before = sample();
+        const frames: (string | undefined)[] = [];
+        const stop = w.eachPaint(() => frames.push(sample()));
+        if (layout === 'pane resize') w.resize(440, 240);
+        // A program can start a synchronized redraw between resize and its
+        // first paint. The retained rows must keep their old scroll coordinate.
+        w.aroundNextFitTask(undefined, () => w.term.write('\x1b[?2026h'));
+        w.TerminalUI.setTermFontSize(16);
+        await w.frames();
+        await w.frames();
+        w.term.write('\x1b[?2026l');
+        await w.frames();
+        stop();
+        return { before, frames, after: sample(), font: w.term.options.fontSize, sameCols: cols === w.term.cols };
+      }, layout);
+      assert.match(result.before ?? '', /^passage \d+$/);
+      assert.equal(result.font, 16);
+      assert.equal(result.sameCols, layout === 'same column count');
+      assert.equal(result.after, result.before);
+      assert.deepEqual([...new Set(result.frames)], [result.before]);
+    });
+  }
+
   await t.test('a font step follows the native timeout of the latest synchronized update', async () => {
     const page = await rig(false);
     const midway = await page.evaluate(async () => {

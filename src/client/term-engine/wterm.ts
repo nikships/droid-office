@@ -416,8 +416,19 @@ export class WTermAdapter {
         }
       });
       if (previousHeight !== this.rowHeight) {
-        if (this.readerRow !== undefined) el.scrollTop = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
-        this.pendingRestore = { appliedTop: el.scrollTop };
+        const restore = (this.pendingRestore = { appliedTop: el.scrollTop });
+        if (this.readerRow !== undefined) {
+          const top = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
+          const { cols, rows } = this;
+          // A font fit resizes synchronously. Let its mapped viewport replace
+          // this restore rather than scrolling rows that still have the old pitch.
+          queueMicrotask(() => {
+            if (this.pendingRestore !== restore || el.scrollTop !== restore.appliedTop) return;
+            if ((cols !== this.cols || rows !== this.rows) && this.scheduleViewport(top)) return;
+            el.scrollTop = top;
+            restore.appliedTop = el.scrollTop;
+          });
+        }
       }
     }
   }
