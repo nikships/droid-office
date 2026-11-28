@@ -996,24 +996,56 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     });
   }
 
-  await t.test('a font step follows the native timeout of the latest synchronized update', async () => {
-    const page = await rig(false);
-    const midway = await page.evaluate(async () => {
-      const w = window as any;
-      w.term.write('\x1b[?2026h');
-      w.TerminalUI.setTermFontSize(16);
-      await new Promise((r) => setTimeout(r, 650));
-      w.term.write('\x1b[?2026l\x1b[?2026h');
-      await new Promise((r) => setTimeout(r, 600));
-      return w.term.options.fontSize;
+  for (const stream of ['reopen every third frame', 'remain open', 'replace every third frame'] as const) {
+    await t.test(`a queued font step has one synchronized-output deadline: ${stream}`, async () => {
+      const page = await rig(false);
+      const result = await page.evaluate(async (stream) => {
+        const w = window as any;
+        const term = w.term;
+        w.messages = [];
+        term.write('\x1b[?2026h');
+        let start = 0;
+        let elapsed = 0;
+        let frame = 0;
+        let committedFrame = -1;
+        let committedOpen = false;
+        const set = term.setFontForFit.bind(term);
+        term.setFontForFit = (px: number) => {
+          elapsed = performance.now() - start;
+          committedFrame = frame;
+          committedOpen = term.core.synchronizedOutput();
+          set(px);
+        };
+        await new Promise<void>((resolve) => {
+          w.aroundNextFitTask(() => (start = performance.now()), resolve);
+          w.TerminalUI.setTermFontSize(16);
+        });
+        while (frame < 9 || (elapsed === 0 && performance.now() - start < 600)) {
+          await new Promise(requestAnimationFrame);
+          frame++;
+          if (stream === 'reopen every third frame' && frame % 3 === 1) term.write('\x1b[?2026l');
+          if (stream === 'reopen every third frame' && frame % 3 === 2) term.write('\x1b[?2026h');
+          if (stream === 'replace every third frame' && frame % 3 === 0) term.write('\x1b[?2026l\x1b[?2026h');
+          term.write(`frame ${frame}\r\n`);
+        }
+        const open = term.core.synchronizedOutput();
+        term.write('\x1b[?2026l');
+        await w.frames();
+        return { elapsed, committedFrame, committedOpen, open, sizes: w.sizes().length, output: term.native.element.textContent.includes(`frame ${frame}`) };
+      }, stream);
+      assert.equal(result.sizes, 1);
+      assert.equal(result.output, true);
+      assert.ok(result.elapsed > 0 && result.elapsed < 300, `commit after ${result.elapsed} ms`);
+      if (stream === 'reopen every third frame') {
+        assert.equal(result.committedFrame, 1, 'use the first frame between blocks');
+        assert.equal(result.committedOpen, false);
+      } else {
+        assert.ok(result.elapsed >= 249, `held for ${result.elapsed} ms`);
+        assert.equal(result.committedOpen, true);
+        assert.equal(result.open, true, 'the font commit does not flush the program’s block');
+      }
     });
-    assert.equal(midway, 14, 'an earlier timeout must not let the font through a new block');
-    await page.waitForFunction(() => {
-      const { term } = window as any;
-      return term.options.fontSize === 16 && term.native.element.querySelectorAll('.term-row:not(.term-scrollback-row)').length === term.rows;
-    });
-    assert.equal(await page.evaluate(() => (window as any).term.core.synchronizedOutput()), true, 'an unclosed block falls back to normal painting');
-  });
+  }
 
   await t.test('A+ from Thread returns to Raw without painting larger cells on the retained grid', async () => {
     const page = await rig(false, false, false, 'thread');
