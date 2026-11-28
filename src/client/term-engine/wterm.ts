@@ -3,6 +3,7 @@ import type { GhosttyCore } from '@wterm/ghostty';
 import { VtScanner } from '../../shared/vt-scanner';
 import { TERM_THEME } from '../term-theme';
 import type { ClientTerminalOptions } from './types';
+import { retainedRows } from './wterm-links-lines';
 
 const widths = '\x1b[?2027l';
 const palette = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', 'brightBlack', 'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightMagenta', 'brightCyan', 'brightWhite'] as const;
@@ -42,6 +43,7 @@ export class WTermAdapter {
   private replay?: 'waiting' | 'parsing' | 'parsed' | 'painted';
   private revealFrame = 0;
   private afterSnapshotPaint?: () => void;
+  private redrawReader?: SavedReader;
   private readonly changed = event<keyof ClientTerminalOptions>();
   private readonly data = event<string>();
   private readonly lifetime = new AbortController();
@@ -54,6 +56,7 @@ export class WTermAdapter {
   private metricsPending = true;
   // History index including discarded rows, or undefined when following the tail.
   private readerRow?: number;
+  private reflowCell?: { col: number; top: number };
   private holdReaderAfterPaint = false;
   private heldAlternate = false;
   private paintedDiscarded = 0;
@@ -86,6 +89,7 @@ export class WTermAdapter {
         return true;
       });
     this.parser.registerEscHandler({ final: 'c' }, () => {
+      this.redrawReader = undefined;
       this.native?.clearSelection();
       this.writeNative(`\x1bc${widths}`);
       return true;
@@ -93,12 +97,9 @@ export class WTermAdapter {
     this.parser.registerCsiHandler({ final: 'J' }, ([mode]) => {
       // Some programs respond to SIGWINCH by erasing and reprinting their entire
       // history in a synchronized update. That destroys even a tracked core pin.
-      if (mode === 3 && !this.replay && !this.afterSnapshotPaint && this.core?.synchronizedOutput()) {
-        const reader = this.saveReader({ redraw: true });
-        if (reader && this.root) {
-          this.afterSnapshotPaint = reader;
-          this.pendingRestore = { appliedTop: this.root.scrollTop };
-        }
+      if (mode === 3) {
+        this.redrawReader = !this.replay && !this.afterSnapshotPaint && this.core?.synchronizedOutput() ? this.saveReader({ redraw: true }) : undefined;
+        if (this.redrawReader && this.root) this.pendingRestore = { appliedTop: this.root.scrollTop };
       }
       return false;
     });
@@ -144,6 +145,7 @@ export class WTermAdapter {
       this.readerRevision++;
     }
     const range = el.scrollHeight - el.clientHeight;
+    if (this.reflowCell && el.scrollTop !== this.reflowCell.top) this.reflowCell = undefined;
     const remaining = range - el.scrollTop;
     this.readerRow = this.isAtTail(range) ? undefined : this.paintedDiscarded + el.scrollTop / this.rowHeight;
     if (this.readerRow !== undefined) el.classList.remove('pinning-tail');
@@ -156,6 +158,7 @@ export class WTermAdapter {
   }
   /** An explicit navigation supersedes both a metric restore and an older saved reader. */
   cancelReaderRestore(revealed = true) {
+    this.redrawReader = this.reflowCell = undefined;
     this.root?.classList.remove('pinning-tail');
     if (revealed) this.holdReaderAfterPaint = false;
     this.readerRevision++;
@@ -175,12 +178,12 @@ export class WTermAdapter {
     if (pending?.revision === this.readerRevision) return pending;
     const c = this.core;
     const el = this.root;
-    if (!c || !el || (!this.paintPending && viewportY >= baseY)) return;
+    if (!c || !el || (redraw ? this.isAtTail() : !this.paintPending && viewportY >= baseY)) return;
     const savedRevision = this.readerRevision;
     const inset = redraw ? parseFloat(getComputedStyle(el).paddingTop) / this.rowHeight : 0;
-    const position = Math.max(0, (this.paintPending ? el.scrollTop / this.rowHeight : viewportY + ((this.readerRow ?? 0) % 1)) - inset);
-    const startRow = Math.floor(position);
-    const fraction = position % 1;
+    const position = (this.paintPending || redraw ? el.scrollTop / this.rowHeight : viewportY + ((this.readerRow ?? 0) % 1)) - inset;
+    const startRow = Math.max(0, Math.floor(position));
+    const fraction = position - startRow;
     const rowText = (row: number, base: number, expected?: string) => {
       const offset = base - 1 - row;
       let text = '';
@@ -200,18 +203,20 @@ export class WTermAdapter {
       // The parsed core may be a different grid. Only its retained DOM rows were visible.
       const origin = el.querySelector<HTMLElement>('.term-scrollback-spacer')?.offsetTop;
       if (origin === undefined || !el.clientHeight || this.isAtTail()) return;
-      const painted = Array.from(el.querySelectorAll<HTMLElement>('.term-scrollback-row')).find((row) => Math.round((row.offsetTop - origin) / this.rowHeight) === startRow);
+      const mounted = Array.from(el.querySelectorAll<HTMLElement>(redraw ? '.term-row' : '.term-scrollback-row'));
+      const index = mounted.findIndex((row) => Math.round((row.offsetTop - origin) / this.rowHeight) === startRow);
+      const painted = mounted[index];
       if (!painted) return;
       label = painted.textContent.trimEnd();
       const sibling = painted.nextElementSibling;
       if (sibling?.classList.contains('term-scrollback-row')) next = sibling.textContent.trimEnd();
-      if (redraw) {
-        for (let p: Element | null = painted; p?.classList.contains('term-scrollback-row') && context.length < 6; p = p.nextElementSibling) context.push(p.textContent);
-      }
+      if (redraw) context = mounted.slice(index, index + 6).map((p) => p.textContent);
+    } else if (redraw) {
+      const rows = retainedRows(c);
+      context = Array.from({ length: Math.min(6, rows.length - startRow) }, (_, i) => rows.getLine(startRow + i)?.translateToString(true) ?? '');
     } else {
       label = rowText(startRow, baseY);
       if (startRow + 1 < baseY) next = rowText(startRow + 1, baseY);
-      if (redraw) context = Array.from({ length: Math.min(6, baseY - startRow) }, (_, i) => rowText(startRow + i, baseY) ?? '');
     }
     const restore = () => {
       // Closing Find explicitly requests the pre-search position, even after stepping through matches.
@@ -222,33 +227,7 @@ export class WTermAdapter {
       const start = Math.min(startRow, base - 1);
       let row: number | undefined;
       if (redraw) {
-        // The program may hard-wrap at word boundaries where the core used
-        // soft wraps. Find a short piece of the passage across the new rows.
-        const compact = (s: string) => s.replace(/\s/g, '');
-        const skip = context.findIndex((line) => compact(line));
-        const needle = compact(context.join('')).slice(0, 64);
-        if (!needle) return;
-        const cache = new Map<number, string>();
-        const line = (i: number) => {
-          const text = cache.get(i) ?? compact(rowText(i, base) ?? '');
-          cache.set(i, text);
-          return text;
-        };
-        const estimate = Math.max(0, Math.min(start + skip, base - 1));
-        search: for (let d = 0; d < base; d++) {
-          for (const i of d ? [estimate - d, estimate + d] : [estimate]) {
-            if (i < 0 || i >= base) continue;
-            let part = line(i);
-            const end = part.length;
-            if (!part.includes(needle[0])) continue;
-            for (let j = i + 1; part.length < end + needle.length - 1 && j < base; j++) part += line(j);
-            const at = part.indexOf(needle);
-            if (at >= 0 && at < end) {
-              row = Math.max(0, i - skip);
-              break search;
-            }
-          }
-        }
+        row = this.findRedrawnRow(c, context, startRow);
         if (row === undefined) return;
       } else
         search: for (let d = 0; d < base; d++) {
@@ -262,15 +241,67 @@ export class WTermAdapter {
           }
         }
       const target = row ?? start;
+      const top = (target + fraction + inset) * this.rowHeight;
       const apply = () => {
-        if (this.root === el && revision === this.readerRevision && el.clientHeight && target >= 0) el.scrollTop = (target + fraction + inset) * this.rowHeight;
+        if (this.root === el && revision === this.readerRevision && el.clientHeight && target >= 0) el.scrollTop = top;
       };
+      if (redraw) {
+        this.reflowCell = undefined;
+        if (this.scheduleViewport(top)) {
+          this.readerRow = c.getScrollbackDiscardedCount() + top / this.rowHeight;
+          this.pendingRestore = { appliedTop: el.scrollTop };
+        } else this.afterSnapshotPaint = apply;
+        return;
+      }
       // Find may close before the next native paint. Reattach calls us after
       // paint, so apply now rather than racing a superseding snapshot next frame.
       if (explicit) requestAnimationFrame(apply);
       else apply();
     };
     return Object.assign(restore, { revision: savedRevision });
+  }
+  private findRedrawnRow(core: GhosttyCore, context: string[], start: number) {
+    const compact = (s: string) => s.replace(/\s/g, '');
+    const needle = compact(context.join(''));
+    if (!needle) return;
+    const prefix = needle.slice(0, 64);
+    const skip = context.findIndex((s) => compact(s));
+    const rows = retainedRows(core);
+    const cache = new Map<number, string>();
+    const line = (i: number) => {
+      const text = cache.get(i) ?? compact(rows.getLine(i)!.translateToString(true));
+      cache.set(i, text);
+      return text;
+    };
+    const estimate = Math.min(start + skip, rows.length - 1);
+    let nearest: number | undefined;
+    for (let d = 0; d < rows.length; d++) {
+      for (const i of d ? [estimate - d, estimate + d] : [estimate]) {
+        if (i < 0 || i >= rows.length) continue;
+        let part = line(i);
+        const end = part.length;
+        if (!part.includes(prefix[0])) continue;
+        let j = i + 1;
+        while (part.length < end + prefix.length - 1 && j < rows.length) part += line(j++);
+        for (let at = part.indexOf(prefix); at >= 0 && at < end; at = part.indexOf(prefix, at + 1)) {
+          const target = Math.max(0, i - skip);
+          nearest ??= target;
+          while (part.length < at + needle.length && j < rows.length) part += line(j++);
+          if (part.startsWith(needle, at)) return target;
+        }
+      }
+    }
+    return nearest;
+  }
+  /** wterm 0.6.0's pending pixel offset mounts the reader's virtual rows before paint; a DOM scroll afterwards leaves one empty frame. */
+  private scheduleViewport(top: number) {
+    const t = this.native as unknown as { _pendingResizeScrollTop?: number | null; _shouldScrollToBottom?: boolean } | undefined;
+    if (!t || (t._pendingResizeScrollTop !== null && typeof t._pendingResizeScrollTop !== 'number') || typeof t._shouldScrollToBottom !== 'boolean') return false;
+    t._shouldScrollToBottom = false;
+    // Native render subtracts newly discarded history from its saved *old* origin.
+    const discarded = this.core?.getScrollbackDiscardedCount() ?? this.paintedDiscarded;
+    t._pendingResizeScrollTop = top + Math.max(0, discarded - this.paintedDiscarded) * this.rowHeight;
+    return true;
   }
   private rowHeight = 1;
   private lastClientHeight = 0;
@@ -423,6 +454,7 @@ export class WTermAdapter {
           if (this.replay === 'parsed') root.classList.remove('awaiting-grid');
           if (!this.pendingRestore && this.holdReaderAfterPaint && this.heldAlternate === this.core?.usingAltScreen()) this.pendingRestore = { appliedTop: root.scrollTop };
           const restore = this.pendingRestore;
+          if (this.redrawReader && this.core?.synchronizedOutput()) return;
           const reader = this.afterSnapshotPaint;
           if (restore || this.replay === 'parsed' || reader)
             queueMicrotask(() => {
@@ -437,6 +469,7 @@ export class WTermAdapter {
                 // on a clipped grid without history. Never hide a new coordinate.
                 restoredSameTop = this.holdReaderAfterPaint && this.core?.getScrollbackCount() === 0 && root.scrollTop === lastScrollTop;
                 this.pendingRestore = undefined;
+                if (this.reflowCell) this.reflowCell.top = root.scrollTop;
               }
               if (this.replay === 'parsed') {
                 this.replay = 'painted';
@@ -575,6 +608,7 @@ export class WTermAdapter {
   }
   /** Keep an existing grid painted while an accepted snapshot replaces the core. */
   holdSnapshot() {
+    this.redrawReader = undefined;
     this.afterSnapshotPaint = undefined;
     this.replay = 'parsing';
     this.syncRendering();
@@ -653,6 +687,11 @@ export class WTermAdapter {
     } finally {
       this.displayWrite = false;
     }
+    if (this.redrawReader && !this.core?.synchronizedOutput()) {
+      const restore = this.redrawReader;
+      this.redrawReader = undefined;
+      restore();
+    }
     this.parsed.fire();
     if (done)
       queueMicrotask(() => {
@@ -660,6 +699,7 @@ export class WTermAdapter {
       });
   }
   reset() {
+    this.redrawReader = this.reflowCell = undefined;
     this.readerRow = undefined;
     this.resetting.fire();
     this.parser.reset();
@@ -680,12 +720,14 @@ export class WTermAdapter {
     if (cols !== oldCols && !this.replay) this.sampleReader();
     const position = cols !== oldCols && !this.replay && this.readerRow !== undefined && c ? this.readerRow - c.getScrollbackDiscardedCount() : undefined;
     const row = position !== undefined && this.root ? Math.max(0, Math.floor(position - parseFloat(getComputedStyle(this.root).paddingTop) / this.rowHeight)) : 0;
-    const pin = position !== undefined ? c?.trackPosition({ row, col: 0 }) : undefined;
+    const pin = position !== undefined ? c?.trackPosition({ row, col: this.reflowCell?.col ?? 0 }) : undefined;
     try {
       t.resize(cols, rows);
       const mapped = pin?.resolve();
       if (mapped && c && position !== undefined) {
+        this.reflowCell = { col: mapped.col, top: this.root?.scrollTop ?? 0 };
         this.readerRow = c.getScrollbackDiscardedCount() + mapped.row + (position - row);
+        this.scheduleViewport((mapped.row + position - row) * this.rowHeight);
         this.pendingRestore = { appliedTop: this.root?.scrollTop };
       }
     } finally {
@@ -748,6 +790,7 @@ export class WTermAdapter {
     this.followTail();
   }
   private followTail() {
+    this.redrawReader = this.reflowCell = undefined;
     this.holdReaderAfterPaint = false;
     this.readerRow = undefined;
     const el = this.root;

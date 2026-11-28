@@ -83,6 +83,125 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
         continue;
       }
       if (dpr === 1) {
+        await t.test('native history mounts the passage on the first resize and the first completed-reprint frame', async () => {
+          const page = await pane();
+          try {
+            const result = await page.evaluate(async () => {
+              const { term } = window as any;
+              const el = term.native.element;
+              const pitch = parseFloat(el.style.getPropertyValue('--term-row-height'));
+              const inset = parseFloat(getComputedStyle(el).paddingTop);
+              // The native frame runs first; read its mounted cells before another scroll render can repair them.
+              const next = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+              const visible = () => {
+                const y = el.getBoundingClientRect().top + 1;
+                return [...el.querySelectorAll('.term-row')]
+                  .find((r) => r.getBoundingClientRect().top <= y && r.getBoundingClientRect().bottom > y)
+                  ?.textContent.trim()
+                  .slice(0, 8);
+              };
+              const facts = (n: number, redraw: boolean) => Array.from({ length: n }, (_, i) => `Fact ${i}: ${'some detailed text '.repeat(4)}${redraw ? '\r\n\r\n\r\n' : '\r\n'}`).join('');
+              const contract = '_pendingResizeScrollTop' in term.native && '_shouldScrollToBottom' in term.native;
+              term.reset();
+              term.write(facts(100, false));
+              await next();
+              el.scrollTop = 140 * pitch + inset + 7;
+              await next();
+              await next();
+              const before = visible();
+              term.resize(28, 15);
+              await next();
+              const resize = visible();
+              await next();
+              await next();
+              term.write('\x1b[?2026h\x1b[2J\x1b[3J\x1b[H');
+              term.write(facts(100, true));
+              term.write('\x1b[?2026l');
+              await next();
+              return { contract, before, resize, redraw: visible() };
+            });
+            assert.equal(result.contract, true, 'review the wterm viewport bridge on a package upgrade');
+            assert.deepEqual([result.before, result.resize, result.redraw], ['Fact 70:', 'Fact 70:', 'Fact 70:']);
+          } finally {
+            await page.close();
+          }
+        });
+        for (const caseName of ['repeated continuation', 'clipped live row', 'widen into live rows', 'top padding', 'continued cell', 'synchronized fallback'])
+          await t.test(`reader reflow: ${caseName}`, async () => {
+            const page = await pane();
+            try {
+              const result = await page.evaluate(async (kind) => {
+                const { term } = window as any;
+                const el = term.native.element;
+                const paint = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+                const pitch = parseFloat(el.style.getPropertyValue('--term-row-height'));
+                const inset = parseFloat(getComputedStyle(el).paddingTop);
+                const wide = kind === 'widen into live rows';
+                const live = kind === 'clipped live row';
+                const repeated = kind === 'repeated continuation' || kind === 'continued cell';
+                term.reset();
+                term.resize(wide ? 30 : 60, wide ? 16 : 32);
+                el.parentElement.style.cssText = `flex:none;height:${(wide ? 16 : 9) * pitch + 12}px`;
+                const facts = (redraw: boolean) =>
+                  Array.from({ length: repeated ? 60 : 120 }, (_, i) => {
+                    const label = `Fact ${String(i).padStart(3, '0')}:`;
+                    if (repeated) return `${label}\r\n${redraw ? '\r\n\r\n' : ''}${'0123456789'.repeat(13)}\r\n`;
+                    return `${label}${redraw === wide ? ' ' : '\r\n'}ordinary text\r\n`;
+                  }).join('');
+                term.write(facts(false));
+                await paint();
+                const rowText = (row: number) => {
+                  const base = term.core.getScrollbackCount();
+                  return Array.from({ length: term.cols }, (_, col) => String.fromCodePoint((row < base ? term.core.getScrollbackCell(base - 1 - row, col) : term.core.getCell(row - base, col)).char || 32))
+                    .join('')
+                    .trimEnd();
+                };
+                const mark = repeated ? 'Fact 020:' : 'Fact 104:';
+                let row = 0;
+                if (!live && kind !== 'top padding') {
+                  while (row < term.core.getScrollbackCount() && !rowText(row).startsWith(mark)) row++;
+                  if (repeated) row += 2;
+                }
+                el.scrollTop = live ? el.scrollHeight - el.clientHeight - 2 : kind === 'top padding' ? 0 : row * pitch + inset + 7;
+                await paint();
+                const read = () => {
+                  const row = Math.max(0, Math.floor((el.scrollTop - inset) / pitch));
+                  let i = row;
+                  while (i > 0 && !rowText(i).startsWith('Fact ')) i--;
+                  return { row, live: row >= term.core.getScrollbackCount(), fact: rowText(i).slice(0, 9), offset: el.scrollTop - inset - row * pitch };
+                };
+                const before = read();
+                term.resize(wide ? 60 : kind === 'continued cell' ? 28 : 30, term.rows);
+                await paint();
+                const resized = read();
+                if (kind === 'continued cell') term.resize(60, term.rows);
+                else {
+                  term.write('\x1b[?2026h\x1b[2J\x1b[3J\x1b[H');
+                  if (kind === 'synchronized fallback') {
+                    // A real native fallback paint, not a guessed delay. The update has not closed.
+                    await new Promise<void>((resolve) => {
+                      const observer = new MutationObserver(() => {
+                        if (el.querySelector('.term-scrollback-row')) return;
+                        observer.disconnect();
+                        resolve();
+                      });
+                      observer.observe(el, { childList: true, subtree: true });
+                    });
+                  }
+                  term.write(`${facts(true)}\x1b[?2026l`);
+                }
+                await paint();
+                return { before, resized, after: read() };
+              }, caseName);
+              if (caseName === 'clipped live row') assert.equal(result.before.live, true);
+              assert.equal(result.resized.fact, result.before.fact);
+              assert.equal(result.after.fact, result.before.fact);
+              assert.equal(result.after.offset, result.before.offset);
+              if (caseName === 'continued cell') assert.equal(result.after.row, result.before.row);
+            } finally {
+              await page.close();
+            }
+          });
         await t.test('column changes keep the first visible passage and its partial row at the same height', async () => {
           const page = await pane();
           try {

@@ -10,6 +10,8 @@ A replacement snapshot closes Find on web and Mac. On Android, a replacement sna
 
 A program can respond to a resize by clearing and reprinting its entire history. A synchronized clear destroys native cell positions, so the reader restore matches text from the visible passage across the replacement rows, ignoring changes in wrapping and indentation. Tail followers do not search the history.
 
+Wterm 0.6.0's pending pixel offset mounts the reader's virtual rows before paint; a DOM scroll afterwards leaves one empty frame. The adapter checks that the two native viewport fields still exist before using them and otherwise restores after paint. After a synchronized clear it waits for the update to end, even if the native timeout has already painted partial output.
+
 ## Adapter contract
 
 - Each window owns a `WTermAdapter`. Await `openTerminalRenderer(term, host, alive)` after `loadFonts()` and recheck the view’s lifetime before attaching. The engine opens in an inert root so no pane steals focus. Mount, attach and first paint do not wait for the opening animation. Synchronous `WTerm.fit()` metric probes counter-scale ancestor transforms (collapsing only horizontal width/padding), so virtual spacers and tail-follow use unscaled CSS pixels. Only pointer hit testing waits for the opening transform to finish (240 ms dashboard, 160 ms modal), when a single metrics refresh restores the settled cell geometry. A click on the concealed terminal still focuses its keyboard. The first visible grid contains the negotiated snapshot; a subsequent snapshot keeps the previous grid visible until the replacement paints.
