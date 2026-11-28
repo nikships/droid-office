@@ -767,11 +767,7 @@ export function openOfficeShell(net: Net) {
   let boxChanged = false;
 
   const sendSize = (claim: boolean, dimensions: () => typeof term.observedDimensions) => {
-    if (!mirror.ready || !opened || !net.up) return;
-    if (term.options.disableStdin) {
-      if (guestTokenOn()) dimensions(); // Guests, too, can change only the font.
-      return;
-    }
+    if (!mirror.ready || !opened || !net.up || term.options.disableStdin) return;
     if (claim || boxChanged) shared = false;
     boxChanged = false;
     if (shared) {
