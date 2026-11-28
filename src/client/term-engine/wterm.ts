@@ -324,6 +324,7 @@ export class WTermAdapter {
     return true;
   }
   private rowHeight = 1;
+  private fittingFont = false;
   private lastClientHeight = 0;
   private metricsContext?: CanvasRenderingContext2D | null;
   private keepTailOnShrink() {
@@ -359,6 +360,14 @@ export class WTermAdapter {
       return fn();
     } finally {
       el.style.transform = transform;
+    }
+  }
+  setFontForFit(px: number) {
+    this.fittingFont = true;
+    try {
+      this.options.fontSize = px;
+    } finally {
+      this.fittingFont = false;
     }
   }
   refreshMetrics() {
@@ -422,12 +431,14 @@ export class WTermAdapter {
           const { cols, rows } = this;
           // A font fit resizes synchronously. Let its mapped viewport replace
           // this restore rather than scrolling rows that still have the old pitch.
-          queueMicrotask(() => {
+          const scroll = () => {
             if (this.pendingRestore !== restore || el.scrollTop !== restore.appliedTop) return;
             if ((cols !== this.cols || rows !== this.rows) && this.scheduleViewport(top)) return;
             el.scrollTop = top;
             restore.appliedTop = el.scrollTop;
-          });
+          };
+          if (this.fittingFont) queueMicrotask(scroll);
+          else scroll();
         }
       }
     }

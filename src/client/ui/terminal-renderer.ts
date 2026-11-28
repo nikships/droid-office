@@ -89,7 +89,7 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
       // A disconnected mirror or a pending snapshot cannot apply a grid.
       // Claim only this proposal, not the next snapshot if the owner declines.
       fit(true, () => {
-        term.options.fontSize = px;
+        term.setFontForFit(px);
         fittedFont = term.proposeDimensions(box.width, cellWidth);
         return fittedFont;
       });
