@@ -893,6 +893,54 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     assert.deepEqual(result.sizes, [result.grid]);
   });
 
+  await t.test('stepping the font during a synchronized update never paints a partially refitted grid', async () => {
+    const page = await rig(false);
+    const result = await page.evaluate(async () => {
+      const w = window as any;
+      const term = w.term;
+      const sample = () => [Number.parseFloat(getComputedStyle(term.native.element.querySelector('.term-row')).fontSize), term.native.element.querySelectorAll('.term-row:not(.term-scrollback-row)').length, term.cols];
+      const write = (s: string) => new Promise<void>((resolve) => term.write(s, resolve));
+      const before = sample();
+      const frames: number[][] = [];
+      const stop = w.eachPaint(() => frames.push(sample()));
+      await write('\x1b[?2026h');
+      w.TerminalUI.setTermFontSize(16);
+      await w.frames();
+      await w.frames();
+      const held = sample();
+      const synchronized = term.native.bridge.synchronizedOutput?.();
+      await write('\x1b[?2026l');
+      await w.frames();
+      await w.frames();
+      stop();
+      return { before, held, synchronized, frames, after: sample() };
+    });
+    assert.equal(result.synchronized, true);
+    assert.deepEqual(result.held, result.before, 'keep the original font and grid while the program holds output');
+    assert.equal(result.after[0], 16);
+    assert.notDeepEqual(result.before.slice(1), result.after.slice(1));
+    for (const frame of result.frames) assert.deepEqual(frame, frame[0] === 14 ? result.before : result.after, `synchronized=${result.synchronized}, before close: ${result.held}`);
+  });
+
+  await t.test('a font step follows the native timeout of the latest synchronized update', async () => {
+    const page = await rig(false);
+    const midway = await page.evaluate(async () => {
+      const w = window as any;
+      w.term.write('\x1b[?2026h');
+      w.TerminalUI.setTermFontSize(16);
+      await new Promise((r) => setTimeout(r, 650));
+      w.term.write('\x1b[?2026l\x1b[?2026h');
+      await new Promise((r) => setTimeout(r, 600));
+      return w.term.options.fontSize;
+    });
+    assert.equal(midway, 14, 'an earlier timeout must not let the font through a new block');
+    await page.waitForFunction(() => {
+      const { term } = window as any;
+      return term.options.fontSize === 16 && term.native.element.querySelectorAll('.term-row:not(.term-scrollback-row)').length === term.rows;
+    });
+    assert.equal(await page.evaluate(() => (window as any).term.core.synchronizedOutput()), true, 'an unclosed block falls back to normal painting');
+  });
+
   await t.test('A+ from Thread returns to Raw without painting larger cells on the retained grid', async () => {
     const page = await rig(false, false, false, 'thread');
     await page.getByRole('button', { name: 'Thread', exact: true }).click();

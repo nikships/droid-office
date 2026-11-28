@@ -15,6 +15,7 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
   let fontProbe: HTMLElement | undefined;
   let cellWidth = 0;
   let fittedFont: WTermAdapter['observedDimensions'];
+  let syncWait: { generation: number; until: number } | undefined;
   // The observer supplies exact unscaled content pixels. Compare its layout
   // again in the commit task: another task can resize or hide the pane after
   // the last observation. client sizes include scrollbar loss but round to
@@ -40,6 +41,7 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     fontProbe?.remove();
     fontProbe = fontBox = fontSize = undefined;
     cellWidth = 0;
+    syncWait = undefined;
   };
   // A stepped transition, or the rounded end of an easing curve, can produce
   // identical boxes for several frames before its last layout change.
@@ -58,6 +60,17 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     if (dragging || document.hidden) return;
     if ((settling || fontSize !== undefined) && movingBox()) return settle();
     if (fontSize !== undefined && fontSize !== term.options.fontSize) {
+      // Native resize cannot paint inside a synchronized update. Keep the old
+      // font until it closes or wterm's one-second fallback for this generation.
+      if (term.core?.synchronizedOutput()) {
+        const generation = term.core.synchronizedOutputGeneration();
+        if (generation !== syncWait?.generation) syncWait = { generation, until: performance.now() + 1000 };
+        if (performance.now() < syncWait.until) {
+          settling = false;
+          term.setFitPending(false);
+          return settle();
+        }
+      }
       const root = term.native!.element;
       const box = fontBox;
       if (!box || !cellWidth || !term.observedDimensions || layout(root) !== box.layout) {
