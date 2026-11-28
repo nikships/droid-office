@@ -224,7 +224,9 @@ test('native terminal search, working directory and read-only snapshots in Chrom
         await pane.mouse.down();
         await pane.mouse.move(x, y + 75, { steps: 5 });
         await pane.mouse.up();
-        const position = await rig.evaluate(({ term }) => {
+        const position = await rig.evaluate(async ({ term }) => {
+          // The last compositor drag offset can reach the DOM after mouseup.
+          await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
           const pos = { top: term.native.element.scrollTop, refreshing: term.native.getSearchState().searching };
           term.write('BIRD\r\n\x1b[?2026l');
           return pos;
