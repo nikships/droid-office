@@ -172,7 +172,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
     ? undefined
     : (() => {
         const title = h('h2');
-        const sub = h('p.sub.term-subtitle');
+        const sub = h('p.sub.reserved-subtitle');
         const pill = h('span.pill');
         const smaller = h('button.btn.icon', { type: 'button', title: 'Smaller text', 'aria-label': 'Smaller terminal text', onclick: () => zoomBy(-1) }, 'A−');
         const bigger = h('button.btn.icon', { type: 'button', title: 'Bigger text', 'aria-label': 'Bigger terminal text', onclick: () => zoomBy(1) }, 'A+');

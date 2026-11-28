@@ -45,3 +45,38 @@ test('a late worker title does not move or shrink the desk terminal', { skip: !b
     await page.close();
   }
 });
+
+test('loading the branch keeps the Changes Diff and Log in place', { skip: !browserStatus().installed }, async (t) => {
+  const browser = await launchBrowser();
+  t.after(closeBrowser);
+  const context = await newIsolatedContext(browser);
+  t.after(() => context.close());
+  const mount = await terminalFixture(t);
+  for (const view of ['Diff', 'Log']) {
+    const page = await context.newPage();
+    await mount(page, '<div id="modal-root"></div><div id="toasts"></div>');
+    await page.evaluate(async () => {
+      const url = '/ui/changes.ts';
+      const changes = await import(url);
+      const { store } = (window as any).TerminalUI;
+      store.workers.set('pixel', { id: 'pixel', name: 'Pixel', kind: 'agent', status: 'idle' });
+      changes.openChanges({ up: true, send: () => true }, 'pixel');
+    });
+    if (view === 'Log') await page.getByRole('button', { name: /^Log/ }).click();
+    const body = page.locator(view === 'Log' ? '.changes-log' : '.changes-body');
+    const bounds = () => body.evaluate((el) => [el.offsetTop, el.offsetHeight]);
+    const before = await bounds();
+    assert.ok(before[1] > 0);
+    await page.evaluate(async () => {
+      const url = '/ui/changes.ts';
+      const { routeChangesMessage } = await import(url);
+      routeChangesMessage({ t: 'changes', state: { workerId: 'pixel', branch: 'feature/long-branch'.repeat(20), base: 'HEAD', files: [] } });
+    });
+    const branch = page.locator('.desk-changes header .sub');
+    assert.match((await branch.textContent())!, /feature\/long-branch/);
+    assert.equal(await branch.getAttribute('title'), await branch.textContent());
+    assert.ok(await branch.evaluate((el) => el.scrollWidth > el.clientWidth && getComputedStyle(el).textOverflow === 'ellipsis'));
+    assert.deepEqual(await bounds(), before, `${view} top and height`);
+    await page.close();
+  }
+});
