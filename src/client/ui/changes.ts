@@ -156,7 +156,7 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
   let loading = false;
 
   const title = h('h2', {}, `${info.name} · changes`);
-  const branch = h('p.sub.hidden');
+  const branch = h('p.sub.reserved-subtitle');
   const diffViewBtn = h('button.btn.on', { type: 'button', 'aria-pressed': 'true', title: 'The changed files and their diff (T)' }, 'Diff');
   const logViewBtn = h('button.btn', { type: 'button', 'aria-pressed': 'false', title: "The worker's terminal, to watch it (T)" }, 'Log', h('span.key', {}, 'T'));
   const viewSeg = h('span.seg', { role: 'group', 'aria-label': 'Show' }, diffViewBtn, logViewBtn);
@@ -395,7 +395,6 @@ export function openChanges(net: Net, workerId: string, onTerminal?: () => void,
     if (!s || s.error) branch.textContent = '';
     else branch.textContent = s.base === 'HEAD' ? `🌿 ${s.branch} · uncommitted changes` : `🌿 ${s.branch} · vs ${s.base}`;
     branch.title = branch.textContent;
-    branch.classList.toggle('hidden', !branch.textContent);
   };
 
   const onState = (s: ChangesState) => {
