@@ -45,6 +45,197 @@ async function openPhone(t: TestContext, missing?: 'fonts' | 'renderer', deviceS
   return { context, page };
 }
 
+test('a streamed RIS drops pre-reset Find results and queued navigation', browserTest, async (t) => {
+  const { page } = await openPhone(t);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.office.receive({ t: 'data', data: 'BIRD BIRD BIRD' });
+    w.office.receive({ t: 'search', query: 'BIRD', request: 11 });
+  });
+  const last = () => page.evaluate(() => (window as any).posted.filter((m: any) => m.t === 'matches').at(-1));
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 3 && !m.searching));
+  await page.evaluate(() => {
+    const w = window as any;
+    w.office.receive({ t: 'data', data: '\r\n' });
+    w.office.receive({ t: 'match', direction: 1 });
+    w.office.receive({ t: 'data', data: '\x1b' });
+    w.office.receive({ t: 'data', data: 'cfresh BIRD BIRD' });
+  });
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 2 && !m.searching));
+  assert.deepEqual(await last(), { t: 'matches', active: 0, count: 2, searching: false, limited: false, request: 11 });
+});
+
+test('Latest during a Find rescan keeps the tail and leaves Find open', browserTest, async (t) => {
+  const { page } = await openPhone(t);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.office.receive({ t: 'snapshot', cols: 40, rows: 14, data: ('BIRD\r\n' + 'line\r\n'.repeat(100)).repeat(3) });
+    w.office.receive({ t: 'search', query: 'BIRD', request: 11 });
+  });
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 3 && !m.searching));
+  await page.evaluate(() => {
+    const w = window as any;
+    w.office.receive({ t: 'data', data: '\x1b[?2026h\r\n' });
+    w.office.receive({ t: 'match', direction: 1 });
+    w.office.receive({ t: 'bottom' });
+    w.office.receive({ t: 'data', data: 'BIRD\r\n\x1b[?2026l' });
+  });
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 4 && !m.searching));
+  const result = await page.evaluate(async () => {
+    await new Promise(requestAnimationFrame);
+    const root = document.querySelector('.office-wterm')!;
+    const m = (window as any).posted.filter((m: any) => m.t === 'matches').at(-1);
+    return [m.active, root.scrollHeight - root.clientHeight - root.scrollTop];
+  });
+  assert.deepEqual(result, [0, 0]);
+});
+
+test('reader gestures supersede pending Find steps without closing Find', browserTest, async (t) => {
+  for (const gesture of [
+    'wheel',
+    'touch',
+    'horizontal wheel',
+    'zoom wheel',
+    'horizontal swipe',
+    'horizontal wobble',
+    'L-shaped swipe',
+    'wheel at top',
+    'swipe at top',
+    'pan after pinch',
+    'single flick after pinch',
+    'horizontal after outside pinch',
+    'two-finger squeeze',
+  ] as const) {
+    await t.test(gesture, async (t) => {
+      const { page, context } = await openPhone(t);
+      const root = page.locator('.office-wterm');
+      const cdp = await context.newCDPSession(page);
+      await page.evaluate(() => {
+        const w = window as any;
+        w.posted.length = 0;
+        w.office.receive({ t: 'snapshot', cols: 40, rows: 14, data: ('BIRD\r\n' + 'line\r\n'.repeat(100)).repeat(3) });
+        w.office.receive({ t: 'search', query: 'BIRD', request: 11 });
+      });
+      await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 3 && !m.searching));
+      const initialTop = gesture === 'horizontal wobble' ? 350 : 0;
+      await root.evaluate(async (el, top) => {
+        el.scrollTop = top;
+        await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+        const w = window as any;
+        w.office.receive({ t: 'data', data: '\x1b[?2026h\r\n' });
+        w.office.receive({ t: 'match', direction: 1 });
+      }, initialTop);
+      if (gesture === 'zoom wheel') {
+        await root.evaluate((el) => el.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY: 180, bubbles: true })));
+      } else if (gesture.includes('wheel')) {
+        await page.mouse.move(120, 200);
+        await page.mouse.wheel(gesture === 'horizontal wheel' ? 180 : 0, gesture === 'horizontal wheel' ? 0 : gesture === 'wheel at top' ? -180 : 180);
+      } else if (gesture.includes('pinch') || gesture === 'two-finger squeeze') {
+        const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', touchPoints: { id: number; x: number; y: number }[]) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
+        const first = { id: 1, x: 120, y: 360 };
+        // The second contact can land in the 8px margin outside the scrollport.
+        const second = { id: 2, x: gesture === 'horizontal after outside pinch' ? 3 : 280, y: 240 };
+        await touch('touchStart', [first]);
+        await touch('touchStart', [first, second]);
+        if (gesture === 'horizontal after outside pinch' || gesture === 'two-finger squeeze') {
+          first.y -= 72;
+          second.y += 24;
+          await touch('touchMove', [first, second]);
+        }
+        await touch('touchEnd', [second]);
+        if (gesture === 'single flick after pinch') {
+          first.y -= 85;
+          await touch('touchMove', [first]);
+        } else if (gesture !== 'two-finger squeeze') {
+          for (let i = 0; i < 4; i++) {
+            if (gesture === 'pan after pinch') first.y -= 30;
+            else first.x += 10;
+            await touch('touchMove', [first]);
+          }
+        }
+        await touch('touchEnd', []);
+      } else if (gesture === 'horizontal wobble' || gesture === 'L-shaped swipe') {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 120, y: 320 }] });
+        const moves =
+          gesture === 'horizontal wobble'
+            ? [
+                [180, 320],
+                [180, 319],
+                [225, 319],
+                [270, 319],
+              ]
+            : [
+                [270, 320],
+                [270, 220],
+              ];
+        for (const [x, y] of moves) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      } else {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 120, y: 300 }] });
+        const point = gesture === 'horizontal swipe' ? { x: 200, y: 300 } : { x: 120, y: gesture === 'swipe at top' ? 380 : 220 };
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      }
+      if (gesture === 'wheel' || gesture === 'touch' || gesture === 'pan after pinch' || gesture === 'single flick after pinch')
+        await page.waitForFunction(() => document.querySelector('.office-wterm')!.scrollTop > 0, undefined, { timeout: 2000 });
+      else if (!gesture.includes('pinch') && gesture !== 'two-finger squeeze' && gesture !== 'L-shaped swipe')
+        assert.equal(
+          await root.evaluate(async (el) => {
+            await new Promise(requestAnimationFrame);
+            return el.scrollTop;
+          }),
+          initialTop,
+        );
+      assert.equal(await page.evaluate(() => (window as any).posted.some((m: any) => m.t === 'matches' && m.active > 0)), false);
+      await page.evaluate(() => (window as any).office.receive({ t: 'data', data: 'BIRD\r\n\x1b[?2026l' }));
+      await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 4 && !m.searching));
+      assert.equal(await page.evaluate(() => (window as any).posted.filter((m: any) => m.t === 'matches').at(-1).active), gesture.startsWith('horizontal') || gesture === 'zoom wheel' || gesture === 'two-finger squeeze' ? 1 : 0);
+    });
+  }
+});
+
+test('only Find presses after the last reader action apply to refreshed results', browserTest, async (t) => {
+  for (const [action, expected] of [
+    ['output at tail', 1],
+    ['Find reveal', 1],
+    ['prompt', 0],
+    ['Latest then Previous', 3],
+  ] as const) {
+    await t.test(action, async (t) => {
+      const { page } = await openPhone(t);
+      await page.evaluate(() => {
+        const w = window as any;
+        w.office.receive({ t: 'snapshot', cols: 40, rows: 14, data: ('\x1b]133;A\x07BIRD\r\n' + 'line\r\n'.repeat(100)).repeat(3) });
+        w.office.receive({ t: 'search', query: 'BIRD', request: 11 });
+      });
+      await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 3 && !m.searching));
+      const before = await page.evaluate(async (action) => {
+        const w = window as any;
+        const root = document.querySelector('.office-wterm')!;
+        w.office.receive({ t: 'bottom' });
+        await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+        const tail = root.scrollTop;
+        if (action === 'Find reveal') w.office.receive({ t: 'match', direction: 1 });
+        const initial = root.scrollTop;
+        w.office.receive({ t: 'data', data: '\x1b[?2026h\r\n' });
+        w.office.receive({ t: 'match', direction: 1 });
+        if (action === 'prompt') w.office.receive({ t: 'prompt', direction: -1 });
+        if (action === 'Latest then Previous') {
+          w.office.receive({ t: 'bottom' });
+          w.office.receive({ t: 'match', direction: -1 });
+        }
+        await new Promise(requestAnimationFrame);
+        w.office.receive({ t: 'data', data: 'BIRD\r\n\x1b[?2026l' });
+        return [tail, initial];
+      }, action);
+      assert.ok(before[0] > 0);
+      if (action === 'Find reveal') assert.ok(before[1] < before[0]);
+      await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 4 && !m.searching));
+      assert.equal(await page.evaluate(() => (window as any).posted.filter((m: any) => m.t === 'matches').at(-1).active), expected);
+    });
+  }
+});
+
 test('Raw TTY keeps program colors, opaque reverse-video ink and inert links on every artwork ground', browserTest, async (t) => {
   const { page } = await openPhone(t);
   const send = (msg: Record<string, unknown>) => page.evaluate((m) => (window as any).office.receive(m), msg);

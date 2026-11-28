@@ -103,7 +103,7 @@ internal fun TerminalFindBar(nav: TerminalNavigation) {
         onStep = { nav.page?.send(TermPage.navigate(false, it > 0)) }, onClose = nav::close, terminal = true,
         status = when {
             nav.query.isEmpty() -> ""
-            matches.searching -> "Searching…"
+            matches.searching && matches.count == 0 -> "Searching…"
             matches.limited -> "${matches.active + 1} of ${matches.count}+"
             else -> null
         },

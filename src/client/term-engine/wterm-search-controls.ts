@@ -5,6 +5,10 @@ import type { SearchOptions, SearchState, WTerm } from '@wterm/dom';
 export const searchStarting = 'office-terminal-search-starting';
 
 const externalControls = new WeakSet<WTermAdapter>();
+// Each native step can reveal a row and notify a mobile bridge synchronously.
+const maxStepsPerRefresh = 8;
+const overlayThumbHitWidth = 14; // CSS pixels hit by the expanded thin overlay thumb on macOS Chromium.
+const touchSlop = 8; // Platform touch slop in CSS pixels, measured from the start of a single-finger phase.
 /** Native shells provide their own controls and own WTerm.onSearchChange. Call before open(). */
 export function useNativeSearchControls(adapter: WTermAdapter) {
   externalControls.add(adapter);
@@ -20,9 +24,109 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
   let awaitingMatch = false;
   let revealed = false;
   let restore: (() => void) | undefined;
+  let finished: SearchState | undefined;
+  let lastSent: SearchState | undefined;
+  let steps: number | undefined; // Zero is an accepted round trip that must still reveal its match.
+  let queuedRevision = 0;
+  let applyingSteps = false;
+  // A normal pan need not supersede an adapter restore or change its revision.
+  // Listen for reader input, not scroll events from output or Find's own reveal.
+  const passive = { passive: true, signal };
+  // Vertical intent counts even at a scroll bound; horizontal gestures and zoom do not.
+  const vertical = (dx: number, dy: number) => dy !== 0 && Math.abs(dy) >= Math.abs(dx);
+  el.parentElement?.addEventListener(
+    'wheel',
+    (e) => {
+      if (steps !== undefined && !e.ctrlKey && vertical(e.deltaX, e.deltaY) && e.composedPath().includes(el)) steps = undefined;
+    },
+    { ...passive, capture: true },
+  ); // Mouse tracking can stop propagation at the terminal.
+  let touchAnchor: Touch | undefined;
+  const sampleTouch = (e: TouchEvent) => {
+    const p = e.touches.length === 1 ? e.touches[0] : undefined;
+    if (e.type !== 'touchmove' || !p || touchAnchor?.identifier !== p.identifier) touchAnchor = p;
+    else if (Math.abs(p.clientY - touchAnchor.clientY) >= touchSlop) steps = undefined;
+  };
+  for (const name of ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const) el.addEventListener(name, sampleTouch, passive);
+  let thumbTop: number | undefined;
+  const checkThumb = () => {
+    if (thumbTop !== undefined && thumbTop !== el.scrollTop) {
+      steps = undefined;
+      thumbTop = el.scrollTop;
+    }
+  };
+  el.addEventListener('scroll', checkThumb, passive);
+  window.addEventListener(
+    'pointerup',
+    () => {
+      checkThumb();
+      thumbTop = undefined;
+    },
+    { ...passive, capture: true },
+  );
+  window.addEventListener(
+    'pointercancel',
+    () => {
+      thumbTop = undefined;
+    },
+    { ...passive, capture: true },
+  );
+  el.addEventListener(
+    'pointerdown',
+    (event) => {
+      thumbTop = undefined;
+      if (!opened || event.button !== 0 || event.target !== el) return;
+      const fromEnd = el.getBoundingClientRect().left + el.clientLeft + el.clientWidth - event.clientX;
+      if (fromEnd <= 0) steps = undefined;
+      // Overlay scrollbars hit the scrollport itself, inside clientWidth. Only a drag, not a click, moves it.
+      else if (event.pointerType === 'mouse' && fromEnd <= overlayThumbHitWidth && el.offsetWidth === el.clientWidth) thumbTop = el.scrollTop;
+    },
+    passive,
+  );
+  const display = (state: SearchState) => (state.searching ? (finished ?? state) : state);
+  const step = (direction: 1 | -1) => {
+    const moved = direction === 1 ? native.findNext() : native.findPrevious();
+    adapter.cancelReaderRestore(moved);
+    return moved;
+  };
+  const navigate = (direction: 1 | -1) => {
+    if (!opened) return false;
+    if (!finished || !native.getSearchState().searching) return step(direction);
+    if (!finished.count) return false;
+    if (queuedRevision !== adapter.navigationRevision) steps = undefined;
+    const next = (steps ?? 0) + direction;
+    if (Math.abs(next) > maxStepsPerRefresh) return false;
+    queuedRevision = adapter.navigationRevision;
+    if (thumbTop !== undefined) thumbTop = el.scrollTop;
+    steps = next;
+    return true;
+  };
+  const replay = (state: SearchState) => {
+    if (state.searching || steps === undefined) return state;
+    const pending = steps;
+    steps = undefined;
+    if (!state.count || queuedRevision !== adapter.navigationRevision) return state;
+    applyingSteps = true;
+    try {
+      const remaining = pending % state.count;
+      if (remaining) {
+        for (let i = 0; i < Math.abs(remaining); i++) step(remaining > 0 ? 1 : -1);
+      } else {
+        // A whole lap still reveals the selected match.
+        step(1);
+        if (state.count > 1) step(-1);
+      }
+      return native.getSearchState();
+    } finally {
+      applyingSteps = false;
+    }
+  };
   const close = (restorePosition: boolean) => {
     if (!opened) return;
     opened = false;
+    finished = undefined;
+    steps = undefined;
+    lastSent = undefined;
     awaitingMatch = false;
     native.clearSearch();
     if (restorePosition && revealed && restore) {
@@ -35,6 +139,14 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
   const release = () => close(false);
   el.addEventListener(searchStarting, release, { signal });
   const reset = adapter.onReset(release);
+  // A live RIS is handled by the parser, not by adapter.reset(). Observe it
+  // before the adapter forwards it, including when ESC and c arrive separately.
+  const ris = adapter.parser.registerEscHandler({ final: 'c' }, () => {
+    finished = lastSent = undefined;
+    steps = undefined;
+    restore = undefined;
+    return false;
+  });
   native.onSearchChange = (state) => {
     // Search can finish in a later paint. An empty or unsuccessful query
     // never took the viewport away from a stationary reader.
@@ -43,14 +155,33 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
       revealed = true;
       adapter.cancelReaderRestore();
     }
-    callbacks.onChange?.(state);
+    // Writes invalidate WTerm's match list before its asynchronous rescan.
+    // Keep the last completed result visible, but navigate only on fresh matches.
+    if (opened && !state.searching) finished = state;
+    if (applyingSteps) return;
+    const shown = display(replay(state));
+    if (
+      !lastSent ||
+      shown.query !== lastSent.query ||
+      shown.caseSensitive !== lastSent.caseSensitive ||
+      shown.count !== lastSent.count ||
+      shown.activeIndex !== lastSent.activeIndex ||
+      shown.searching !== lastSent.searching ||
+      shown.limited !== lastSent.limited
+    ) {
+      lastSent = shown;
+      callbacks.onChange?.(shown);
+    }
   };
   signal.addEventListener(
     'abort',
     () => {
       opened = false;
+      steps = undefined;
+      finished = undefined;
       restore = undefined;
       reset.dispose();
+      ris.dispose();
       native.onSearchChange = null;
     },
     { once: true },
@@ -66,23 +197,19 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
     },
     setQuery(query: string, options?: SearchOptions) {
       if (!opened) return;
+      const previous = native.getSearchState();
+      lastSent = undefined; // Explicit host requests need a reply, even for the same text.
+      if (previous.query !== query || previous.caseSensitive !== (options?.caseSensitive ?? false)) {
+        steps = undefined;
+        finished = undefined;
+      }
       adapter.cancelReaderRestore(false);
       awaitingMatch = !!query;
       native.search(query, options);
     },
-    next() {
-      if (!opened) return false;
-      const moved = native.findNext();
-      adapter.cancelReaderRestore(moved);
-      return moved;
-    },
-    previous() {
-      if (!opened) return false;
-      const moved = native.findPrevious();
-      adapter.cancelReaderRestore(moved);
-      return moved;
-    },
+    next: () => navigate(1),
+    previous: () => navigate(-1),
     close: () => close(true),
-    getState: () => native.getSearchState(),
+    getState: () => display(native.getSearchState()),
   };
 }

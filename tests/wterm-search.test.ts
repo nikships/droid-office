@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright-core';
 import { createServer } from 'vite';
-import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
+import { browserStatus, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 
 test('native terminal search, working directory and read-only snapshots in Chromium', { skip: !browserStatus().installed }, async (t) => {
@@ -26,8 +27,9 @@ test('native terminal search, working directory and read-only snapshots in Chrom
   await vite.listen();
   const addr = vite.httpServer!.address();
   assert.ok(addr && typeof addr === 'object');
-  const browser = await launchBrowser();
-  t.after(closeBrowser);
+  // Find must also respect a real native thumb. Playwright hides it by default.
+  const browser = await chromium.launch({ executablePath: browserStatus().executable, chromiumSandbox: true, ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--disable-features=OverlayScrollbar'] });
+  t.after(() => browser.close());
   const context = await newIsolatedContext(browser);
   t.after(() => context.close());
   const page = await context.newPage();
@@ -69,6 +71,236 @@ test('native terminal search, working directory and read-only snapshots in Chrom
   const find = page.locator('#host input[aria-label="Find in terminal"]');
   const frame = () => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
   await frame();
+  await t.test('Find keeps its count and accepts a step between a write and the refreshed scan', async () => {
+    const rig = await page.evaluateHandle(async () => {
+      const path = '/term-engine/web-terminal.ts';
+      const { createWebTerminal } = await import(path);
+      const host = document.createElement('div');
+      host.className = 'host';
+      document.body.append(host);
+      const { term } = createWebTerminal({ fontSize: 14 });
+      await term.open(host);
+      term.resize(48, 5);
+      term.write('one BIRD\r\ntwo BIRD\r\nthree BIRD\r\n');
+      host.querySelector<HTMLButtonElement>('.wterm-search-panel button')!.click();
+      const field = host.querySelector<HTMLInputElement>('.wterm-search-bar input')!;
+      field.value = 'BIRD';
+      field.dispatchEvent(new Event('input'));
+      return { term, host };
+    });
+    try {
+      await page.waitForFunction(({ term }) => term.native.getSearchState().count === 3 && !term.native.getSearchState().searching, rig);
+      const during = await rig.evaluate(({ term, host }) => {
+        term.write('four BIRD\r\n');
+        const next = host.querySelector<HTMLButtonElement>('button[title="Next match (Enter)"]')!;
+        const value = { label: host.querySelector('[role=status]')!.textContent, disabled: next.disabled };
+        next.click();
+        return value;
+      });
+      await page.waitForFunction(({ term }) => term.native.getSearchState().count === 4 && !term.native.getSearchState().searching, rig);
+      const refreshed = await rig.evaluate(({ host }) => host.querySelector('[role=status]')!.textContent);
+      assert.deepEqual({ ...during, refreshed }, { label: '1 of 3', disabled: false, refreshed: '2 of 4' });
+
+      const transitions = await rig.evaluate(async ({ term, host }) => {
+        const next = host.querySelector<HTMLButtonElement>('button[title="Next match (Enter)"]')!;
+        const prev = host.querySelector<HTMLButtonElement>('button[title="Previous match (Shift+Enter)"]')!;
+        const label = () => host.querySelector('[role=status]')!.textContent;
+        const edit = (query: string) => {
+          const field = host.querySelector('input')!;
+          field.value = query;
+          field.dispatchEvent(new Event('input'));
+        };
+        const settled = async () => {
+          while (term.native.getSearchState().searching) await new Promise(requestAnimationFrame);
+          return label();
+        };
+        const moves: number[] = [];
+        for (const [method, dir] of [
+          ['findNext', 1],
+          ['findPrevious', -1],
+        ] as const) {
+          const apply = term.native[method].bind(term.native);
+          term.native[method] = () => {
+            moves.push(dir);
+            return apply();
+          };
+        }
+        term.write('more\r\n');
+        prev.click();
+        term.write('and more\r\n');
+        next.click();
+        next.click();
+        const ordered = await settled();
+        const compacted = moves.splice(0);
+        term.write('again\r\n');
+        for (let i = 0; i < 100; i++) next.click();
+        const bounded = await settled();
+        const burst = moves.splice(0);
+        term.write('opposites\r\n');
+        next.click();
+        prev.click();
+        await settled();
+        const wholeLap = moves.splice(0);
+        term.write('line\r\n');
+        next.click();
+        edit('NEW');
+        const newQuery = [label(), next.disabled];
+        const empty = await settled();
+        term.write('NEW NEW\r\n');
+        const lastEmpty = [label(), next.disabled];
+        const found = await settled();
+        term.write('line\r\n');
+        prev.click();
+        host.querySelector<HTMLButtonElement>('button[title="Close search (Esc)"]')!.click();
+        host.querySelector<HTMLButtonElement>('.wterm-search-panel button')!.click();
+        edit('NEW');
+        return { ordered, compacted, bounded, burst, wholeLap, moves, newQuery, empty, lastEmpty, found, reopened: await settled() };
+      });
+      assert.deepEqual(transitions, {
+        ordered: '2 of 4',
+        compacted: [1],
+        bounded: '1 of 4',
+        burst: [1, -1],
+        wholeLap: [1, -1],
+        moves: [],
+        newQuery: ['Searching…', true],
+        empty: 'No matches',
+        lastEmpty: ['No matches', true],
+        found: '1 of 2',
+        reopened: '1 of 2',
+      });
+    } finally {
+      await rig.evaluate(({ term, host }) => {
+        term.dispose();
+        host.remove();
+        (window as any).hostRig.term.focus();
+      });
+      await rig.dispose();
+    }
+  });
+  for (const overlay of [false, true])
+    await t.test(`${overlay ? 'overlay' : 'classic'} thumb and mouse-tracking history wheel supersede queued Find steps`, async (t) => {
+      const pane = overlay
+        ? await (async () => {
+            const b = await chromium.launch({ executablePath: browserStatus().executable, chromiumSandbox: true, ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--enable-features=OverlayScrollbar'] });
+            t.after(() => b.close());
+            const p = await b.newPage();
+            await p.route('**/overlay', (r) => r.fulfill({ contentType: 'text/html', body: '<!doctype html><link rel="stylesheet" href="/style.css">' }));
+            await p.addInitScript('window.__name = fn => fn');
+            await p.goto(`http://127.0.0.1:${addr.port}/overlay`);
+            return p;
+          })()
+        : page;
+      const rig = await pane.evaluateHandle(async () => {
+        const path = '/term-engine/web-terminal.ts';
+        const { createWebTerminal } = await import(path);
+        const host = document.createElement('div');
+        host.style.cssText = 'position:fixed;inset:0;width:480px;height:320px;z-index:10000';
+        document.body.append(host);
+        const { term } = createWebTerminal({ scrollback: 1000 });
+        await term.open(host);
+        term.resize(48, 12);
+        term.write(('BIRD\r\n' + 'line\r\n'.repeat(100)).repeat(3));
+        host.querySelector<HTMLButtonElement>('.wterm-search-panel button')!.click();
+        const field = host.querySelector<HTMLInputElement>('.wterm-search-bar input')!;
+        field.value = 'BIRD';
+        field.dispatchEvent(new Event('input'));
+        return { term, host };
+      });
+      try {
+        await pane.waitForFunction(({ term }) => !term.native.getSearchState().searching && term.native.getSearchState().count === 3, rig);
+        // Reveal the native overlay thumb with reader input before trying to grab it.
+        await pane.mouse.move(120, 100);
+        await pane.mouse.wheel(0, 180);
+        await pane.waitForFunction(({ term }) => term.native.element.scrollTop >= 100, rig);
+        const { x, y, gutter, initialTop } = await rig.evaluate(({ term, host }) => {
+          const el = term.native.element;
+          const rect = el.getBoundingClientRect();
+          term.write('\x1b[?2026h\r\n');
+          host.querySelector<HTMLButtonElement>('button[title="Next match (Enter)"]')!.click();
+          return { x: rect.right - 3, y: rect.top + ((el.scrollTop + el.clientHeight / 2) / el.scrollHeight) * el.clientHeight, gutter: el.offsetWidth - el.clientWidth, initialTop: el.scrollTop };
+        });
+        assert.ok(overlay ? gutter === 0 : gutter > 3, `Unexpected gutter: ${gutter}`);
+        await pane.mouse.move(x, y);
+        await pane.mouse.down();
+        if (overlay) {
+          await rig.evaluate(({ host }) => host.querySelector<HTMLInputElement>('.wterm-search-bar input')!.focus({ preventScroll: true }));
+          await pane.keyboard.press('Enter'); // The held thumb can still supersede this newer step.
+        }
+        await pane.mouse.move(x, y + 75, { steps: 5 });
+        await pane.mouse.up();
+        const position = await rig.evaluate(async ({ term }) => {
+          // The last compositor drag offset can reach the DOM after mouseup.
+          await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+          const pos = { top: term.native.element.scrollTop, refreshing: term.native.getSearchState().searching };
+          term.write('BIRD\r\n\x1b[?2026l');
+          return pos;
+        });
+        assert.ok(position.top > initialTop && position.refreshing, JSON.stringify(position));
+        await pane.waitForFunction(({ term }) => !term.native.getSearchState().searching && term.native.getSearchState().count === 4, rig);
+        assert.deepEqual(await rig.evaluate(({ term }) => [term.native.getSearchState().activeIndex, term.native.element.scrollTop]), [0, position.top]);
+        await rig.evaluate(({ term, host }) => {
+          term.write('\x1b[?1000h\x1b[?2026h\r\n');
+          host.querySelector<HTMLButtonElement>('button[title="Next match (Enter)"]')!.click();
+        });
+        await pane.mouse.move(120, 120);
+        await pane.mouse.wheel(0, 180);
+        await pane.waitForFunction(({ term, top }) => term.native.element.scrollTop > top, { term: await rig.getProperty('term'), top: position.top });
+        const wheeled = await rig.evaluate(({ term }) => {
+          const top = term.native.element.scrollTop;
+          term.write('BIRD\r\n\x1b[?2026l');
+          return top;
+        });
+        await pane.waitForFunction(({ term }) => !term.native.getSearchState().searching && term.native.getSearchState().count === 5, rig);
+        assert.deepEqual(await rig.evaluate(({ term }) => [term.native.getSearchState().activeIndex, term.native.element.scrollTop]), [0, wheeled]);
+        if (overlay) {
+          await rig.evaluate(({ term }) => term.write('\x1b[?1000l' + ('BIRD '.repeat(8) + '\r\n').repeat(400)));
+          await pane.waitForFunction(({ term }) => !term.native.getSearchState().searching && term.native.getSearchState().count > 3000, rig);
+          // An output-following scroll while the mouse is held in padding is not a thumb drag.
+          const origin = await rig.evaluate(async ({ term, host }) => {
+            term.scrollToBottom();
+            await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+            const el = term.native.element;
+            el.style.paddingLeft = '8px';
+            const rect = el.getBoundingClientRect();
+            const x = rect.left + 4,
+              y = rect.top + 100;
+            const target = document.elementFromPoint(x, y) === el;
+            term.write('\x1b[?2026h\r\n');
+            host.querySelector<HTMLButtonElement>('button[title="Next match (Enter)"]')!.click();
+            return { x, y, target, top: el.scrollTop };
+          });
+          assert.ok(origin.target, 'left padding must target the scrollport itself');
+          await pane.mouse.move(origin.x, origin.y);
+          await pane.mouse.down();
+          const followed = await rig.evaluate(async ({ term }) => {
+            const painted = new Promise<number>((done) => {
+              term.write('output\r\n'.repeat(32) + '\x1b[?2026l');
+              requestAnimationFrame(() => {
+                // More synchronized output arrives after the tail paints, before the search can finish.
+                term.write('\x1b[?2026h\r');
+                requestAnimationFrame(() => done(term.native.element.scrollTop));
+              });
+            });
+            const top = await painted;
+            term.write('\x1b[?2026l');
+            return top;
+          });
+          await pane.mouse.move(600, 400);
+          await pane.mouse.up();
+          assert.ok(followed > origin.top, `tail did not follow: ${origin.top}→${followed}`);
+          await pane.waitForFunction(({ term }) => !term.native.getSearchState().searching, rig);
+          assert.equal(await rig.evaluate(({ term }) => term.native.getSearchState().activeIndex), 1);
+        }
+      } finally {
+        await rig.evaluate(({ term, host }) => {
+          term.dispose();
+          host.remove();
+          (window as any).hostRig?.term.focus();
+        });
+        await rig.dispose();
+      }
+    });
   await t.test('only terminal rows and padding define the scroll range through clears, replay, reflow, Find and IME', async () => {
     const samples = await page.evaluate(async () => {
       const path = '/term-engine/web-terminal.ts';
@@ -485,6 +717,94 @@ test('native terminal search, working directory and read-only snapshots in Chrom
       return result;
     });
     assert.deepEqual(measured, [2, 0, 1, 0, 1, 0]);
+  });
+  await t.test('a new query can step partial native results; unchanged refreshes do not republish the count', async () => {
+    const result = await page.evaluate(async () => {
+      const load = (path: string) => import(path);
+      const [{ WTermAdapter }, { createWtermSearch, useNativeSearchControls }] = await Promise.all([load('/term-engine/wterm.ts'), load('/term-engine/wterm-search-controls.ts')]);
+      const term = new WTermAdapter({ scrollback: 2400 });
+      useNativeSearchControls(term);
+      const host = document.createElement('div');
+      document.body.append(host);
+      const events: { count: number; searching: boolean; activeIndex: number; query: string }[] = [];
+      try {
+        await term.open(host);
+        term.resize(60, 12);
+        term.write('match match history\r\n'.repeat(2000));
+        let search: ReturnType<typeof createWtermSearch>;
+        term.onOpen((native: unknown, signal: AbortSignal) => {
+          search = createWtermSearch(term, native, signal, { onChange: (s: (typeof events)[number]) => events.push(s) });
+        });
+        const native = term.native;
+        const report = native.onSearchChange;
+        const partial: number[] = [];
+        native.onSearchChange = (s: (typeof events)[number]) => {
+          report(s);
+          if (!partial.length && s.searching && s.count >= 2) {
+            partial.push(s.count, search.getState().count, events.at(-1)!.count);
+            partial.push(Number(search.next()), native.getSearchState().activeIndex);
+            Reflect.deleteProperty(performance, 'now');
+          }
+        };
+        // Force a slice boundary independent of machine speed; all matches and
+        // notifications still come from scanning the real Ghostty history.
+        let clock = performance.now();
+        Object.defineProperty(performance, 'now', { configurable: true, value: () => (clock += 5) });
+        search!.open();
+        search!.setQuery('match');
+        const settled = async () => {
+          while (native.getSearchState().searching) await new Promise(requestAnimationFrame);
+        };
+        await settled();
+        events.length = 0;
+        term.write('\r');
+        await settled(); // WTerm resets the index once, but not the completed count.
+        const afterIndexReset = events.splice(0).map((s) => [s.activeIndex, s.count]);
+        term.write('\r');
+        term.write('\r');
+        await settled();
+        const duplicates = events.length;
+        term.write('\r');
+        for (let i = 0; i < 1200; i++) search!.next();
+        await settled();
+        const capped = events.splice(0).map((s) => s.activeIndex);
+        const bursts = [];
+        for (const [matches, clicks] of [
+          [19, 10],
+          [21, 9],
+          [5, 7],
+        ]) {
+          const query = `burst${matches}`;
+          term.write(`\r\n${(query + ' ').repeat(matches)}`);
+          search!.setQuery(query);
+          await settled();
+          term.write('\r');
+          const accepted = Array.from({ length: clicks }, () => search!.next());
+          await settled();
+          bursts.push([accepted.filter(Boolean).length, search!.getState().activeIndex]);
+        }
+        events.length = 0;
+        search!.setQuery('absent');
+        const edited = [events[0]?.query, events[0]?.searching];
+        return { partial, afterIndexReset, duplicates, capped, bursts, edited };
+      } finally {
+        Reflect.deleteProperty(performance, 'now');
+        term.dispose();
+        host.remove();
+      }
+    });
+    const [raw, displayed, emitted, stepped, index] = result.partial;
+    assert.ok(raw >= 2);
+    assert.deepEqual([displayed, emitted, stepped, index], [raw, raw, 1, 1]);
+    assert.deepEqual(result.afterIndexReset, [[0, 4000]]);
+    assert.equal(result.duplicates, 0);
+    assert.deepEqual(result.capped, [8]); // One bridge emission, no intermediate indices.
+    assert.deepEqual(result.bursts, [
+      [8, 8],
+      [8, 8],
+      [7, 2],
+    ]);
+    assert.deepEqual(result.edited, ['absent', true]);
   });
   await t.test('externalLauncher omits the floating Find button and syncs toggleSearch/onOpenChange including before open', async () => {
     const measured = await page.evaluate(async () => {
