@@ -67,6 +67,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
             w.connectionStatus = fn;
             return () => {};
           },
+          onMessage: () => () => {},
         };
         w.snapshot = (data = '') => routeTerminalMessage({ t: 'term.snapshot', workerId: mode === 'shell' ? OFFICE_SHELL_ID : worker.id, data, cols: worker.cols, rows: worker.rows, shared });
         w.update = (cols = worker.cols, rows = worker.rows) => {
@@ -84,10 +85,40 @@ test('inline terminals follow pane geometry without focus or stale size rollback
         w.frames = async () => {
           for (let i = 0; i < 6; i++) await new Promise(requestAnimationFrame);
         };
+        // A layout observer runs after all rendering rAFs, including wterm's.
+        w.eachPaint = (sample: () => void) => {
+          const probe = document.createElement('div');
+          probe.style.position = 'fixed';
+          document.body.append(probe);
+          const observer = new ResizeObserver(sample);
+          observer.observe(probe);
+          let id = requestAnimationFrame(function tick() {
+            probe.style.width = probe.style.width === '1px' ? '2px' : '1px';
+            id = requestAnimationFrame(tick);
+          });
+          return () => {
+            cancelAnimationFrame(id);
+            observer.disconnect();
+            probe.remove();
+          };
+        };
+        w.aroundNextFitTask = (before?: () => void, after?: () => void) => {
+          const timer = window.setTimeout;
+          window.setTimeout = (fn: TimerHandler, delay?: number, ...args: unknown[]) => {
+            if (delay !== 0 || typeof fn !== 'function') return timer(fn, delay, ...args);
+            window.setTimeout = timer;
+            return timer(() => {
+              before?.();
+              fn(...args);
+              after?.();
+            }, 0);
+          };
+        };
         document.getElementById('focus')!.focus();
         if (mode === 'shell') openOfficeShell(w.net);
-        else if (mode === 'modal') {
-          worker.kind = 'shell';
+        else if (mode === 'modal' || mode === 'thread') {
+          if (mode === 'thread') localStorage.setItem('droid-office.desk-thread-view:pixel', 'raw');
+          else worker.kind = 'shell';
           openTerminal(w.net, worker.id);
         } else w.handle = openTerminal(w.net, worker.id, undefined, undefined, { mount, focus: false });
       },
@@ -112,26 +143,13 @@ test('inline terminals follow pane geometry without focus or stale size rollback
           w.update(w.term.cols, w.term.rows);
           w.messages = [];
           const frames: (string | number)[][] = [];
-          // Observe layout after all rAFs (including wterm's paint), before
-          // tasks for the next frame can run. Keep the probe out of the pane.
-          const probe = document.createElement('div');
-          probe.style.position = 'fixed';
-          document.body.append(probe);
-          const observer = new ResizeObserver(() => frames.push(sample()));
-          observer.observe(probe);
-          const collect = () => {
-            probe.style.width = probe.style.width === '1px' ? '2px' : '1px';
-            id = requestAnimationFrame(collect);
-          };
-          let id = requestAnimationFrame(collect);
+          const stop = w.eachPaint(() => frames.push(sample()));
           for (const px of sizes) {
             w.TerminalUI.setTermFontSize(px);
             await new Promise(requestAnimationFrame);
           }
           await w.frames();
-          cancelAnimationFrame(id);
-          observer.disconnect();
-          probe.remove();
+          stop();
           steps.push({ before, after: sample(), frames, sent: w.sizes(), px: sizes.at(-1) });
         }
         return steps;
@@ -708,22 +726,207 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     assert.deepEqual(sizes, [after.slice(1)]);
   });
 
-  await t.test('a second font step while the pane is concealed supersedes its pending step', async () => {
-    const page = await rig(false, false, false, 'dashboard');
+  for (const hide of [false, true]) {
+    await t.test(hide ? 'a concealed font step uses the first settled visible box' : 'a box change after observation supersedes the pending font fit', async () => {
+      const page = await rig(false, false, false, 'dashboard');
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      const result = await page.evaluate(async (hide) => {
+        const w = window as any;
+        const pane = document.querySelector<HTMLElement>('#mount')!;
+        const root: HTMLElement = w.term.native.element;
+        w.update(w.term.cols, w.term.rows);
+        w.messages = [];
+        const sample = () => [getComputedStyle(root.querySelector('.term-row')!).fontSize, w.term.cols, root.querySelectorAll('.term-row:not(.term-scrollback-row)').length];
+        const before = sample();
+        const paints: (string | number)[][] = [];
+        const stop = w.eachPaint(() => {
+          if (root.clientWidth) paints.push(sample());
+        });
+        // A layout task runs after the last box observation, immediately before
+        // the zero-delay fit commit. Interpose there, not at a guessed wall time.
+        w.aroundNextFitTask(() => {
+          if (hide) pane.style.display = 'none';
+          else pane.style.setProperty('--w', '.35');
+        });
+        w.TerminalUI.setTermFontSize(16);
+        await w.frames();
+        const hiddenFont = w.term.options.fontSize;
+        if (hide) pane.style.display = '';
+        await w.frames();
+        await w.frames();
+        stop();
+        return { before, hiddenFont, after: sample(), sizes: w.sizes(), paints, width: pane.style.getPropertyValue('--w') };
+      }, hide);
+      if (hide) assert.equal(result.hiddenFont, 14, 'keep the request, not just the old grid, while hidden');
+      else assert.equal(result.width, '.35');
+      assert.equal(result.after[0], '16px');
+      assert.deepEqual(result.sizes, [result.after.slice(1)]);
+      for (const frame of result.paints) assert.deepEqual(frame, frame[0] === '14px' ? result.before : result.after);
+    });
+  }
+
+  await t.test('typing during a shared font-only wait paints the live echo at the next frame', async () => {
+    const page = await rig(true);
     const result = await page.evaluate(async () => {
       const w = window as any;
-      const pane = document.querySelector<HTMLElement>('#mount')!;
-      pane.parentElement!.classList.add('resizing');
+      w.messages = [];
       w.TerminalUI.setTermFontSize(16);
-      pane.style.display = 'none';
+      w.term.input('x');
+      w.TerminalUI.routeTerminalMessage({ t: 'term.data', workerId: 'pixel', data: 'LIVE-ECHO' });
+      await new Promise(requestAnimationFrame);
+      const echo = w.term.native.element.querySelector('.term-grid').textContent.includes('LIVE-ECHO');
       await w.frames();
-      w.TerminalUI.setTermFontSize(18);
-      pane.style.display = '';
-      pane.parentElement!.classList.remove('resizing');
-      await w.frames();
-      return [w.term.options.fontSize, getComputedStyle(pane.querySelector('.term-row')!).fontSize];
+      return { echo, input: w.messages.filter((m: any) => m.t === 'term.input').map((m: any) => m.data), sizes: w.sizes() };
     });
-    assert.deepEqual(result, [18, '18px']);
+    assert.deepEqual(result.input, ['x']);
+    assert.ok(result.echo, 'do not hold output while coalescing a font choice');
+    assert.equal(result.sizes.length, 1);
+  });
+
+  await t.test('a scaled pane at a fractional column boundary fits once to the unscaled probe', async () => {
+    const page = await rig(false);
+    const result = await page.evaluate(async () => {
+      const w = window as any;
+      const root: HTMLElement = w.term.native.element;
+      const pane = document.getElementById('mount')!;
+      const probe = root.querySelector('.term-size-probe')!.cloneNode(true) as HTMLElement;
+      probe.style.fontSize = '16px';
+      root.append(probe);
+      const pitch = probe.getBoundingClientRect().width;
+      probe.remove();
+      const css = getComputedStyle(root);
+      const inset = pane.offsetWidth - root.clientWidth + parseFloat(css.paddingLeft) + parseFloat(css.paddingRight);
+      // Round offsetWidth *up* while leaving less than one layout pixel past
+      // the last column. A counter-scale based on offsetWidth loses that column.
+      let cols = 30;
+      for (; cols < 100; cols++) {
+        const fraction = (cols * pitch + inset) % 1;
+        if (fraction >= 0.5 && fraction < 0.8) break;
+      }
+      pane.style.width = `${cols * pitch + inset}px`;
+      pane.style.transform = 'scale(.83)';
+      await w.frames();
+      w.update(w.term.cols, w.term.rows);
+      w.messages = [];
+      w.TerminalUI.setTermFontSize(16);
+      await w.frames();
+      await w.frames();
+      return { cols, observed: w.term.observedDimensions, sizes: w.sizes() };
+    });
+    assert.ok(result.cols < 100);
+    assert.equal(result.observed.cols, result.cols);
+    assert.deepEqual(result.sizes, [[result.cols, result.observed.rows]]);
+  });
+
+  await t.test('a Boss Shell snapshot becoming ready between a font task and observation takes the new proposal', async () => {
+    const page = await rig(false, true, false, 'shell');
+    const result = await page.evaluate(async () => {
+      const w = window as any;
+      w.aroundNextFitTask(undefined, () => w.snapshot('ready'));
+      w.TerminalUI.setTermFontSize(16);
+      await w.frames();
+      await w.frames();
+      return { font: w.term.options.fontSize, actual: [w.term.cols, w.term.rows], observed: w.term.observedDimensions, sizes: w.sizes() };
+    });
+    assert.equal(result.font, 16);
+    assert.deepEqual(result.actual, [result.observed.cols, result.observed.rows]);
+    assert.deepEqual(result.sizes, [result.actual]);
+  });
+
+  await t.test('A+ from Thread returns to Raw without painting larger cells on the retained grid', async () => {
+    const page = await rig(false, false, false, 'thread');
+    await page.getByRole('button', { name: 'Thread', exact: true }).click();
+    await page.evaluate(() => (window as any).frames());
+    const result = await page.evaluate(async () => {
+      const w = window as any;
+      const root: HTMLElement = w.term.native.element;
+      w.update(w.term.cols, w.term.rows);
+      w.messages = [];
+      const paints: number[][] = [];
+      const stop = w.eachPaint(() => {
+        if (root.clientWidth && !root.classList.contains('replaying') && getComputedStyle(root.querySelector('.term-row')!).fontSize === '16px')
+          paints.push([w.term.cols, root.querySelectorAll('.term-row:not(.term-scrollback-row)').length]);
+      });
+      document.querySelector<HTMLButtonElement>('[aria-label="Bigger terminal text"]')!.click();
+      await w.frames();
+      await w.frames();
+      stop();
+      return { paints, sizes: w.sizes(), observed: w.term.observedDimensions };
+    });
+    const grid = [result.observed.cols, result.observed.rows];
+    assert.deepEqual(result.sizes, [grid]);
+    assert.ok(result.paints.length);
+    for (const actual of result.paints) assert.deepEqual(actual, grid);
+  });
+
+  await t.test('a second post-commit press paints both fitted grids without holding live output', async () => {
+    const page = await rig(false, false, false, 'modal');
+    const result = await page.evaluate(async () => {
+      const w = window as any;
+      const click = () => document.querySelector<HTMLButtonElement>('[aria-label="Bigger terminal text"]')!.click();
+      const send = w.net.send.bind(w.net);
+      let second = false;
+      w.net.send = (msg: any) => {
+        if (!second && msg.t === 'term.resize') {
+          second = true;
+          // Queue the second press after the commit returns, before any paint.
+          queueMicrotask(click);
+        }
+        return send(msg);
+      };
+      w.messages = [];
+      const root: HTMLElement = w.term.native.element;
+      const sample = () => [getComputedStyle(root.querySelector('.term-row')!).fontSize, w.term.cols, root.querySelectorAll('.term-row:not(.term-scrollback-row)').length];
+      const before = sample();
+      const paints: (string | number)[][] = [];
+      let firstEcho: boolean | undefined;
+      const stop = w.eachPaint(() => {
+        paints.push(sample());
+        if (!second) return;
+        if (firstEcho === undefined && paints.filter((p) => p[0] === '16px').length === 1) w.TerminalUI.routeTerminalMessage({ t: 'term.data', workerId: 'pixel', data: 'NEXT-ECHO' });
+        else if (firstEcho === undefined) firstEcho = root.querySelector('.term-grid')!.textContent.includes('NEXT-ECHO');
+      });
+      click();
+      await w.frames();
+      await w.frames();
+      stop();
+      return { before, paints, firstEcho, sizes: w.sizes() };
+    });
+    assert.equal(result.sizes.length, 2);
+    const [first, last] = result.sizes;
+    const layouts = [result.before, ['16px', ...first], ['18px', ...last]];
+    assert.deepEqual(
+      result.paints.filter((p, i, all) => i === 0 || p[0] !== all[i - 1][0]),
+      layouts,
+    );
+    for (const paint of result.paints)
+      assert.deepEqual(
+        paint,
+        layouts.find((layout) => layout[0] === paint[0]),
+      );
+    assert.equal(result.firstEcho, true, 'superseded font probe must not hold the next echo');
+    t.diagnostic(`post-commit press: ${JSON.stringify(layouts)}`);
+  });
+
+  await t.test('desk and shell buttons step from their own requested size after another tab changes its preference', async () => {
+    for (const mode of ['modal', 'shell']) {
+      const page = await rig(false, false, false, mode);
+      const other = await context.newPage();
+      await other.route(page.url(), (route) => route.fulfill({ contentType: 'text/html', body: '<title>Other tab</title>' }));
+      await other.goto(page.url());
+      await other.evaluate(() => localStorage.setItem('droid-office.term-font', '22'));
+      const result = await page.evaluate(async () => {
+        const w = window as any;
+        const before = [w.term.options.fontSize, localStorage.getItem('droid-office.term-font')];
+        const bigger = document.querySelector<HTMLButtonElement>('[aria-label="Bigger terminal text"]')!;
+        bigger.click();
+        bigger.click();
+        await w.frames();
+        return { before, after: w.term.options.fontSize };
+      });
+      await other.close();
+      assert.deepEqual(result, { before: [14, '22'], after: 18 });
+    }
   });
 
   for (const mode of ['inline', 'shell']) {

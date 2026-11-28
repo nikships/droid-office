@@ -3,7 +3,7 @@ import { h, toast } from './dom';
 
 /** Observe every box, but never reflow the shared program through a gesture's
  * intermediate boxes. Input bytes don't wait for the queued ownership claim. */
-export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: (claim: boolean, size?: WTermAdapter['observedDimensions']) => void, workspace?: Element | null) {
+export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: (claim: boolean, dimensions: () => WTermAdapter['observedDimensions']) => void, workspace?: Element | null) {
   let frame = 0;
   let task = 0;
   let settling = false;
@@ -11,14 +11,29 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
   let claim = false;
   let dragging = false;
   let fontSize: number | undefined;
-  let contentWidth: number | undefined;
+  let fontBox: { width: number; layout: string } | undefined;
+  let fontProbe: HTMLElement | undefined;
+  let cellWidth = 0;
   let fittedFont: WTermAdapter['observedDimensions'];
-  // Only sample while a font step is queued. The content box excludes the
-  // actual scrollbar and retains fractional CSS pixels even in a scaled pane.
-  const fontBox = new ResizeObserver(([entry]) => (contentWidth = entry.contentRect.width));
+  // The observer supplies exact unscaled content pixels. Compare its layout
+  // again in the commit task: another task can resize or hide the pane after
+  // the last observation. client sizes include scrollbar loss but round to
+  // integers, while the resolved CSS box retains fractional layout changes.
+  const layout = (el: HTMLElement) => {
+    const css = getComputedStyle(el);
+    return `${el.clientWidth}/${el.clientHeight}/${css.width}/${css.height}/${css.borderWidth}/${css.padding}`;
+  };
+  const fontObserver = new ResizeObserver((entries) => {
+    for (const { target, contentRect } of entries) {
+      if (target === fontProbe) cellWidth = contentRect.width;
+      else fontBox = contentRect.width && contentRect.height ? { width: contentRect.width, layout: layout(target as HTMLElement) } : undefined;
+    }
+    if (fontBox && cellWidth) settle();
+  });
   const cancel = () => {
     cancelAnimationFrame(frame);
     clearTimeout(task);
+    frame = task = 0;
   };
   // A stepped transition, or the rounded end of an easing curve, can produce
   // identical boxes for several frames before its last layout change.
@@ -35,18 +50,36 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
   const commit = () => {
     cancel();
     if (dragging || document.hidden) return;
-    if (settling && movingBox()) return settle();
-    settling = false;
+    if ((settling || fontSize !== undefined) && movingBox()) return settle();
     if (fontSize !== undefined && fontSize !== term.options.fontSize) {
-      term.options.fontSize = fontSize;
-      fittedFont = term.proposeDimensions(contentWidth);
+      const root = term.native!.element;
+      const box = fontBox;
+      if (!box || !cellWidth || !term.observedDimensions || layout(root) !== box.layout) {
+        // Re-arm even if the box returns to its previous size before the next
+        // observation. A zero box waits for reveal without publishing a fit.
+        fontBox = undefined;
+        fontObserver.unobserve(root);
+        fontObserver.observe(root);
+        return;
+      }
+      const px = fontSize;
       changed();
-      fit(claim, fittedFont);
-    } else if (pending) fit(claim);
+      // A disconnected mirror or a pending snapshot cannot apply a grid.
+      // Change the font only when its owner actually takes the proposal.
+      fit(claim, () => {
+        term.options.fontSize = px;
+        fittedFont = term.proposeDimensions(box.width, cellWidth);
+        return fittedFont;
+      });
+      if (term.options.fontSize !== px) return;
+    } else if (pending) fit(claim, () => fittedFont ?? term.observedDimensions);
     if (fontSize !== undefined) {
-      fontBox.disconnect();
-      fontSize = contentWidth = undefined;
+      fontObserver.disconnect();
+      fontProbe?.remove();
+      fontProbe = fontBox = fontSize = undefined;
+      cellWidth = 0;
     }
+    settling = false;
     pending = claim = false;
     term.setFitPending(false);
   };
@@ -67,7 +100,8 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     claim ||= typing;
     if (settling || dragging) {
       if (!document.hidden) term.setFitPending(true);
-    } else commit();
+    } else if (fontSize === undefined) return commit();
+    if (fontSize !== undefined && fontBox && !frame && !task) settle();
   };
   term.onFit((resized) => {
     const applied = fittedFont;
@@ -132,7 +166,8 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     signal.addEventListener(
       'abort',
       () => {
-        fontBox.disconnect();
+        fontObserver.disconnect();
+        fontProbe?.remove();
         observer.disconnect();
         geometry.disconnect();
         release();
@@ -140,20 +175,31 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
       { once: true },
     );
   });
+  const requestedFontSize = () => fontSize ?? term.options.fontSize;
   const setFontSize = (px: number) => {
-    if (px === (fontSize ?? term.options.fontSize)) return;
-    if (!term.native || (!term.observedDimensions && fontSize === undefined)) {
+    if (px === requestedFontSize()) return;
+    const root = term.native?.element;
+    const probe = root?.querySelector<HTMLElement>('.term-size-probe');
+    if (!root || !probe) {
       term.options.fontSize = px;
       return;
     }
     // Keep both the old font and the old grid until the last press (and any
     // simultaneous box gesture) settles. Native can render both in its next rAF.
     fontSize = px;
-    fontBox.observe(term.native.element);
-    settling = true;
-    settle();
+    // Observe the requested font on a duplicate of the native probe while
+    // the painted cells retain their old font. This width is unscaled even
+    // when a fractional CSS box rounds up in offsetWidth.
+    fontProbe ??= probe.cloneNode(true) as HTMLElement;
+    fontProbe.style.fontSize = `${px}px`;
+    if (!fontProbe.isConnected) root.append(fontProbe);
+    cancel();
+    cellWidth = 0;
+    fontObserver.unobserve(fontProbe);
+    fontObserver.observe(fontProbe);
+    fontObserver.observe(root);
   };
-  return { requestFit: request, setFontSize };
+  return { requestFit: request, setFontSize, requestedFontSize };
 }
 
 /** Opening never attaches to a PTY until the renderer is ready. Only an explicit
