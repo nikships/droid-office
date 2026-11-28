@@ -100,6 +100,51 @@ test('inline terminals follow pane geometry without focus or stale size rollback
   };
 
   for (const mode of ['inline', 'modal', 'shell']) {
+    await t.test(`${mode} paints a text-size step with its fitted grid, including a burst`, async () => {
+      const page = await rig(false, false, false, mode);
+      const results = await page.evaluate(async () => {
+        const w = window as any;
+        const root: HTMLElement = w.term.native.element;
+        const sample = () => [getComputedStyle(root.querySelector('.term-row')!).fontSize, root.querySelectorAll('.term-row:not(.term-scrollback-row)').length, w.term.cols];
+        const steps = [];
+        for (const sizes of [[16], [14], [16, 18, 20, 22, 24]]) {
+          const before = sample();
+          w.update(w.term.cols, w.term.rows);
+          w.messages = [];
+          const frames: (string | number)[][] = [];
+          // Observe layout after all rAFs (including wterm's paint), before
+          // tasks for the next frame can run. Keep the probe out of the pane.
+          const probe = document.createElement('div');
+          probe.style.position = 'fixed';
+          document.body.append(probe);
+          const observer = new ResizeObserver(() => frames.push(sample()));
+          observer.observe(probe);
+          const collect = () => {
+            probe.style.width = probe.style.width === '1px' ? '2px' : '1px';
+            id = requestAnimationFrame(collect);
+          };
+          let id = requestAnimationFrame(collect);
+          for (const px of sizes) {
+            w.TerminalUI.setTermFontSize(px);
+            await new Promise(requestAnimationFrame);
+          }
+          await w.frames();
+          cancelAnimationFrame(id);
+          observer.disconnect();
+          probe.remove();
+          steps.push({ before, after: sample(), frames, sent: w.sizes(), px: sizes.at(-1) });
+        }
+        return steps;
+      });
+      for (const { before, after, frames, sent, px } of results) {
+        assert.equal(after[0], `${px}px`);
+        assert.notEqual(before[2], after[2]);
+        assert.deepEqual(sent, [[after[2], after[1]]]);
+        assert.ok(frames.some((frame) => frame[0] === after[0]));
+        for (const frame of frames) assert.deepEqual(frame, frame[0] === before[0] ? before : after, 'no intermediate font or partially refitted grid');
+      }
+    });
+
     await t.test(`${mode} fits visible cells inside padding and refits shared views on layout and font changes`, async () => {
       const page = await rig(true, false, false, mode);
       assert.deepEqual(await page.evaluate(() => (window as any).sizes()), []);
@@ -635,6 +680,50 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     assert.deepEqual(sizes.bytes, ['a', 'b']);
     assert.deepEqual(sizes.during, []);
     assert.deepEqual(sizes.after, [sizes.expected]);
+  });
+
+  await t.test('stepping text size during a splitter drag keeps both font and grid until release', async () => {
+    const page = await rig(false, false, false, 'dashboard');
+    const { before, during, after, sizes } = await page.evaluate(async () => {
+      const w = window as any;
+      const pane = document.querySelector<HTMLElement>('#mount')!;
+      const layout = () => [w.term.options.fontSize, w.term.cols, w.term.rows];
+      const before = layout();
+      w.messages = [];
+      pane.parentElement!.classList.add('resizing');
+      pane.style.setProperty('--w', '.4');
+      w.TerminalUI.setTermFontSize(16);
+      await w.frames();
+      const during = { layout: layout(), sizes: w.sizes() };
+      pane.style.setProperty('--w', '.7');
+      pane.parentElement!.classList.remove('resizing');
+      // Releasing the handle also allows the pane's width transition to finish.
+      await new Promise(requestAnimationFrame);
+      await Promise.all(pane.getAnimations().map((animation) => animation.finished));
+      await w.frames();
+      return { before, during, after: layout(), sizes: w.sizes() };
+    });
+    assert.deepEqual(during, { layout: before, sizes: [] });
+    assert.equal(after[0], 16);
+    assert.deepEqual(sizes, [after.slice(1)]);
+  });
+
+  await t.test('a second font step while the pane is concealed supersedes its pending step', async () => {
+    const page = await rig(false, false, false, 'dashboard');
+    const result = await page.evaluate(async () => {
+      const w = window as any;
+      const pane = document.querySelector<HTMLElement>('#mount')!;
+      pane.parentElement!.classList.add('resizing');
+      w.TerminalUI.setTermFontSize(16);
+      pane.style.display = 'none';
+      await w.frames();
+      w.TerminalUI.setTermFontSize(18);
+      pane.style.display = '';
+      pane.parentElement!.classList.remove('resizing');
+      await w.frames();
+      return [w.term.options.fontSize, getComputedStyle(pane.querySelector('.term-row')!).fontSize];
+    });
+    assert.deepEqual(result, [18, '18px']);
   });
 
   for (const mode of ['inline', 'shell']) {

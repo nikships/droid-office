@@ -3,13 +3,19 @@ import { h, toast } from './dom';
 
 /** Observe every box, but never reflow the shared program through a gesture's
  * intermediate boxes. Input bytes don't wait for the queued ownership claim. */
-export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: (claim: boolean) => void, workspace?: Element | null) {
+export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: (claim: boolean, size?: WTermAdapter['observedDimensions']) => void, workspace?: Element | null) {
   let frame = 0;
   let task = 0;
   let settling = false;
   let pending = false;
   let claim = false;
   let dragging = false;
+  let fontSize: number | undefined;
+  let contentWidth: number | undefined;
+  let fittedFont: WTermAdapter['observedDimensions'];
+  // Only sample while a font step is queued. The content box excludes the
+  // actual scrollbar and retains fractional CSS pixels even in a scaled pane.
+  const fontBox = new ResizeObserver(([entry]) => (contentWidth = entry.contentRect.width));
   const cancel = () => {
     cancelAnimationFrame(frame);
     clearTimeout(task);
@@ -31,7 +37,16 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     if (dragging || document.hidden) return;
     if (settling && movingBox()) return settle();
     settling = false;
-    if (pending) fit(claim);
+    if (fontSize !== undefined && fontSize !== term.options.fontSize) {
+      term.options.fontSize = fontSize;
+      fittedFont = term.proposeDimensions(contentWidth);
+      changed();
+      fit(claim, fittedFont);
+    } else if (pending) fit(claim);
+    if (fontSize !== undefined) {
+      fontBox.disconnect();
+      fontSize = contentWidth = undefined;
+    }
     pending = claim = false;
     term.setFitPending(false);
   };
@@ -55,6 +70,11 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     } else commit();
   };
   term.onFit((resized) => {
+    const applied = fittedFont;
+    fittedFont = undefined;
+    // The font probe observes our own completed fit before paint. Do not
+    // suspend the program's subsequent redraw to fit the same cells again.
+    if (applied && applied.cols === term.observedDimensions?.cols && applied.rows === term.observedDimensions.rows && !settling) return;
     if (resized) changed();
     if (!document.hidden && (resized || movingBox())) {
       settling = true;
@@ -112,6 +132,7 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     signal.addEventListener(
       'abort',
       () => {
+        fontBox.disconnect();
         observer.disconnect();
         geometry.disconnect();
         release();
@@ -119,7 +140,20 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
       { once: true },
     );
   });
-  return request;
+  const setFontSize = (px: number) => {
+    if (px === (fontSize ?? term.options.fontSize)) return;
+    if (!term.native || (!term.observedDimensions && fontSize === undefined)) {
+      term.options.fontSize = px;
+      return;
+    }
+    // Keep both the old font and the old grid until the last press (and any
+    // simultaneous box gesture) settles. Native can render both in its next rAF.
+    fontSize = px;
+    fontBox.observe(term.native.element);
+    settling = true;
+    settle();
+  };
+  return { requestFit: request, setFontSize };
 }
 
 /** Opening never attaches to a PTY until the renderer is ready. Only an explicit

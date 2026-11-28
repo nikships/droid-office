@@ -283,6 +283,7 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
         openChanges(
           {
             send: (m: { t: string }) => {
+              if (m.t === 'term.resize') (window as any).logResized = true;
               if (m.t === 'worker.attach') queueMicrotask(() => routeChangesMessage({ t: 'term.snapshot', workerId: 'pixel', cols: 80, rows: 24, data: 'initial log' }));
               return true;
             },
@@ -299,6 +300,23 @@ test('wterm real WASM: open, ordered write/drain, reset, fixed-size resize and c
         assert.ok(await logHost.evaluate((el) => el.contains(document.activeElement)));
       };
       await focusLog();
+      const logStep = await root.evaluate(async (el) => {
+        const module = '/ui/term-font.ts';
+        const { setTermFontSize, termFontSize } = await import(module);
+        const old = termFontSize();
+        const sizes = [];
+        for (const px of [old + 2, old]) {
+          setTermFontSize(px);
+          await new Promise(requestAnimationFrame);
+          sizes.push([getComputedStyle(el.querySelector('.term-row')!).fontSize, el.querySelectorAll('.term-row:not(.term-scrollback-row)').length]);
+        }
+        return { old, sizes, resized: !!(window as any).logResized };
+      });
+      assert.deepEqual(logStep.sizes, [
+        [`${logStep.old + 2}px`, 24],
+        [`${logStep.old}px`, 24],
+      ]);
+      assert.equal(logStep.resized, false);
       await pane.evaluate(async () => {
         const ui = '/ui/changes.ts';
         (await import(ui)).routeChangesMessage({ t: 'term.data', workerId: 'pixel', data: `\x1b]133;A\x07logged prompt\r\n${'output\r\n'.repeat(120)}` });

@@ -7,6 +7,7 @@ export const TERM_FONT_STEP = 2;
 
 const storageKey = 'droid-office.term-font';
 const listeners = new Set<(px: number) => void>();
+let unsavedSize: number | undefined;
 
 function clampTermFont(px: number): number {
   if (!Number.isFinite(px)) return TERM_FONT_DEFAULT;
@@ -20,6 +21,7 @@ export function stepTermFont(px: number, dir: 1 | -1): number {
 
 /** The size a terminal opens at: the saved choice, else the default. */
 export function termFontSize(): number {
+  if (unsavedSize !== undefined) return unsavedSize;
   try {
     const saved = localStorage.getItem(storageKey);
     if (saved !== null) return clampTermFont(Number(saved));
@@ -33,8 +35,9 @@ export function setTermFontSize(px: number) {
   const size = clampTermFont(px);
   try {
     localStorage.setItem(storageKey, String(size));
+    unsavedSize = undefined;
   } catch {
-    // storage blocked
+    unsavedSize = size;
   }
   for (const fn of listeners) fn(size);
 }
