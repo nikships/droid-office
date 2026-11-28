@@ -91,7 +91,21 @@ test('Latest during a Find rescan keeps the tail and leaves Find open', browserT
 });
 
 test('reader gestures supersede pending Find steps without closing Find', browserTest, async (t) => {
-  for (const gesture of ['wheel', 'touch', 'horizontal wheel', 'zoom wheel', 'horizontal swipe', 'wheel at top', 'swipe at top', 'pan after pinch', 'horizontal after outside pinch', 'two-finger squeeze'] as const) {
+  for (const gesture of [
+    'wheel',
+    'touch',
+    'horizontal wheel',
+    'zoom wheel',
+    'horizontal swipe',
+    'horizontal wobble',
+    'L-shaped swipe',
+    'wheel at top',
+    'swipe at top',
+    'pan after pinch',
+    'single flick after pinch',
+    'horizontal after outside pinch',
+    'two-finger squeeze',
+  ] as const) {
     await t.test(gesture, async (t) => {
       const { page, context } = await openPhone(t);
       const root = page.locator('.office-wterm');
@@ -103,13 +117,14 @@ test('reader gestures supersede pending Find steps without closing Find', browse
         w.office.receive({ t: 'search', query: 'BIRD', request: 11 });
       });
       await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 3 && !m.searching));
-      await root.evaluate(async (el) => {
-        el.scrollTop = 0;
+      const initialTop = gesture === 'horizontal wobble' ? 350 : 0;
+      await root.evaluate(async (el, top) => {
+        el.scrollTop = top;
         await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
         const w = window as any;
         w.office.receive({ t: 'data', data: '\x1b[?2026h\r\n' });
         w.office.receive({ t: 'match', direction: 1 });
-      });
+      }, initialTop);
       if (gesture === 'zoom wheel') {
         await root.evaluate((el) => el.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY: 180, bubbles: true })));
       } else if (gesture.includes('wheel')) {
@@ -122,13 +137,16 @@ test('reader gestures supersede pending Find steps without closing Find', browse
         const second = { id: 2, x: gesture === 'horizontal after outside pinch' ? 3 : 280, y: 240 };
         await touch('touchStart', [first]);
         await touch('touchStart', [first, second]);
-        if (gesture !== 'pan after pinch') {
+        if (gesture === 'horizontal after outside pinch' || gesture === 'two-finger squeeze') {
           first.y -= 72;
           second.y += 24;
           await touch('touchMove', [first, second]);
         }
         await touch('touchEnd', [second]);
-        if (gesture !== 'two-finger squeeze') {
+        if (gesture === 'single flick after pinch') {
+          first.y -= 85;
+          await touch('touchMove', [first]);
+        } else if (gesture !== 'two-finger squeeze') {
           for (let i = 0; i < 4; i++) {
             if (gesture === 'pan after pinch') first.y -= 30;
             else first.x += 10;
@@ -136,20 +154,37 @@ test('reader gestures supersede pending Find steps without closing Find', browse
           }
         }
         await touch('touchEnd', []);
+      } else if (gesture === 'horizontal wobble' || gesture === 'L-shaped swipe') {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 120, y: 320 }] });
+        const moves =
+          gesture === 'horizontal wobble'
+            ? [
+                [180, 320],
+                [180, 319],
+                [225, 319],
+                [270, 319],
+              ]
+            : [
+                [270, 320],
+                [270, 220],
+              ];
+        for (const [x, y] of moves) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       } else {
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 120, y: 300 }] });
         const point = gesture === 'horizontal swipe' ? { x: 200, y: 300 } : { x: 120, y: gesture === 'swipe at top' ? 380 : 220 };
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point] });
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       }
-      if (gesture === 'wheel' || gesture === 'touch' || gesture === 'pan after pinch') await page.waitForFunction(() => document.querySelector('.office-wterm')!.scrollTop > 0, undefined, { timeout: 2000 });
-      else if (!gesture.includes('pinch') && gesture !== 'two-finger squeeze')
+      if (gesture === 'wheel' || gesture === 'touch' || gesture === 'pan after pinch' || gesture === 'single flick after pinch')
+        await page.waitForFunction(() => document.querySelector('.office-wterm')!.scrollTop > 0, undefined, { timeout: 2000 });
+      else if (!gesture.includes('pinch') && gesture !== 'two-finger squeeze' && gesture !== 'L-shaped swipe')
         assert.equal(
           await root.evaluate(async (el) => {
             await new Promise(requestAnimationFrame);
             return el.scrollTop;
           }),
-          0,
+          initialTop,
         );
       assert.equal(await page.evaluate(() => (window as any).posted.some((m: any) => m.t === 'matches' && m.active > 0)), false);
       await page.evaluate(() => (window as any).office.receive({ t: 'data', data: 'BIRD\r\n\x1b[?2026l' }));

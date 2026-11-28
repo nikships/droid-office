@@ -8,6 +8,7 @@ const externalControls = new WeakSet<WTermAdapter>();
 // Each native step can reveal a row and notify a mobile bridge synchronously.
 const maxStepsPerRefresh = 8;
 const overlayThumbHitWidth = 14; // CSS pixels hit by the expanded thin overlay thumb on macOS Chromium.
+const touchSlop = 8; // Platform touch slop in CSS pixels, measured from the start of a single-finger phase.
 /** Native shells provide their own controls and own WTerm.onSearchChange. Call before open(). */
 export function useNativeSearchControls(adapter: WTermAdapter) {
   externalControls.add(adapter);
@@ -40,17 +41,13 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
     },
     { ...passive, capture: true },
   ); // Mouse tracking can stop propagation at the terminal.
-  let previousTouch: Touch | undefined;
+  let touchAnchor: Touch | undefined;
   const sampleTouch = (e: TouchEvent) => {
     const p = e.touches.length === 1 ? e.touches[0] : undefined;
-    if (p && previousTouch?.identifier === p.identifier && vertical(p.clientX - previousTouch.clientX, p.clientY - previousTouch.clientY)) steps = undefined;
-    previousTouch = p;
+    if (e.type !== 'touchmove' || !p || touchAnchor?.identifier !== p.identifier) touchAnchor = p;
+    else if (Math.abs(p.clientY - touchAnchor.clientY) >= touchSlop) steps = undefined;
   };
-  const clearTouch = () => {
-    previousTouch = undefined;
-  };
-  for (const name of ['touchstart', 'touchmove'] as const) el.addEventListener(name, sampleTouch, passive);
-  for (const name of ['touchend', 'touchcancel'] as const) el.addEventListener(name, clearTouch, passive);
+  for (const name of ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const) el.addEventListener(name, sampleTouch, passive);
   let thumbTop: number | undefined;
   const checkThumb = () => {
     if (thumbTop !== undefined && thumbTop !== el.scrollTop) {
