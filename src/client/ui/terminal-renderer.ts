@@ -76,9 +76,8 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
         fittedFont = term.proposeDimensions(box.width, cellWidth);
         return fittedFont;
       });
-      if (term.options.fontSize !== px) return;
+      if (term.options.fontSize === px) clearFont();
     } else if (pending) fit(claim, () => fittedFont ?? term.observedDimensions);
-    if (fontSize !== undefined) clearFont();
     settling = false;
     pending = claim = false;
     term.setFitPending(false);

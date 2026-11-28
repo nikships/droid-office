@@ -867,6 +867,32 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     });
   }
 
+  await t.test('a declined font proposal releases the paint hold for a settled pane resize', async () => {
+    const page = await rig(true, true);
+    const result = await page.evaluate(async () => {
+      const w = window as any;
+      const holds: boolean[] = [];
+      const hold = w.term.setFitPending.bind(w.term);
+      w.term.setFitPending = (value: boolean) => {
+        holds.push(value);
+        hold(value);
+      };
+      w.resize(440, 350);
+      w.TerminalUI.setTermFontSize(16);
+      await w.frames();
+      await w.frames();
+      const waiting = { font: w.term.options.fontSize, sizes: w.sizes(), held: holds.at(-1) };
+      w.snapshot();
+      await w.frames();
+      await w.frames();
+      return { waiting, heldDuringResize: holds.includes(true), font: w.term.options.fontSize, grid: [w.term.cols, w.term.rows], sizes: w.sizes() };
+    });
+    assert.equal(result.heldDuringResize, true);
+    assert.deepEqual(result.waiting, { font: 14, sizes: [], held: false });
+    assert.equal(result.font, 16);
+    assert.deepEqual(result.sizes, [result.grid]);
+  });
+
   await t.test('A+ from Thread returns to Raw without painting larger cells on the retained grid', async () => {
     const page = await rig(false, false, false, 'thread');
     await page.getByRole('button', { name: 'Thread', exact: true }).click();
