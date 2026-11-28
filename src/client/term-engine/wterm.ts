@@ -64,6 +64,10 @@ export class WTermAdapter {
   private paintPending = false;
   private pendingRestore?: { appliedTop?: number };
   private readerRevision = 0;
+  /** Advances on explicit viewport navigation and scrolls that supersede a pending restore. */
+  get navigationRevision() {
+    return this.readerRevision;
+  }
   private keyHandler?: (e: KeyboardEvent) => boolean;
 
   constructor(
