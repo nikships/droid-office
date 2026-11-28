@@ -35,6 +35,12 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     clearTimeout(task);
     frame = task = 0;
   };
+  const clearFont = () => {
+    fontObserver.disconnect();
+    fontProbe?.remove();
+    fontProbe = fontBox = fontSize = undefined;
+    cellWidth = 0;
+  };
   // A stepped transition, or the rounded end of an easing curve, can produce
   // identical boxes for several frames before its last layout change.
   const movingBox = () => {
@@ -63,22 +69,16 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
         return;
       }
       const px = fontSize;
-      changed();
       // A disconnected mirror or a pending snapshot cannot apply a grid.
-      // Change the font only when its owner actually takes the proposal.
-      fit(claim, () => {
+      // Claim only this proposal, not the next snapshot if the owner declines.
+      fit(true, () => {
         term.options.fontSize = px;
         fittedFont = term.proposeDimensions(box.width, cellWidth);
         return fittedFont;
       });
       if (term.options.fontSize !== px) return;
     } else if (pending) fit(claim, () => fittedFont ?? term.observedDimensions);
-    if (fontSize !== undefined) {
-      fontObserver.disconnect();
-      fontProbe?.remove();
-      fontProbe = fontBox = fontSize = undefined;
-      cellWidth = 0;
-    }
+    if (fontSize !== undefined) clearFont();
     settling = false;
     pending = claim = false;
     term.setFitPending(false);
@@ -166,8 +166,7 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     signal.addEventListener(
       'abort',
       () => {
-        fontObserver.disconnect();
-        fontProbe?.remove();
+        clearFont();
         observer.disconnect();
         geometry.disconnect();
         release();
@@ -178,6 +177,12 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
   const requestedFontSize = () => fontSize ?? term.options.fontSize;
   const setFontSize = (px: number) => {
     if (px === requestedFontSize()) return;
+    if (px === term.options.fontSize) {
+      clearFont();
+      if (settling || dragging) settle();
+      else commit();
+      return;
+    }
     const root = term.native?.element;
     const probe = root?.querySelector<HTMLElement>('.term-size-probe');
     if (!root || !probe) {

@@ -833,6 +833,40 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     assert.deepEqual(result.sizes, [result.actual]);
   });
 
+  for (const [mode, resize] of [
+    ['shell', false],
+    ['inline', false],
+    ['inline', true],
+  ] as const) {
+    await t.test(`${mode} canceling an unaccepted font step ${resize ? 'preserves a genuine box claim' : 'preserves the shared grid'}`, async () => {
+      const page = await rig(true, true, false, mode);
+      const result = await page.evaluate(async (resize) => {
+        const w = window as any;
+        await new Promise<void>((resolve) => {
+          w.aroundNextFitTask(undefined, resolve);
+          w.TerminalUI.setTermFontSize(16);
+        });
+        const waiting = w.term.options.fontSize;
+        if (resize) {
+          w.resize(440, 350);
+          await w.frames();
+        }
+        w.TerminalUI.setTermFontSize(14);
+        const probes = w.term.native.element.querySelectorAll('.term-size-probe').length;
+        w.snapshot('shared');
+        await w.frames();
+        await w.frames();
+        return { waiting, probes, font: w.term.options.fontSize, grid: [w.term.cols, w.term.rows], fit: w.term.observedDimensions, sizes: w.sizes() };
+      }, resize);
+      const grid = resize ? [result.fit.cols, result.fit.rows] : [120, 40];
+      assert.deepEqual(result.sizes, resize ? [grid] : []);
+      assert.deepEqual(result.grid, grid);
+      assert.equal(result.waiting, 14);
+      assert.equal(result.font, 14);
+      assert.equal(result.probes, 1, 'the canceled measurement probe is removed immediately');
+    });
+  }
+
   await t.test('A+ from Thread returns to Raw without painting larger cells on the retained grid', async () => {
     const page = await rig(false, false, false, 'thread');
     await page.getByRole('button', { name: 'Thread', exact: true }).click();

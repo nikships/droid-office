@@ -321,7 +321,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
    */
   let adoptSharedSize = false;
   /** Sizes the shared PTY to this window, or this window to the shared PTY (see adoptSharedSize). */
-  const sendSize = (typing: boolean, dimensions: () => typeof term.observedDimensions) => {
+  const sendSize = (claim: boolean, dimensions: () => typeof term.observedDimensions) => {
     if (readOnly) {
       dimensions(); // Apply a queued font, but retain the shared PTY grid.
       const w = store.worker(workerId);
@@ -329,7 +329,7 @@ export function openTerminal(net: Net, workerId: string, onChanges?: () => void,
       return;
     }
     if (!mirror.ready || !opened || !net.up) return;
-    if (typing || paneSizeChanged) adoptSharedSize = false;
+    if (claim || paneSizeChanged) adoptSharedSize = false;
     paneSizeChanged = false;
     if (adoptSharedSize) {
       const w = store.worker(workerId);
@@ -766,13 +766,13 @@ export function openOfficeShell(net: Net) {
   const pendingSizes: string[] = [];
   let boxChanged = false;
 
-  const sendSize = (typing: boolean, dimensions: () => typeof term.observedDimensions) => {
+  const sendSize = (claim: boolean, dimensions: () => typeof term.observedDimensions) => {
     if (!mirror.ready || !opened || !net.up) return;
     if (term.options.disableStdin) {
       if (guestTokenOn()) dimensions(); // Guests, too, can change only the font.
       return;
     }
-    if (typing || boxChanged) shared = false;
+    if (claim || boxChanged) shared = false;
     boxChanged = false;
     if (shared) {
       if (ptyCols !== term.cols || ptyRows !== term.rows) term.resize(ptyCols, ptyRows);
