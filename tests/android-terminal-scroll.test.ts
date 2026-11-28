@@ -65,6 +65,110 @@ test('a streamed RIS drops pre-reset Find results and queued navigation', browse
   assert.deepEqual(await last(), { t: 'matches', active: 0, count: 2, searching: false, limited: false, request: 11 });
 });
 
+test('Latest during a Find rescan keeps the tail and leaves Find open', browserTest, async (t) => {
+  const { page } = await openPhone(t);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.office.receive({ t: 'snapshot', cols: 40, rows: 14, data: ('BIRD\r\n' + 'line\r\n'.repeat(100)).repeat(3) });
+    w.office.receive({ t: 'search', query: 'BIRD', request: 11 });
+  });
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 3 && !m.searching));
+  await page.evaluate(() => {
+    const w = window as any;
+    w.office.receive({ t: 'data', data: '\x1b[?2026h\r\n' });
+    w.office.receive({ t: 'match', direction: 1 });
+    w.office.receive({ t: 'bottom' });
+    w.office.receive({ t: 'data', data: 'BIRD\r\n\x1b[?2026l' });
+  });
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 4 && !m.searching));
+  const result = await page.evaluate(async () => {
+    await new Promise(requestAnimationFrame);
+    const root = document.querySelector('.office-wterm')!;
+    const m = (window as any).posted.filter((m: any) => m.t === 'matches').at(-1);
+    return [m.active, root.scrollHeight - root.clientHeight - root.scrollTop];
+  });
+  assert.deepEqual(result, [0, 0]);
+});
+
+test('reader gestures supersede pending Find steps without closing Find', browserTest, async (t) => {
+  for (const gesture of ['wheel', 'touch'] as const) {
+    await t.test(gesture, async (t) => {
+      const { page, context } = await openPhone(t);
+      const root = page.locator('.office-wterm');
+      const cdp = await context.newCDPSession(page);
+      await page.evaluate(() => {
+        const w = window as any;
+        w.posted.length = 0;
+        w.office.receive({ t: 'snapshot', cols: 40, rows: 14, data: ('BIRD\r\n' + 'line\r\n'.repeat(100)).repeat(3) });
+        w.office.receive({ t: 'search', query: 'BIRD', request: 11 });
+      });
+      await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 3 && !m.searching));
+      await root.evaluate(async (el) => {
+        el.scrollTop = 0;
+        await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+        const w = window as any;
+        w.office.receive({ t: 'data', data: '\x1b[?2026h\r\n' });
+        w.office.receive({ t: 'match', direction: 1 });
+      });
+      if (gesture === 'wheel') {
+        await page.mouse.move(120, 200);
+        await page.mouse.wheel(0, 180);
+      } else {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 120, y: 300 }] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 120, y: 220 }] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      }
+      await page.waitForFunction(() => document.querySelector('.office-wterm')!.scrollTop > 0, undefined, { timeout: 2000 });
+      assert.equal(await page.evaluate(() => (window as any).posted.some((m: any) => m.t === 'matches' && m.active > 0)), false);
+      await page.evaluate(() => (window as any).office.receive({ t: 'data', data: 'BIRD\r\n\x1b[?2026l' }));
+      await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 4 && !m.searching));
+      assert.equal(await page.evaluate(() => (window as any).posted.filter((m: any) => m.t === 'matches').at(-1).active), 0);
+    });
+  }
+});
+
+test('only Find presses after the last reader action apply to refreshed results', browserTest, async (t) => {
+  for (const [action, expected] of [
+    ['output at tail', 1],
+    ['Find reveal', 1],
+    ['prompt', 0],
+    ['Latest then Previous', 3],
+  ] as const) {
+    await t.test(action, async (t) => {
+      const { page } = await openPhone(t);
+      await page.evaluate(() => {
+        const w = window as any;
+        w.office.receive({ t: 'snapshot', cols: 40, rows: 14, data: ('\x1b]133;A\x07BIRD\r\n' + 'line\r\n'.repeat(100)).repeat(3) });
+        w.office.receive({ t: 'search', query: 'BIRD', request: 11 });
+      });
+      await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 3 && !m.searching));
+      const before = await page.evaluate(async (action) => {
+        const w = window as any;
+        const root = document.querySelector('.office-wterm')!;
+        w.office.receive({ t: 'bottom' });
+        await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+        const tail = root.scrollTop;
+        if (action === 'Find reveal') w.office.receive({ t: 'match', direction: 1 });
+        const initial = root.scrollTop;
+        w.office.receive({ t: 'data', data: '\x1b[?2026h\r\n' });
+        w.office.receive({ t: 'match', direction: 1 });
+        if (action === 'prompt') w.office.receive({ t: 'prompt', direction: -1 });
+        if (action === 'Latest then Previous') {
+          w.office.receive({ t: 'bottom' });
+          w.office.receive({ t: 'match', direction: -1 });
+        }
+        await new Promise(requestAnimationFrame);
+        w.office.receive({ t: 'data', data: 'BIRD\r\n\x1b[?2026l' });
+        return [tail, initial];
+      }, action);
+      assert.ok(before[0] > 0);
+      if (action === 'Find reveal') assert.ok(before[1] < before[0]);
+      await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 4 && !m.searching));
+      assert.equal(await page.evaluate(() => (window as any).posted.filter((m: any) => m.t === 'matches').at(-1).active), expected);
+    });
+  }
+});
+
 test('Raw TTY keeps program colors, opaque reverse-video ink and inert links on every artwork ground', browserTest, async (t) => {
   const { page } = await openPhone(t);
   const send = (msg: Record<string, unknown>) => page.evaluate((m) => (window as any).office.receive(m), msg);

@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { chromium } from 'playwright-core';
 import { createServer } from 'vite';
-import { browserStatus, closeBrowser, launchBrowser, newIsolatedContext } from '../src/server/whiteboard-browser.js';
+import { browserStatus, newIsolatedContext } from '../src/server/whiteboard-browser.js';
 import { ORCHESTRATOR_ID } from '../src/shared/mission-control.js';
 
 test('native terminal search, working directory and read-only snapshots in Chromium', { skip: !browserStatus().installed }, async (t) => {
@@ -26,8 +27,9 @@ test('native terminal search, working directory and read-only snapshots in Chrom
   await vite.listen();
   const addr = vite.httpServer!.address();
   assert.ok(addr && typeof addr === 'object');
-  const browser = await launchBrowser();
-  t.after(closeBrowser);
+  // Find must also respect a real native thumb. Playwright hides it by default.
+  const browser = await chromium.launch({ executablePath: browserStatus().executable, chromiumSandbox: true, ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--disable-features=OverlayScrollbar'] });
+  t.after(() => browser.close());
   const context = await newIsolatedContext(browser);
   t.after(() => context.close());
   const page = await context.newPage();
@@ -161,6 +163,54 @@ test('native terminal search, working directory and read-only snapshots in Chrom
         found: '1 of 2',
         reopened: '1 of 2',
       });
+    } finally {
+      await rig.evaluate(({ term, host }) => {
+        term.dispose();
+        host.remove();
+        (window as any).hostRig.term.focus();
+      });
+      await rig.dispose();
+    }
+  });
+  await t.test('dragging the native thumb supersedes a queued Find step', async () => {
+    const rig = await page.evaluateHandle(async () => {
+      const path = '/term-engine/web-terminal.ts';
+      const { createWebTerminal } = await import(path);
+      const host = document.createElement('div');
+      host.style.cssText = 'position:fixed;inset:0;width:480px;height:320px;z-index:10000';
+      document.body.append(host);
+      const { term } = createWebTerminal({ scrollback: 1000 });
+      await term.open(host);
+      term.resize(48, 12);
+      term.write(('BIRD\r\n' + 'line\r\n'.repeat(100)).repeat(3));
+      host.querySelector<HTMLButtonElement>('.wterm-search-panel button')!.click();
+      const field = host.querySelector<HTMLInputElement>('.wterm-search-bar input')!;
+      field.value = 'BIRD';
+      field.dispatchEvent(new Event('input'));
+      return { term, host };
+    });
+    try {
+      await page.waitForFunction(({ term }) => !term.native.getSearchState().searching && term.native.getSearchState().count === 3, rig);
+      const { x, y, gutter } = await rig.evaluate(({ term, host }) => {
+        const el = term.native.element;
+        const rect = el.getBoundingClientRect();
+        term.write('\x1b[?2026h\r\n');
+        host.querySelector<HTMLButtonElement>('button[title="Next match (Enter)"]')!.click();
+        return { x: rect.right - 3, y: rect.top + 5, gutter: el.offsetWidth - el.clientWidth };
+      });
+      assert.ok(gutter > 3, `No native scrollbar gutter: ${gutter}`);
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(x, y + 75, { steps: 5 });
+      await page.mouse.up();
+      const position = await rig.evaluate(({ term }) => {
+        const pos = { top: term.native.element.scrollTop, refreshing: term.native.getSearchState().searching };
+        term.write('BIRD\r\n\x1b[?2026l');
+        return pos;
+      });
+      assert.ok(position.top > 0 && position.refreshing, JSON.stringify(position));
+      await page.waitForFunction(({ term }) => !term.native.getSearchState().searching && term.native.getSearchState().count === 4, rig);
+      assert.deepEqual(await rig.evaluate(({ term }) => [term.native.getSearchState().activeIndex, term.native.element.scrollTop]), [0, position.top]);
     } finally {
       await rig.evaluate(({ term, host }) => {
         term.dispose();

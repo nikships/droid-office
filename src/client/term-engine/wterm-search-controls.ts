@@ -25,7 +25,23 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
   let finished: SearchState | undefined;
   let lastSent: SearchState | undefined;
   let steps = 0;
+  let queuedRevision = 0;
   let applyingSteps = false;
+  // A normal pan need not supersede an adapter restore or change its revision.
+  // Listen for reader input, not scroll events from output or Find's own reveal.
+  const dropSteps = () => {
+    steps = 0;
+  };
+  const passive = { passive: true, signal };
+  el.addEventListener('wheel', dropSteps, passive);
+  el.addEventListener('touchmove', dropSteps, passive);
+  el.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (steps && event.clientX - el.getBoundingClientRect().left >= el.clientLeft + el.clientWidth) dropSteps();
+    },
+    passive,
+  );
   const display = (state: SearchState) => (state.searching ? (finished ?? state) : state);
   const step = (direction: 1 | -1) => {
     const moved = direction === 1 ? native.findNext() : native.findPrevious();
@@ -36,6 +52,8 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
     if (!opened) return false;
     if (!finished || !native.getSearchState().searching) return step(direction);
     if (!finished.count) return false;
+    if (queuedRevision !== adapter.navigationRevision) steps = 0;
+    queuedRevision = adapter.navigationRevision;
     steps += direction;
     return true;
   };
@@ -80,7 +98,7 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
     if (!state.searching && steps) {
       const pending = steps;
       steps = 0;
-      if (state.count) {
+      if (state.count && queuedRevision === adapter.navigationRevision) {
         applyingSteps = true;
         try {
           // Whole laps have the same destination. Preserve their final reveal
