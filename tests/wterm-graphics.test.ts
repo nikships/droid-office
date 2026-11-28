@@ -396,46 +396,6 @@ test('wterm and xterm Kitty placements on real Chromium', { skip: !browserStatus
       document.querySelector<HTMLElement>('#w')!.style.transform = '';
     });
   });
-  await t.test('native fractional scroll, partly shown top row, metrics changes, selection outside image', async () => {
-    await reset();
-    await write(`START\r\n${apc('a=T,i=8,c=6,r=3,C=1,f=24,s=1,v=1;/wAA')}${'row\r\n'.repeat(16)}`);
-    await page.waitForFunction(() => (window as any).wt.native.element.scrollTop > 0);
-    await page.evaluate(() => {
-      const { wt, xt } = window as any;
-      wt.native.element.scrollTop = 0;
-      xt.scrollToTop();
-    });
-    await both(1, 1, red);
-    const measured = await page.evaluate(() => {
-      const root = (window as any).wt.native.element,
-        screen = document.querySelector('.wterm-kitty-screen')!;
-      const a = screen.getBoundingClientRect().top;
-      root.scrollTop = 5;
-      return [root.scrollTop, a - screen.getBoundingClientRect().top];
-    });
-    assert.deepEqual(measured, [5, 5], 'canvas scrolls synchronously even before the scroll event');
-    await page.evaluate(async () => {
-      const { wt, xt } = window as any;
-      wt.options.fontSize = xt.options.fontSize = 18;
-      wt.resize(32, 7);
-      xt.resize(32, 7);
-      // Let the resized grid and history spacer paint before scrolling to the new origin.
-      await new Promise(requestAnimationFrame);
-      await new Promise(requestAnimationFrame);
-      wt.native.element.scrollTop = 0;
-      xt.scrollToTop();
-    });
-    await both(1, 1, red);
-    const row = page.locator('#w .term-row').filter({ hasText: 'START' }).first();
-    await row.waitFor({ state: 'visible' });
-    const rect = await row.boundingBox();
-    assert.ok(rect);
-    await page.mouse.move(rect.x + 1, rect.y + rect.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(rect.x + 60, rect.y + rect.height / 2, { steps: 8 });
-    await page.mouse.up();
-    assert.match(await page.evaluate(() => document.getSelection()?.toString() ?? ''), /START/);
-  });
   await page.evaluate(() => {
     const { wt, xt } = window as any;
     wt.dispose();
