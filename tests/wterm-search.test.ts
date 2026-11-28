@@ -209,19 +209,24 @@ test('native terminal search, working directory and read-only snapshots in Chrom
       });
       try {
         await pane.waitForFunction(({ term }) => !term.native.getSearchState().searching && term.native.getSearchState().count === 3, rig);
-        await rig.evaluate(({ term }) => {
-          term.native.element.scrollTop = 2;
-        });
-        const { x, y, gutter } = await rig.evaluate(({ term, host }) => {
+        // Reveal the native overlay thumb with reader input before trying to grab it.
+        await pane.mouse.move(120, 100);
+        await pane.mouse.wheel(0, 180);
+        await pane.waitForFunction(({ term }) => term.native.element.scrollTop >= 100, rig);
+        const { x, y, gutter, initialTop } = await rig.evaluate(({ term, host }) => {
           const el = term.native.element;
           const rect = el.getBoundingClientRect();
           term.write('\x1b[?2026h\r\n');
           host.querySelector<HTMLButtonElement>('button[title="Next match (Enter)"]')!.click();
-          return { x: rect.right - 3, y: rect.top + 5, gutter: el.offsetWidth - el.clientWidth };
+          return { x: rect.right - 3, y: rect.top + ((el.scrollTop + el.clientHeight / 2) / el.scrollHeight) * el.clientHeight, gutter: el.offsetWidth - el.clientWidth, initialTop: el.scrollTop };
         });
         assert.ok(overlay ? gutter === 0 : gutter > 3, `Unexpected gutter: ${gutter}`);
         await pane.mouse.move(x, y);
         await pane.mouse.down();
+        if (overlay) {
+          await rig.evaluate(({ host }) => host.querySelector<HTMLInputElement>('.wterm-search-bar input')!.focus({ preventScroll: true }));
+          await pane.keyboard.press('Enter'); // The held thumb can still supersede this newer step.
+        }
         await pane.mouse.move(x, y + 75, { steps: 5 });
         await pane.mouse.up();
         const position = await rig.evaluate(async ({ term }) => {
@@ -231,7 +236,7 @@ test('native terminal search, working directory and read-only snapshots in Chrom
           term.write('BIRD\r\n\x1b[?2026l');
           return pos;
         });
-        assert.ok(position.top > 2 && position.refreshing, JSON.stringify(position));
+        assert.ok(position.top > initialTop && position.refreshing, JSON.stringify(position));
         await pane.waitForFunction(({ term }) => !term.native.getSearchState().searching && term.native.getSearchState().count === 4, rig);
         assert.deepEqual(await rig.evaluate(({ term }) => [term.native.getSearchState().activeIndex, term.native.element.scrollTop]), [0, position.top]);
         await rig.evaluate(({ term, host }) => {
@@ -248,6 +253,45 @@ test('native terminal search, working directory and read-only snapshots in Chrom
         });
         await pane.waitForFunction(({ term }) => !term.native.getSearchState().searching && term.native.getSearchState().count === 5, rig);
         assert.deepEqual(await rig.evaluate(({ term }) => [term.native.getSearchState().activeIndex, term.native.element.scrollTop]), [0, wheeled]);
+        if (overlay) {
+          await rig.evaluate(({ term }) => term.write('\x1b[?1000l' + ('BIRD '.repeat(8) + '\r\n').repeat(400)));
+          await pane.waitForFunction(({ term }) => !term.native.getSearchState().searching && term.native.getSearchState().count > 3000, rig);
+          // An output-following scroll while the mouse is held in padding is not a thumb drag.
+          const origin = await rig.evaluate(async ({ term, host }) => {
+            term.scrollToBottom();
+            await new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+            const el = term.native.element;
+            el.style.paddingLeft = '8px';
+            const rect = el.getBoundingClientRect();
+            const x = rect.left + 4,
+              y = rect.top + 100;
+            const target = document.elementFromPoint(x, y) === el;
+            term.write('\x1b[?2026h\r\n');
+            host.querySelector<HTMLButtonElement>('button[title="Next match (Enter)"]')!.click();
+            return { x, y, target, top: el.scrollTop };
+          });
+          assert.ok(origin.target, 'left padding must target the scrollport itself');
+          await pane.mouse.move(origin.x, origin.y);
+          await pane.mouse.down();
+          const followed = await rig.evaluate(async ({ term }) => {
+            const painted = new Promise<number>((done) => {
+              term.write('output\r\n'.repeat(32) + '\x1b[?2026l');
+              requestAnimationFrame(() => {
+                // More synchronized output arrives after the tail paints, before the search can finish.
+                term.write('\x1b[?2026h\r');
+                requestAnimationFrame(() => done(term.native.element.scrollTop));
+              });
+            });
+            const top = await painted;
+            term.write('\x1b[?2026l');
+            return top;
+          });
+          await pane.mouse.move(600, 400);
+          await pane.mouse.up();
+          assert.ok(followed > origin.top, `tail did not follow: ${origin.top}→${followed}`);
+          await pane.waitForFunction(({ term }) => !term.native.getSearchState().searching, rig);
+          assert.equal(await rig.evaluate(({ term }) => term.native.getSearchState().activeIndex), 1);
+        }
       } finally {
         await rig.evaluate(({ term, host }) => {
           term.dispose();

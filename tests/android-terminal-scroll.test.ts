@@ -91,7 +91,7 @@ test('Latest during a Find rescan keeps the tail and leaves Find open', browserT
 });
 
 test('reader gestures supersede pending Find steps without closing Find', browserTest, async (t) => {
-  for (const gesture of ['wheel', 'touch', 'horizontal wheel', 'zoom wheel', 'horizontal swipe', 'wheel at top', 'swipe at top'] as const) {
+  for (const gesture of ['wheel', 'touch', 'horizontal wheel', 'zoom wheel', 'horizontal swipe', 'wheel at top', 'swipe at top', 'pan after pinch', 'horizontal after outside pinch', 'two-finger squeeze'] as const) {
     await t.test(gesture, async (t) => {
       const { page, context } = await openPhone(t);
       const root = page.locator('.office-wterm');
@@ -115,14 +115,35 @@ test('reader gestures supersede pending Find steps without closing Find', browse
       } else if (gesture.includes('wheel')) {
         await page.mouse.move(120, 200);
         await page.mouse.wheel(gesture === 'horizontal wheel' ? 180 : 0, gesture === 'horizontal wheel' ? 0 : gesture === 'wheel at top' ? -180 : 180);
+      } else if (gesture.includes('pinch') || gesture === 'two-finger squeeze') {
+        const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', touchPoints: { id: number; x: number; y: number }[]) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
+        const first = { id: 1, x: 120, y: 360 };
+        // The second contact can land in the 8px margin outside the scrollport.
+        const second = { id: 2, x: gesture === 'horizontal after outside pinch' ? 3 : 280, y: 240 };
+        await touch('touchStart', [first]);
+        await touch('touchStart', [first, second]);
+        if (gesture !== 'pan after pinch') {
+          first.y -= 72;
+          second.y += 24;
+          await touch('touchMove', [first, second]);
+        }
+        await touch('touchEnd', [second]);
+        if (gesture !== 'two-finger squeeze') {
+          for (let i = 0; i < 4; i++) {
+            if (gesture === 'pan after pinch') first.y -= 30;
+            else first.x += 10;
+            await touch('touchMove', [first]);
+          }
+        }
+        await touch('touchEnd', []);
       } else {
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 120, y: 300 }] });
         const point = gesture === 'horizontal swipe' ? { x: 200, y: 300 } : { x: 120, y: gesture === 'swipe at top' ? 380 : 220 };
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point] });
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       }
-      if (gesture === 'wheel' || gesture === 'touch') await page.waitForFunction(() => document.querySelector('.office-wterm')!.scrollTop > 0, undefined, { timeout: 2000 });
-      else
+      if (gesture === 'wheel' || gesture === 'touch' || gesture === 'pan after pinch') await page.waitForFunction(() => document.querySelector('.office-wterm')!.scrollTop > 0, undefined, { timeout: 2000 });
+      else if (!gesture.includes('pinch') && gesture !== 'two-finger squeeze')
         assert.equal(
           await root.evaluate(async (el) => {
             await new Promise(requestAnimationFrame);
@@ -133,7 +154,7 @@ test('reader gestures supersede pending Find steps without closing Find', browse
       assert.equal(await page.evaluate(() => (window as any).posted.some((m: any) => m.t === 'matches' && m.active > 0)), false);
       await page.evaluate(() => (window as any).office.receive({ t: 'data', data: 'BIRD\r\n\x1b[?2026l' }));
       await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 4 && !m.searching));
-      assert.equal(await page.evaluate(() => (window as any).posted.filter((m: any) => m.t === 'matches').at(-1).active), gesture.startsWith('horizontal') || gesture === 'zoom wheel' ? 1 : 0);
+      assert.equal(await page.evaluate(() => (window as any).posted.filter((m: any) => m.t === 'matches').at(-1).active), gesture.startsWith('horizontal') || gesture === 'zoom wheel' || gesture === 'two-finger squeeze' ? 1 : 0);
     });
   }
 });

@@ -7,6 +7,7 @@ export const searchStarting = 'office-terminal-search-starting';
 const externalControls = new WeakSet<WTermAdapter>();
 // Each native step can reveal a row and notify a mobile bridge synchronously.
 const maxStepsPerRefresh = 8;
+const overlayThumbHitWidth = 14; // CSS pixels hit by the expanded thin overlay thumb on macOS Chromium.
 /** Native shells provide their own controls and own WTerm.onSearchChange. Call before open(). */
 export function useNativeSearchControls(adapter: WTermAdapter) {
   externalControls.add(adapter);
@@ -39,50 +40,49 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
     },
     { ...passive, capture: true },
   ); // Mouse tracking can stop propagation at the terminal.
-  let touchStart: Touch | undefined;
-  el.addEventListener(
-    'touchstart',
-    (e) => {
-      touchStart = e.touches.length === 1 ? e.touches[0] : undefined;
-    },
-    passive,
-  );
-  el.addEventListener(
-    'touchmove',
-    (e) => {
-      const p = e.touches[0];
-      if (steps !== undefined && touchStart && e.touches.length === 1 && p.identifier === touchStart.identifier && vertical(p.clientX - touchStart.clientX, p.clientY - touchStart.clientY)) steps = undefined;
-    },
-    passive,
-  );
+  let previousTouch: Touch | undefined;
+  const sampleTouch = (e: TouchEvent) => {
+    const p = e.touches.length === 1 ? e.touches[0] : undefined;
+    if (p && previousTouch?.identifier === p.identifier && vertical(p.clientX - previousTouch.clientX, p.clientY - previousTouch.clientY)) steps = undefined;
+    previousTouch = p;
+  };
+  const clearTouch = () => {
+    previousTouch = undefined;
+  };
+  for (const name of ['touchstart', 'touchmove'] as const) el.addEventListener(name, sampleTouch, passive);
+  for (const name of ['touchend', 'touchcancel'] as const) el.addEventListener(name, clearTouch, passive);
   let thumbTop: number | undefined;
   const checkThumb = () => {
-    if (thumbTop !== undefined && thumbTop !== el.scrollTop) steps = thumbTop = undefined;
+    if (thumbTop !== undefined && thumbTop !== el.scrollTop) {
+      steps = undefined;
+      thumbTop = el.scrollTop;
+    }
   };
   el.addEventListener('scroll', checkThumb, passive);
-  el.addEventListener(
+  window.addEventListener(
     'pointerup',
     () => {
       checkThumb();
       thumbTop = undefined;
     },
-    passive,
+    { ...passive, capture: true },
   );
-  el.addEventListener(
+  window.addEventListener(
     'pointercancel',
     () => {
       thumbTop = undefined;
     },
-    passive,
+    { ...passive, capture: true },
   );
   el.addEventListener(
     'pointerdown',
     (event) => {
       thumbTop = undefined;
-      if (steps === undefined || event.button !== 0 || event.target !== el) return;
-      if (event.clientX - el.getBoundingClientRect().left >= el.clientLeft + el.clientWidth) steps = undefined;
+      if (!opened || event.button !== 0 || event.target !== el) return;
+      const fromEnd = el.getBoundingClientRect().left + el.clientLeft + el.clientWidth - event.clientX;
+      if (fromEnd <= 0) steps = undefined;
       // Overlay scrollbars hit the scrollport itself, inside clientWidth. Only a drag, not a click, moves it.
-      else if (event.pointerType === 'mouse' && el.offsetWidth === el.clientWidth) thumbTop = el.scrollTop;
+      else if (event.pointerType === 'mouse' && fromEnd <= overlayThumbHitWidth && el.offsetWidth === el.clientWidth) thumbTop = el.scrollTop;
     },
     passive,
   );
@@ -100,7 +100,7 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
     const next = (steps ?? 0) + direction;
     if (Math.abs(next) > maxStepsPerRefresh) return false;
     queuedRevision = adapter.navigationRevision;
-    thumbTop = undefined;
+    if (thumbTop !== undefined) thumbTop = el.scrollTop;
     steps = next;
     return true;
   };
