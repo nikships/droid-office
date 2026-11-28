@@ -82,6 +82,10 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
         return;
       }
       const px = fontSize;
+      const { cols, rows } = term;
+      const oldFont = root.style.getPropertyValue('--term-font-size');
+      const oldHeight = root.style.getPropertyValue('--term-row-height');
+      const oldWidth = root.style.getPropertyValue('--term-cell-width');
       // A disconnected mirror or a pending snapshot cannot apply a grid.
       // Claim only this proposal, not the next snapshot if the owner declines.
       fit(true, () => {
@@ -89,6 +93,16 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
         fittedFont = term.proposeDimensions(box.width, cellWidth);
         return fittedFont;
       });
+      // A sync block may also open *after* resize and cancel its queued paint.
+      // wterm replaces the mounted rows on grid rebuild. Keep those old nodes
+      // at their painted metrics; the new rows inherit the new metrics directly.
+      if (cols !== term.cols || rows !== term.rows) {
+        for (const row of root.querySelectorAll<HTMLElement>('.term-grid > .term-row')) {
+          row.style.fontSize ||= oldFont;
+          if (!row.style.getPropertyValue('--term-row-height')) row.style.setProperty('--term-row-height', oldHeight);
+          if (!row.style.getPropertyValue('--term-cell-width')) row.style.setProperty('--term-cell-width', oldWidth);
+        }
+      }
       if (term.options.fontSize === px) clearFont();
     } else if (pending) fit(claim, () => fittedFont ?? term.observedDimensions);
     settling = false;

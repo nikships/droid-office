@@ -922,6 +922,33 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     for (const frame of result.frames) assert.deepEqual(frame, frame[0] === 14 ? result.before : result.after, `synchronized=${result.synchronized}, before close: ${result.held}`);
   });
 
+  await t.test('a synchronized update can start after font commit but before wterm paints', async () => {
+    const page = await rig(false);
+    const result = await page.evaluate(async () => {
+      const w = window as any;
+      const root = w.term.native.element;
+      const sample = () => {
+        const rows = root.querySelectorAll('.term-row:not(.term-scrollback-row)');
+        const style = getComputedStyle(rows[0]);
+        return [style.fontSize, rows.length, rows[0].offsetHeight, style.getPropertyValue('--term-cell-width')];
+      };
+      const before = sample();
+      const frames: (string | number)[][] = [];
+      const stop = w.eachPaint(() => frames.push(sample()));
+      w.aroundNextFitTask(undefined, () => w.term.write('\x1b[?2026h'));
+      w.TerminalUI.setTermFontSize(16);
+      await w.frames();
+      await w.frames();
+      w.term.write('\x1b[?2026l');
+      await w.frames();
+      stop();
+      return { before, frames, after: sample() };
+    });
+    assert.equal(result.after[0], '16px');
+    assert.notEqual(result.before[1], result.after[1]);
+    for (const frame of result.frames) assert.deepEqual(frame, frame[0] === '14px' ? result.before : result.after);
+  });
+
   await t.test('a font step follows the native timeout of the latest synchronized update', async () => {
     const page = await rig(false);
     const midway = await page.evaluate(async () => {
