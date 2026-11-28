@@ -45,6 +45,26 @@ async function openPhone(t: TestContext, missing?: 'fonts' | 'renderer', deviceS
   return { context, page };
 }
 
+test('a streamed RIS drops pre-reset Find results and queued navigation', browserTest, async (t) => {
+  const { page } = await openPhone(t);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.office.receive({ t: 'data', data: 'BIRD BIRD BIRD' });
+    w.office.receive({ t: 'search', query: 'BIRD', request: 11 });
+  });
+  const last = () => page.evaluate(() => (window as any).posted.filter((m: any) => m.t === 'matches').at(-1));
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 3 && !m.searching));
+  await page.evaluate(() => {
+    const w = window as any;
+    w.office.receive({ t: 'data', data: '\r\n' });
+    w.office.receive({ t: 'match', direction: 1 });
+    w.office.receive({ t: 'data', data: '\x1b' });
+    w.office.receive({ t: 'data', data: 'cfresh BIRD BIRD' });
+  });
+  await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 2 && !m.searching));
+  assert.deepEqual(await last(), { t: 'matches', active: 0, count: 2, searching: false, limited: false, request: 11 });
+});
+
 test('Raw TTY keeps program colors, opaque reverse-video ink and inert links on every artwork ground', browserTest, async (t) => {
   const { page } = await openPhone(t);
   const send = (msg: Record<string, unknown>) => page.evaluate((m) => (window as any).office.receive(m), msg);

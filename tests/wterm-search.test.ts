@@ -129,6 +129,11 @@ test('native terminal search, working directory and read-only snapshots in Chrom
         next.click();
         next.click();
         const ordered = await settled();
+        const compacted = moves.splice(0);
+        term.write('again\r\n');
+        for (let i = 0; i < 100; i++) next.click();
+        const bounded = await settled();
+        const burst = moves.splice(0);
         term.write('line\r\n');
         next.click();
         edit('NEW');
@@ -142,9 +147,20 @@ test('native terminal search, working directory and read-only snapshots in Chrom
         host.querySelector<HTMLButtonElement>('button[title="Close search (Esc)"]')!.click();
         host.querySelector<HTMLButtonElement>('.wterm-search-panel button')!.click();
         edit('NEW');
-        return { ordered, moves, newQuery, empty, lastEmpty, found, reopened: await settled() };
+        return { ordered, compacted, bounded, burst, moves, newQuery, empty, lastEmpty, found, reopened: await settled() };
       });
-      assert.deepEqual(transitions, { ordered: '2 of 4', moves: [-1, 1, 1], newQuery: ['Searching…', true], empty: 'No matches', lastEmpty: ['No matches', true], found: '1 of 2', reopened: '1 of 2' });
+      assert.deepEqual(transitions, {
+        ordered: '2 of 4',
+        compacted: [1],
+        bounded: '1 of 4',
+        burst: [1, -1],
+        moves: [],
+        newQuery: ['Searching…', true],
+        empty: 'No matches',
+        lastEmpty: ['No matches', true],
+        found: '1 of 2',
+        reopened: '1 of 2',
+      });
     } finally {
       await rig.evaluate(({ term, host }) => {
         term.dispose();
@@ -570,6 +586,73 @@ test('native terminal search, working directory and read-only snapshots in Chrom
       return result;
     });
     assert.deepEqual(measured, [2, 0, 1, 0, 1, 0]);
+  });
+  await t.test('a new query can step partial native results; unchanged refreshes do not republish the count', async () => {
+    const result = await page.evaluate(async () => {
+      const load = (path: string) => import(path);
+      const [{ WTermAdapter }, { createWtermSearch, useNativeSearchControls }] = await Promise.all([load('/term-engine/wterm.ts'), load('/term-engine/wterm-search-controls.ts')]);
+      const term = new WTermAdapter({ scrollback: 2400 });
+      useNativeSearchControls(term);
+      const host = document.createElement('div');
+      document.body.append(host);
+      const events: { count: number; searching: boolean; activeIndex: number; query: string }[] = [];
+      try {
+        await term.open(host);
+        term.resize(60, 12);
+        term.write('match match history\r\n'.repeat(2000));
+        let search: ReturnType<typeof createWtermSearch>;
+        term.onOpen((native: unknown, signal: AbortSignal) => {
+          search = createWtermSearch(term, native, signal, { onChange: (s: (typeof events)[number]) => events.push(s) });
+        });
+        const native = term.native;
+        const report = native.onSearchChange;
+        const partial: number[] = [];
+        native.onSearchChange = (s: (typeof events)[number]) => {
+          report(s);
+          if (!partial.length && s.searching && s.count >= 2) {
+            partial.push(s.count, search.getState().count, events.at(-1)!.count);
+            partial.push(Number(search.next()), native.getSearchState().activeIndex);
+            Reflect.deleteProperty(performance, 'now');
+          }
+        };
+        // Force a slice boundary independent of machine speed; all matches and
+        // notifications still come from scanning the real Ghostty history.
+        let clock = performance.now();
+        Object.defineProperty(performance, 'now', { configurable: true, value: () => (clock += 5) });
+        search!.open();
+        search!.setQuery('match');
+        const settled = async () => {
+          while (native.getSearchState().searching) await new Promise(requestAnimationFrame);
+        };
+        await settled();
+        events.length = 0;
+        term.write('\r');
+        await settled(); // WTerm resets the index once, but not the completed count.
+        const afterIndexReset = events.splice(0).map((s) => [s.activeIndex, s.count]);
+        term.write('\r');
+        term.write('\r');
+        await settled();
+        const duplicates = events.length;
+        term.write('\r');
+        for (let i = 0; i < 1200; i++) search!.next();
+        await settled();
+        const capped = events.splice(0).map((s) => s.activeIndex);
+        search!.setQuery('absent');
+        const edited = [events[0]?.query, events[0]?.searching];
+        return { partial, afterIndexReset, duplicates, capped, edited };
+      } finally {
+        Reflect.deleteProperty(performance, 'now');
+        term.dispose();
+        host.remove();
+      }
+    });
+    const [raw, displayed, emitted, stepped, index] = result.partial;
+    assert.ok(raw >= 2);
+    assert.deepEqual([displayed, emitted, stepped, index], [raw, raw, 1, 1]);
+    assert.deepEqual(result.afterIndexReset, [[0, 4000]]);
+    assert.equal(result.duplicates, 0);
+    assert.deepEqual(result.capped, [8]); // One bridge emission, no intermediate indices.
+    assert.deepEqual(result.edited, ['absent', true]);
   });
   await t.test('externalLauncher omits the floating Find button and syncs toggleSearch/onOpenChange including before open', async () => {
     const measured = await page.evaluate(async () => {
