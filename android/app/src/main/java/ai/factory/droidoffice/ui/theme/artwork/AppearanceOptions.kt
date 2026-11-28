@@ -33,6 +33,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -50,7 +52,7 @@ internal fun glassNote(level: GlassLevel) = when (level) {
 
 internal fun wallpaperNote(source: WallpaperSource) = when (source) {
     WallpaperSource.Artwork -> "The theme’s full-resolution artwork."
-    WallpaperSource.None -> "No picture: the theme’s color and moving light show behind the glass."
+    WallpaperSource.None -> "No picture: the theme’s color and lighting show behind the glass."
 }
 
 internal fun motionNote(motion: BackdropMotion, systemAnimates: Boolean) = when {
@@ -69,29 +71,35 @@ internal fun AppearanceOptions(theme: Artwork, look: AppearanceLook, change: ((A
         Section("Glass", glassNote(look.glass)) {
             val scroll = rememberScrollState()
             val step = with(LocalDensity.current) { (GlassCardWidth + GlassCardGap).roundToPx() }
-            // Start with the chosen level in view; Smoked and Solid sit past the edge of a phone.
-            LaunchedEffect(Unit) { scroll.scrollTo(look.glass.ordinal * step - step) }
+            val cardWidth = with(LocalDensity.current) { GlassCardWidth.roundToPx() }
+            // Keep the chosen level in view (Smoked and Solid sit past the edge of a phone), including after Restore.
+            LaunchedEffect(look.glass) {
+                val start = look.glass.ordinal * step
+                val viewport = scroll.viewportSize
+                if (viewport > 0 && start >= scroll.value && start + cardWidth <= scroll.value + viewport) return@LaunchedEffect
+                scroll.animateScrollTo((start - step).coerceAtLeast(0))
+            }
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(scroll).selectableGroup(),
                 horizontalArrangement = Arrangement.spacedBy(GlassCardGap),
             ) {
-                for (level in GlassLevel.entries) GlassCard(theme, level, level == look.glass) { change { it.copy(glass = level) } }
+                for (level in GlassLevel.entries) GlassCard(theme, level, level == look.glass, look.wallpaper == WallpaperSource.Artwork) { change { it.copy(glass = level) } }
             }
         }
         Section("Wallpaper", wallpaperNote(look.wallpaper)) {
-            Segments(WallpaperSource.entries, look.wallpaper, { it.label }, { Tags.Artwork.wallpaper(it.id) }) { picked -> change { it.copy(wallpaper = picked) } }
+            Segments("Wallpaper", WallpaperSource.entries, look.wallpaper, { it.label }, { Tags.Artwork.wallpaper(it.id) }) { picked -> change { it.copy(wallpaper = picked) } }
             if (look.wallpaper == WallpaperSource.Artwork) {
-                SubLabel("Dim", "Darkens the picture behind the glass.")
-                Segments(WallpaperDim.entries, look.dim, { it.label }, { Tags.Artwork.dim(it.id) }) { picked -> change { it.copy(dim = picked) } }
+                SubLabel("Dim", "Darkens the picture behind the glass. Clearer glass may already add some shade.")
+                Segments("Dim", WallpaperDim.entries, look.dim, { it.label }, { Tags.Artwork.dim(it.id) }) { picked -> change { it.copy(dim = picked) } }
                 // Compose's blur needs Android 12; below it the option would save but change nothing.
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     SubLabel("Blur", "Softens the picture behind the glass.")
-                    Segments(WallpaperBlur.entries, look.blur, { it.label }, { Tags.Artwork.blur(it.id) }) { picked -> change { it.copy(blur = picked) } }
+                    Segments("Blur", WallpaperBlur.entries, look.blur, { it.label }, { Tags.Artwork.blur(it.id) }) { picked -> change { it.copy(blur = picked) } }
                 }
             }
         }
         Section("Motion", motionNote(look.motion, artworkMotionEnabled())) {
-            Segments(BackdropMotion.entries, look.motion, { it.label }, { Tags.Artwork.motion(it.id) }) { picked -> change { it.copy(motion = picked) } }
+            Segments("Motion", BackdropMotion.entries, look.motion, { it.label }, { Tags.Artwork.motion(it.id) }) { picked -> change { it.copy(motion = picked) } }
         }
         TextButton({ change { AppearanceLook() } }, Modifier.tagged(Tags.Artwork.RESET), enabled = !look.isDefault) {
             Text("Restore default options", color = if (look.isDefault) Palette.TextTertiary else Palette.Text)
@@ -119,7 +127,7 @@ private fun SubLabel(title: String, note: String) {
 }
 
 @Composable
-private fun <T> Segments(options: List<T>, selected: T, label: (T) -> String, tag: (T) -> String, pick: (T) -> Unit) {
+private fun <T> Segments(group: String, options: List<T>, selected: T, label: (T) -> String, tag: (T) -> String, pick: (T) -> Unit) {
     val outer = RoundedCornerShape(10.dp)
     val inner = RoundedCornerShape(7.dp)
     Row(Modifier.fillMaxWidth().clip(outer).background(Palette.Surface).border(1.dp, Palette.Border, outer).padding(3.dp).selectableGroup()) {
@@ -128,7 +136,8 @@ private fun <T> Segments(options: List<T>, selected: T, label: (T) -> String, ta
             Box(
                 Modifier.weight(1f).heightIn(min = 40.dp).clip(inner).background(if (on) Palette.AccentMuted else Palette.Surface)
                     .border(1.dp, if (on) Palette.Accent else Palette.Surface, inner)
-                    .selectable(on, role = Role.RadioButton) { if (!on) pick(option) }.tagged(tag(option)),
+                    // Every tap goes to the store: the selection shown may lag a tap still being saved.
+                    .selectable(on, role = Role.RadioButton) { pick(option) }.semantics { contentDescription = "$group: ${label(option)}" }.tagged(tag(option)),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(label(option), style = MaterialTheme.typography.labelLarge, color = if (on) Palette.Text else Palette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -139,14 +148,14 @@ private fun <T> Segments(options: List<T>, selected: T, label: (T) -> String, ta
 
 /** The artwork on the left, the level's pane over it on the right, as the web's glass cards. */
 @Composable
-private fun GlassCard(theme: Artwork, level: GlassLevel, selected: Boolean, pick: () -> Unit) {
+private fun GlassCard(theme: Artwork, level: GlassLevel, selected: Boolean, picture: Boolean, pick: () -> Unit) {
     val shape = RoundedCornerShape(10.dp)
     Column(
         Modifier.width(GlassCardWidth).clip(shape).background(Palette.Surface).border(1.dp, if (selected) theme.accent else Palette.BorderStrong, shape)
-            .selectable(selected, role = Role.RadioButton) { if (!selected) pick() }.tagged(Tags.Artwork.glass(level.id)),
+            .selectable(selected, role = Role.RadioButton, onClick = pick).tagged(Tags.Artwork.glass(level.id)),
     ) {
         Box(Modifier.fillMaxWidth().height(56.dp).background(theme.bg)) {
-            Image(painterResource(theme.preview), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            if (picture) Image(painterResource(theme.preview), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Column(
                 Modifier.fillMaxHeight().fillMaxWidth(.62f).align(Alignment.CenterEnd).background(theme.tint.copy(alpha = Glass.pane(theme.glass, level)))
                     .padding(horizontal = 8.dp, vertical = 12.dp),

@@ -29,6 +29,8 @@ class AppearanceTest {
             assertTrue(over in 0f..1f)
             assertEquals("$level at $themeGlass", Glass.pane(themeGlass, level), chrome + over * (1f - chrome), 1e-4f)
         }
+        // Solid keeps panels filled where no chrome lies under them, such as inside sheets.
+        assertEquals(1f, Glass.paneOverChrome(.72f, GlassLevel.Solid))
         // Frosted keeps the formula the app shipped before the glass levels.
         assertEquals(.1f / (1f - .72f + .1f), Glass.paneOverChrome(.72f, GlassLevel.Frosted), 1e-4f)
     }

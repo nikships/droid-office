@@ -9,7 +9,7 @@ import kotlin.math.roundToInt
  * (`src/shared/companion-themes.ts`, `src/client/ui/companion-theme.ts`). Original ignores them.
  */
 enum class GlassLevel(val id: String, val label: String, val hint: String) {
-    Crystal("crystal", "Crystal", "No tint"),
+    Crystal("crystal", "Crystal", "Clearest"),
     Clear("clear", "Clear", "Light tint"),
     Tinted("tinted", "Tinted", "Balanced"),
     Frosted("frosted", "Frosted", "Classic"),
@@ -94,7 +94,7 @@ object Glass {
 
     fun pane(themeGlass: Float, level: GlassLevel): Float {
         val spec = specs[level] ?: return 1f
-        return round3(min(spec.max, max(spec.min, themeGlass + spec.delta)))
+        return round3((themeGlass + spec.delta).coerceIn(spec.min, spec.max))
     }
 
     fun chrome(themeGlass: Float, level: GlassLevel): Float {
@@ -102,10 +102,13 @@ object Glass {
         return round3(max(spec.chromeMin, pane(themeGlass, level) - spec.chromeGap))
     }
 
-    /** The alpha a pane needs over the full-screen chrome layer so the two composite to [pane]. */
+    /**
+     * The alpha a pane needs over the full-screen chrome layer so the two composite to [pane]. Opaque
+     * chrome keeps an opaque pane, which looks the same over it and keeps panels filled in sheets.
+     */
     fun paneOverChrome(themeGlass: Float, level: GlassLevel): Float {
         val chrome = chrome(themeGlass, level)
-        if (chrome >= 1f) return 0f
+        if (chrome >= 1f) return 1f
         return ((pane(themeGlass, level) - chrome) / (1f - chrome)).coerceIn(0f, 1f)
     }
 
@@ -155,7 +158,7 @@ object Glass {
             (p ushr 24) / 255.0 * luminance(p)
         }
         ys.sort()
-        val y = ys[min(ys.size - 1, (ys.size * quantile).toInt())]
+        val y = ys[(ys.size * quantile).toInt().coerceIn(0, ys.lastIndex)]
         return (255 * (if (y <= .00304) y * 12.92 else 1.055 * Math.pow(y, 1 / 2.4) - .055)).roundToInt()
     }
 }

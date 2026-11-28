@@ -56,10 +56,10 @@ private val grays = mutableMapOf<Int, Int>()
 private fun artworkGray(@DrawableRes image: Int): Int? {
     val resources = LocalContext.current.resources
     // Keyed on the image: switching theme or orientation must not keep the previous picture's gray.
-    val gray = remember(image) { mutableStateOf(grays[image]) }
+    var gray by remember(image) { mutableStateOf(grays[image]) }
     LaunchedEffect(image) {
-        if (gray.value != null) return@LaunchedEffect
-        gray.value = withContext(Dispatchers.Default) {
+        if (gray != null) return@LaunchedEffect
+        gray = withContext(Dispatchers.Default) {
             val options = BitmapFactory.Options().apply { inSampleSize = 16 }
             val bitmap = BitmapFactory.decodeResource(resources, image, options) ?: return@withContext null
             val pixels = IntArray(bitmap.width * bitmap.height)
@@ -68,7 +68,7 @@ private fun artworkGray(@DrawableRes image: Int): Int? {
             Glass.brightGray(pixels)
         }?.also { grays[image] = it }
     }
-    return gray.value
+    return gray
 }
 
 internal fun artworkAnimates(systemScale: Float, composeScale: Float) = systemScale > 0f && composeScale > 0f
