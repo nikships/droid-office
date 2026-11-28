@@ -57,6 +57,7 @@ export class WTermAdapter {
   // History index including discarded rows, or undefined when following the tail.
   private readerRow?: number;
   private reflowCell?: { col: number; top: number };
+  private viewportRequest?: { value: number; revision: number };
   private holdReaderAfterPaint = false;
   private heldAlternate = false;
   private paintedDiscarded = 0;
@@ -89,6 +90,7 @@ export class WTermAdapter {
         return true;
       });
     this.parser.registerEscHandler({ final: 'c' }, () => {
+      this.scheduleViewport(null);
       this.redrawReader = undefined;
       this.native?.clearSelection();
       this.writeNative(`\x1bc${widths}`);
@@ -98,6 +100,7 @@ export class WTermAdapter {
       // Some programs respond to SIGWINCH by erasing and reprinting their entire
       // history in a synchronized update. That destroys even a tracked core pin.
       if (mode === 3) {
+        this.scheduleViewport(null);
         this.redrawReader = !this.replay && !this.afterSnapshotPaint && this.core?.synchronizedOutput() ? this.saveReader({ redraw: true }) : undefined;
         if (this.redrawReader && this.root) this.pendingRestore = { appliedTop: this.root.scrollTop };
       }
@@ -142,6 +145,8 @@ export class WTermAdapter {
       // its new maximum. Ordinary navigation to the bottom approaches from below.
       const max = el.scrollHeight - el.clientHeight;
       if (applied !== undefined && applied > max && el.scrollTop < applied && this.isAtTail(max)) return;
+      this.redrawReader = undefined;
+      this.scheduleViewport(null);
       this.readerRevision++;
     }
     const range = el.scrollHeight - el.clientHeight;
@@ -158,6 +163,7 @@ export class WTermAdapter {
   }
   /** An explicit navigation supersedes both a metric restore and an older saved reader. */
   cancelReaderRestore(revealed = true) {
+    this.scheduleViewport(null);
     this.redrawReader = this.reflowCell = undefined;
     this.root?.classList.remove('pinning-tail');
     if (revealed) this.holdReaderAfterPaint = false;
@@ -294,13 +300,27 @@ export class WTermAdapter {
     return nearest;
   }
   /** wterm 0.6.0's pending pixel offset mounts the reader's virtual rows before paint; a DOM scroll afterwards leaves one empty frame. */
-  private scheduleViewport(top: number) {
+  private scheduleViewport(top: number | 'afterWrite' | null) {
+    const previous = this.viewportRequest;
+    if (typeof top !== 'number' && !previous) return false;
+    this.viewportRequest = undefined;
     const t = this.native as unknown as { _pendingResizeScrollTop?: number | null; _shouldScrollToBottom?: boolean } | undefined;
     if (!t || (t._pendingResizeScrollTop !== null && typeof t._pendingResizeScrollTop !== 'number') || typeof t._shouldScrollToBottom !== 'boolean') return false;
+    if (typeof top === 'number') {
+      // Native render subtracts newly discarded history from its saved *old* origin.
+      const discarded = this.core?.getScrollbackDiscardedCount() ?? this.paintedDiscarded;
+      const value = top + Math.max(0, discarded - this.paintedDiscarded) * this.rowHeight;
+      this.viewportRequest = { value, revision: this.readerRevision };
+      t._pendingResizeScrollTop = value;
+    } else {
+      if (!previous || t._pendingResizeScrollTop !== previous.value) return false;
+      if (top === null || previous.revision !== this.readerRevision) {
+        t._pendingResizeScrollTop = null;
+        return false;
+      }
+      this.viewportRequest = previous;
+    }
     t._shouldScrollToBottom = false;
-    // Native render subtracts newly discarded history from its saved *old* origin.
-    const discarded = this.core?.getScrollbackDiscardedCount() ?? this.paintedDiscarded;
-    t._pendingResizeScrollTop = top + Math.max(0, discarded - this.paintedDiscarded) * this.rowHeight;
     return true;
   }
   private rowHeight = 1;
@@ -447,14 +467,17 @@ export class WTermAdapter {
         },
         features,
         (discarded) => {
+          this.scheduleViewport(null);
           this.paintPending = false;
           this.paintedDiscarded = discarded;
           // The native renderer has populated the first snapshot's rows. Give
           // them a scroll range before its scroll phase, not at window reveal.
           if (this.replay === 'parsed') root.classList.remove('awaiting-grid');
+          // A fallback frame can run after the DOM moved but before its scroll
+          // event. Sample it before native scrolling can erase that coordinate.
+          if (this.redrawReader && this.core?.synchronizedOutput()) this.sampleReader(true);
           if (!this.pendingRestore && this.holdReaderAfterPaint && this.heldAlternate === this.core?.usingAltScreen()) this.pendingRestore = { appliedTop: root.scrollTop };
           const restore = this.pendingRestore;
-          if (this.redrawReader && this.core?.synchronizedOutput()) return;
           const reader = this.afterSnapshotPaint;
           if (restore || this.replay === 'parsed' || reader)
             queueMicrotask(() => {
@@ -468,7 +491,9 @@ export class WTermAdapter {
                 // out. Feeding that duplicate back to wterm would repaint forever
                 // on a clipped grid without history. Never hide a new coordinate.
                 restoredSameTop = this.holdReaderAfterPaint && this.core?.getScrollbackCount() === 0 && root.scrollTop === lastScrollTop;
-                this.pendingRestore = undefined;
+                // A timeout paint can clamp the scrollport before a held redraw ends.
+                // Keep that coordinate as the baseline for detecting real navigation.
+                this.pendingRestore = this.redrawReader && this.core?.synchronizedOutput() ? { appliedTop: root.scrollTop } : undefined;
                 if (this.reflowCell) this.reflowCell.top = root.scrollTop;
               }
               if (this.replay === 'parsed') {
@@ -608,6 +633,7 @@ export class WTermAdapter {
   }
   /** Keep an existing grid painted while an accepted snapshot replaces the core. */
   holdSnapshot() {
+    this.scheduleViewport(null);
     this.redrawReader = undefined;
     this.afterSnapshotPaint = undefined;
     this.replay = 'parsing';
@@ -676,6 +702,7 @@ export class WTermAdapter {
   private writeNative(chunk: string) {
     this.paintPending = true;
     this.native?.write(chunk);
+    if (this.viewportRequest) this.scheduleViewport('afterWrite');
     this.nativeParsed.fire(chunk);
   }
   write(data: string, done?: () => void) {
@@ -699,6 +726,7 @@ export class WTermAdapter {
       });
   }
   reset() {
+    this.scheduleViewport(null);
     this.redrawReader = this.reflowCell = undefined;
     this.readerRow = undefined;
     this.resetting.fire();
@@ -790,6 +818,7 @@ export class WTermAdapter {
     this.followTail();
   }
   private followTail() {
+    this.scheduleViewport(null);
     this.redrawReader = this.reflowCell = undefined;
     this.holdReaderAfterPaint = false;
     this.readerRow = undefined;

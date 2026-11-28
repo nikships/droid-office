@@ -10,7 +10,7 @@ A replacement snapshot closes Find on web and Mac. On Android, a replacement sna
 
 A program can respond to a resize by clearing and reprinting its entire history. A synchronized clear destroys native cell positions, so the reader restore matches text from the visible passage across the replacement rows, ignoring changes in wrapping and indentation. Tail followers do not search the history.
 
-Wterm 0.6.0's pending pixel offset mounts the reader's virtual rows before paint; a DOM scroll afterwards leaves one empty frame. The adapter checks that the two native viewport fields still exist before using them and otherwise restores after paint. After a synchronized clear it waits for the update to end, even if the native timeout has already painted partial output.
+Wterm 0.6.0's pending pixel offset mounts the reader's virtual rows before paint; a DOM scroll afterwards leaves one empty frame. The adapter checks that the two native viewport fields still exist before using them and otherwise restores after paint. A scheduled reader position survives intervening output until the next paint, but yields to a new scroll or explicit navigation. After a synchronized clear it waits for the update to end, even if the native timeout has already painted partial output.
 
 ## Adapter contract
 

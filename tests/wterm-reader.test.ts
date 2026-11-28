@@ -83,6 +83,73 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
         continue;
       }
       if (dpr === 1) {
+        for (const scenario of ['write before resize paint', 'page up during fit', 'scroll during fit', 'scroll after partial fallback'])
+          await t.test(`viewport ownership: ${scenario}`, async () => {
+            const page = await pane();
+            try {
+              const result = await page.evaluate(async (scenario) => {
+                const { term } = window as any;
+                const el = term.native.element,
+                  pitch = parseFloat(el.style.getPropertyValue('--term-row-height'));
+                const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+                const first = () => {
+                  const y = el.getBoundingClientRect().top + 1;
+                  return [...el.querySelectorAll('.term-row')]
+                    .find((r) => r.getBoundingClientRect().top <= y && r.getBoundingClientRect().bottom > y)
+                    ?.textContent.trim()
+                    .slice(0, 8);
+                };
+                const stream = scenario === 'write before resize paint',
+                  partial = scenario === 'scroll after partial fallback';
+                term.reset();
+                term.resize(100, partial ? 32 : 10);
+                el.parentElement.style.cssText = `flex:none;height:${10 * pitch + 12}px`;
+                const facts = (redraw: boolean) => Array.from({ length: 150 }, (_, i) => `Fact ${String(i).padStart(3, '0')}${' some details'.repeat(5)}\r\n${redraw ? '\r\n\r\n' : ''}`).join('');
+                term.write(facts(false));
+                await frame();
+                el.scrollTop = stream ? el.scrollHeight - el.clientHeight - 2 : 1250;
+                await frame();
+                await frame();
+                if (stream) {
+                  const before = first();
+                  term.resize(20, 10);
+                  term.write('z');
+                  await frame();
+                  return { before, after: first() };
+                }
+                if (partial) {
+                  term.write('\x1b[?2026h\x1b[2J\x1b[3J\x1b[H' + Array.from({ length: 25 }, (_, i) => `Partial ${i}\r\n`).join(''));
+                  await new Promise<void>((r) => {
+                    const observer = new MutationObserver(() => {
+                      if (!el.querySelector('.term-grid')?.textContent.includes('Partial 6')) return;
+                      observer.disconnect();
+                      r();
+                    });
+                    observer.observe(el, { subtree: true, childList: true });
+                  });
+                  await frame();
+                  el.scrollTop = 129;
+                } else {
+                  term.setFitPending(true);
+                  term.write('\x1b[?2026h\x1b[2J\x1b[3J\x1b[H' + facts(true) + '\x1b[?2026l');
+                  if (scenario === 'page up during fit') term.cancelReaderRestore();
+                  el.scrollTop -= el.clientHeight - pitch;
+                }
+                const before = el.scrollTop;
+                await frame();
+                await frame();
+                if (partial) term.write('more');
+                else term.setFitPending(false);
+                await frame();
+                return { before, after: el.scrollTop, mounted: first() };
+              }, scenario);
+              assert.ok(result.before);
+              assert.equal(result.after, result.before);
+              if (scenario !== 'write before resize paint') assert.notEqual(result.mounted, undefined, 'a live or history row covers the selected viewport');
+            } finally {
+              await page.close();
+            }
+          });
         await t.test('native history mounts the passage on the first resize and the first completed-reprint frame', async () => {
           const page = await pane();
           try {
