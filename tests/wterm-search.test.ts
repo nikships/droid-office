@@ -69,6 +69,91 @@ test('native terminal search, working directory and read-only snapshots in Chrom
   const find = page.locator('#host input[aria-label="Find in terminal"]');
   const frame = () => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
   await frame();
+  await t.test('Find keeps its count and accepts a step between a write and the refreshed scan', async () => {
+    const rig = await page.evaluateHandle(async () => {
+      const path = '/term-engine/web-terminal.ts';
+      const { createWebTerminal } = await import(path);
+      const host = document.createElement('div');
+      host.className = 'host';
+      document.body.append(host);
+      const { term } = createWebTerminal({ fontSize: 14 });
+      await term.open(host);
+      term.resize(48, 5);
+      term.write('one BIRD\r\ntwo BIRD\r\nthree BIRD\r\n');
+      host.querySelector<HTMLButtonElement>('.wterm-search-panel button')!.click();
+      const field = host.querySelector<HTMLInputElement>('.wterm-search-bar input')!;
+      field.value = 'BIRD';
+      field.dispatchEvent(new Event('input'));
+      return { term, host };
+    });
+    try {
+      await page.waitForFunction(({ term }) => term.native.getSearchState().count === 3 && !term.native.getSearchState().searching, rig);
+      const during = await rig.evaluate(({ term, host }) => {
+        term.write('four BIRD\r\n');
+        const next = host.querySelector<HTMLButtonElement>('button[title="Next match (Enter)"]')!;
+        const value = { label: host.querySelector('[role=status]')!.textContent, disabled: next.disabled };
+        next.click();
+        return value;
+      });
+      await page.waitForFunction(({ term }) => term.native.getSearchState().count === 4 && !term.native.getSearchState().searching, rig);
+      const refreshed = await rig.evaluate(({ host }) => host.querySelector('[role=status]')!.textContent);
+      assert.deepEqual({ ...during, refreshed }, { label: '1 of 3', disabled: false, refreshed: '2 of 4' });
+
+      const transitions = await rig.evaluate(async ({ term, host }) => {
+        const next = host.querySelector<HTMLButtonElement>('button[title="Next match (Enter)"]')!;
+        const prev = host.querySelector<HTMLButtonElement>('button[title="Previous match (Shift+Enter)"]')!;
+        const label = () => host.querySelector('[role=status]')!.textContent;
+        const edit = (query: string) => {
+          const field = host.querySelector('input')!;
+          field.value = query;
+          field.dispatchEvent(new Event('input'));
+        };
+        const settled = async () => {
+          while (term.native.getSearchState().searching) await new Promise(requestAnimationFrame);
+          return label();
+        };
+        const moves: number[] = [];
+        for (const [method, dir] of [
+          ['findNext', 1],
+          ['findPrevious', -1],
+        ] as const) {
+          const apply = term.native[method].bind(term.native);
+          term.native[method] = () => {
+            moves.push(dir);
+            return apply();
+          };
+        }
+        term.write('more\r\n');
+        prev.click();
+        term.write('and more\r\n');
+        next.click();
+        next.click();
+        const ordered = await settled();
+        term.write('line\r\n');
+        next.click();
+        edit('NEW');
+        const newQuery = [label(), next.disabled];
+        const empty = await settled();
+        term.write('NEW NEW\r\n');
+        const lastEmpty = [label(), next.disabled];
+        const found = await settled();
+        term.write('line\r\n');
+        prev.click();
+        host.querySelector<HTMLButtonElement>('button[title="Close search (Esc)"]')!.click();
+        host.querySelector<HTMLButtonElement>('.wterm-search-panel button')!.click();
+        edit('NEW');
+        return { ordered, moves, newQuery, empty, lastEmpty, found, reopened: await settled() };
+      });
+      assert.deepEqual(transitions, { ordered: '2 of 4', moves: [-1, 1, 1], newQuery: ['Searching…', true], empty: 'No matches', lastEmpty: ['No matches', true], found: '1 of 2', reopened: '1 of 2' });
+    } finally {
+      await rig.evaluate(({ term, host }) => {
+        term.dispose();
+        host.remove();
+        (window as any).hostRig.term.focus();
+      });
+      await rig.dispose();
+    }
+  });
   await t.test('only terminal rows and padding define the scroll range through clears, replay, reflow, Find and IME', async () => {
     const samples = await page.evaluate(async () => {
       const path = '/term-engine/web-terminal.ts';

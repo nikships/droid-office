@@ -20,9 +20,29 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
   let awaitingMatch = false;
   let revealed = false;
   let restore: (() => void) | undefined;
+  let finished: SearchState | undefined;
+  let steps: (1 | -1)[] = [];
+  const display = (state: SearchState): SearchState => {
+    if (!state.searching) return state;
+    return finished ?? { ...state, count: 0, activeIndex: -1, limited: false };
+  };
+  const step = (direction: 1 | -1) => {
+    const moved = direction === 1 ? native.findNext() : native.findPrevious();
+    adapter.cancelReaderRestore(moved);
+    return moved;
+  };
+  const navigate = (direction: 1 | -1) => {
+    if (!opened) return false;
+    if (!native.getSearchState().searching) return step(direction);
+    if (!finished?.count) return false;
+    steps.push(direction);
+    return true;
+  };
   const close = (restorePosition: boolean) => {
     if (!opened) return;
     opened = false;
+    finished = undefined;
+    steps = [];
     awaitingMatch = false;
     native.clearSearch();
     if (restorePosition && revealed && restore) {
@@ -43,12 +63,22 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
       revealed = true;
       adapter.cancelReaderRestore();
     }
-    callbacks.onChange?.(state);
+    // Writes invalidate WTerm's match list before its asynchronous rescan.
+    // Keep the last completed result visible, but navigate only on fresh matches.
+    if (opened && !state.searching) finished = state;
+    const pending = steps;
+    if (!state.searching) steps = [];
+    callbacks.onChange?.(display(state));
+    if (!state.searching && state.count) {
+      for (const direction of pending) navigate(direction);
+    }
   };
   signal.addEventListener(
     'abort',
     () => {
       opened = false;
+      steps = [];
+      finished = undefined;
       restore = undefined;
       reset.dispose();
       native.onSearchChange = null;
@@ -66,23 +96,18 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
     },
     setQuery(query: string, options?: SearchOptions) {
       if (!opened) return;
+      const previous = native.getSearchState();
+      if (previous.query !== query || previous.caseSensitive !== (options?.caseSensitive ?? false)) {
+        steps = [];
+        finished = undefined;
+      }
       adapter.cancelReaderRestore(false);
       awaitingMatch = !!query;
       native.search(query, options);
     },
-    next() {
-      if (!opened) return false;
-      const moved = native.findNext();
-      adapter.cancelReaderRestore(moved);
-      return moved;
-    },
-    previous() {
-      if (!opened) return false;
-      const moved = native.findPrevious();
-      adapter.cancelReaderRestore(moved);
-      return moved;
-    },
+    next: () => navigate(1),
+    previous: () => navigate(-1),
     close: () => close(true),
-    getState: () => native.getSearchState(),
+    getState: () => display(native.getSearchState()),
   };
 }
