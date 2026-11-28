@@ -24,21 +24,65 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
   let restore: (() => void) | undefined;
   let finished: SearchState | undefined;
   let lastSent: SearchState | undefined;
-  let steps = 0;
+  let steps: number | undefined; // Zero is an accepted round trip that must still reveal its match.
   let queuedRevision = 0;
   let applyingSteps = false;
   // A normal pan need not supersede an adapter restore or change its revision.
   // Listen for reader input, not scroll events from output or Find's own reveal.
-  const dropSteps = () => {
-    steps = 0;
-  };
   const passive = { passive: true, signal };
-  el.addEventListener('wheel', dropSteps, passive);
-  el.addEventListener('touchmove', dropSteps, passive);
+  // Vertical intent counts even at a scroll bound; horizontal gestures and zoom do not.
+  const vertical = (dx: number, dy: number) => dy !== 0 && Math.abs(dy) >= Math.abs(dx);
+  el.parentElement?.addEventListener(
+    'wheel',
+    (e) => {
+      if (steps !== undefined && !e.ctrlKey && vertical(e.deltaX, e.deltaY) && e.composedPath().includes(el)) steps = undefined;
+    },
+    { ...passive, capture: true },
+  ); // Mouse tracking can stop propagation at the terminal.
+  let touchStart: Touch | undefined;
+  el.addEventListener(
+    'touchstart',
+    (e) => {
+      touchStart = e.touches.length === 1 ? e.touches[0] : undefined;
+    },
+    passive,
+  );
+  el.addEventListener(
+    'touchmove',
+    (e) => {
+      const p = e.touches[0];
+      if (steps !== undefined && touchStart && e.touches.length === 1 && p.identifier === touchStart.identifier && vertical(p.clientX - touchStart.clientX, p.clientY - touchStart.clientY)) steps = undefined;
+    },
+    passive,
+  );
+  let thumbTop: number | undefined;
+  const checkThumb = () => {
+    if (thumbTop !== undefined && thumbTop !== el.scrollTop) steps = thumbTop = undefined;
+  };
+  el.addEventListener('scroll', checkThumb, passive);
+  el.addEventListener(
+    'pointerup',
+    () => {
+      checkThumb();
+      thumbTop = undefined;
+    },
+    passive,
+  );
+  el.addEventListener(
+    'pointercancel',
+    () => {
+      thumbTop = undefined;
+    },
+    passive,
+  );
   el.addEventListener(
     'pointerdown',
     (event) => {
-      if (steps && event.clientX - el.getBoundingClientRect().left >= el.clientLeft + el.clientWidth) dropSteps();
+      thumbTop = undefined;
+      if (steps === undefined || event.button !== 0 || event.target !== el) return;
+      if (event.clientX - el.getBoundingClientRect().left >= el.clientLeft + el.clientWidth) steps = undefined;
+      // Overlay scrollbars hit the scrollport itself, inside clientWidth. Only a drag, not a click, moves it.
+      else if (event.pointerType === 'mouse' && el.offsetWidth === el.clientWidth) thumbTop = el.scrollTop;
     },
     passive,
   );
@@ -52,16 +96,39 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
     if (!opened) return false;
     if (!finished || !native.getSearchState().searching) return step(direction);
     if (!finished.count) return false;
-    if (queuedRevision !== adapter.navigationRevision) steps = 0;
+    if (queuedRevision !== adapter.navigationRevision) steps = undefined;
+    const next = (steps ?? 0) + direction;
+    if (Math.abs(next) > maxStepsPerRefresh) return false;
     queuedRevision = adapter.navigationRevision;
-    steps += direction;
+    thumbTop = undefined;
+    steps = next;
     return true;
+  };
+  const replay = (state: SearchState) => {
+    if (state.searching || steps === undefined) return state;
+    const pending = steps;
+    steps = undefined;
+    if (!state.count || queuedRevision !== adapter.navigationRevision) return state;
+    applyingSteps = true;
+    try {
+      const remaining = pending % state.count;
+      if (remaining) {
+        for (let i = 0; i < Math.abs(remaining); i++) step(remaining > 0 ? 1 : -1);
+      } else {
+        // A whole lap still reveals the selected match.
+        step(1);
+        if (state.count > 1) step(-1);
+      }
+      return native.getSearchState();
+    } finally {
+      applyingSteps = false;
+    }
   };
   const close = (restorePosition: boolean) => {
     if (!opened) return;
     opened = false;
     finished = undefined;
-    steps = 0;
+    steps = undefined;
     lastSent = undefined;
     awaitingMatch = false;
     native.clearSearch();
@@ -79,7 +146,7 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
   // before the adapter forwards it, including when ESC and c arrive separately.
   const ris = adapter.parser.registerEscHandler({ final: 'c' }, () => {
     finished = lastSent = undefined;
-    steps = 0;
+    steps = undefined;
     restore = undefined;
     return false;
   });
@@ -95,29 +162,7 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
     // Keep the last completed result visible, but navigate only on fresh matches.
     if (opened && !state.searching) finished = state;
     if (applyingSteps) return;
-    if (!state.searching && steps) {
-      const pending = steps;
-      steps = 0;
-      if (state.count && queuedRevision === adapter.navigationRevision) {
-        applyingSteps = true;
-        try {
-          // Whole laps have the same destination. Preserve their final reveal
-          // even when it happens to be the already-selected match.
-          let remaining = pending % state.count;
-          if (!remaining) {
-            step(1);
-            if (state.count > 1) step(-1);
-          } else {
-            if (Math.abs(remaining) > state.count / 2) remaining -= Math.sign(remaining) * state.count;
-            for (let i = 0; i < Math.min(Math.abs(remaining), maxStepsPerRefresh); i++) step(remaining > 0 ? 1 : -1);
-          }
-        } finally {
-          applyingSteps = false;
-        }
-        state = native.getSearchState();
-      }
-    }
-    const shown = display(state);
+    const shown = display(replay(state));
     if (
       !lastSent ||
       shown.query !== lastSent.query ||
@@ -135,7 +180,7 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
     'abort',
     () => {
       opened = false;
-      steps = 0;
+      steps = undefined;
       finished = undefined;
       restore = undefined;
       reset.dispose();
@@ -158,7 +203,7 @@ export function createWtermSearch(adapter: WTermAdapter, native: WTerm, signal: 
       const previous = native.getSearchState();
       lastSent = undefined; // Explicit host requests need a reply, even for the same text.
       if (previous.query !== query || previous.caseSensitive !== (options?.caseSensitive ?? false)) {
-        steps = 0;
+        steps = undefined;
         finished = undefined;
       }
       adapter.cancelReaderRestore(false);

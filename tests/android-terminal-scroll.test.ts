@@ -91,7 +91,7 @@ test('Latest during a Find rescan keeps the tail and leaves Find open', browserT
 });
 
 test('reader gestures supersede pending Find steps without closing Find', browserTest, async (t) => {
-  for (const gesture of ['wheel', 'touch'] as const) {
+  for (const gesture of ['wheel', 'touch', 'horizontal wheel', 'zoom wheel', 'horizontal swipe', 'wheel at top', 'swipe at top'] as const) {
     await t.test(gesture, async (t) => {
       const { page, context } = await openPhone(t);
       const root = page.locator('.office-wterm');
@@ -110,19 +110,30 @@ test('reader gestures supersede pending Find steps without closing Find', browse
         w.office.receive({ t: 'data', data: '\x1b[?2026h\r\n' });
         w.office.receive({ t: 'match', direction: 1 });
       });
-      if (gesture === 'wheel') {
+      if (gesture === 'zoom wheel') {
+        await root.evaluate((el) => el.dispatchEvent(new WheelEvent('wheel', { ctrlKey: true, deltaY: 180, bubbles: true })));
+      } else if (gesture.includes('wheel')) {
         await page.mouse.move(120, 200);
-        await page.mouse.wheel(0, 180);
+        await page.mouse.wheel(gesture === 'horizontal wheel' ? 180 : 0, gesture === 'horizontal wheel' ? 0 : gesture === 'wheel at top' ? -180 : 180);
       } else {
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 120, y: 300 }] });
-        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 120, y: 220 }] });
+        const point = gesture === 'horizontal swipe' ? { x: 200, y: 300 } : { x: 120, y: gesture === 'swipe at top' ? 380 : 220 };
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point] });
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       }
-      await page.waitForFunction(() => document.querySelector('.office-wterm')!.scrollTop > 0, undefined, { timeout: 2000 });
+      if (gesture === 'wheel' || gesture === 'touch') await page.waitForFunction(() => document.querySelector('.office-wterm')!.scrollTop > 0, undefined, { timeout: 2000 });
+      else
+        assert.equal(
+          await root.evaluate(async (el) => {
+            await new Promise(requestAnimationFrame);
+            return el.scrollTop;
+          }),
+          0,
+        );
       assert.equal(await page.evaluate(() => (window as any).posted.some((m: any) => m.t === 'matches' && m.active > 0)), false);
       await page.evaluate(() => (window as any).office.receive({ t: 'data', data: 'BIRD\r\n\x1b[?2026l' }));
       await page.waitForFunction(() => (window as any).posted.some((m: any) => m.count === 4 && !m.searching));
-      assert.equal(await page.evaluate(() => (window as any).posted.filter((m: any) => m.t === 'matches').at(-1).active), 0);
+      assert.equal(await page.evaluate(() => (window as any).posted.filter((m: any) => m.t === 'matches').at(-1).active), gesture.startsWith('horizontal') || gesture === 'zoom wheel' ? 1 : 0);
     });
   }
 });
