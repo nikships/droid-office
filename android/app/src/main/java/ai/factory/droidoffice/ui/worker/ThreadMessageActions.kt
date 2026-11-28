@@ -1,6 +1,5 @@
 package ai.factory.droidoffice.ui.worker
 
-import android.content.ClipData
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
@@ -22,7 +21,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
@@ -49,11 +47,11 @@ internal fun ThreadMessageActions(
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var copied by remember(id) { mutableStateOf(false) }
-    var now by remember(id) { mutableLongStateOf(System.currentTimeMillis()) }
+    var now by remember(id) { mutableLongStateOf(workerNowMillis()) }
     LaunchedEffect(id, at) {
         while (at != null) {
             delay(60_000)
-            now = System.currentTimeMillis()
+            now = workerNowMillis()
         }
     }
     Row(modifier.heightIn(min = 32.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -62,7 +60,7 @@ internal fun ThreadMessageActions(
         }
         MessageAction(if (copied) OfficeIcons.Check else OfficeIcons.Copy, "Copy message", Tags.Worker.threadMessageCopy(id)) {
             scope.launch {
-                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Message", text)))
+                clipboard.setClipEntry(workerTextClip("Message", text))
                 copied = true
                 delay(2_000)
                 copied = false

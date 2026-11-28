@@ -2,6 +2,8 @@
 
 **Settings → Appearance** styles `/dashboard` in a browser or the Mac companion. Android has its own native look; the 3D office is not themed by this registry. Android's **Appearance** sheet ports the eight artworks and the Glass levels (the same `glassAlpha`, `chromeAlpha` and `pictureShade` math in `core/Appearance.kt`), Wallpaper (artwork or none, with Dim and Blur) and Motion; it has no custom picture, and its glass changes opacity only, without a backdrop blur.
 
+The iOS companion compiles this same Compose sheet and backdrop, bundles the Android WebPs and Geist fonts, and honors iOS Reduce Motion. The wallpaper sits beneath the native terminal: on a themed phone it shows through Raw TTY with the worker pane’s glass tint. Original keeps the black terminal, and explicit terminal program backgrounds stay opaque.
+
 ## Signature themes
 
 The eight `family: 'artwork'` entries in [`companion-themes.ts`](../src/shared/companion-themes.ts) are the wallpaper signatures. Each owns its full-size JPEG and crop, gradient fallback, veil, animated overlay, two accents, text, lines, glass tint and opacity, and terminal foreground, cursor, background and selection. The stage also owns its colors, blend, speed and opacity.

@@ -11,7 +11,8 @@ import ai.factory.droidoffice.core.WallpaperSource
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.Palette
-import android.os.Build
+import ai.factory.droidoffice.ui.theme.supportsWallpaperBlur
+import ai.factory.droidoffice.ui.theme.reducedMotionNote
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,7 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
+import ai.factory.droidoffice.ui.theme.officePainter
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -56,7 +57,7 @@ internal fun wallpaperNote(source: WallpaperSource) = when (source) {
 }
 
 internal fun motionNote(motion: BackdropMotion, systemAnimates: Boolean) = when {
-    !systemAnimates -> "Held still because Android animations are off."
+    !systemAnimates -> reducedMotionNote
     motion == BackdropMotion.Still -> "The backdrop holds one still frame."
     else -> "The backdrop’s light moves."
 }
@@ -92,7 +93,7 @@ internal fun AppearanceOptions(theme: Artwork, look: AppearanceLook, change: ((A
                 SubLabel("Dim", "Darkens the picture behind the glass. Clearer glass may already add some shade.")
                 Segments("Dim", WallpaperDim.entries, look.dim, { it.label }, { Tags.Artwork.dim(it.id) }) { picked -> change { it.copy(dim = picked) } }
                 // Compose's blur needs Android 12; below it the option would save but change nothing.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (supportsWallpaperBlur) {
                     SubLabel("Blur", "Softens the picture behind the glass.")
                     Segments("Blur", WallpaperBlur.entries, look.blur, { it.label }, { Tags.Artwork.blur(it.id) }) { picked -> change { it.copy(blur = picked) } }
                 }
@@ -155,7 +156,7 @@ private fun GlassCard(theme: Artwork, level: GlassLevel, selected: Boolean, pict
             .selectable(selected, role = Role.RadioButton, onClick = pick).tagged(Tags.Artwork.glass(level.id)),
     ) {
         Box(Modifier.fillMaxWidth().height(56.dp).background(theme.bg)) {
-            if (picture) Image(painterResource(theme.preview), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            if (picture) Image(officePainter(theme.preview), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Column(
                 Modifier.fillMaxHeight().fillMaxWidth(.62f).align(Alignment.CenterEnd).background(theme.tint.copy(alpha = Glass.pane(theme.glass, level)))
                     .padding(horizontal = 8.dp, vertical = 12.dp),

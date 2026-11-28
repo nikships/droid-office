@@ -2,11 +2,15 @@ package ai.factory.droidoffice.ui.worker
 
 import ai.factory.droidoffice.R
 import ai.factory.droidoffice.core.PageMsg
-import ai.factory.droidoffice.core.TermEvent
 import ai.factory.droidoffice.core.TermPage
 import ai.factory.droidoffice.core.TermPalette
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.res.Resources
+import android.os.Build
+import android.os.PersistableBundle
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -16,8 +20,21 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayInputStream
+
+internal const val TERMINAL_UNAVAILABLE = "Could not open the terminal. Check for an Android System WebView update."
+
+@Composable
+internal fun rememberTerminalPage(onMessage: (TerminalPage, PageMsg) -> Unit, onGone: (TerminalPage) -> Unit): TerminalPage {
+    val context = LocalContext.current
+    return remember(context) { AndroidTerminalPage(context, onMessage, onGone) }
+}
 
 /**
  * The WebView running the terminal page (assets/terminal/): wterm, the same emulator as the
@@ -27,20 +44,9 @@ import java.io.ByteArrayInputStream
  * the renderer's own replies to terminal queries stay in the page, so the phone
  * never answers the program alongside the desktop.
  */
-class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, private val onGone: () -> Unit) {
-    private val keyboard = TerminalKeyboard(context) { onMessage(PageMsg.Input(it)) }
-    val view: WebView = keyboard
-    var ready = false
-        private set
-    private var ended = false
-
-    var clipboardWritable: () -> Boolean = { false }
-    private var hasSnapshot = false
-    /** Hands the feed's events to the page, in order. */
-    val listener: (TermEvent) -> Unit = { event ->
-        if (event is TermEvent.Snapshot) hasSnapshot = true
-        send(TermPage.event(event, hasSnapshot && clipboardWritable()))
-    }
+private class AndroidTerminalPage(context: Context, onMessage: (TerminalPage, PageMsg) -> Unit, onGone: (TerminalPage) -> Unit) : TerminalPage(onMessage, onGone) {
+    private val keyboard = TerminalKeyboard(context) { receive(PageMsg.Input(it)) }
+    private val view: WebView = keyboard
 
     init {
         val loader = WebViewAssetLoader.Builder()
@@ -76,19 +82,32 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
         view.loadUrl(PAGE)
     }
 
-    fun send(script: String) {
-        if (ready) view.evaluateJavascript(script, null)
+    override fun evaluate(script: String) { view.evaluateJavascript(script, null) }
+
+    @Composable
+    override fun Surface(modifier: Modifier, unframed: Boolean, drawn: Boolean) {
+        AndroidView(factory = { view }, modifier = modifier, update = {
+            it.setBackgroundColor(if (unframed) android.graphics.Color.TRANSPARENT else TermPalette.BACKGROUND)
+            it.alpha = if (unframed && !drawn) 0f else 1f
+        })
     }
 
-    fun typeDirectly(enabled: Boolean) = keyboard.typeDirectly(enabled)
+    override fun typeDirectly(enabled: Boolean) = keyboard.typeDirectly(enabled)
 
-    fun setCsiEnter(enabled: Boolean) { keyboard.csiEnter = enabled }
+    override fun setCsiEnter(enabled: Boolean) { keyboard.csiEnter = enabled }
 
-    fun destroy() {
-        ended = true
-        clipboardWritable = { false }
-        typeDirectly(false)
-        ready = false
+    override fun copyIfAttached(text: String) {
+        if (!view.isAttachedToWindow) return
+        runCatching {
+            val clip = ClipData.newPlainText("Terminal", text)
+            if (Build.VERSION.SDK_INT >= 33) {
+                clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
+            }
+            view.context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+        }
+    }
+
+    override fun disposeView() {
         (view.parent as? ViewGroup)?.removeView(view)
         view.destroy()
     }
@@ -106,10 +125,7 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            if (ended) return true
-            ended = true
-            ready = false
-            onGone()
+            rendererGone()
             return true
         }
     }
@@ -121,9 +137,8 @@ class TerminalPage(context: Context, private val onMessage: (PageMsg) -> Unit, p
             val msg = TermPage.decode(json) ?: return
             view.post {
                 if (ended) return@post
-                if (msg == PageMsg.Ready) ready = true
                 if (msg is PageMsg.Kitty) keyboard.kittyFlags = msg.flags
-                onMessage(msg)
+                receive(msg)
             }
         }
     }

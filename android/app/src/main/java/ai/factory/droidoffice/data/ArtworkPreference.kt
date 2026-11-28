@@ -6,27 +6,24 @@ import ai.factory.droidoffice.core.GlassLevel
 import ai.factory.droidoffice.core.WallpaperBlur
 import ai.factory.droidoffice.core.WallpaperDim
 import ai.factory.droidoffice.core.WallpaperSource
-import androidx.datastore.preferences.core.MutablePreferences
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.stringPreferencesKey
 
 /** No key is the original Android look, including on installations predating the gallery. */
 internal object ArtworkPreference {
-    val key = stringPreferencesKey("artwork_theme")
-    fun write(p: MutablePreferences, id: String?) {
+    const val key = "artwork_theme"
+    fun write(p: MutableMap<String, String>, id: String?) {
         if (id == null) p.remove(key) else p[key] = id
     }
 }
 
 /** Glass, wallpaper and motion options; a missing or unknown value reads as the default. */
 internal object AppearancePreference {
-    val glass = stringPreferencesKey("appearance_glass")
-    val wallpaper = stringPreferencesKey("appearance_wallpaper")
-    val dim = stringPreferencesKey("appearance_dim")
-    val blur = stringPreferencesKey("appearance_blur")
-    val motion = stringPreferencesKey("appearance_motion")
+    private const val glass = "appearance_glass"
+    private const val wallpaper = "appearance_wallpaper"
+    private const val dim = "appearance_dim"
+    private const val blur = "appearance_blur"
+    private const val motion = "appearance_motion"
 
-    fun read(p: Preferences) = AppearanceLook(
+    fun read(p: Map<String, String>) = AppearanceLook(
         glass = GlassLevel.parse(p[glass]),
         wallpaper = WallpaperSource.parse(p[wallpaper]),
         dim = WallpaperDim.parse(p[dim]),
@@ -34,9 +31,9 @@ internal object AppearancePreference {
         motion = BackdropMotion.parse(p[motion]),
     )
 
-    fun write(p: MutablePreferences, look: AppearanceLook) {
+    fun write(p: MutableMap<String, String>, look: AppearanceLook) {
         val defaults = AppearanceLook()
-        fun put(key: Preferences.Key<String>, value: String, default: String) {
+        fun put(key: String, value: String, default: String) {
             if (value == default) p.remove(key) else p[key] = value
         }
         put(glass, look.glass.id, defaults.glass.id)

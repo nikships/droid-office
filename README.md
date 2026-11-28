@@ -97,6 +97,8 @@ The **web companion** opens the same pane-based workspace in a browser, locally 
 
 [Download the Android APK](https://github.com/nikships/droid-office/releases/latest) · [Pair over Tailscale](android/README.md)
 
+The [iOS companion](ios/README.md) runs the same Office, Workers, Board and Me screens on iPhone and iPad. Pair with your Mac to hire workers, open their Threads and terminals, or work on the Whiteboard.
+
 ## For developers
 
 Run the source to modify or contribute. You need **Node.js 20+**, npm and the tools above; macOS builds also need Xcode Command Line Tools.

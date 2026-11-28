@@ -138,7 +138,7 @@ test('no active subscription blocks only hosted models, and missing Core data is
 
 test('Android coreModels stays identical to FACTORY_CORE_MODELS and missing ids fail open safely', () => {
   assert.equal(factoryModelTier({ id: undefined as unknown as string }), undefined);
-  const kotlin = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/core/FactoryLimits.kt', import.meta.url), 'utf8');
+  const kotlin = readFileSync(new URL('../android/core/src/commonMain/kotlin/ai/factory/droidoffice/core/FactoryLimits.kt', import.meta.url), 'utf8');
   const block = kotlin.match(/private val coreModels = setOf\(([\s\S]*?)\)/)?.[1];
   assert.ok(block, 'coreModels set found in FactoryLimits.kt');
   const androidCore = new Set([...block.matchAll(/"([^"]+)"/g)].map((m) => m[1]));

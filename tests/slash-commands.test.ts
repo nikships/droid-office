@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { applySlash, findSlashQuery, nativeCopy, nativeLimits, sideQuestion, SLASH_COMMANDS, slashCommands, slashKind, slashOf, slashRefusal, slashSuggestions } from '../src/shared/slash-commands.js';
 
 test('the Android app lists the same slash commands', () => {
-  const kotlin = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/core/SlashCommands.kt', import.meta.url), 'utf8');
+  const kotlin = readFileSync(new URL('../android/core/src/commonMain/kotlin/ai/factory/droidoffice/core/SlashCommands.kt', import.meta.url), 'utf8');
   const parsed = [...kotlin.matchAll(/Command\("([^"]+)", "([^"]+)", Kind\.(\w+)(?:, listOf\(([^)]*)\))?(, midTurn = true)?\)/g)].map((m) => ({
     name: m[1],
     description: m[2],

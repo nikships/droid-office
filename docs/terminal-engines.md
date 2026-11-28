@@ -6,6 +6,8 @@ Both web entry points warm the runtime when idle. Concurrent loads of the same h
 
 Android Raw TTY packages the JavaScript, CSS and WASM inside the APK. The native input connection owns Direct input. On the stock Android 9 (API 28) emulator, Chrome WebView 66 fetched all 599,627 WASM bytes with the correct MIME type, but the embedder disallowed WebAssembly compilation. Raw TTY shows **Unavailable** on that provider; there is no alternate renderer. See [the Android app guide](../android/README.md) for Phone and Desktop sizing, input and navigation.
 
+The iOS companion packages the same terminal assets and opens them in a WKWebView. The shared Compose surface owns Phone/Desktop sizing, quick keys, Find and the live feed; a native text view handles iOS keyboard and composition input. The terminal page does not connect to the office itself.
+
 A replacement snapshot closes Find on web and Mac. On Android, a replacement snapshot on an existing renderer closes Find, clears the query and keeps the reading position when the line is still in history. A fresh Android renderer can rerun a preserved query.
 
 A program can respond to a resize by clearing and reprinting its entire history. A synchronized clear destroys native cell positions, so the reader restore matches text from the visible passage across the replacement rows, ignoring changes in wrapping and indentation. Tail followers do not search the history.

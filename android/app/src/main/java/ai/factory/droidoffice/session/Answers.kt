@@ -7,7 +7,7 @@ import ai.factory.droidoffice.core.Menu
 import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.QuestionAnswers
 import ai.factory.droidoffice.core.WorkerStatus
-import java.util.UUID
+import kotlin.uuid.Uuid
 
 /** Only [Sent] means the office confirmed the answer, not just a socket write. */
 enum class Answered { Sent, Changed, Unreachable, NeedsThread, Unconfirmed, Refused }
@@ -34,7 +34,7 @@ class Answers(private val connection: OfficeConnection) {
         if (now.multiSelect && !data.workerAnswerMultiSelect) return Answered.NeedsThread
         if (!QuestionAnswers.valid(now, choice, choices, text)) return Answered.NeedsThread
         val floor = if (workerId == ORCHESTRATOR_ID) data.floorId else (data.workerFloorId(workerId) ?: data.floorId.takeIf { !data.hasBuildingRoster } ?: return Answered.Changed)
-        val request = UUID.randomUUID().toString()
+        val request = Uuid.random().toString()
         val receipt = connection.answerConfirmed(request, ClientMsg.workerAnswer(workerId, shown, request, floor, choice, choices, text))
             ?: return Answered.Unconfirmed
         return if (receipt.ok) Answered.Sent else Answered.Refused

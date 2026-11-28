@@ -36,7 +36,7 @@ Preconditions:
 - **Live turn.** In the companion, send “Ask me one two-choice question; hire nobody.” Observe starting/working, answer the real question from the pane, and require its reply in Thread. Send a follow-up while working and Stop a separate turn. Capture the action and result, not just the final transcript.
 - **Team.** Ask it to hire one cheap worker on a named cloned floor for a read-only count, with no pushes or forge writes. Require the worker in the floor list and the building agent's team, live room dashes, a report and the Orchestrator's follow-up. Send the helper home afterwards.
 - **Bots.** Go to the bot by id with `office.goTo(id)`, then E. Require its card to say it runs externally, and check the same identity/team in the companion. `office.state().workers` must not contain it.
-- **Android.** Use the handles in `android/app/src/main/java/ai/factory/droidoffice/core/Tags.kt` for Home, the Orchestrator, Asks and the settings sheet. Answer a real question, background the app for the completion notification, then tap it and require the same thread.
+- **Android.** Use the handles in `android/core/src/commonMain/kotlin/ai/factory/droidoffice/core/Tags.kt` for Home, the Orchestrator, Asks and the settings sheet. Answer a real question, background the app for the completion notification, then tap it and require the same thread.
 - **Evidence.** Keep numbered shots and `proof.json`; list entry points that were not exercised. The scripted drive writes its assertions and skipped bot path there.
 
 ## Gotchas

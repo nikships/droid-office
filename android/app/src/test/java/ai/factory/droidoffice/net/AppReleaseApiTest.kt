@@ -8,7 +8,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class AppReleaseApiTest {
-    private val auth = OfficeAuth.Device("test-device")
+    private fun auth(base: String) = OfficeAuth.Device("test-device", listOf(base))
 
     /** What the office answers from `gh api repos/nikships/droid-office/releases/latest --jq …`, trimmed to its APK. */
     private val release = """{"assets":[{"browser_download_url":"https://github.com/nikships/droid-office/releases/download/v0.1.1161/Droid-Office-0.1.1160.apk","digest":"sha256:6834751605ac972c339e22437bf7e8a248df4cffb0cf4dca81fca96f8b4157ef","name":"Droid-Office-0.1.1160.apk","size":25262837,"state":"uploaded"}],"draft":false,"prerelease":false,"tag_name":"v0.1.1161"}"""
@@ -20,14 +20,14 @@ class AppReleaseApiTest {
             assertEquals("Bearer test-device", exchange.requestHeaders.getFirst("Authorization"))
             reply(exchange, 200, release)
         }) { base ->
-            assertEquals(release, OfficeApi().appRelease(base, auth).getOrThrow())
+            assertEquals(release, OfficeApi().appRelease(base, auth(base)).getOrThrow())
         }
     }
 
     @Test
     fun saysWhyTheOfficeCouldNotReadIt() = runBlocking {
         serve({ reply(it, 502, """{"error":"The office couldn't read the newest release from GitHub: gh isn't logged in on the server — run `gh auth login`"}""") }) { base ->
-            val error = OfficeApi().appRelease(base, auth).exceptionOrNull()
+            val error = OfficeApi().appRelease(base, auth(base)).exceptionOrNull()
             assertEquals("The office couldn't read the newest release from GitHub: gh isn't logged in on the server — run `gh auth login`", error?.message)
         }
     }
@@ -35,7 +35,7 @@ class AppReleaseApiTest {
     @Test
     fun anOlderOfficeWithoutTheRouteAsksForAnOfficeUpdate() = runBlocking {
         serve({ reply(it, 404, """{"error":"Not found"}""") }) { base ->
-            assertEquals("Update the office on your Mac to check for app updates.", OfficeApi().appRelease(base, auth).exceptionOrNull()?.message)
+            assertEquals("Update the office on your Mac to check for app updates.", OfficeApi().appRelease(base, auth(base)).exceptionOrNull()?.message)
         }
     }
 

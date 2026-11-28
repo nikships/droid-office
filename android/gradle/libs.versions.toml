@@ -3,6 +3,8 @@ agp = "9.4.1"
 kotlin = "2.4.20"
 composeBom = "2026.09.00"
 materialIconsCore = "1.7.8"
+composeMobile = "1.12.2"
+materialMobile = "1.12.0-alpha03"
 activity = "1.13.0"
 core = "1.19.1"
 splashscreen = "1.2.0"
@@ -38,6 +40,13 @@ compose-foundation = { module = "androidx.compose.foundation:foundation" }
 compose-animation = { module = "androidx.compose.animation:animation" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-material-icons-core = { module = "androidx.compose.material:material-icons-core", version.ref = "materialIconsCore" }
+mobile-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "composeMobile" }
+mobile-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "composeMobile" }
+mobile-material = { module = "org.jetbrains.compose.material3:material3", version.ref = "materialMobile" }
+mobile-icons = { module = "org.jetbrains.compose.material:material-icons-core", version = "1.7.3" }
+mobile-lifecycle = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+mobile-navigation = { module = "org.jetbrains.androidx.navigation3:navigation3-ui", version.ref = "navigation3" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
@@ -47,8 +56,12 @@ camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = 
 camera-compose = { module = "androidx.camera:camera-compose", version.ref = "camerax" }
 mlkit-barcode = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkitBarcode" }
 junit = { module = "junit:junit", version.ref = "junit" }
+kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+android-kotlin-multiplatform-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+android-lint = { id = "com.android.lint", version.ref = "agp" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }

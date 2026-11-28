@@ -49,7 +49,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import ai.factory.droidoffice.ui.worker.workerDialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Availability
 import ai.factory.droidoffice.core.ModelAvailability
@@ -124,7 +124,7 @@ internal fun ModelPicker(catalogue: ModelCatalogue?, loading: Boolean, selected:
         onPick(option)
     }
     // Full screen like the hire screen under it: a long list in a sheet drags the sheet away when scrolled past its top.
-    Dialog(onDismissRequest = { open = false }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    Dialog(onDismissRequest = { open = false }, properties = workerDialogProperties()) {
         Column(Modifier.fillMaxSize().background(Palette.Bg).windowInsetsPadding(WindowInsets.safeDrawing).tagged(Tags.Hire.MODEL_SHEET)) {
             Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 20.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { open = false }, modifier = Modifier.tagged(Tags.Hire.MODEL_CLOSE)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Palette.Text) }

@@ -395,7 +395,7 @@ test('every retained owner tool has a strict self-contained schema', async (t) =
 
 test('office_worker_answer forwards the exact captured review snapshot', async (t) => {
   const r = await remoteRig(t);
-  const menu = readMenu(readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'))!;
+  const menu = readMenu(readFileSync(new URL('../android/core/src/androidHostTest/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'))!;
   const result = await r.call('office_worker_answer', { workerId: 'pixel', menu, choice: 1 });
   assert.equal(result.error, false);
   assert.deepEqual(r.calls.at(-1), { by: 'Grok', floor: 'f-api', msg: { t: 'worker.answer', workerId: 'pixel', menu, choice: 1 } });

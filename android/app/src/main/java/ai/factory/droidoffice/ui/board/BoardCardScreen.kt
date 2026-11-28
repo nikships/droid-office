@@ -1,9 +1,5 @@
 package ai.factory.droidoffice.ui.board
 
-import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
@@ -14,16 +10,13 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.viewinterop.AndroidView
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.WB_STICKY_COLORS
 import ai.factory.droidoffice.core.WbPage
 import ai.factory.droidoffice.core.WbPageMsg
 import ai.factory.droidoffice.ui.components.Chip
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlin.time.Clock
 import kotlinx.serialization.json.JsonObject
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -141,7 +134,6 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavig
     val graph = LocalGraph.current
     val connection = graph.connection
     val snackbar = LocalSnackbar.current
-    val context = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val boards by connection.boards.collectAsStateWithLifecycle()
@@ -206,23 +198,9 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavig
 
     val raw = floor?.cards?.get(cardId)
     val cap = floor?.caps?.get(cardId)
-    val canLive = remember { CardPage.supported() }
-    val live = canLive && card != null && raw != null && (card.isCanvas || cap != null)
-    var generation by remember(cardId) { mutableIntStateOf(0) }
-    val inbox = remember { arrayOf<(WbPageMsg) -> Unit>({}) }
-    val page = if (live) {
-        remember(cardId, generation) {
-            CardPage(
-                context,
-                cardId,
-                object : CardFiles {
-                    override fun card(cap: String, path: String) = connection.cardFile(cap, path)
-                    override fun picture(hash: String) = connection.boardFile(floorId, cardId, hash)
-                },
-                onMessage = { inbox[0](it) },
-                onGone = { generation++ },
-            )
-        }
+    val inbox = remember(connection, floorId, cardId) { arrayOf<(WbPageMsg) -> Unit>({}) }
+    val page = if (card != null && raw != null && (card.isCanvas || cap != null)) {
+        rememberCardPage(connection, floorId, cardId, cap) { inbox[0](it) }
     } else {
         null
     }
@@ -244,7 +222,7 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavig
 
     fun acted(name: String) {
         // A page that records actions by itself (a game, a timer) would otherwise bury the screen in snackbars.
-        val now = System.currentTimeMillis()
+        val now = Clock.System.now().toEpochMilliseconds()
         if (now - (actedAt[name] ?: 0) < ACTED_TOAST_MS) return
         actedAt[name] = now
         scope.launch {
@@ -310,11 +288,11 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavig
         LaunchedEffect(page, readyCount, buttons) { if (readyCount > 0 && buttons != null) page.send(WbPage.buttons(buttons)) }
     }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null || page == null) return@rememberLauncherForActivityResult
+    val pickPicture = rememberBoardPicturePicker { loadPicture ->
+        if (page == null) return@rememberBoardPicturePicker
         adding = true
         scope.launch {
-            val picture = withContext(Dispatchers.IO) { runCatching { loadBoardPicture(context, uri) }.getOrNull() }
+            val picture = loadPicture()
             if (picture == null) {
                 snackbar.showSnackbar("That picture couldn't be read")
             } else {
@@ -359,8 +337,8 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavig
             }
             if (page != null) {
                 key(page) {
-                    AndroidView(
-                        factory = { page.view },
+                    LiveCardSurface(
+                        page = page,
                         modifier = Modifier.weight(1f).fillMaxWidth()
                             .onSizeChanged { widthDp = it.width / density.density }
                             .tagged(Tags.Board.LIVE)
@@ -405,7 +383,7 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavig
                     mode,
                     adding,
                     onMode = { chosenMode = it },
-                    onPicture = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    onPicture = pickPicture,
                     onComments = {
                         focusThread = null
                         comments = true
@@ -418,26 +396,15 @@ fun BoardCardScreen(floorId: String, cardId: String, onBack: () -> Unit, onNavig
                 })
             }
         }
-        page?.fullscreen?.let { shown ->
-            key(shown) {
-                AndroidView(
-                    factory = { shown },
-                    modifier = Modifier.fillMaxSize().background(Color.Black).tagged(Tags.Board.VIDEO_FULLSCREEN),
-                )
-            }
-            BackHandler { page.leaveFullscreen() }
-        }
-        if (immersive && page?.fullscreen == null) {
+        CardFullscreen(page, immersive, onExit = { immersive = false }) {
             IconButton(
                 onClick = { immersive = false },
                 modifier = Modifier.align(Alignment.TopEnd).padding(10.dp).size(40.dp)
                     .panel(CircleShape, Palette.SurfaceHover.copy(alpha = 0.85f), Palette.BorderStrong)
                     .tagged(Tags.Board.FULLSCREEN),
             ) { Icon(OfficeIcons.Collapse, "Leave full screen", tint = Palette.Text) }
-            BackHandler { immersive = false }
         }
     }
-    HideSystemBars(immersive || page?.fullscreen != null)
 
     if (comments && card != null) {
         CommentsSheet(

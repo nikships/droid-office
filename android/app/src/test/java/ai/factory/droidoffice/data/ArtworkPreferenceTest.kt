@@ -9,6 +9,7 @@ import ai.factory.droidoffice.core.WallpaperSource
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import java.io.File
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -33,25 +34,25 @@ class ArtworkPreferenceTest {
         }
         withStore { store ->
             store.edit { it[haptics] = false }
-            assertNull(store.data.first()[ArtworkPreference.key])
-            store.edit { ArtworkPreference.write(it, "carbons-copy") }
+            assertNull(store.data.first()[stringPreferencesKey(ArtworkPreference.key)])
+            AndroidOfficePreferences(store).edit { ArtworkPreference.write(it, "carbons-copy") }
         }
         withStore { store ->
-            assertEquals("carbons-copy", store.data.first()[ArtworkPreference.key])
-            store.edit { ArtworkPreference.write(it, null) }
+            assertEquals("carbons-copy", store.data.first()[stringPreferencesKey(ArtworkPreference.key)])
+            AndroidOfficePreferences(store).edit { ArtworkPreference.write(it, null) }
         }
         withStore { store ->
-            assertNull(store.data.first()[ArtworkPreference.key])
+            assertNull(store.data.first()[stringPreferencesKey(ArtworkPreference.key)])
             assertEquals(false, store.data.first()[haptics])
         }
     }
 
     @Test fun appearanceOptionsSurviveReopenAndDefaultsLeaveNoKeys() = runBlocking {
         val file = File(folder.root, "look.preferences_pb")
-        suspend fun withStore(block: suspend (androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences>) -> Unit) {
+        suspend fun withStore(block: suspend (OfficePreferences) -> Unit) {
             val job = SupervisorJob()
             try {
-                block(PreferenceDataStoreFactory.create(scope = CoroutineScope(Dispatchers.IO + job)) { file })
+                block(AndroidOfficePreferences(PreferenceDataStoreFactory.create(scope = CoroutineScope(Dispatchers.IO + job)) { file }))
             } finally {
                 job.cancelAndJoin()
             }
@@ -66,7 +67,7 @@ class ArtworkPreferenceTest {
             store.edit { AppearancePreference.write(it, AppearanceLook()) }
         }
         withStore { store ->
-            assertTrue(store.data.first().asMap().isEmpty())
+            assertTrue(store.data.first().isEmpty())
         }
     }
 }

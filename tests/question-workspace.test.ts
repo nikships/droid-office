@@ -205,7 +205,7 @@ test('answer workspace: full text, explicit selection, responsive scrolling and 
   await page.getByRole('button', { name: 'Submit answer', exact: true }).click();
   assert.equal(await page.evaluate(() => (window as any).replies.at(-1).menu.question), single.question);
   assert.deepEqual(await page.evaluate(() => (window as any).replies.at(-1).value), { choice: 3 });
-  const review = readMenu(readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'))!;
+  const review = readMenu(readFileSync(new URL('../android/core/src/androidHostTest/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'))!;
   for (const [width, height] of [
     [1440, 900],
     [1024, 700],
@@ -249,7 +249,7 @@ test('answer workspace: one window walks a whole questionnaire, by pointer or ke
   const first = readMenu(['  Which hypervisor should we use?', '', '  1. UTM', '  2. Parallels', '  Or type your own answer...', '', '  Space/Enter/1-9 Select'])!;
   const second = readMenu(['  Which Windows licence should we use?', '  1. [ ] Evaluation', '  2. [ ] Pro', '  3. [ ] Enterprise', '  [ ] Or type your own answer...', '  Submit', '  Space/Enter/1-9 Toggle'])!;
   const third = readMenu(['  How should agents connect?', '', '  1. SSH', '  2. RDP', '  Or type your own answer...', '', '  Space/Enter/1-9 Select'])!;
-  const review = readMenu(readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'))!;
+  const review = readMenu(readFileSync(new URL('../android/core/src/androidHostTest/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'))!;
   for (const [width, height] of [
     [1024, 700],
     [390, 844],

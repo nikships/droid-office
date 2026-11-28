@@ -5,7 +5,7 @@ import { ORCHESTRATOR_COLOR, ORCHESTRATOR_ID, ORCHESTRATOR_NAME, type MissionAge
 import type { WorkerInfo } from '../src/shared/protocol.js';
 import { botLine, ORCHESTRATOR_EXAMPLES, ORCHESTRATOR_MODEL_CHANGE, ORCHESTRATOR_PITCH, orchestratorLine } from '../src/client/mission.js';
 
-const kotlin = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/core/MissionControl.kt', import.meta.url), 'utf8');
+const kotlin = readFileSync(new URL('../android/core/src/commonMain/kotlin/ai/factory/droidoffice/core/MissionControl.kt', import.meta.url), 'utf8');
 
 /** The string a top-level or member `const val NAME = "..."` holds in MissionControl.kt. */
 function constant(name: string): string {

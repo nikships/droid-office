@@ -6,7 +6,7 @@ import { FLAG_BOLD, type Run } from '../src/shared/protocol.js';
 import { Answers, type AnswerHost } from '../src/server/answers.js';
 
 // Real installed Droid 1.7.1, three-question AskUser, captured via tuistory at 110×45.
-const REVIEW = readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n');
+const REVIEW = readFileSync(new URL('../android/core/src/androidHostTest/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n');
 
 test('Droid 1.7.1 review is an explicit Enter submission bound to every answer', async () => {
   const menu = readMenu(REVIEW)!;
@@ -18,7 +18,7 @@ test('Droid 1.7.1 review is an explicit Enter submission bound to every answer',
   assert.equal(replyKeys(menu, 'submit'), undefined);
   assert.equal(canAnswer({ kind: 'agent', status: 'needs_input' }, REVIEW), true);
   assert.deepEqual(readScreenMenu(REVIEW.map((line) => [[line, -1, -1, 0]])), menu);
-  const phone = readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review-phone.txt', import.meta.url), 'utf8').split('\n');
+  const phone = readFileSync(new URL('../android/core/src/androidHostTest/resources/askuser-1.7.1-review-phone.txt', import.meta.url), 'utf8').split('\n');
   assert.deepEqual(readMenu(phone), menu, 'real 50×29 phone capture wraps the footer and drops its separator');
   const lines = REVIEW.map((line) => line.replace('→ SSH', '→ RDP'));
   assert.equal(sameMenu(menu, readMenu(lines)), false, 'changed summaries invalidate a review even when Submit is unchanged');

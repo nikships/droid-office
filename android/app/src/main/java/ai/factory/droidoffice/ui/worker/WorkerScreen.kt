@@ -1,6 +1,6 @@
 package ai.factory.droidoffice.ui.worker
 
-import androidx.activity.compose.LocalActivity
+import kotlin.time.Clock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -76,8 +76,6 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.testTag
-import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.AnnotatedString
@@ -150,6 +148,8 @@ import ai.factory.droidoffice.ui.theme.Palette
 import ai.factory.droidoffice.ui.theme.ThreadPalette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+internal fun workerNowMillis(): Long = Clock.System.now().toEpochMilliseconds()
 
 private val PhoneSizingSaver = Saver<PhoneSizing, List<Int>>(
     save = { listOf(it.original?.cols ?: 0, it.original?.rows ?: 0) + it.sentSizes.flatMap { size -> listOf(size.cols, size.rows) } },
@@ -262,7 +262,7 @@ fun WorkerScreen(
     var phoneChoice by rememberSaveable(workerId) { mutableStateOf<Boolean?>(null) }
     val phone = phoneChoice ?: (worker?.isCloud == false)
     val sizing = rememberSaveable(workerId, saver = PhoneSizingSaver) { PhoneSizing() }
-    val activity = LocalActivity.current
+    val changingConfiguration = workerConfigurationChange()
     val ptySize by rememberUpdatedState(worker?.let { TermSize(it.cols, it.rows) })
 
     DisposableEffect(workerId) {
@@ -272,7 +272,7 @@ fun WorkerScreen(
         onDispose {
             // Leaving the phone view puts the desktop's size back (before detaching: the office takes
             // a resize only from an attached window). Rotating keeps the phone view and its size.
-            if (activity?.isChangingConfigurations != true) {
+            if (!changingConfiguration()) {
                 ptySize?.let { now -> sizing.restore(now) }?.let { connection.send(ClientMsg.termResize(workerId, it.cols, it.rows)) }
                 sizing.release()
             }
@@ -933,8 +933,7 @@ private fun QuickKey(label: String, spoken: String, tag: String, accent: Boolean
                 role = if (checked == null) Role.Button else Role.Switch
                 this.selected = selected
                 if (checked != null) toggleableState = ToggleableState(checked)
-                testTagsAsResourceId = true
-                testTag = tag
+                workerKeyTag(tag)
             }
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center,

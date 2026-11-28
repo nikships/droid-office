@@ -5,6 +5,7 @@ import ai.factory.droidoffice.core.ORCHESTRATOR_ID
 import ai.factory.droidoffice.core.PageMsg
 import ai.factory.droidoffice.core.ScreenState
 import ai.factory.droidoffice.core.Tags
+import ai.factory.droidoffice.core.TermEvent
 import ai.factory.droidoffice.core.TermPage
 import ai.factory.droidoffice.core.TermPalette
 import ai.factory.droidoffice.core.TermView
@@ -13,11 +14,6 @@ import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.components.Spinner
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.Palette
-import android.content.ClipData
-import android.content.ClipDescription
-import android.content.ClipboardManager
-import android.os.Build
-import android.os.PersistableBundle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -55,16 +51,58 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 
 private val TermBg = Color(TermPalette.BACKGROUND)
+
+/** Both native views are passive renderers. Only the live, attached feed can grant a clipboard write. */
+internal abstract class TerminalPage(private val onMessage: (TerminalPage, PageMsg) -> Unit, private val onGone: (TerminalPage) -> Unit) {
+    private var ready = false
+    protected var ended = false
+        private set
+    private var hasSnapshot = false
+    var clipboardWritable: () -> Boolean = { false }
+    val listener: (TermEvent) -> Unit = { event ->
+        if (event is TermEvent.Snapshot) hasSnapshot = true
+        send(TermPage.event(event, hasSnapshot && clipboardWritable()))
+    }
+
+    protected fun receive(msg: PageMsg) {
+        if (ended) return
+        if (msg == PageMsg.Ready) {
+            if (ready) return
+            ready = true
+        }
+        onMessage(this, msg)
+    }
+
+    protected fun rendererGone() {
+        if (ended) return
+        ended = true
+        onGone(this)
+    }
+
+    fun send(script: String) { if (ready && !ended) evaluate(script) }
+    fun writeClipboard(text: String) { if (ready && !ended && clipboardWritable()) copyIfAttached(text) }
+    fun destroy() {
+        ended = true
+        clipboardWritable = { false }
+        typeDirectly(false)
+        disposeView()
+    }
+
+    protected abstract fun evaluate(script: String)
+    protected abstract fun copyIfAttached(text: String)
+    protected abstract fun disposeView()
+    abstract fun typeDirectly(enabled: Boolean)
+    abstract fun setCsiEnter(enabled: Boolean)
+    @Composable abstract fun Surface(modifier: Modifier, unframed: Boolean, drawn: Boolean)
+}
 
 /**
  * A worker's terminal: the office's own stream in wterm (see [TerminalPage]), with its history.
@@ -89,7 +127,6 @@ internal fun Terminal(
 ) {
     val connection = LocalGraph.current.connection
     val data by connection.data.collectAsStateWithLifecycle()
-    val context = LocalContext.current
     val fontScale = LocalDensity.current.fontScale
     // A new page whenever the WebView's renderer goes away; it starts from a fresh snapshot.
     var generation by remember(workerId) { mutableIntStateOf(0) }
@@ -116,11 +153,9 @@ internal fun Terminal(
         data.deskWorker(workerId)?.name
     }
 
-    val page = remember(workerId, generation) {
-        lateinit var p: TerminalPage
-        p = TerminalPage(
-            context,
-            onMessage = { msg ->
+    val page = key(workerId, generation) {
+        rememberTerminalPage(
+            onMessage = { p, msg ->
                 when (msg) {
                     PageMsg.Ready -> {
                         navigation.setRenderer(p)
@@ -141,16 +176,7 @@ internal fun Terminal(
                     }
                     is PageMsg.Matches -> if (navigation.page === p) navigation.accept(msg)
                     is PageMsg.SearchClosed -> if (navigation.page === p) navigation.closed(msg.request)
-                    is PageMsg.ClipboardWrite -> if (p.ready && p.view.isAttachedToWindow && p.clipboardWritable()) {
-                        runCatching {
-                            val clip = ClipData.newPlainText("Terminal", msg.text)
-                            // Android owns the clipboard overlay. Don't preview potentially sensitive shell output.
-                            if (Build.VERSION.SDK_INT >= 33) {
-                                clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
-                            }
-                            context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
-                        }
-                    }
+                    is PageMsg.ClipboardWrite -> p.writeClipboard(msg.text)
                     is PageMsg.Prompts -> navigation.prompts = msg.available
                     PageMsg.Unavailable -> unavailable = true
                     is PageMsg.Bottom -> atBottom = msg.at
@@ -160,9 +186,8 @@ internal fun Terminal(
                     is PageMsg.Input -> if (TermPage.acceptsInput(latestLive, drawn, unavailable)) connection.send(ClientMsg.termInput(workerId, msg.data))
                 }
             },
-            onGone = { navigation.detach(p); generation++ },
+            onGone = { p -> navigation.detach(p); generation++ },
         )
-        p
     }
     DisposableEffect(page) {
         onDispose {
@@ -189,13 +214,10 @@ internal fun Terminal(
             },
     ) {
         key(page) {
-            AndroidView(factory = { page.view }, modifier = Modifier.fillMaxSize(), update = {
-                it.setBackgroundColor(if (unframed) android.graphics.Color.TRANSPARENT else TermPalette.BACKGROUND)
-                it.alpha = if (unframed && !drawn) 0f else 1f
-            })
+            page.Surface(Modifier.fillMaxSize(), unframed, drawn)
         }
         if (unavailable) {
-            Text("Could not open the terminal. Check for an Android System WebView update.", Modifier.align(Alignment.Center).padding(16.dp))
+            Text(TERMINAL_UNAVAILABLE, Modifier.align(Alignment.Center).padding(16.dp))
         } else if (!drawn) {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spinner(Modifier.size(22.dp))

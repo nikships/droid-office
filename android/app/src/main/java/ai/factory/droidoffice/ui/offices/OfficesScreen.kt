@@ -64,7 +64,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.ui.mission.OrchestratorSheet
-import ai.factory.droidoffice.BuildConfig
 import ai.factory.droidoffice.core.Routes
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.data.AppSettings
@@ -186,7 +185,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                     }
                     Toggle(
                         OfficeIcons.Bolt, "Stay connected",
-                        "Keep the connection open in the background, so alerts come even with the app closed. Shows a quiet ongoing notification.",
+                        graph.backgroundConnectionNote,
                         store.settings.stayConnected,
                         Tags.Offices.STAY_CONNECTED,
                     ) { on ->
@@ -212,7 +211,7 @@ fun OfficesScreen(onBack: () -> Unit, onPairNew: () -> Unit, onSwitched: () -> U
                 Eyebrow("About", Modifier.padding(start = 4.dp, top = 26.dp, bottom = 8.dp))
                 Column(Modifier.fillMaxWidth().panel().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     About("This phone", graph.deviceName)
-                    About("App", "Droid Office ${BuildConfig.VERSION_NAME}")
+                    About("App", "Droid Office ${graph.appVersion}")
                     store.active?.version?.let { About("Office", "droid-office $it") }
                     UpdateRow()
                     SecondaryButton("Host desktop app", { hostUpdate = true }, Modifier.fillMaxWidth().tagged(Tags.HostUpdate.OPEN), enabled = store.active != null)

@@ -1,6 +1,5 @@
 package ai.factory.droidoffice.ui.worker
 
-import android.content.ClipData
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -34,7 +33,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -91,7 +89,7 @@ internal fun ThreadCopyDialog(entries: List<ThreadEntry>, sessionId: String?, on
             if (text == null) {
                 snackbar.showSnackbar(if (choice == ThreadTurns.Copy.Session) "This worker has no session yet." else "Nothing to copy yet.")
             } else {
-                val copied = runCatching { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(choice.label, text))) }.isSuccess
+                val copied = runCatching { clipboard.setClipEntry(workerTextClip(choice.label, text)) }.isSuccess
                 if (copied) onDismiss() else snackbar.showSnackbar("Couldn't copy to the clipboard.")
             }
         }

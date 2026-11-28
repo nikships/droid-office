@@ -11,19 +11,20 @@ import org.junit.Test
 
 class FactoryOverageApiTest {
     @Test fun sendsExactContractWithPairedDeviceOrLegacyLanAuth() = runBlocking {
-        for (auth in listOf(OfficeAuth.Device("test-device"), OfficeAuth.Lan("test-lan"))) {
+        for (device in listOf(true, false)) {
             serve({ exchange ->
                 assertEquals("POST", exchange.requestMethod)
                 assertEquals("""{"overagePreference":"extraUsage"}""", exchange.requestBody.reader().use { it.readText() })
                 val origin = "http://127.0.0.1:${exchange.localAddress.port}"
                 assertEquals(origin, exchange.requestHeaders.getFirst("Origin"))
-                if (auth is OfficeAuth.Device) {
+                if (device) {
                     assertEquals("Bearer test-device", exchange.requestHeaders.getFirst("Authorization"))
                     assertEquals(null, exchange.requestURI.rawQuery)
                 } else assertEquals("t=test-lan", exchange.requestURI.rawQuery)
                 exchange.sendResponseHeaders(200, -1)
                 exchange.close()
             }) { base ->
+                val auth = if (device) OfficeAuth.Device("test-device", listOf(base)) else OfficeAuth.Lan("test-lan", listOf(base))
                 assertTrue(OfficeApi().factoryOverage(base, auth, "extraUsage").isSuccess)
             }
         }
@@ -38,7 +39,7 @@ class FactoryOverageApiTest {
             exchange.responseBody.use { it.write(body) }
         }) { base ->
             val api = OfficeApi()
-            val auth = OfficeAuth.Device("test-device")
+            val auth = OfficeAuth.Device("test-device", listOf(base))
             assertEquals("Airgapped mode pauses Factory", api.factoryOverage(base, auth, "droidCore").exceptionOrNull()?.message)
             assertTrue(api.factoryOverage(base, auth, "invalid").isFailure)
             assertEquals(1, calls.get())
@@ -58,7 +59,7 @@ class FactoryOverageApiTest {
                 }
                 exchange.close()
             }) { base ->
-                assertTrue(OfficeApi().factoryOverage(base, OfficeAuth.Device("test-device"), "extraUsage").isFailure)
+                assertTrue(OfficeApi().factoryOverage(base, OfficeAuth.Device("test-device", listOf(base)), "extraUsage").isFailure)
                 assertEquals(1, calls.get())
             }
         }

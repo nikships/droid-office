@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleURLTypes</key><array><dict>
+        <key>CFBundleURLName</key><string>$(PRODUCT_BUNDLE_IDENTIFIER).pair</string>
+        <key>CFBundleURLSchemes</key><array><string>droidoffice</string></array>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+    </dict></array>
+    <key>ITSAppUsesNonExemptEncryption</key><false/>
+    <key>CADisableMinimumFrameDurationOnPhone</key><true/>
+    <key>NSCameraUsageDescription</key><string>Read the pairing QR code shown by your Droid Office. No images are saved.</string>
+    <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+    <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
+    <key>NSLocalNetworkUsageDescription</key><string>Reach your paired Droid Office on your private network.</string>
+</dict></plist>

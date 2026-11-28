@@ -263,7 +263,7 @@ test('a pane keeps one answer window open across a questionnaire and closes it w
     first: ['  Ask User', '  Which hypervisor should we use?', '', '  1. UTM', '  2. Parallels', '  Or type your own answer...', '', '  Space/Enter/1-9 Select'],
     second: ['  Ask User', '  Which Windows licence should we use?', '', '  1. Evaluation', '  2. Retail', '  Or type your own answer...', '', '  Space/Enter/1-9 Select'],
     third: ['  Ask User', '  How should agents connect?', '', '  1. SSH', '  2. RDP', '  Or type your own answer...', '', '  Space/Enter/1-9 Select'],
-    review: readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'),
+    review: readFileSync(new URL('../android/core/src/androidHostTest/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'),
   };
   await page.setContent('<!doctype html><div id="dashboard"><div class="dash-workspace"></div></div><div id="modal-root"></div>');
   await page.addStyleTag({ content: readFileSync(new URL('../src/client/style.css', import.meta.url), 'utf8') });

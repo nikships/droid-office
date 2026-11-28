@@ -25,7 +25,7 @@ Preconditions:
 - The debug app is installed: `cd android && ./gradlew installDebug`. Its package is `ai.factory.droidoffice.debug`, and its activity is `ai.factory.droidoffice.MainActivity`.
 - The app is paired with the run's office, and a worker is hired there (`hire-shell`).
 
-- **Unit tests and lint.** Run `cd android && ./gradlew testDebugUnitTest lintDebug`. Exit code `0`. Save the console to `$EVIDENCE/android/gradle.txt`.
+- **Unit tests and lint.** Run `cd android && ./gradlew testDebugUnitTest :core:testAndroidHostTest lintDebug :core:lint`. Exit code `0`. Save the console to `$EVIDENCE/android/gradle.txt`.
 - **Reach the office.** Run `adb reverse tcp:$PORT tcp:$PORT` so the device reaches the run's office on its own `127.0.0.1`.
 - **Pair on loopback.** Open `droidoffice://pair?v=1&name=Office%20clone&t=loopback-verification&u=http://127.0.0.1:$PORT` with `adb shell am start -a android.intent.action.VIEW -d '<link>' -p ai.factory.droidoffice.debug`, then tap `pair.open`. The placeholder is not a real LAN token: the isolated server trusts the connection arriving through `adb reverse` on loopback. Do not use this outside the isolated run.
 - **Open the list.** Run `adb shell am start -n ai.factory.droidoffice.debug/ai.factory.droidoffice.MainActivity`, then `adb exec-out uiautomator dump /dev/tty | sed 's/<node /\n<node /g' | grep 'resource-id="[^"]'`. The dump has `screen.home` and a `home.worker/<id>` whose id matches the office's worker.

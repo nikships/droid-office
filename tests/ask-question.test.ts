@@ -195,7 +195,7 @@ test('a questionnaire becomes steps: each question by topic, then the review wit
   assert.equal(replySummary(firstDisplay, { choice: 2 }), 'Parallels');
   assert.equal(replySummary(firstDisplay, { text: 'Hyper-V' }), 'Hyper-V');
 
-  const review = readMenu(readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'))!;
+  const review = readMenu(readFileSync(new URL('../android/core/src/androidHostTest/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n'))!;
   assert.deepEqual(reviewAnswers(review.review!), [
     { question: 'Which hypervisor should we use?', answer: 'UTM' },
     { question: 'Which Windows licence should we use?', answer: 'Evaluation' },

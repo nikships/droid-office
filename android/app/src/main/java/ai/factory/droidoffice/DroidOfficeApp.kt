@@ -68,8 +68,15 @@ class AppGraph(val app: Application) {
     val answers = Answers(connection)
     val alerts = Alerts(app, scope, connection, store, visibility)
     val updates = UpdateController(scope, GitHubUpdates(app, connection::appRelease))
+    val appVersion = BuildConfig.VERSION_NAME
+    val backgroundConnectionNote = "Keep the connection open in the background, so alerts come even with the app closed. Shows a quiet ongoing notification."
 
     init {
+        scope.launch {
+            store.snapshot.filter { it.loaded }.map { it.settings.stayConnected && it.offices.isNotEmpty() }.distinctUntilChanged().collect {
+                if (it) StayConnectedService.start(app) else StayConnectedService.stop(app)
+            }
+        }
         scope.launch {
             store.snapshot.map { it.settings.artworkId }.distinctUntilChanged().collect { Palette.artwork = Artworks.find(it) }
         }

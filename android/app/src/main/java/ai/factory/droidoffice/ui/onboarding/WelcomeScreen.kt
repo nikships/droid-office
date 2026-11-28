@@ -87,7 +87,7 @@ fun WelcomeScreen(onScan: () -> Unit, onLink: (PairingInvite) -> Unit, pendingDe
             GlyphMark(Modifier.graphicsLayer { alpha = rise.value; scaleX = 0.85f + 0.15f * rise.value; scaleY = scaleX }, size = 76.dp)
             Column(Modifier.widthIn(max = 520.dp).fillMaxWidth().graphicsLayer { alpha = rise.value; translationY = (1 - rise.value) * 40f }) {
                 Spacer(Modifier.height(8.dp))
-                Eyebrow("Droid Office · for Android", color = Palette.Accent)
+                Eyebrow("Droid Office · for $phonePlatform", color = Palette.Accent)
                 Spacer(Modifier.height(14.dp))
                 Text(
                     buildAnnotatedString {

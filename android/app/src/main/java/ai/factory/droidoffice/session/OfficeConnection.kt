@@ -40,12 +40,16 @@ import ai.factory.droidoffice.data.AuthMode
 import ai.factory.droidoffice.data.OfficeStore
 import ai.factory.droidoffice.data.PairedOffice
 import ai.factory.droidoffice.net.ModelCatalogue
-import ai.factory.droidoffice.net.NetworkMonitor
+import ai.factory.droidoffice.net.OfficeNetwork
 import ai.factory.droidoffice.net.OfficeApi
 import ai.factory.droidoffice.net.OfficeAuth
+import ai.factory.droidoffice.net.OfficeSocket
+import ai.factory.droidoffice.net.OfficeSocketListener
 import ai.factory.droidoffice.net.ThreadFiles
-import java.io.IOException
-import java.util.concurrent.ConcurrentHashMap
+import kotlin.concurrent.Volatile
+import kotlin.time.Clock
+import kotlin.uuid.Uuid
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -66,6 +70,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
@@ -73,9 +78,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
+
+private fun nowMs() = Clock.System.now().toEpochMilliseconds()
 
 enum class Phase { Idle, Connecting, Connected, Reconnecting, Offline, Unauthorized }
 
@@ -211,7 +215,7 @@ class OfficeConnection(
     private val scope: CoroutineScope,
     private val api: OfficeApi,
     private val store: OfficeStore,
-    private val network: NetworkMonitor,
+    private val network: OfficeNetwork,
     val deviceName: String,
     private val racer: RouteRacer = RouteRacer(),
 ) {
@@ -237,12 +241,12 @@ class OfficeConnection(
 
     /** Subscription and Factory gates share one live map for every existing model-picker caller. */
     private val availabilityClock = _link.transformLatest { link ->
-        emit(System.currentTimeMillis())
+        emit(nowMs())
         // A window can expire between server polls. Stop the clock while disconnected.
         if (link.phase != Phase.Connected) return@transformLatest
         while (true) {
             delay(30_000)
-            emit(System.currentTimeMillis())
+            emit(nowMs())
         }
     }
     val availability: StateFlow<Map<String, ModelAvailability>> = combine(_availability, _factory, _catalogue, availabilityClock) { proxy, factoryState, catalogue, now ->
@@ -288,16 +292,16 @@ class OfficeConnection(
 
     private val holders = MutableStateFlow<Set<String>>(emptySet())
     private val nonce = MutableStateFlow(0)
-    private val attached = ConcurrentHashMap.newKeySet<String>()
-    private val holds = HashMap<String, Int>()
+    private val holds = MutableStateFlow<Map<String, Int>>(emptyMap())
+    private val attached get() = holds.value.keys
     /** Each attached terminal's stream, on the main thread like [handle]. */
     private val feeds = HashMap<String, TermFeed>()
-    @Volatile private var socket: WebSocket? = null
+    @Volatile private var socket: OfficeSocket? = null
     @Volatile private var current: OfficeEndpoint<OfficeAuth>? = null
     @Volatile private var hireAskedAt = 0L
     private var models: Triple<String, Long, ModelCatalogue>? = null
-    private val slash = ConcurrentHashMap<String, Triple<String, Long, List<DroidCommand>>>()
-    private val actionRequests = ConcurrentHashMap<String, CompletableDeferred<ServerMsg.ActionResult?>>()
+    private val slash = MutableStateFlow<Map<String, Triple<String, Long, List<DroidCommand>>>>(emptyMap())
+    private val actionRequests = MutableStateFlow<Map<String, CompletableDeferred<ServerMsg.ActionResult?>>>(emptyMap())
     /** Changes when a socket ends, so an answer cannot cross a reconnection. */
     var answerEpoch: Long = 0
         private set
@@ -342,18 +346,18 @@ class OfficeConnection(
     /** Await the office's receipt, without queuing or replaying an unconfirmed action. */
     suspend fun actionConfirmed(requestId: String, json: String): ServerMsg.ActionResult? {
         val receipt = CompletableDeferred<ServerMsg.ActionResult?>()
-        actionRequests[requestId] = receipt
+        actionRequests.update { it + (requestId to receipt) }
         return try {
             if (!send(json)) return null
             withTimeoutOrNull(60_000) { receipt.await() }
         } finally {
-            actionRequests.remove(requestId)
+            actionRequests.update { it - requestId }
         }
     }
 
     /** Holds the connection until it's up (or [timeoutMs] passes), sends, then lets go. */
     suspend fun sendWhenConnected(json: String, timeoutMs: Long = 12_000): Boolean {
-        val tag = "send-${System.nanoTime()}"
+        val tag = "send-${Uuid.random()}"
         hold(tag)
         try {
             withTimeoutOrNull(timeoutMs) { link.first { it.phase == Phase.Connected } } ?: return false
@@ -369,20 +373,17 @@ class OfficeConnection(
      * notification can each hold it; it detaches when the last one lets go.
      */
     fun attach(workerId: String) {
-        synchronized(holds) { holds[workerId] = (holds[workerId] ?: 0) + 1 }
-        attached += workerId
+        holds.update { it + (workerId to (it.getOrElse(workerId) { 0 } + 1)) }
         feeds.getOrPut(workerId) { TermFeed() }
         send(ClientMsg.attach(workerId))
     }
 
     fun detach(workerId: String) {
-        val left = synchronized(holds) {
-            val n = (holds[workerId] ?: 1) - 1
-            if (n <= 0) holds.remove(workerId) else holds[workerId] = n
-            n
+        val previous = holds.getAndUpdate {
+            val n = (it[workerId] ?: 1) - 1
+            if (n <= 0) it - workerId else it + (workerId to n)
         }
-        if (left > 0) return
-        attached -= workerId
+        if ((previous[workerId] ?: 1) > 1) return
         feeds.remove(workerId)
         send(ClientMsg.detach(workerId))
     }
@@ -411,7 +412,7 @@ class OfficeConnection(
     fun hire(prompt: String?, kind: String, model: String?, effort: String?, worktree: Boolean, deskId: String? = null, cloud: ai.factory.droidoffice.core.CloudHire? = null, repos: List<String> = emptyList()): Boolean {
         val office = store.snapshot.value.active
         val desk = deskId ?: if (office?.auth == AuthMode.Lan) Workers.freeDesk(_data.value.workers.values) else "auto"
-        hireAskedAt = System.currentTimeMillis()
+        hireAskedAt = nowMs()
         return send(ClientMsg.spawn(desk, prompt, worktree, kind, model, effort, cloud, repos))
     }
 
@@ -420,9 +421,9 @@ class OfficeConnection(
 
     suspend fun models(): ModelCatalogue? {
         val (base, auth) = current ?: return null
-        models?.let { (b, at, m) -> if (b == base && System.currentTimeMillis() - at < 60_000) return m }
+        models?.let { (b, at, m) -> if (b == base && nowMs() - at < 60_000) return m }
         return api.models(base, auth)?.also {
-            models = Triple(base, System.currentTimeMillis(), it)
+            models = Triple(base, nowMs(), it)
             _catalogue.value = it
         }
     }
@@ -430,21 +431,21 @@ class OfficeConnection(
     /** The skills and custom commands [workerId]'s droid offers as slash commands, cached for a minute; null until the office answers. */
     suspend fun slashCommands(workerId: String): List<DroidCommand>? {
         val (base, auth) = current ?: return null
-        slash[workerId]?.let { (b, at, c) -> if (b == base && System.currentTimeMillis() - at < 60_000) return c }
-        return api.slashCommands(base, auth, workerId = workerId)?.also { if (it.isNotEmpty()) slash[workerId] = Triple(base, System.currentTimeMillis(), it) }
+        slash.value[workerId]?.let { (b, at, c) -> if (b == base && nowMs() - at < 60_000) return c }
+        return api.slashCommands(base, auth, workerId = workerId)?.also { commands -> if (commands.isNotEmpty()) slash.update { it + (workerId to Triple(base, nowMs(), commands)) } }
     }
 
     /** The skills and custom commands [floorId]'s folder offers before a worker is hired, cached for a minute. */
     suspend fun floorSlashCommands(floorId: String): List<DroidCommand>? {
         val (base, auth) = current ?: return null
         val key = "floor:$floorId"
-        slash[key]?.let { (b, at, c) -> if (b == base && System.currentTimeMillis() - at < 60_000) return c }
-        return api.slashCommands(base, auth, floorId = floorId)?.also { if (it.isNotEmpty()) slash[key] = Triple(base, System.currentTimeMillis(), it) }
+        slash.value[key]?.let { (b, at, c) -> if (b == base && nowMs() - at < 60_000) return c }
+        return api.slashCommands(base, auth, floorId = floorId)?.also { commands -> if (commands.isNotEmpty()) slash.update { it + (key to Triple(base, nowMs(), commands)) } }
     }
 
     /** The Android app's newest release, as the active office reads it from GitHub with its `gh`. */
     suspend fun appRelease(): Result<String> {
-        val (base, auth) = current ?: return Result.failure(IOException("Connect to your office to check for app updates."))
+        val (base, auth) = current ?: return Result.failure(IllegalStateException("Connect to your office to check for app updates."))
         return api.appRelease(base, auth)
     }
 
@@ -584,14 +585,20 @@ class OfficeConnection(
     /** Unpairs from the office when it can (best effort: it may be off), then forgets it here. */
     suspend fun forget(office: PairedOffice) {
         if (office.auth == AuthMode.Device) {
-            val token = store.token(office.id)
-            if (token != null) {
-                val bases = listOfNotNull(office.lastBase) + office.bases
-                val win = racer.race(bases) { api.hello(it, OfficeAuth.Device(token)) }
-                if (win is RaceResult.Winner) api.unpair(win.base, OfficeAuth.Device(token))
+            val auth = store.credential(office)
+            if (auth is OfficeAuth.Device) {
+                val bases = (listOfNotNull(office.lastBase) + office.bases).filter(auth.origins::contains)
+                val win = racer.race(bases) { api.hello(it, auth) }
+                if (win is RaceResult.Winner) api.unpair(win.base, auth)
             }
         }
-        store.remove(office.id)
+        try {
+            store.remove(office.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            _toasts.emit(ServerMsg.Toast("Couldn't remove this office's saved data. Try forgetting it again.", "error", null))
+        }
     }
 
     private suspend fun run(d: Desire) {
@@ -615,10 +622,11 @@ class OfficeConnection(
             _availability.value = emptyMap()
             _data.value = OfficeData(officeId = office.id)
             _screens.value = emptyMap()
-            attached.clear()
-            synchronized(holds) { holds.clear() }
+            holds.value = emptyMap()
             feeds.clear()
             models = null
+            slash.value = emptyMap()
+            _catalogue.value = null
             whiteboard.close()
             whiteboard = newWhiteboard()
             _boards.value = emptyMap()
@@ -631,34 +639,34 @@ class OfficeConnection(
             _link.value = Link(Phase.Offline, office.id, detail = "The phone is offline. Workers keep going at the office.")
             return
         }
-        val token = store.token(office.id)
-        if (token == null) {
+        val auth = store.credential(office)
+        if (auth == null) {
             _link.value = Link(Phase.Unauthorized, office.id, detail = "This phone lost its key for the office")
             awaitCancellation()
         }
-        val auth = if (office.auth == AuthMode.Lan) OfficeAuth.Lan(token) else OfficeAuth.Device(token)
+        val bases = office.bases.filter(auth.origins::contains)
         val backoff = Backoff()
         while (currentCoroutineContext().isActive) {
             _link.value = _link.value.copy(phase = if (backoff.attempt == 0) Phase.Connecting else Phase.Reconnecting, officeId = office.id, attempt = backoff.attempt, retryAt = null)
-            when (val race = racer.race(office.bases) { api.hello(it, auth) }) {
+            when (val race = racer.race(bases) { api.hello(it, auth) }) {
                 is RaceResult.Unauthorized -> {
                     _link.value = Link(Phase.Unauthorized, office.id, base = race.base, detail = if (office.auth == AuthMode.Lan) "The office restarted, so its old QR code no longer works" else "This phone was unpaired from the office")
                     awaitCancellation()
                 }
                 is RaceResult.AllFailed -> {
                     val wait = backoff.next()
-                    _link.value = Link(Phase.Reconnecting, office.id, attempt = backoff.attempt, retryAt = System.currentTimeMillis() + wait, detail = "Can't reach the office on ${office.bases.size} address${if (office.bases.size == 1) "" else "es"}")
+                    _link.value = Link(Phase.Reconnecting, office.id, attempt = backoff.attempt, retryAt = nowMs() + wait, detail = "Can't reach the office on ${bases.size} address${if (bases.size == 1) "" else "es"}")
                     delay(wait)
                 }
                 is RaceResult.Winner -> {
                     val probe: Probe.Ok = race.probe
                     // name follows the office. label is this phone's rename and is left alone.
                     store.update(office.id) {
-                        it.copy(lastBase = race.base, lastSeenAt = System.currentTimeMillis(), name = probe.officeName ?: it.name, version = probe.version ?: it.version)
+                        it.copy(lastBase = race.base, lastSeenAt = nowMs(), name = probe.officeName ?: it.name, version = probe.version ?: it.version)
                     }
                     current = OfficeEndpoint(race.base, auth, office.id)
                     _link.value = Link(Phase.Connecting, office.id, base = race.base, kind = race.kind, attempt = backoff.attempt)
-                    val end = session(office, race.base, race.kind, auth)
+                    val end = try { session(office, race.base, race.kind, auth) } finally { current = null }
                     if (end.unpaired) {
                         // Unpaired from the office (its Settings → Phone & web, or here): no point retrying the same token.
                         _link.value = Link(Phase.Unauthorized, office.id, base = race.base, detail = "This phone was unpaired from the office")
@@ -671,7 +679,7 @@ class OfficeConnection(
                     }
                     if (end.welcomed) backoff.reset()
                     val wait = backoff.next()
-                    _link.value = Link(Phase.Reconnecting, office.id, base = race.base, kind = race.kind, attempt = backoff.attempt, retryAt = System.currentTimeMillis() + wait, detail = end.reason)
+                    _link.value = Link(Phase.Reconnecting, office.id, base = race.base, kind = race.kind, attempt = backoff.attempt, retryAt = nowMs() + wait, detail = end.reason)
                     delay(wait)
                 }
             }
@@ -681,29 +689,16 @@ class OfficeConnection(
     private suspend fun session(office: PairedOffice, base: String, kind: RouteKind, auth: OfficeAuth): SessionEnd {
         val events = Channel<SocketEvent>(Channel.UNLIMITED)
         val floor = store.snapshot.value.offices.firstOrNull { it.id == office.id }?.lastFloor
-        val ws = api.socket(base, auth, floor, officeName, object : WebSocketListener() {
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                events.trySend(SocketEvent.Text(text))
-            }
-
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                webSocket.close(1000, null)
-                events.trySend(SocketEvent.Closed(reason.ifBlank { "The office closed the connection" }, code))
-            }
-
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                events.trySend(SocketEvent.Closed(reason.ifBlank { "Connection closed" }, code))
-            }
-
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                events.trySend(SocketEvent.Failed(t.message ?: "Connection lost", response?.code))
-            }
+        val ws = api.socket(base, auth, floor, officeName, object : OfficeSocketListener {
+            override fun text(text: String) { events.trySend(SocketEvent.Text(text)) }
+            override fun closed(code: Int, reason: String) { events.trySend(SocketEvent.Closed(reason.ifBlank { "Connection closed" }, code)) }
+            override fun failed(code: Int?) { events.trySend(SocketEvent.Failed("Connection lost", code)) }
         })
         socket = ws
         var welcomed = false
         // On Tailscale after a Wi-Fi blip, nothing about the phone's network changes when Wi-Fi to the
         // office comes back, so check the better routes now and then and move over when one answers.
-        val better = Routes.better(office.bases, base)
+        val better = Routes.better(office.bases.filter(auth.origins::contains), base)
         val upgrade = if (better.isEmpty()) null else scope.launch {
             while (isActive) {
                 delay(UPGRADE_CHECK_MS)
@@ -735,8 +730,8 @@ class OfficeConnection(
             upgrade?.cancel()
             socket = null
             answerEpoch++
-            actionRequests.values.forEach { it.complete(null) }
-            actionRequests.clear()
+            actionRequests.getAndUpdate { emptyMap() }.values.forEach { it.complete(null) }
+            events.close()
             ws.cancel()
             whiteboard.status(false)
         }
@@ -750,11 +745,12 @@ class OfficeConnection(
                     r.floor to r.workers.filter { w -> MissionControl.isDeskWorker(w, missionState) }.associateBy(WorkerInfo::id)
                 }?.toMutableMap()
                 val bPulls = msg.building?.associate { r -> r.floor to r.pulls }?.toMutableMap()
-                if (bWorkers != null && msg.view.floor != null) {
-                    bWorkers[msg.view.floor] = msg.view.workers.filter { w -> MissionControl.isDeskWorker(w, missionState) }.associateBy(WorkerInfo::id)
+                val viewFloor = msg.view.floor
+                if (bWorkers != null && viewFloor != null) {
+                    bWorkers[viewFloor] = msg.view.workers.filter { w -> MissionControl.isDeskWorker(w, missionState) }.associateBy(WorkerInfo::id)
                 }
-                if (bPulls != null && msg.view.floor != null) {
-                    bPulls[msg.view.floor] = msg.view.pulls.items
+                if (bPulls != null && viewFloor != null) {
+                    bPulls[viewFloor] = msg.view.pulls.items
                 }
                 _data.update {
                     it.copy(
@@ -804,7 +800,7 @@ class OfficeConnection(
                 val w = msg.worker
                 if (w.id == ORCHESTRATOR_ID || !MissionControl.isDeskWorker(w, _data.value.mission)) return
                 val knownBefore = _data.value.deskWorker(w.id)
-                if (knownBefore == null && w.createdBy == officeName && System.currentTimeMillis() - hireAskedAt < HIRE_WINDOW_MS) {
+                if (knownBefore == null && w.createdBy == officeName && nowMs() - hireAskedAt < HIRE_WINDOW_MS) {
                     hireAskedAt = 0
                     _hired.tryEmit(w)
                 }
@@ -834,8 +830,7 @@ class OfficeConnection(
                     )
                 }
                 _screens.update { it - msg.workerId }
-                attached -= msg.workerId
-                synchronized(holds) { holds.remove(msg.workerId) }
+                holds.update { it - msg.workerId }
                 feeds.remove(msg.workerId)
             }
             is ServerMsg.BuildingPulls -> {
@@ -858,7 +853,7 @@ class OfficeConnection(
                 }
                 if (!MissionControl.isDeskWorker(w, _data.value.mission)) return
                 val before = _data.value.workers
-                if (_data.value.deskWorker(w.id) == null && w.createdBy == officeName && System.currentTimeMillis() - hireAskedAt < HIRE_WINDOW_MS) {
+                if (_data.value.deskWorker(w.id) == null && w.createdBy == officeName && nowMs() - hireAskedAt < HIRE_WINDOW_MS) {
                     hireAskedAt = 0
                     _hired.tryEmit(w)
                 }
@@ -879,8 +874,7 @@ class OfficeConnection(
                     d.copy(workers = d.workers - msg.workerId, buildingWorkers = nextBuilding)
                 }
                 _screens.update { it - msg.workerId }
-                attached -= msg.workerId
-                synchronized(holds) { holds.remove(msg.workerId) }
+                holds.update { it - msg.workerId }
                 feeds.remove(msg.workerId)
             }
             is ServerMsg.Screen -> _screens.update { it + (msg.workerId to ScreenState.apply(it[msg.workerId], msg)) }
@@ -897,7 +891,7 @@ class OfficeConnection(
             is ServerMsg.ThreadSnapshot -> _threads.tryEmit(msg)
             is ServerMsg.ThreadLiveUpdate -> _threadLives.tryEmit(msg)
             is ServerMsg.WorkerRewound -> _workerRewounds.tryEmit(msg)
-            is ServerMsg.ActionResult -> actionRequests.remove(msg.requestId)?.complete(msg)
+            is ServerMsg.ActionResult -> actionRequests.getAndUpdate { it - msg.requestId }[msg.requestId]?.complete(msg)
             is ServerMsg.Pong, is ServerMsg.Ignored -> Unit
         }
     }
@@ -933,8 +927,9 @@ class OfficeConnection(
         val mission = currentData.mission
         val floorWorkers = view.workers.filter { w -> MissionControl.isDeskWorker(w, mission) }.associateBy(WorkerInfo::id)
         _data.update { d ->
-            val nextBuildingWorkers = if (d.hasBuildingRoster && view.floor != null) d.buildingWorkers + (view.floor to floorWorkers) else d.buildingWorkers
-            val nextBuildingPulls = if (d.hasBuildingRoster && view.floor != null) d.buildingPulls + (view.floor to view.pulls.items) else d.buildingPulls
+            val viewFloor = view.floor
+            val nextBuildingWorkers = if (d.hasBuildingRoster && viewFloor != null) d.buildingWorkers + (viewFloor to floorWorkers) else d.buildingWorkers
+            val nextBuildingPulls = if (d.hasBuildingRoster && viewFloor != null) d.buildingPulls + (viewFloor to view.pulls.items) else d.buildingPulls
             d.copy(
                 officeId = officeId,
                 floors = floors ?: d.floors,

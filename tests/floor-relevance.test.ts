@@ -14,7 +14,7 @@ interface Golden {
   ranked: string[];
   fit: { name: string; widths: { id: string; width: number }[]; ranked: string[]; current: string | null; available: number; more: number; expected: { shown: string[]; hidden: string[] } }[];
 }
-const golden = JSON.parse(readFileSync(new URL('../android/app/src/test/resources/floor-relevance-golden.json', import.meta.url), 'utf8')) as Golden;
+const golden = JSON.parse(readFileSync(new URL('../android/core/src/androidHostTest/resources/floor-relevance-golden.json', import.meta.url), 'utf8')) as Golden;
 
 test('the golden fixture Android also checks matches the shared scoring, ranking and fitting', () => {
   for (const f of golden.floors) assert.equal(floorRelevance(f, golden.now), golden.scores.find((s) => s.id === f.id)?.score, f.id);

@@ -1420,6 +1420,8 @@ test('a first prompt whose SessionStart never comes is typed in once droid shows
 
 /** Each worker launch so far (not the task namer's calls, nor what was typed into it), oldest first. */
 const launchesOf = (f: Fixture) => f.read().filter((r) => r.kind === 'droid' && r.args.includes('--settings') && r.stdin === undefined);
+// Worktree setup runs a login shell, copies files and reports start and finish before the agent can record its launch.
+const setupLaunchTimeout = 15_000;
 
 function carryOnFixture(t: { after(fn: () => void): void }) {
   const f = fixture();
@@ -1577,7 +1579,7 @@ test('a fork gets its own session, worktree, source-local setup and seat, then r
   assert.equal(twin.lead, undefined, 'a peer, not a subagent');
   assert.equal(twin.worktree?.base, git('rev-parse', 'HEAD'));
   assert.equal(twin.forkedFrom?.workerId, source.id);
-  const launch = (await waitFor(() => launchesOf(f).find((r) => r.env.workerId === twin.id), Boolean))!;
+  const launch = (await waitFor(() => launchesOf(f).find((r) => r.env.workerId === twin.id), Boolean, setupLaunchTimeout))!;
   assert.deepEqual(launch.args.slice(-2), ['--fork', 'source-session']);
   assert.ok(!launch.args.includes('--resume'));
   const cwd = path.join(f.root, twin.worktree!.path);
@@ -1660,7 +1662,7 @@ test('a fork copies every repository in a workspace and leaves team relationship
   assert.equal(twin.team, undefined);
   assert.equal(twin.model, 'custom:current');
   assert.equal(twin.effort, undefined, 'a /model change without effort must not inherit an old pinned effort');
-  const twinLaunch = (await waitFor(() => launchesOf(f).find((r) => r.env.workerId === twin.id), Boolean))!;
+  const twinLaunch = (await waitFor(() => launchesOf(f).find((r) => r.env.workerId === twin.id), Boolean, setupLaunchTimeout))!;
   assert.equal(await startedWith(f, workers, twinLaunch, 'workspace-twin'), undefined, 'a blank fork never starts a turn');
   assert.equal(readFileSync(path.join(f.root, twin.worktree!.path, '.env'), 'utf8'), 'LOCAL=source');
   assert.equal(readFileSync(path.join(f.root, twin.repos![0].path, '.env'), 'utf8'), 'LOCAL=other-source');
@@ -1936,7 +1938,7 @@ test("a new worktree is set up in the worker's terminal before its agent starts,
     await waitFor(
       () => launchesOf(f),
       (x) => x.length > 0,
-      8000,
+      setupLaunchTimeout,
     )
   )[0];
   // The agent came after the setup: the worktree has its .env and what the command wrote.

@@ -1,15 +1,16 @@
 # Android app
 
-Droid Office for Android: Kotlin, Jetpack Compose and Material 3 (`app` module). Update [README.md](README.md) whenever user-visible behavior or adb tags change.
+The Android `app` and iOS `mobile` targets compile the same Compose screens and session code against `core`. Keep platform calls in platform-specific files rather than forking a screen. See [iOS build and simulation](../ios/README.md). Update [README.md](README.md) whenever user-visible behavior or adb tags change.
 
 ## Commands
 
-Run from `android/` with JDK 17+ (CI uses 21; SDK from `ANDROID_HOME` or `local.properties`). Before a PR touching Android, run `./gradlew testDebugUnitTest lintDebug assembleRelease` (`assembleRelease` exercises R8, which CI runs only on `main`; root `npm test` covers the WebView JS assets):
+Run from `android/` with JDK 17+ (CI uses 21; SDK from `ANDROID_HOME` or `local.properties`). Before a PR touching Android, run `./gradlew testDebugUnitTest :core:testAndroidHostTest lintDebug :core:lint assembleRelease` (`assembleRelease` exercises R8, which CI runs only on `main`; root `npm test` covers the WebView JS assets):
 
 | Task | Command |
 | --- | --- |
-| Unit tests (JVM) | `./gradlew testDebugUnitTest` |
-| Android Lint (warnings as errors) | `./gradlew lintDebug` |
+| Unit tests (JVM) | `./gradlew testDebugUnitTest :core:testAndroidHostTest` |
+| Shared core for iOS (Mac with Xcode and an iOS simulator runtime) | `./gradlew :core:compileKotlinIosArm64 :core:iosSimulatorArm64Test` |
+| Android Lint (warnings as errors) | `./gradlew lintDebug :core:lint` |
 | Install debug APK on connected device | `./gradlew installDebug` |
 | Release APK with R8 | `./gradlew assembleRelease` |
 
@@ -20,7 +21,7 @@ Run from `android/` with JDK 17+ (CI uses 21; SDK from `ANDROID_HOME` or `local.
 
 ## Architecture and code
 
-- **Pure `core/` vs `ui/`**: Keep `core/` free of Android imports (parsing, ordering, labels, terminal model) so its JUnit suite runs on the JVM; keep `ui/` to Compose layout and state wiring. Share the single `OfficeConnection` via `hold(tag)` and `release(tag)`. Show the worker list on every screen size, with a side-by-side detail pane on wide screens.
+- **Shared `core/` vs `ui/`**: `core/` is the `:core` Kotlin Multiplatform module the iOS companion shares (parsing, ordering, labels, terminal model in `core/src/commonMain/`); keep `ui/` to Compose layout and state wiring. Keep commonMain free of Android and JVM APIs (no `java.*`): put what needs the platform in `Platform.kt`, with the JDK call as the `androidMain` actual and Foundation as the `iosMain` one. Android-only code in the `core` package (APK updates, on-disk receipts) stays in `app/src/main/java/ai/factory/droidoffice/core/`. Put platform-independent contracts in `core/src/commonTest/` so Android and iOS run them both; JVM-only tests and Node-shared golden files belong in `core/src/androidHostTest/`. Kotlin won't smart-cast a `:core` property in `app`, so copy it to a local `val` first. Share the single `OfficeConnection` via `hold(tag)` and `release(tag)`. Show the worker list on every screen size, with a side-by-side detail pane on wide screens.
 - **WebViews**:
   - Terminal (`app/src/main/assets/terminal/` ↔ `ui/worker/TerminalPage.kt` via `core/TermPage.kt`): put DOM-free logic in `input.js` (`tests/android-terminal.test.ts` checks `input.js`). Regenerate `terminal/vendor/` with `node tools/android-terminal.mjs` (see [tools/AGENTS.md](../tools/AGENTS.md)). Keep the page offline and suppress the renderer's PTY query replies (the office's terminal already answers PTY queries).
   - Whiteboard (`app/src/main/assets/whiteboard/` ↔ `ui/board/CardPage.kt` via `core/WbPage.kt`): frame cards with `CARD_SANDBOX` and `CARD_ALLOW` over `src/shared/whiteboard-bridge.ts`, accepting messages only from the wrapper page's origin. Keep DOM-free logic in `marks.js` (`tests/android-whiteboard.test.ts`) and update the wrapper whenever the web Whiteboard bridge changes.

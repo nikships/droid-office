@@ -64,12 +64,12 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.painterResource
+import ai.factory.droidoffice.ui.theme.officePainter
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
-import androidx.compose.ui.semantics.testTagsAsResourceId
+import ai.factory.droidoffice.ui.theme.automationTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -115,8 +115,7 @@ fun parseColor(hex: String, fallback: Color = Palette.TextSecondary): Color = ru
  * than once at the root, because sheets, dialogs and menus are windows of their own.
  */
 fun Modifier.tagged(name: String) = this.semantics {
-    testTagsAsResourceId = true
-    testTag = name
+    automationTag(name)
 }
 
 /**
@@ -141,8 +140,7 @@ fun StatusIcon(status: WorkerStatus, modifier: Modifier = Modifier, acked: Boole
     val semantics = modifier.size(size).clearAndSetSemantics {
         contentDescription = look.label
         if (tag != null) {
-            testTagsAsResourceId = true
-            testTag = tag
+            automationTag(tag)
         }
     }
     if (mark == Mark.Asleep) {
@@ -260,8 +258,7 @@ fun RouteBadge(kind: RouteKind?, connected: Boolean, modifier: Modifier = Modifi
             .clearAndSetSemantics {
                 contentDescription = spoken
                 if (tag != null) {
-                    testTagsAsResourceId = true
-                    testTag = tag
+                    automationTag(tag)
                 }
             }
             .clip(RoundedCornerShape(50)).background(Palette.SurfaceRaised).border(1.dp, Palette.Border, RoundedCornerShape(50))
@@ -373,7 +370,7 @@ fun GlyphMark(modifier: Modifier = Modifier, size: Dp = 96.dp, spin: Boolean = t
             )
         }
         Icon(
-            painterResource(R.drawable.ic_glyph),
+            officePainter(R.drawable.ic_glyph),
             contentDescription = null,
             tint = Palette.Text,
             // Turned while drawing, not with a layer: a rotating layer moves the node's bounds every

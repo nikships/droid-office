@@ -1,22 +1,5 @@
 package ai.factory.droidoffice.ui.onboarding
 
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.OptIn
-import androidx.camera.compose.CameraXViewfinder
-import androidx.camera.core.Camera
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ExperimentalGetImage
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.Preview
-import androidx.camera.core.SurfaceRequest
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.lifecycle.awaitInstance
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -52,7 +35,6 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -73,12 +55,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import ai.factory.droidoffice.core.InviteParse
 import ai.factory.droidoffice.core.Pairing
 import ai.factory.droidoffice.core.PairingInvite
@@ -91,37 +70,23 @@ import ai.factory.droidoffice.ui.components.panel
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
-import com.google.mlkit.vision.barcode.BarcodeScannerOptions
-import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.common.InputImage
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.delay
+
+internal class CameraAccess(val granted: Boolean, val denied: Boolean, val ask: () -> Unit, val settings: () -> Unit, val available: Boolean = true)
 
 /** The camera, looking for the office's pairing QR code; a pasted link works as well. */
 @Composable
 fun ScanScreen(onBack: () -> Unit, onInvite: (PairingInvite) -> Unit) {
-    val context = LocalContext.current
-    var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
-    var denied by remember { mutableStateOf(false) }
+    val access = rememberCameraAccess()
     var showPaste by remember { mutableStateOf(false) }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        granted = ok
-        denied = !ok
-    }
-    LaunchedEffect(Unit) { if (!granted) launcher.launch(Manifest.permission.CAMERA) }
+    LaunchedEffect(Unit) { if (access.available && !access.granted && !access.denied) access.ask() }
 
     Box(Modifier.fillMaxSize().tagged(Tags.Screen.SCAN).background(Color.Black)) {
-        if (granted) {
+        if (access.available && access.granted) {
             Scanner(onInvite)
         } else {
             NoCamera(
-                denied = denied,
-                onAsk = { launcher.launch(Manifest.permission.CAMERA) },
-                onSettings = {
-                    context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
-                },
+                access = access,
                 onPaste = { showPaste = true },
             )
         }
@@ -134,7 +99,7 @@ fun ScanScreen(onBack: () -> Unit, onInvite: (PairingInvite) -> Unit) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
             }
             Spacer(Modifier.weight(1f))
-            if (granted) {
+            if (access.available && access.granted) {
                 IconButton(onClick = { showPaste = true }, modifier = Modifier.tagged(Tags.Scan.PASTE), colors = IconButtonDefaults.iconButtonColors(containerColor = Color(0x66000000), contentColor = Color.White)) {
                     Icon(OfficeIcons.Paste, "Paste a join link")
                 }
@@ -144,54 +109,13 @@ fun ScanScreen(onBack: () -> Unit, onInvite: (PairingInvite) -> Unit) {
     if (showPaste) PasteSheet(onDismiss = { showPaste = false }, onInvite = { showPaste = false; onInvite(it) })
 }
 
-@OptIn(ExperimentalGetImage::class)
 @Composable
 private fun Scanner(onInvite: (PairingInvite) -> Unit) {
-    val context = LocalContext.current
-    val lifecycle = LocalLifecycleOwner.current
     val haptics = LocalHapticFeedback.current
-    var request by remember { mutableStateOf<SurfaceRequest?>(null) }
-    var camera by remember { mutableStateOf<Camera?>(null) }
+    var hasTorch by remember { mutableStateOf(false) }
     var torch by remember { mutableStateOf(false) }
     var hint by remember { mutableStateOf<String?>(null) }
     var found by remember { mutableStateOf<PairingInvite?>(null) }
-    val handled = remember { AtomicBoolean(false) }
-    val executor = remember { Executors.newSingleThreadExecutor() }
-    val scanner = remember {
-        BarcodeScanning.getClient(BarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build())
-    }
-    DisposableEffect(Unit) {
-        onDispose {
-            scanner.close()
-            executor.shutdown()
-        }
-    }
-
-    LaunchedEffect(lifecycle) {
-        val provider = ProcessCameraProvider.awaitInstance(context)
-        val preview = Preview.Builder().build().apply { setSurfaceProvider { request = it } }
-        val analysis = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
-        analysis.setAnalyzer(executor) { proxy ->
-            val media = proxy.image
-            if (media == null || handled.get()) {
-                proxy.close()
-                return@setAnalyzer
-            }
-            scanner.process(InputImage.fromMediaImage(media, proxy.imageInfo.rotationDegrees))
-                .addOnSuccessListener { codes ->
-                    for (code in codes) {
-                        val raw = code.rawValue ?: continue
-                        when (val r = Pairing.parse(raw)) {
-                            is InviteParse.Ok -> if (handled.compareAndSet(false, true)) found = r.invite
-                            is InviteParse.Invalid -> hint = "That QR code isn't an office's pairing code"
-                        }
-                    }
-                }
-                .addOnCompleteListener { proxy.close() }
-        }
-        provider.unbindAll()
-        camera = provider.bindToLifecycle(lifecycle, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
-    }
 
     LaunchedEffect(found) {
         val invite = found ?: return@LaunchedEffect
@@ -207,7 +131,12 @@ private fun Scanner(onInvite: (PairingInvite) -> Unit) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        request?.let { CameraXViewfinder(surfaceRequest = it, modifier = Modifier.fillMaxSize()) }
+        CameraPreview(torch, onTorchAvailable = { hasTorch = it }) { raw ->
+            if (found == null) when (val result = Pairing.parse(raw)) {
+                is InviteParse.Ok -> found = result.invite
+                is InviteParse.Invalid -> hint = "That QR code isn't an office's pairing code"
+            }
+        }
         Frame(locked = found != null)
         Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 24.dp, vertical = 20.dp),
@@ -235,14 +164,11 @@ private fun Scanner(onInvite: (PairingInvite) -> Unit) {
                     "The office shows it in its terminal when it starts, and under Settings → Phone & web.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                if (camera?.cameraInfo?.hasFlashUnit() == true) {
+                if (hasTorch) {
                     Spacer(Modifier.height(12.dp))
                     SecondaryButton(
                         if (torch) "Light off" else "Light on",
-                        {
-                            torch = !torch
-                            camera?.cameraControl?.enableTorch(torch)
-                        },
+                        { torch = !torch },
                         Modifier.fillMaxWidth().height(44.dp).tagged(Tags.Scan.TORCH),
                         icon = OfficeIcons.Bolt,
                     )
@@ -293,7 +219,7 @@ private fun Frame(locked: Boolean) {
 }
 
 @Composable
-private fun NoCamera(denied: Boolean, onAsk: () -> Unit, onSettings: () -> Unit, onPaste: () -> Unit) {
+private fun NoCamera(access: CameraAccess, onPaste: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Palette.Screen).dotGrid(), contentAlignment = Alignment.Center) {
         Column(
             Modifier.widthIn(max = 480.dp).fillMaxWidth().padding(24.dp),
@@ -305,14 +231,15 @@ private fun NoCamera(denied: Boolean, onAsk: () -> Unit, onSettings: () -> Unit,
             }
             Text("The camera reads the office's code", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
             Text(
-                if (denied) "Camera access is off for Droid Office. Turn it on in Settings, or paste the join link the office printed instead."
+                if (!access.available) "This device has no camera. Paste the join link from your office instead."
+                else if (access.denied) "Camera access is off for Droid Office. Turn it on in Settings, or paste the join link the office printed instead."
                 else "Allow the camera to scan the pairing QR code. Nothing is recorded or kept.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Palette.TextSecondary,
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(10.dp))
-            PrimaryButton(if (denied) "Open Settings" else "Allow camera", if (denied) onSettings else onAsk, Modifier.fillMaxWidth().tagged(Tags.Scan.CAMERA), icon = OfficeIcons.Scan)
+            if (access.available) PrimaryButton(if (access.denied) "Open Settings" else "Allow camera", if (access.denied) access.settings else access.ask, Modifier.fillMaxWidth().tagged(Tags.Scan.CAMERA), icon = OfficeIcons.Scan)
             SecondaryButton("Paste a join link", onPaste, Modifier.fillMaxWidth().tagged(Tags.Scan.PASTE_LINK), icon = OfficeIcons.Paste)
         }
     }

@@ -1,19 +1,12 @@
 package ai.factory.droidoffice.data
 
-import android.content.Context
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
 import ai.factory.droidoffice.core.AppearanceLook
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.QuickKeys
 import ai.factory.droidoffice.core.Receipts
-import java.io.File
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import ai.factory.droidoffice.net.OfficeAuth
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -39,7 +32,7 @@ data class PairedOffice(
     val name: String,
     /**
      * A name this phone shows instead of [name]. Null means show [name]. The office never sees it,
-     * and a reconnect that refreshes [name] does not replace it. It lives in Preferences DataStore,
+     * and a reconnect that refreshes [name] does not replace it. It lives in local preferences,
      * so an app update keeps it.
      */
     val label: String? = null,
@@ -105,45 +98,63 @@ data class StoreSnapshot(
     val active: PairedOffice? get() = offices.firstOrNull { it.id == activeId } ?: offices.firstOrNull()
 }
 
-private val Context.officeData by preferencesDataStore(name = "offices")
+internal interface OfficePreferences {
+    val data: Flow<Map<String, String>>
+    /** Serialize read-modify-write transactions, returning only after a successful commit. */
+    suspend fun edit(change: (MutableMap<String, String>) -> Unit)
+}
+
+/** On Android a sealed value is ciphertext; on iOS it's an opaque handle to a Keychain item. */
+internal interface OfficeVault {
+    fun seal(office: PairedOffice, token: String): String
+    fun open(office: PairedOffice, sealed: String): OfficeAuth?
+    fun discard(sealed: String)
+}
+
+/** Stored inside the protected value, never derived from an editable list of offices on iOS. */
+@Serializable
+internal class OfficeKey(val officeId: String, val mode: AuthMode, val origins: List<String>, val token: String) {
+    fun auth(office: PairedOffice): OfficeAuth? {
+        if (office.id != officeId || office.auth != mode) return null
+        return if (mode == AuthMode.Device) OfficeAuth.Device(token, origins, officeId) else OfficeAuth.Lan(token, origins)
+    }
+}
 
 /**
- * Paired offices and settings in Preferences DataStore. Office tokens are kept next to them, sealed
- * by [TokenVault]; nothing here is backed up (see data_extraction_rules.xml).
+ * One store for the production screens on both platforms. The preferences transaction contains
+ * only public office metadata, preferences and sealed values, never plaintext credentials.
  */
-class OfficeStore(context: Context, scope: CoroutineScope, private val vault: TokenVault = TokenVault()) {
-    private val store = context.applicationContext.officeData
+class OfficeStore internal constructor(
+    private val store: OfficePreferences,
+    scope: CoroutineScope,
+    private val vault: OfficeVault,
+    private val receiptFiles: Receipts,
+) {
     private val listSerializer = ListSerializer(PairedOffice.serializer())
 
     val snapshot: StateFlow<StoreSnapshot> = store.data.map(::read).stateIn(scope, SharingStarted.Eagerly, StoreSnapshot())
 
-    private fun read(p: Preferences): StoreSnapshot {
+    private fun read(p: Map<String, String>): StoreSnapshot {
         val offices = p[OFFICES]?.let { runCatching { OfficeJson.decodeFromString(listSerializer, it) }.getOrNull() }.orEmpty()
         return StoreSnapshot(
             offices = offices,
             activeId = p[ACTIVE],
             settings = AppSettings(
-                stayConnected = p[STAY] ?: false,
-                notifyNeedsInput = p[NOTIFY_INPUT] ?: true,
-                notifyDone = p[NOTIFY_DONE] ?: true,
-                haptics = p[HAPTICS] ?: true,
+                stayConnected = p[STAY]?.toBooleanStrictOrNull() ?: false,
+                notifyNeedsInput = p[NOTIFY_INPUT]?.toBooleanStrictOrNull() ?: true,
+                notifyDone = p[NOTIFY_DONE]?.toBooleanStrictOrNull() ?: true,
+                haptics = p[HAPTICS]?.toBooleanStrictOrNull() ?: true,
                 hireModel = p[HIRE_MODEL],
                 hireEffort = p[HIRE_EFFORT],
                 recentModels = p[RECENT_MODELS]?.split('\n')?.filter { it.isNotBlank() }?.distinct()?.take(4).orEmpty(),
                 quickKeys = QuickKeys.decode(p[QUICK_KEYS]),
-                threadView = p[THREAD_VIEW] ?: false,
+                threadView = p[THREAD_VIEW]?.toBooleanStrictOrNull() ?: false,
                 artworkId = p[ArtworkPreference.key],
                 look = AppearancePreference.read(p),
             ),
             loaded = true,
         )
     }
-
-    /**
-     * Queue receipts, a file per worker apart from this store: they can be large (32 long messages),
-     * and this store is read whole on every change. Not backed up, like the rest.
-     */
-    private val receiptFiles = Receipts(File(context.applicationContext.noBackupFilesDir, "receipts"))
 
     /** The receipts kept for the worker at `officeId/floorId/workerId`, read off the main thread. */
     suspend fun loadReceipts(key: String): Receipts.Loaded = withContext(Dispatchers.IO) { receiptFiles.load(key) }
@@ -153,21 +164,31 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
 
     suspend fun loaded(): StoreSnapshot = snapshot.first { it.loaded }
 
-    suspend fun token(officeId: String): String? = store.data.first()[tokenKey(officeId)]?.let(vault::decrypt)
+    suspend fun credential(office: PairedOffice): OfficeAuth? = withContext(Dispatchers.IO) {
+        store.data.first()[tokenKey(office.id)]?.let { vault.open(office, it) }
+    }
 
     /** Adds the office, or replaces the one with the same id, and makes it the active one. */
-    suspend fun save(office: PairedOffice, token: String) {
-        val sealed = vault.encrypt(token)
-        store.edit { p ->
-            val existing = current(p)
-            val replaced = existing.filter { it.id == office.id || it.sameOfficeAs(office) }
-            // Pairing again replaces the old entry for the same office (same address), not just the same id.
-            replaced.filter { it.id != office.id }.forEach { p.remove(tokenKey(it.id)) }
-            val saved = office.keepingLocalLabel(replaced)
-            p[OFFICES] = OfficeJson.encodeToString(listSerializer, existing.filterNot { it.id == office.id || it.sameOfficeAs(office) } + saved)
-            p[tokenKey(office.id)] = sealed
-            p[ACTIVE] = office.id
+    suspend fun save(office: PairedOffice, token: String) = withContext(Dispatchers.IO + NonCancellable) {
+        val sealed = vault.seal(office, token)
+        val retired = mutableListOf<String>()
+        try {
+            store.edit { p ->
+                val existing = current(p)
+                val replaced = existing.filter { it.id == office.id || it.sameOfficeAs(office) }
+                for (old in replaced) p.remove(tokenKey(old.id))?.let(retired::add)
+                val saved = office.keepingLocalLabel(replaced)
+                p[OFFICES] = OfficeJson.encodeToString(listSerializer, existing - replaced.toSet() + saved)
+                p[tokenKey(office.id)] = sealed
+                p[ACTIVE] = office.id
+            }
+        } catch (e: Exception) {
+            runCatching { vault.discard(sealed) }
+            throw e
         }
+        // The new pairing is durable. A failure to erase an obsolete local key must not make
+        // Pairer roll back the working key on the server, or skip remote revocation of the old one.
+        retired.forEach { runCatching { vault.discard(it) } }
     }
 
     suspend fun update(officeId: String, change: (PairedOffice) -> PairedOffice) {
@@ -178,17 +199,18 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
         }
     }
 
-    suspend fun remove(officeId: String) {
+    suspend fun remove(officeId: String) = withContext(Dispatchers.IO + NonCancellable) {
         store.edit { p ->
             val rest = current(p).filterNot { it.id == officeId }
             p[OFFICES] = OfficeJson.encodeToString(listSerializer, rest)
-            p.remove(tokenKey(officeId))
+            // Keep the handle available to retry if Keychain cannot erase this office's item.
+            p.remove(tokenKey(officeId))?.let(vault::discard)
             if (p[ACTIVE] == officeId) {
                 val next = rest.maxByOrNull { it.lastSeenAt }?.id
                 if (next != null) p[ACTIVE] = next else p.remove(ACTIVE)
             }
         }
-        withContext(Dispatchers.IO) { receiptFiles.removeOffice(officeId) }
+        receiptFiles.removeOffice(officeId)
     }
 
     suspend fun setActive(officeId: String) {
@@ -198,34 +220,35 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
     suspend fun settings(change: (AppSettings) -> AppSettings) {
         store.edit { p ->
             val s = change(read(p).settings)
-            p[STAY] = s.stayConnected
-            p[NOTIFY_INPUT] = s.notifyNeedsInput
-            p[NOTIFY_DONE] = s.notifyDone
-            p[HAPTICS] = s.haptics
+            p[STAY] = s.stayConnected.toString()
+            p[NOTIFY_INPUT] = s.notifyNeedsInput.toString()
+            p[NOTIFY_DONE] = s.notifyDone.toString()
+            p[HAPTICS] = s.haptics.toString()
             s.hireModel?.let { p[HIRE_MODEL] = it } ?: p.remove(HIRE_MODEL)
             s.hireEffort?.let { p[HIRE_EFFORT] = it } ?: p.remove(HIRE_EFFORT)
             p[RECENT_MODELS] = s.recentModels.take(4).joinToString("\n")
             s.quickKeys?.let { p[QUICK_KEYS] = QuickKeys.encode(it) } ?: p.remove(QUICK_KEYS)
-            p[THREAD_VIEW] = s.threadView
+            p[THREAD_VIEW] = s.threadView.toString()
             ArtworkPreference.write(p, s.artworkId)
             AppearancePreference.write(p, s.look)
         }
     }
 
-    private fun current(p: Preferences) = read(p).offices
+    private fun current(p: Map<String, String>) = read(p).offices
 
-    private companion object {
-        val OFFICES = stringPreferencesKey("offices")
-        val ACTIVE = stringPreferencesKey("active")
-        val STAY = booleanPreferencesKey("stay_connected")
-        val NOTIFY_INPUT = booleanPreferencesKey("notify_needs_input")
-        val NOTIFY_DONE = booleanPreferencesKey("notify_done")
-        val HAPTICS = booleanPreferencesKey("haptics")
-        val HIRE_MODEL = stringPreferencesKey("hire_model")
-        val HIRE_EFFORT = stringPreferencesKey("hire_effort")
-        val RECENT_MODELS = stringPreferencesKey("recent_models")
-        val QUICK_KEYS = stringPreferencesKey("quick_keys")
-        val THREAD_VIEW = booleanPreferencesKey("thread_view")
-        fun tokenKey(id: String) = stringPreferencesKey("token.$id")
+    internal companion object {
+        private const val OFFICES = "offices"
+        private const val ACTIVE = "active"
+        private const val STAY = "stay_connected"
+        private const val NOTIFY_INPUT = "notify_needs_input"
+        private const val NOTIFY_DONE = "notify_done"
+        private const val HAPTICS = "haptics"
+        private const val HIRE_MODEL = "hire_model"
+        private const val HIRE_EFFORT = "hire_effort"
+        private const val RECENT_MODELS = "recent_models"
+        private const val QUICK_KEYS = "quick_keys"
+        private const val THREAD_VIEW = "thread_view"
+        internal val booleanKeys = setOf(STAY, NOTIFY_INPUT, NOTIFY_DONE, HAPTICS, THREAD_VIEW)
+        private fun tokenKey(id: String) = "token.$id"
     }
 }

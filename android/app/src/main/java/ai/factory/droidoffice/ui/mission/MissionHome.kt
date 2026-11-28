@@ -57,7 +57,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import ai.factory.droidoffice.ui.theme.officePainter
 import ai.factory.droidoffice.R
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -184,7 +184,8 @@ private fun OrchestratorCard(agent: MissionAgent?, team: List<MissionTeamMember>
                 val rest = buildList {
                     MissionControl.teamLine(team)?.let(::add)
                     w?.let { Workers.workedMs(it, now) }?.takeIf { it >= 1_000 }?.let { add(Workers.duration(it)) }
-                    if ((state == WorkerStatus.NeedsInput || (state == WorkerStatus.Done && w?.acked == false)) && w?.waitingSince != null) add(Workers.ago(w.waitingSince, now))
+                    val waitingSince = w?.waitingSince
+                    if ((state == WorkerStatus.NeedsInput || (state == WorkerStatus.Done && w?.acked == false)) && waitingSince != null) add(Workers.ago(waitingSince, now))
                 }.joinToString(" · ").uppercase()
                 val style = LocalOfficeType.current.eyebrow.copy(fontSize = 10.sp)
                 Row(Modifier.tagged(Tags.Mission.ORCHESTRATOR_META), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -351,7 +352,7 @@ internal fun BotTile(grokBot: Boolean, tint: Color, small: Boolean = false) {
         Modifier.size(if (small) 26.dp else 32.dp).clip(shape).border(1.dp, tint.copy(alpha = 0.4f), shape),
         contentAlignment = Alignment.Center,
     ) {
-        Image(painterResource(R.drawable.grokbot), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        Image(officePainter(R.drawable.grokbot), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
     }
 }
 

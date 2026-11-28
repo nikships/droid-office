@@ -47,6 +47,20 @@ import java.util.Locale
 val LocalOpenUpdates = staticCompositionLocalOf<() -> Unit> { error("no update dialog") }
 
 @Composable
+internal fun UpdateNotice(graph: ai.factory.droidoffice.AppGraph, snackbar: androidx.compose.material3.SnackbarHostState, open: () -> Unit) {
+    var announced by rememberSaveable { mutableStateOf<String?>(null) }
+    val update by graph.updates.state.collectAsStateWithLifecycle()
+    LaunchedEffect(update.release?.version) {
+        val version = update.release?.version ?: return@LaunchedEffect
+        if (announced != version) {
+            announced = version
+            if (snackbar.showSnackbar("Droid Office $version is available.", actionLabel = "Update", withDismissAction = true,
+                    duration = androidx.compose.material3.SnackbarDuration.Long) == androidx.compose.material3.SnackbarResult.ActionPerformed) open()
+        }
+    }
+}
+
+@Composable
 fun UpdateSnackbar(data: SnackbarData) {
     Snackbar(
         action = {

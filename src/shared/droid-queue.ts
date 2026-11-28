@@ -9,7 +9,7 @@
  *
  * That block is the truth about what Droid will send next, whichever window queued it. Each row is
  * a preview: one line, maybe cut short. The Android app reads the same block (core/DroidQueue.kt),
- * checked against the same screens (android/app/src/test/resources/droid-queue-golden.json).
+ * checked against the same screens (android/core/src/androidHostTest/resources/droid-queue-golden.json).
  */
 
 export interface DroidQueued {

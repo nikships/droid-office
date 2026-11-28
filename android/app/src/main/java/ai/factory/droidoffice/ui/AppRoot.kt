@@ -37,8 +37,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -56,7 +54,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -67,6 +64,10 @@ import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
+import androidx.savedstate.serialization.SavedStateConfiguration
+import kotlinx.serialization.modules.SerializersModule
+import kotlinx.serialization.modules.polymorphic
+import kotlinx.serialization.modules.subclass
 import ai.factory.droidoffice.AppGraph
 import ai.factory.droidoffice.core.DeepLink
 import ai.factory.droidoffice.core.DeepLinkTarget
@@ -78,7 +79,6 @@ import ai.factory.droidoffice.core.Pairing
 import ai.factory.droidoffice.core.PairingInvite
 import ai.factory.droidoffice.core.WorkerLinkView
 import ai.factory.droidoffice.notify.Banner
-import ai.factory.droidoffice.notify.StayConnectedService
 import ai.factory.droidoffice.session.Phase
 import ai.factory.droidoffice.core.Tags
 import ai.factory.droidoffice.core.WhiteboardPing
@@ -86,6 +86,7 @@ import ai.factory.droidoffice.ui.board.BoardCardScreen
 import ai.factory.droidoffice.ui.components.WorkerDot
 import ai.factory.droidoffice.ui.components.LocalOpenUpdates
 import ai.factory.droidoffice.ui.components.UpdateDialog
+import ai.factory.droidoffice.ui.components.UpdateNotice
 import ai.factory.droidoffice.ui.components.UpdateSnackbar
 import ai.factory.droidoffice.ui.components.parseColor
 import ai.factory.droidoffice.ui.components.tagged
@@ -127,6 +128,15 @@ sealed interface Incoming {
 @Serializable data object OfficesKey : NavKey
 @Serializable data class BoardCardKey(val floor: String, val card: String) : NavKey
 
+private val navigationState = SavedStateConfiguration {
+    serializersModule = SerializersModule {
+        polymorphic(NavKey::class) {
+            subclass(WelcomeKey.serializer()); subclass(ScanKey.serializer()); subclass(PairKey.serializer())
+            subclass(HomeKey.serializer()); subclass(WorkerKey.serializer()); subclass(OfficesKey.serializer()); subclass(BoardCardKey.serializer())
+        }
+    }
+}
+
 val LocalGraph = staticCompositionLocalOf<AppGraph> { error("no graph") }
 val LocalSnackbar = staticCompositionLocalOf<SnackbarHostState> { error("no snackbar") }
 
@@ -163,14 +173,12 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
         Box(Modifier.fillMaxSize().background(Palette.Bg))
         return
     }
-    val stack = rememberNavBackStack(if (snapshot.offices.isEmpty()) WelcomeKey else HomeKey)
+    val stack = rememberNavBackStack(navigationState, if (snapshot.offices.isEmpty()) WelcomeKey else HomeKey)
     val nav = remember(stack) { Nav(stack) }
     val appScope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val snackbarLift = remember { mutableStateOf<Dp?>(null) }
-    val context = LocalContext.current
     var showUpdate by rememberSaveable { mutableStateOf(false) }
-    var announcedUpdate by rememberSaveable { mutableStateOf<String?>(null) }
     var requestedTab by rememberSaveable { mutableStateOf<MainTab?>(null) }
     var deepLaunchId by rememberSaveable { mutableIntStateOf(0) }
     var pendingDeepLinkJson by rememberSaveable { mutableStateOf<String?>(null) }
@@ -183,19 +191,7 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
     fun setPendingDeepLink(next: DeepLink?) {
         pendingDeepLinkJson = next?.let { OfficeJson.encodeToString(DeepLink.serializer(), it) }
     }
-    val update by graph.updates.state.collectAsStateWithLifecycle()
-    LaunchedEffect(update.release?.version) {
-        val version = update.release?.version ?: return@LaunchedEffect
-        if (announcedUpdate != version) {
-            announcedUpdate = version
-            if (snackbar.showSnackbar(
-                "Droid Office $version is available.",
-                actionLabel = "Update",
-                withDismissAction = true,
-                duration = SnackbarDuration.Long,
-            ) == SnackbarResult.ActionPerformed) showUpdate = true
-        }
-    }
+    UpdateNotice(graph, snackbar) { showUpdate = true }
 
     // Links from the system camera, a share, a chat deep link, or a notification tap.
     val pending by incoming.collectAsStateWithLifecycle()
@@ -232,10 +228,6 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
             null -> Unit
         }
         if (pending != null) incoming.value = null
-    }
-
-    LaunchedEffect(snapshot.settings.stayConnected, snapshot.offices.isEmpty()) {
-        if (snapshot.settings.stayConnected && snapshot.offices.isNotEmpty()) StayConnectedService.start(context) else StayConnectedService.stop(context)
     }
 
     // The last office was forgotten: back to the start.
@@ -307,8 +299,9 @@ fun AppRoot(graph: AppGraph, incoming: MutableStateFlow<Incoming?>) {
                 if (link.phase != Phase.Connected || link.officeId != targetOfficeId || data.officeId != targetOfficeId || !data.synced) {
                     return@LaunchedEffect
                 }
-                val resolvedFloor = if (t.floorId != null) {
-                    DeepLinks.resolveFloorId(data.floors, t.floorId)
+                val linkFloor = t.floorId
+                val resolvedFloor = if (linkFloor != null) {
+                    DeepLinks.resolveFloorId(data.floors, linkFloor)
                 } else {
                     data.floorId
                 }

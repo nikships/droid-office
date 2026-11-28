@@ -17,7 +17,7 @@ class CleartextGuard : Interceptor {
         val request = chain.request()
         if (!request.url.isHttps) {
             val address = chain.connection()?.route()?.socketAddress?.address
-            if (address == null || !Routes.isPrivate(address)) {
+            if (address == null || !Routes.isPrivate(address.address)) {
                 throw IOException("Refusing plain HTTP to ${address?.hostAddress ?: request.url.host}: offices on the internet need HTTPS")
             }
         }

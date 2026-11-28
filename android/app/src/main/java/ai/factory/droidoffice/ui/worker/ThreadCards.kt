@@ -61,7 +61,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.DisableSelection
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -634,7 +633,7 @@ private fun CommandRow(a: ThreadModelAction, c: Cards, nested: Boolean) {
             val moreKey = "output:" + a.id
             val expanded = c.open[moreKey] == true
             Clamp(OUTPUT_MAX, expanded, onExpand = { c.onFlip(moreKey, false) }, label = "Expand command output", tag = Tags.Worker.threadMore(a.id)) {
-                SelectionContainer {
+                ThreadSelection {
                     Text(
                         remember(command, output, working, entry == null, live?.more) { commandText(command, output, working, loaded = entry != null || live != null, more = live?.more ?: 0) },
                         style = LocalOfficeType.current.monoBody.copy(fontSize = 11.sp, lineHeight = 17.sp),
@@ -1041,7 +1040,7 @@ private fun ActionDetailsBody(a: ThreadModelAction, entry: ThreadEntry?, modifie
 private fun Mono(label: String, body: String, color: Color) {
     Text(label, style = endStyle())
     val shown = if (body.length > SHOWN_CHARS) body.take(SHOWN_CHARS) else body
-    SelectionContainer {
+    ThreadSelection {
         Text(shown, style = LocalOfficeType.current.monoBody.copy(fontSize = 11.sp, lineHeight = 17.sp, color = color))
     }
     if (shown.length < body.length) {

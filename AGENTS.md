@@ -31,6 +31,7 @@ Each directory with local rules carries its own `AGENTS.md`:
 | `src/client/` | Vite app: `ui/` (DOM modals and panels), `world/` (three.js scene), `/dashboard` (web companion) |
 | `src/desktop/`, `native/`, `build/`, `electron-builder.yml` | Mac Electron main process, Objective-C++ Metal presenter, signing and packaging |
 | `android/` | Kotlin/Compose phone and tablet companion (independent Gradle build) |
+| `ios/` | Xcode host for the Android companion’s Compose screens; [simulator and TestFlight builds](ios/README.md) |
 | `website/` | Public React/Vite marketing site workspace (`firebase.json`) |
 | `bin/`, `tests/`, `tools/`, `deploy/`, `docs/` | CLI entry, `node:test` suites, asset generators and frame benchmarks, AWS EC2 scripts, user guide and specs |
 

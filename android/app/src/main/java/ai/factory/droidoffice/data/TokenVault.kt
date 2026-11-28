@@ -1,5 +1,7 @@
 package ai.factory.droidoffice.data
 
+import ai.factory.droidoffice.core.OfficeJson
+import ai.factory.droidoffice.net.OfficeAuth
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -13,8 +15,21 @@ import javax.crypto.spec.GCMParameterSpec
  * Encrypts office tokens with an AES-256-GCM key that lives in the Android Keystore (hardware
  * backed where the phone has it) and can't be exported. What lands on disk is IV + ciphertext.
  */
-class TokenVault(private val alias: String = "droid-office-tokens") {
+class TokenVault(private val alias: String = "droid-office-tokens") : OfficeVault {
     private val keyStore: KeyStore by lazy { KeyStore.getInstance(KEYSTORE).apply { load(null) } }
+
+    override fun seal(office: PairedOffice, token: String): String =
+        encrypt(OfficeJson.encodeToString(OfficeKey(office.id, office.auth, office.bases, token)))
+
+    override fun open(office: PairedOffice, sealed: String): OfficeAuth? {
+        val value = decrypt(sealed) ?: return null
+        // Installed APKs before origin binding sealed just the token; keep their saved offices.
+        val key = if (value.startsWith('{')) runCatching { OfficeJson.decodeFromString<OfficeKey>(value) }.getOrNull()
+            else OfficeKey(office.id, office.auth, office.bases, value)
+        return key?.auth(office)
+    }
+
+    override fun discard(sealed: String) = Unit // Removing ciphertext from DataStore already forgets it.
 
     private fun key(): SecretKey {
         (keyStore.getKey(alias, null) as? SecretKey)?.let { return it }

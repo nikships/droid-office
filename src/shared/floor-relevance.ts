@@ -2,7 +2,7 @@
  * Which floors get a tab in the companions' floor strip. Every floor is scored for how much the owner
  * likely wants it now; the strip then fills, most relevant first, with full-width tabs until the next
  * one would not fit. Mirrored by Android's `core/FloorRelevance.kt`; both are pinned by
- * `android/app/src/test/resources/floor-relevance-golden.json`.
+ * `android/core/src/androidHostTest/resources/floor-relevance-golden.json`.
  */
 
 /** What a floor's relevance is scored from. */

@@ -21,7 +21,7 @@ const cancelledOf = (row: ThreadRow | undefined) => Number((row?.kind === 'activ
 const noResultOf = (row: ThreadRow | undefined) => Number((row?.kind === 'activity' && /(\d+) no result/.exec(row.status ?? '')?.[1]) || 0);
 const text = (id: string, role: 'user' | 'assistant' = 'assistant'): ThreadEntry => ({ id, seq: 0, role, kind: 'text', text: 'The release is published.' });
 const capturedEntries = (name: string): ThreadEntry[] =>
-  JSON.parse(readFileSync(new URL('../android/app/src/test/resources/thread-presentation-golden.json', import.meta.url), 'utf8')).cases.find((example: { name: string }) => example.name === name).entries;
+  JSON.parse(readFileSync(new URL('../android/core/src/androidHostTest/resources/thread-presentation-golden.json', import.meta.url), 'utf8')).cases.find((example: { name: string }) => example.name === name).entries;
 const capturedFailure = () => capturedEntries('unit_real_missing_read_causal_wrapper');
 const capturedCrash = () => capturedEntries('unit_real_crash_wrapper_flushed_by_a_later_stop');
 // The crash's Script and its interrupted child, with the wrapper's by-user result as if it had come in time.

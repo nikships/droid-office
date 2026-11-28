@@ -1,13 +1,5 @@
 package ai.factory.droidoffice.ui.worker
 
-import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.ImageDecoder
-import android.net.Uri
-import android.provider.OpenableColumns
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -63,7 +55,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -77,7 +68,6 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -95,7 +85,6 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTag
-import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
@@ -118,21 +107,18 @@ import ai.factory.droidoffice.ui.theme.LocalOfficeType
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
 import ai.factory.droidoffice.ui.theme.ThreadPalette
-import java.io.ByteArrayOutputStream
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /** A picture attached to the next prompt: kept on the office's machine once [id] is set. */
-private class Attachment(val key: Long, val thumb: ImageBitmap?) {
+private class Attachment(val thumb: ImageBitmap?) {
     var id by mutableStateOf<String?>(null)
 }
 
 /** The kinds of picture the office takes with a prompt (src/shared/drops.ts PROMPT_IMAGE_TYPES), and its limits. */
-private val IMAGE_TYPES = setOf("image/png", "image/jpeg", "image/gif", "image/webp")
-private const val MAX_BYTES = 25 * 1024 * 1024
+internal val IMAGE_TYPES = setOf("image/png", "image/jpeg", "image/gif", "image/webp")
+internal const val MAX_BYTES = 25 * 1024 * 1024
 private const val MAX_IMAGES = 10
 
 @Composable
@@ -165,7 +151,6 @@ fun Composer(
 ) {
     val graph = LocalGraph.current
     val snackbar = LocalSnackbar.current
-    val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     var value by rememberSaveable(w.id, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(draft.orEmpty(), TextRange(draft.orEmpty().length))) }
@@ -214,8 +199,8 @@ fun Composer(
         if (!connected) return@LaunchedEffect
         val d = graph.connection.data.value
         val floor = if (w.id == ORCHESTRATOR_ID) null else d.workerFloorId(w.id) ?: d.floorId
-        if (!files.fresh(System.currentTimeMillis())) {
-            graph.connection.threadFiles(floor, w.id, "")?.let { files.keep(it, System.currentTimeMillis()) }
+        if (!files.fresh(workerNowMillis())) {
+            graph.connection.threadFiles(floor, w.id, "")?.let { files.keep(it, workerNowMillis()) }
         }
         // The office lists at most 5,000 paths at once: past that, it ranks the rest for the query itself.
         if (query.isNotEmpty() && files.base?.truncated == true && files.filtered?.first != query) {
@@ -259,17 +244,18 @@ fun Composer(
         }
     }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(MAX_IMAGES)) { uris ->
+    val pickPictures = rememberPicturePicker(MAX_IMAGES) { choices ->
         val room = MAX_IMAGES - images.size
-        if (uris.size > room) scope.launch { snackbar.showSnackbar("A prompt carries $MAX_IMAGES pictures at most") }
-        for (uri in uris.take(room)) {
+        if (choices.size > room) scope.launch { snackbar.showSnackbar("A prompt carries $MAX_IMAGES pictures at most") }
+        for (load in choices.take(room)) {
             scope.launch {
-                val picture = withContext(Dispatchers.IO) { runCatching { load(context, uri) }.getOrNull() }
+                val picture = load()
                 if (picture == null) {
                     snackbar.showSnackbar("That picture couldn't be read")
                     return@launch
                 }
-                val a = Attachment(System.nanoTime(), picture.thumb)
+                if (images.size >= MAX_IMAGES) return@launch
+                val a = Attachment(picture.thumb)
                 images += a
                 graph.connection.stageImage(picture.name, picture.type, picture.bytes, w.id)
                     .onSuccess { id -> if (a in images) a.id = id else graph.connection.unstageImage(id, w.id) }
@@ -439,7 +425,7 @@ fun Composer(
                 val controls: @Composable RowScope.() -> Unit = {
                     if (!w.isShell) {
                         Box(
-                            Modifier.size(hit).clip(control).clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }.tagged(Tags.Worker.ATTACH),
+                            Modifier.size(hit).clip(control).clickable(onClick = pickPictures).tagged(Tags.Worker.ATTACH),
                             contentAlignment = Alignment.Center,
                         ) { Icon(Icons.Default.Add, "Attach pictures", tint = ThreadPalette.TextSecondary) }
                     }
@@ -504,7 +490,7 @@ fun Composer(
         ) {
             if (!w.isShell) {
                 Box(
-                    Modifier.size(hit).clip(control).clickable { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }.tagged(Tags.Worker.ATTACH),
+                    Modifier.size(hit).clip(control).clickable(onClick = pickPictures).tagged(Tags.Worker.ATTACH),
                     contentAlignment = Alignment.Center,
                 ) { Icon(Icons.Default.Add, "Attach pictures", tint = Palette.TextSecondary) }
             }
@@ -739,33 +725,5 @@ internal fun MentionMenu(items: List<WorkspaceMention.Item>, searching: Boolean,
 /** How wide the Thread's conversation reads on a large screen: about eighty characters of message type. */
 internal val READING_WIDTH = 768.dp
 
-private class Picture(val name: String, val type: String, val bytes: ByteArray, val thumb: ImageBitmap?)
-
-/**
- * Reads a picked picture. One the office won't take as it is (HEIC, say, or over 25 MB) is
- * re-encoded as a JPEG no wider than 2560 px.
- */
-private fun load(context: Context, uri: Uri): Picture {
-    val resolver = context.contentResolver
-    val type = resolver.getType(uri) ?: "image/jpeg"
-    val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-        if (c.moveToFirst()) c.getString(0) else null
-    } ?: "photo.jpg"
-    val source = ImageDecoder.createSource(resolver, uri)
-    val thumb = runCatching {
-        ImageDecoder.decodeBitmap(source) { d, info, _ ->
-            val s = 160f / maxOf(info.size.width, info.size.height)
-            if (s < 1f) d.setTargetSize((info.size.width * s).toInt().coerceAtLeast(1), (info.size.height * s).toInt().coerceAtLeast(1))
-        }.asImageBitmap()
-    }.getOrNull()
-    val raw = resolver.openInputStream(uri)?.use { it.readBytes() } ?: error("unreadable")
-    if (type in IMAGE_TYPES && raw.size <= MAX_BYTES) return Picture(name, type, raw, thumb)
-    val bitmap = ImageDecoder.decodeBitmap(source) { d, info, _ ->
-        d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-        val s = 2560f / maxOf(info.size.width, info.size.height)
-        if (s < 1f) d.setTargetSize((info.size.width * s).toInt(), (info.size.height * s).toInt())
-    }
-    val out = ByteArrayOutputStream()
-    bitmap.compress(Bitmap.CompressFormat.JPEG, 88, out)
-    return Picture(name.substringBeforeLast('.') + ".jpg", "image/jpeg", out.toByteArray(), thumb)
-}
+internal class Picture(val name: String, val type: String, val bytes: ByteArray, val thumb: ImageBitmap?)
+internal typealias PictureLoader = suspend () -> Picture?

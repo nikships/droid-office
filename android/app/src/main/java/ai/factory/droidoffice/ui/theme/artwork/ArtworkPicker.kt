@@ -25,7 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import ai.factory.droidoffice.ui.theme.officePainter
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -77,7 +77,7 @@ private fun ArtworkChoice(theme: Artwork?, selected: Boolean, choose: () -> Unit
             .selectable(selected, role = Role.RadioButton, onClick = choose).tagged(Tags.Artwork.choice(theme?.id ?: "default")),
     ) {
         Box(Modifier.fillMaxWidth().height(72.dp).background(Color(0xFF020202))) {
-            if (theme != null) Image(painterResource(theme.preview), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            if (theme != null) Image(officePainter(theme.preview), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             Row(Modifier.align(Alignment.BottomStart).padding(10.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (color in listOf(accent, theme?.accent2 ?: Color.White, theme?.tint ?: Color.DarkGray)) {
                     Spacer(Modifier.size(10.dp).background(color, CircleShape).border(1.dp, Color.White.copy(alpha = .26f), CircleShape))

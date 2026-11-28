@@ -72,7 +72,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import ai.factory.droidoffice.ui.worker.workerDialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import ai.factory.droidoffice.core.Availability
 import ai.factory.droidoffice.core.Effort
@@ -210,8 +210,8 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
     LaunchedEffect(floorId, mention?.query, connected, cloud) {
         val query = mention?.query ?: return@LaunchedEffect
         if (!connected || floorId == null) return@LaunchedEffect
-        if (!files.fresh(System.currentTimeMillis())) {
-            connection.threadFiles(floorId, null, "")?.let { files.keep(it, System.currentTimeMillis()) }
+        if (!files.fresh(kotlin.time.Clock.System.now().toEpochMilliseconds())) {
+            connection.threadFiles(floorId, null, "")?.let { files.keep(it, kotlin.time.Clock.System.now().toEpochMilliseconds()) }
         }
         if (query.isNotEmpty() && files.base?.truncated == true && files.filtered?.first != query) {
             delay(150)
@@ -249,7 +249,7 @@ fun HireSheet(onDismiss: () -> Unit, deskId: String? = null) {
         if (connection.hire(null, "shell", null, null, false, deskId)) onDismiss() else failed = true
     }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    Dialog(onDismissRequest = onDismiss, properties = workerDialogProperties()) {
         Column(Modifier.fillMaxSize().background(Palette.Bg).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).tagged(Tags.Hire.SHEET)) {
             Row(Modifier.fillMaxWidth().padding(start = 6.dp, end = 20.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onDismiss, modifier = Modifier.tagged(Tags.Hire.CLOSE)) { Icon(Icons.Default.Close, "Close", tint = Palette.Text) }

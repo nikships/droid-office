@@ -117,7 +117,7 @@ test('Android preserves the official colored SVGs in its generated bitmap assets
   assert.match(readFileSync(new URL('LICENSE.txt', root), 'utf8'), /LobeHub/);
   assert.equal(MODEL_BRANDS.kimi.file, 'kimi-color.svg');
   assert.equal(MODEL_BRANDS.openrouter.file, 'openrouter-color.svg');
-  const native = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/core/ModelBrand.kt', import.meta.url), 'utf8');
+  const native = readFileSync(new URL('../android/core/src/commonMain/kotlin/ai/factory/droidoffice/core/ModelBrand.kt', import.meta.url), 'utf8');
   const mono = [...native.match(/val monochrome = setOf\(([^)]+)\)/)![1].matchAll(/"([^"]+)"/g)].map((m) => m[1]).sort();
   assert.deepEqual(
     mono,

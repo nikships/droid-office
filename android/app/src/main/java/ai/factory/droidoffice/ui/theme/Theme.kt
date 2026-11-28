@@ -17,14 +17,11 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import ai.factory.droidoffice.R
 import ai.factory.droidoffice.core.AppearanceLook
 import ai.factory.droidoffice.core.Glass
 import ai.factory.droidoffice.ui.theme.artwork.Artwork
@@ -111,11 +108,6 @@ data class OfficeType(
 )
 
 val LocalOfficeType = staticCompositionLocalOf<OfficeType> { error("DroidOfficeTheme missing") }
-
-private fun variable(res: Int, weight: Int) = Font(res, FontWeight(weight), variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
-
-val Geist = FontFamily((300..800 step 100).map { variable(R.font.geist, it) })
-val GeistMono = FontFamily((400..700 step 100).map { variable(R.font.geist_mono, it) })
 
 private fun typography(): Typography {
     val base = TextStyle(fontFamily = Geist, color = Palette.Text)

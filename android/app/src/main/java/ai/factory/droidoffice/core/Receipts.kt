@@ -1,7 +1,15 @@
 package ai.factory.droidoffice.core
 
-import java.io.File
-import java.security.MessageDigest
+import ai.factory.droidoffice.data.PhoneLock
+
+internal interface ReceiptDirectory {
+    fun name(key: String): String
+    fun read(name: String): String?
+    fun replace(name: String, text: String)
+    fun delete(name: String): Boolean
+    /** Names of receipt files and their last write times. */
+    fun files(): Map<String, Long>
+}
 
 /**
  * This phone's receipts for messages it sent to workers' Droid queues, kept on disk so a restart or
@@ -10,7 +18,7 @@ import java.security.MessageDigest
  * have a file, at most [MAX_WORKERS] of them (the least recently written go first). Every call is
  * blocking and safe to make from any thread; a disk error is reported, never thrown.
  */
-class Receipts(private val dir: File) {
+class Receipts internal constructor(private val dir: ReceiptDirectory) {
     enum class Saved {
         /** On disk as given. */
         Kept,
@@ -27,64 +35,39 @@ class Receipts(private val dir: File) {
         data class Failed(val reason: String) : Loaded
     }
 
-    private val lock = Any()
+    private val lock = PhoneLock()
 
-    fun load(key: String): Loaded = synchronized(lock) {
+    fun load(key: String): Loaded = lock.withLock {
         try {
-            val file = file(key)
-            if (!file.exists()) return Loaded.Found(null)
-            val text = file.readText()
+            val text = dir.read(dir.name(key)) ?: return Loaded.Found(null)
             val head = text.substringBefore('\n')
             // A name collision or a half-written file: not this worker's receipts.
             if (head != key || '\n' !in text) Loaded.Found(null) else Loaded.Found(text.substringAfter('\n'))
         } catch (e: Exception) {
-            Loaded.Failed(e.message ?: e.javaClass.simpleName)
+            Loaded.Failed(e.message ?: "Couldn't read this worker's receipts")
         }
     }
 
     /** Keeps [snapshot] for [key], or removes the file when it's null. */
-    fun save(key: String, snapshot: String?): Saved = synchronized(lock) {
-        val file = file(key)
+    fun save(key: String, snapshot: String?): Saved = lock.withLock {
+        val file = dir.name(key)
         try {
-            if (snapshot == null) {
-                if (file.exists() && !file.delete()) return Saved.Failed
-                return Saved.Removed
-            }
+            if (snapshot == null) return if (dir.delete(file)) Saved.Removed else Saved.Failed
             if (snapshot.length > MAX_CHARS) {
-                file.delete()
-                return Saved.TooLarge
+                return if (dir.delete(file)) Saved.TooLarge else Saved.Failed
             }
-            if (!dir.isDirectory && !dir.mkdirs()) return Saved.Failed
-            // Written beside it and renamed over it, so a crash mid-write leaves the old copy or none.
-            val temp = File(dir, file.name + ".tmp")
-            temp.writeText(key + "\n" + snapshot)
-            if (!temp.renameTo(file)) {
-                temp.delete()
-                file.delete()
-                return Saved.Failed
-            }
-            trim()
+            dir.replace(file, key + "\n" + snapshot)
+            dir.files().entries.sortedByDescending { it.value }.drop(MAX_WORKERS).forEach { dir.delete(it.key) }
             Saved.Kept
         } catch (e: Exception) {
-            runCatching { file.delete() }
+            runCatching { dir.delete(file) }
             Saved.Failed
         }
     }
 
     /** Forgets every worker's receipts in the office [officeId]. */
-    fun removeOffice(officeId: String) = synchronized(lock) {
-        files().forEach { f -> if (runCatching { f.useLines { it.firstOrNull() } }.getOrNull()?.startsWith("$officeId/") == true) f.delete() }
-    }
-
-    private fun trim() {
-        files().sortedByDescending { it.lastModified() }.drop(MAX_WORKERS).forEach { it.delete() }
-    }
-
-    private fun files(): List<File> = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") }?.toList().orEmpty()
-
-    private fun file(key: String): File {
-        val hash = MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
-        return File(dir, hash.take(32) + ".json")
+    fun removeOffice(officeId: String) = lock.withLock {
+        dir.files().keys.forEach { f -> if (runCatching { dir.read(f) }.getOrNull()?.startsWith("$officeId/") == true) dir.delete(f) }
     }
 
     companion object {

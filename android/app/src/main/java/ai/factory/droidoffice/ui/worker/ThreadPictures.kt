@@ -1,8 +1,7 @@
 package ai.factory.droidoffice.ui.worker
 
-import android.graphics.ImageDecoder
-import android.util.Base64
-import android.util.LruCache
+import androidx.collection.LruCache
+import kotlin.io.encoding.Base64
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,7 +42,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -59,7 +57,6 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import ai.factory.droidoffice.core.Markdown
 import ai.factory.droidoffice.core.PageMsg
 import ai.factory.droidoffice.core.PictureTransform
@@ -76,7 +73,6 @@ import ai.factory.droidoffice.ui.theme.ThreadPalette
 import ai.factory.droidoffice.ui.theme.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.nio.ByteBuffer
 
 /** The floor and worker a Thread is read on: its pictures are fetched from there. */
 internal data class PictureSource(val floor: String, val worker: String)
@@ -100,20 +96,6 @@ private object ThreadPictureCache {
     fun put(key: String, image: ImageBitmap) {
         cache.put(key, image)
     }
-}
-
-/**
- * Decodes off the main thread, halving the size until its longest side fits [side]. ImageDecoder turns a
- * camera photo the way its EXIF orientation says, as the composer's thumbnail does; BitmapFactory would leave it sideways.
- */
-private suspend fun decodeScaled(bytes: ByteArray, side: Int): ImageBitmap? = withContext(Dispatchers.Default) {
-    runCatching {
-        ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { d, info, _ ->
-            var sample = 1
-            while (maxOf(info.size.width, info.size.height) / (sample * 2) >= side) sample *= 2
-            d.setTargetSampleSize(sample)
-        }.asImageBitmap()
-    }.getOrNull()
 }
 
 @Composable
@@ -195,7 +177,7 @@ internal fun MarkdownImage(alt: String, src: String, style: TextStyle) {
     }
     if (failed && picture == null) {
         val uriHandler = LocalUriHandler.current
-        val provider = remember(src) { runCatching { java.net.URI(src).host }.getOrNull() }
+        val provider = remember(src) { if (web) pictureHost(src) else null }
         val shape = RoundedCornerShape(4.dp)
         Row(
             Modifier.fillMaxWidth().clip(shape).border(1.dp, ThreadPalette.BorderStrong, shape).padding(horizontal = 8.dp, vertical = 6.dp),
@@ -259,12 +241,12 @@ private fun PictureViewer(connection: OfficeConnection, source: PictureSource, i
 internal fun KittyPictureViewer(image: PageMsg.Image, about: String?, onClose: () -> Unit) {
     val picture by produceState<ImageBitmap?>(null, image) {
         val bytes = withContext(Dispatchers.Default) {
-            runCatching { Base64.decode(image.data, Base64.DEFAULT) }.getOrNull()
+            runCatching { Base64.decode(image.data) }.getOrNull()
         } ?: return@produceState
         value = decodeScaled(bytes, FULL_SIDE)
     }
     val download = rememberThreadDownload("terminal-image.png", "image/png") {
-        runCatching { Base64.decode(image.data, Base64.DEFAULT) }.getOrNull()
+        runCatching { Base64.decode(image.data) }.getOrNull()
     }
     FullscreenPictureDialog(picture, image.width, image.height, "Terminal image", about, onDownload = download, onClose = onClose)
 }
@@ -282,7 +264,7 @@ internal fun FullscreenPictureDialog(
     onDownload: (() -> Unit)? = null,
     onClose: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    Dialog(onDismissRequest = onClose, properties = workerDialogProperties()) {
         var boxSize by remember { mutableStateOf(IntSize.Zero) }
         var transform by remember(picture) { mutableStateOf(PictureTransform()) }
         val imgW = picture?.width ?: width ?: 0

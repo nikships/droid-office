@@ -57,7 +57,7 @@ test('the dial sweeps a fifth per step and its needle ends inside the arc', () =
 });
 
 test('Android draws the same colours and says the same words', () => {
-  const kotlin = readFileSync(new URL('../android/app/src/main/java/ai/factory/droidoffice/core/EffortDial.kt', import.meta.url), 'utf8');
+  const kotlin = readFileSync(new URL('../android/core/src/commonMain/kotlin/ai/factory/droidoffice/core/EffortDial.kt', import.meta.url), 'utf8');
   const enumOf = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', max: 'Max' } as const;
   for (const e of AGENT_EFFORTS) {
     const color = new RegExp(`Effort\\.${enumOf[e]} to 0xFF([0-9A-F]{6})\\b`).exec(kotlin)?.[1];

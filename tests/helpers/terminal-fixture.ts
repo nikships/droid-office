@@ -27,7 +27,8 @@ export async function terminalFixture(t: TestContext) {
   const addr = server.httpServer!.address();
   if (!addr || typeof addr === 'string') throw Error('missing fixture address');
   return async (page: Page, body: string) => {
-    await page.route('**/fixture', (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><link rel="stylesheet" href="/style.css">${body}` }));
+    // Only the document is synthetic. Let Chromium load and cache the real module graph normally.
+    await page.route('**/fixture', (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><link rel="stylesheet" href="/style.css">${body}` }), { times: 1 });
     await page.goto(`http://127.0.0.1:${addr.port}/fixture`);
     await page.addScriptTag({ content: 'window.__name = fn => fn' });
     await page.evaluate(async (shellId) => {

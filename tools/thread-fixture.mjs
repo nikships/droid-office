@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { pageRows, presentThread, THREAD_MODEL_VERSION } from '../src/shared/thread-presentation.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const FIXTURE = path.join(root, 'android/app/src/test/resources/thread-presentation-golden.json');
+export const FIXTURE = path.join(root, 'android/core/src/androidHostTest/resources/thread-presentation-golden.json');
 
 const ABOUT =
   "The Thread's presentation contract. Each case is the wire ThreadEntry list the office reads from a captured session (src/shared/worker-thread.ts) and the presentation rows the office sends for it (ThreadRow in src/shared/thread-presentation.ts, `presentation.rows` of thread.snapshot). The office builds the rows; the web companion and the Android app only decode and render them. `paging` replays captured cases as the pages a client receives, with the rows it must hold after each one. Regenerate with `node --import tsx tools/thread-fixture.mjs`; never edit `expected` by hand.";

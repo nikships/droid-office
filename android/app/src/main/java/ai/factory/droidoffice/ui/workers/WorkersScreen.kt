@@ -318,7 +318,7 @@ private fun WorkersRosterPane(
                                     onOpenRawTty = { onOpenRawTty(w.id) },
                                     onAnswered = { label ->
                                         if (menu != null) {
-                                            sent.add(0, AnsweredAsk(w.id, w.name, floor?.name, label, System.currentTimeMillis(), menu))
+                                            sent.add(0, AnsweredAsk(w.id, w.name, floor?.name, label, kotlin.time.Clock.System.now().toEpochMilliseconds(), menu))
                                             while (sent.size > 3) sent.removeAt(sent.lastIndex)
                                         }
                                     },
@@ -712,10 +712,11 @@ private fun BuildingWorkerCard(
 
             // Floor + Repo + Seat / Team context strip
             val bodyIndent = if (isOrchestrator || isBot) 36.dp else 26.dp
+            val floor = row.floor
             val floorName = when {
                 isOrchestrator || isBot -> "Mission Control"
-                row.floor != null -> {
-                    val raw = row.floor.name.ifBlank { row.floor.id }
+                floor != null -> {
+                    val raw = floor.name.ifBlank { floor.id }
                     if (multiFloor && floorNumber != null) "$floorNumber · $raw" else raw
                 }
                 !row.floorId.isNullOrBlank() -> row.floorId
@@ -799,9 +800,10 @@ private fun BuildingWorkerCard(
                             modifier = Modifier.tagged(Tags.Workers.CARD_DETAIL),
                         )
                     }
-                    if (row.blocked != null) {
+                    val blocked = row.blocked
+                    if (blocked != null) {
                         Text(
-                            row.blocked,
+                            blocked,
                             style = MaterialTheme.typography.bodySmall,
                             color = Palette.Warning,
                             maxLines = 2,
@@ -873,8 +875,9 @@ private fun cardMeta(row: BuildingWorkerRow, now: Long): String {
     }
     val worked = Workers.workedMs(w, now)
     if (worked >= 1_000) parts += Workers.duration(worked)
-    if ((w.state == WorkerStatus.NeedsInput || (w.state == WorkerStatus.Done && !w.acked)) && w.waitingSince != null) {
-        parts += Workers.ago(w.waitingSince, now)
+    val waitingSince = w.waitingSince
+    if ((w.state == WorkerStatus.NeedsInput || (w.state == WorkerStatus.Done && !w.acked)) && waitingSince != null) {
+        parts += Workers.ago(waitingSince, now)
     }
     return parts.joinToString(" · ").uppercase()
 }

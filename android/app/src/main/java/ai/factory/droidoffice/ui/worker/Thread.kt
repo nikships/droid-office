@@ -32,7 +32,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -239,7 +238,7 @@ internal fun Thread(
         }
         if (!visible) return@LaunchedEffect
         while (isActive) {
-            val now = System.currentTimeMillis()
+            val now = workerNowMillis()
             feed.latest(now, w.sessionId)?.let { req -> if (!connection.send(ClientMsg.threadRead(w.id, req))) feed.unsent(req) }
             feed.tick(now)
             state = feed.state
@@ -249,7 +248,7 @@ internal fun Thread(
     LaunchedEffect(state.loadingEarlier) {
         while (state.loadingEarlier) {
             delay(1_000L)
-            if (feed.tick(System.currentTimeMillis())) state = feed.state
+            if (feed.tick(workerNowMillis())) state = feed.state
         }
     }
 
@@ -267,7 +266,7 @@ internal fun Thread(
     LaunchedEffect(queued, queueRevision, queueReady, state.sessionId, state.entries, droidQueue, clock) {
         val before = queued.snapshot()
         if (queueReady) queued.sync(state.sessionId, state.entries)
-        onQueuePanel(queued.panel(droidQueue, System.currentTimeMillis()))
+        onQueuePanel(queued.panel(droidQueue, workerNowMillis()))
         holding = queued.pending.isNotEmpty()
         if (queueReady && before != queued.snapshot()) onQueueChanged()
     }
@@ -275,7 +274,7 @@ internal fun Thread(
     LaunchedEffect(holding) {
         while (holding) {
             delay(1_000)
-            clock = System.currentTimeMillis()
+            clock = workerNowMillis()
         }
     }
     val list = rememberLazyListState()
@@ -460,7 +459,7 @@ internal fun Thread(
     /** With [keepFollowing], the older page goes in above and the thread stays on the latest. */
     fun earlier(keepFollowing: Boolean = false) {
         if (!connected) return
-        val (req, before) = feed.earlier(System.currentTimeMillis()) ?: return
+        val (req, before) = feed.earlier(workerNowMillis()) ?: return
         if (!keepFollowing) {
             val first = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key != HEAD }
             // Hold on to the row's newest entry: an earlier page can only add to a row from its start.
@@ -915,7 +914,7 @@ private fun Message(
             if (pictures) ThreadPictures(images, "Picture you sent", null, end = true)
             if (!pictures || text.isNotBlank()) Column(Modifier.fillMaxWidth().userBlock()) {
                 var clipped by remember(m.id) { mutableStateOf(false) }
-                SelectionContainer {
+                ThreadSelection {
                     MarkdownText(text, if (all) Modifier else Modifier.clampLines(USER_LINES) { if (clipped != it) clipped = it }, surface = ThreadPalette.UserSlab, breaks = true)
                 }
                 if (all || clipped) {
@@ -940,7 +939,7 @@ private fun Message(
     } else {
         Column(tag.then(if (offerActions) Modifier.clickable(onClick = onActions) else Modifier)) {
             val files = LocalFilePreview.current
-            SelectionContainer { MarkdownText(text, streaming = streaming, onOpenPath = files?.let { it::open }, rich = true) }
+            ThreadSelection { MarkdownText(text, streaming = streaming, onOpenPath = files?.let { it::open }, rich = true) }
             m.turnChanges?.let { TurnChanges(m.id, it, floorDir, Modifier.padding(top = 10.dp)) }
             AnimatedVisibility(actions && offerActions) {
                 ThreadMessageActions(m.id, text, at, user = false, onQuote = onQuote, onRewind = null, modifier = Modifier.tagged(Tags.Worker.threadMessageActions(m.id)))

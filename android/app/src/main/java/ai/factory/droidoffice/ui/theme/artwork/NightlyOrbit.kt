@@ -75,7 +75,7 @@ private fun starfield(): DrawScope.(Float) -> Unit {
                 val start = Offset(w / 2f + (-.4f + 1.3f * seed.x) * h, (.3f - .28f * seed.y) * h)
                 val head = start + direction * (phase * .55f * h)
                 val step = direction * (.16f * h / 16f)
-                val fade = .9f * sin(Math.PI.toFloat() * phase)
+                val fade = .9f * sin(kotlin.math.PI.toFloat() * phase)
                 for (i in 0 until 16) {
                     val tail = 1f - i / 16f
                     drawLine(meteorTint, head - step * i.toFloat(), head - step * (i + 1f),

@@ -2,49 +2,26 @@ package ai.factory.droidoffice.net
 
 import ai.factory.droidoffice.core.DroidCommand
 import ai.factory.droidoffice.core.DroidCommands
-import ai.factory.droidoffice.core.Models
-import ai.factory.droidoffice.core.HostUpdateState
 import ai.factory.droidoffice.core.HostUpdateAction
+import ai.factory.droidoffice.core.HostUpdateState
+import ai.factory.droidoffice.core.Models
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.Probe
 import ai.factory.droidoffice.core.WbFetched
 import ai.factory.droidoffice.core.WbFileRef
 import ai.factory.droidoffice.core.WbRenderStatus
-import java.io.IOException
-import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
-import okio.BufferedSink
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
-
-/** What the phone shows an office to get in: a device token as a bearer, or this start's LAN token as ?t=. */
-sealed interface OfficeAuth {
-    data class Device(val token: String) : OfficeAuth
-    data class Lan(val token: String) : OfficeAuth
-}
 
 @Serializable
 data class OfficeMeta(val name: String = "", val version: String = "")
 
 @Serializable
-data class PairResponse(val deviceId: String = "", val token: String = "", val office: OfficeMeta = OfficeMeta())
+class PairResponse(val deviceId: String = "", val token: String = "", val office: OfficeMeta = OfficeMeta())
 
 @Serializable
 data class HelloResponse(val ok: Boolean = false, val office: OfficeMeta = OfficeMeta(), val deviceId: String? = null)
@@ -63,388 +40,161 @@ data class ModelOption(
     val promo: String? = null,
 )
 
-/** A worker's workspace listing for `@` mentions: capped by the office, [truncated] when there is more. */
 @Serializable
 data class ThreadFiles(val files: List<String> = emptyList(), val dirs: List<String> = emptyList(), val truncated: Boolean = false)
 
 @Serializable
 data class ModelCatalogue(val models: List<ModelOption> = emptyList(), val defaultModel: String? = null, val defaultReasoningEffort: String? = null, val customOnly: Boolean = false)
 
-/** What to call model [id]: the catalogue's name for it, else its id tidied up. */
 fun ModelCatalogue?.nameOf(id: String): String = Models.displayName(id, this?.models?.firstOrNull { it.id == id }?.displayName)
 
 sealed interface PairResult {
     data class Paired(val response: PairResponse) : PairResult
-    /** The office has no /api/mobile routes: an older office, reachable with the LAN token only. */
     data object Unsupported : PairResult
-    /** The LAN token was refused: the office restarted since the QR code was shown. */
     data object Refused : PairResult
     data class Failed(val message: String) : PairResult
 }
 
-/**
- * HTTP and WebSocket access to an office. Every request carries an Origin equal to the base URL
- * it goes to (the office checks it on the WebSocket upgrade and owner writes) and the office's auth.
- */
-class OfficeApi(base: OkHttpClient = OkHttpClient()) {
-    val client: OkHttpClient = base.newBuilder()
-        .addNetworkInterceptor(CleartextGuard())
-        .connectTimeout(4, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
-        .pingInterval(15, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        .build()
-
-    private val probeClient = client.newBuilder()
-        .connectTimeout(3, TimeUnit.SECONDS)
-        .readTimeout(4, TimeUnit.SECONDS)
-        .build()
-
-    private val noRetryClient = client.newBuilder().retryOnConnectionFailure(false).followRedirects(false).build()
-
-    private val jsonType = "application/json".toMediaType()
-
-    suspend fun pair(base: String, lanToken: String, device: String): PairResult = withContext(Dispatchers.IO) {
-        val url = base.toHttpUrl().newBuilder().addPathSegments("api/mobile/pair").addQueryParameter("t", lanToken).build()
-        val body = buildJsonObject { put("device", device) }.toString().toRequestBody(jsonType)
-        val request = Request.Builder().url(url).header("Origin", base).post(body).build()
-        try {
-            client.newCall(request).await().use { res ->
-                when (res.code) {
-                    200, 201 -> {
-                        val parsed = runCatching { OfficeJson.decodeFromString<PairResponse>(res.body.string()) }.getOrNull()
-                        if (parsed == null || parsed.token.isBlank()) PairResult.Failed("The office sent an answer the app can't read")
-                        else PairResult.Paired(parsed)
-                    }
-                    404, 405 -> PairResult.Unsupported
-                    401, 403 -> PairResult.Refused
-                    else -> PairResult.Failed("The office answered ${res.code}")
-                }
-            }
-        } catch (e: IOException) {
-            PairResult.Failed(e.message ?: "Couldn't reach the office")
-        }
-    }
-
-    /** One route's answer for [ai.factory.droidoffice.core.RouteRacer]. */
-    suspend fun hello(base: String, auth: OfficeAuth): Probe = withContext(Dispatchers.IO) {
-        val request = when (auth) {
-            is OfficeAuth.Device -> request(base, "api/mobile/hello", auth).get().build()
-            // An older office has no hello: its health check sits behind the same LAN gate.
-            is OfficeAuth.Lan -> request(base, "api/health", auth).get().build()
-        }
-        try {
-            probeClient.newCall(request).await().use { res ->
-                when (res.code) {
-                    200 -> {
-                        val hello = if (auth is OfficeAuth.Device) runCatching { OfficeJson.decodeFromString<HelloResponse>(res.body.string()) }.getOrNull() else null
-                        Probe.Ok(hello?.office?.name?.takeIf { it.isNotBlank() }, hello?.office?.version?.takeIf { it.isNotBlank() })
-                    }
-                    401, 403 -> Probe.Unauthorized
-                    else -> Probe.Failed("HTTP ${res.code}")
-                }
-            }
-        } catch (e: IOException) {
-            Probe.Failed(e.message ?: e.javaClass.simpleName)
-        }
-    }
-
-    suspend fun unpair(base: String, auth: OfficeAuth.Device): Boolean = withContext(Dispatchers.IO) {
-        try {
-            client.newCall(request(base, "api/mobile/pair", auth).delete().build()).await().use { it.isSuccessful || it.code == 401 }
-        } catch (_: IOException) {
-            false
-        }
-    }
-
-    suspend fun models(base: String, auth: OfficeAuth): ModelCatalogue? = withContext(Dispatchers.IO) {
-        try {
-            client.newCall(request(base, "api/agents/droid/models", auth).get().build()).await().use { res ->
-                if (!res.isSuccessful) null else runCatching { OfficeJson.decodeFromString<ModelCatalogue>(res.body.string()) }.getOrNull()
-            }
-        } catch (_: IOException) {
-            null
-        }
-    }
-
-    /** The skills and custom commands a worker's or floor's droid offers as slash commands; null when the office can't say. */
-    suspend fun slashCommands(base: String, auth: OfficeAuth, workerId: String? = null, floorId: String? = null): List<DroidCommand>? = withContext(Dispatchers.IO) {
-        val param = when {
-            workerId != null -> "worker" to workerId
-            floorId != null -> "floor" to floorId
-            else -> return@withContext null
-        }
-        try {
-            client.newCall(request(base, "api/agents/droid/commands", auth, param).get().build()).await().use { res ->
-                if (!res.isSuccessful) null else runCatching { OfficeJson.decodeFromString<DroidCommands>(res.body.string()).commands }.getOrNull()
-            }
-        } catch (_: IOException) {
-            null
-        }
-    }
-
-    /** The Android app's newest GitHub release, as the office reads it with its own `gh` (GET /api/mobile/app-release). */
-    suspend fun appRelease(base: String, auth: OfficeAuth): Result<String> = withContext(Dispatchers.IO) {
-        try {
-            client.newCall(request(base, "api/mobile/app-release", auth).header("Cache-Control", "no-store").get().build()).await().use { res ->
-                val text = res.body.string()
-                when {
-                    res.isSuccessful -> Result.success(text)
-                    res.code == 404 -> Result.failure(IOException("Update the office on your Mac to check for app updates."))
-                    else -> {
-                        val body = runCatching { OfficeJson.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject }.getOrNull()
-                        val error = (body?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
-                        Result.failure(IOException(error ?: "The office answered ${res.code}"))
-                    }
-                }
-            }
-        } catch (e: IOException) {
-            Result.failure(e)
-        }
-    }
-
-    /** No automatic retries for commands that may restart the host. Poll status after an uncertain answer. */
-    suspend fun hostUpdate(base: String, auth: OfficeAuth, action: HostUpdateAction? = null, version: String? = null): Result<HostUpdateState> = withContext(Dispatchers.IO) {
-        val builder = request(base, "api/host/update", auth)
-        if (action == null) builder.get() else {
-            val body = buildJsonObject {
-                put("action", action.wire)
-                version?.let { put("version", it) }
-            }.toString().toRequestBody(jsonType)
-            builder.post(object : RequestBody() {
-                override fun contentType() = body.contentType()
-                override fun contentLength() = body.contentLength()
-                // Also forbid response-driven retries (for example 503 with Retry-After: 0).
-                override fun isOneShot() = true
-                override fun writeTo(sink: BufferedSink) = body.writeTo(sink)
-            })
-        }
-        try {
-            (if (action == null) client else noRetryClient).newCall(builder.build()).await().use { res ->
-                if (res.code == 404) Result.failure(IOException("This office is too old for remote host updates. Update it on the Mac first."))
-                else if (!res.isSuccessful) {
-                    val body = runCatching { OfficeJson.parseToJsonElement(res.body.string()) as? kotlinx.serialization.json.JsonObject }.getOrNull()
-                    val error = (body?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
-                    Result.failure(IOException(error ?: "The office answered ${res.code}"))
-                } else Result.success(OfficeJson.decodeFromString<HostUpdateState>(res.body.string()))
-            }
-        } catch (e: IOException) {
-            Result.failure(e)
-        } catch (_: kotlinx.serialization.SerializationException) {
-            Result.failure(IOException("The host sent an update status this app can't read."))
-        }
-    }
-
-    /** An explicit owner choice only. Never retry or redirect a paid overage preference write. */
-    suspend fun factoryOverage(base: String, auth: OfficeAuth, preference: String): Result<Unit> = withContext(Dispatchers.IO) {
-        if (preference !in setOf("droidCore", "extraUsage")) return@withContext Result.failure(IllegalArgumentException("Unknown overage preference"))
-        val body = buildJsonObject { put("overagePreference", preference) }.toString().toRequestBody(jsonType)
-        val req = request(base, "api/factory/limits/overage", auth).post(object : RequestBody() {
-            override fun contentType() = body.contentType()
-            override fun contentLength() = body.contentLength()
-            override fun isOneShot() = true
-            override fun writeTo(sink: BufferedSink) = body.writeTo(sink)
-        }).build()
-        try {
-            noRetryClient.newCall(req).await().use { res ->
-                if (res.isSuccessful) Result.success(Unit) else {
-                    val parsed = runCatching { OfficeJson.parseToJsonElement(res.body.string()) as? kotlinx.serialization.json.JsonObject }.getOrNull()
-                    val error = (parsed?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
-                    Result.failure(IOException(error ?: "The office answered ${res.code}. Overage preference was not confirmed."))
-                }
-            }
-        } catch (_: IOException) {
-            Result.failure(IOException("Couldn't confirm the overage preference. Check the office's current mode before trying again."))
-        }
-    }
-
-    /**
-     * Keeps a picture on the office's machine for a prompt that isn't sent yet (POST
-     * /api/prompt/image). Answers with its id for `images` on worker.prompt, or why it was refused.
-     */
-    suspend fun stageImage(base: String, auth: OfficeAuth, floor: String?, name: String, type: String, bytes: ByteArray, worker: String? = null): Result<String> = withContext(Dispatchers.IO) {
-        val url = request(base, "api/prompt/image", auth).build().url.newBuilder()
-            .apply { floor?.let { addQueryParameter("floor", it) }; worker?.let { addQueryParameter("worker", it) } }
-            .addQueryParameter("name", name).build()
-        val req = request(base, "api/prompt/image", auth).url(url).post(bytes.toRequestBody(type.toMediaType())).build()
-        try {
-            client.newCall(req).await().use { res ->
-                val body = runCatching { OfficeJson.parseToJsonElement(res.body.string()) as? kotlinx.serialization.json.JsonObject }.getOrNull()
-                val id = (body?.get("id") as? kotlinx.serialization.json.JsonPrimitive)?.content
-                val error = (body?.get("error") as? kotlinx.serialization.json.JsonPrimitive)?.content
-                if (res.isSuccessful && id != null) Result.success(id) else Result.failure(IOException(error ?: "The office answered ${res.code}"))
-            }
-        } catch (e: IOException) {
-            Result.failure(e)
-        }
-    }
-
-    suspend fun unstageImage(base: String, auth: OfficeAuth, floor: String?, id: String, worker: String? = null) = withContext(Dispatchers.IO) {
-        val url = request(base, "api/prompt/image", auth).build().url.newBuilder()
-            .apply { floor?.let { addQueryParameter("floor", it) }; worker?.let { addQueryParameter("worker", it) } }
-            .addQueryParameter("id", id).build()
-        runCatching { client.newCall(request(base, "api/prompt/image", auth).url(url).delete().build()).await().close() }
-    }
-
-    /** A Whiteboard card's latest image size, tiles and canvas origin (GET /api/whiteboard/render/status). */
-    suspend fun boardRenderStatus(base: String, auth: OfficeAuth, floor: String, card: String): WbRenderStatus? = withContext(Dispatchers.IO) {
-        val req = request(base, "api/whiteboard/render/status", auth, "floor" to floor, "card" to card).get().build()
-        try {
-            client.newCall(req).await().use { res ->
-                if (!res.isSuccessful) null else runCatching { OfficeJson.decodeFromString<WbRenderStatus>(res.body.string()) }.getOrNull()
-            }
-        } catch (_: IOException) {
-            null
-        }
-    }
-
-    /** A worker's or floor's workspace files and folders for `@` mentions (GET /api/thread/files); null when the office can't list them. */
-    suspend fun threadFiles(base: String, auth: OfficeAuth, floor: String?, worker: String?, query: String): ThreadFiles? = withContext(Dispatchers.IO) {
-        val params = buildList {
-            floor?.let { add("floor" to it) }
-            worker?.let { add("worker" to it) }
-            if (query.isNotEmpty()) add("q" to query)
-        }
-        val req = request(base, "api/thread/files", auth, *params.toTypedArray()).header("Cache-Control", "no-store").get().build()
-        try {
-            client.newCall(req).await().use { res ->
-                if (!res.isSuccessful) null else runCatching { OfficeJson.decodeFromString<ThreadFiles>(res.body.string()) }.getOrNull()
-            }
-        } catch (_: IOException) {
-            null
-        }
-    }
-
-    /** One file of a worker's workspace as the office previews it (GET /api/thread/file): its status and JSON, or why it couldn't be asked. */
-    suspend fun threadFile(base: String, auth: OfficeAuth, floor: String?, worker: String, path: String): Result<Pair<Int, String>> = withContext(Dispatchers.IO) {
-        val params = buildList {
-            floor?.let { add("floor" to it) }
-            add("worker" to worker)
-            add("path" to path)
-        }
-        val req = request(base, "api/thread/file", auth, *params.toTypedArray()).get().build()
-        try {
-            client.newCall(req).await().use { res -> Result.success(res.code to res.body.string()) }
-        } catch (e: IOException) {
-            Result.failure(e)
-        }
-    }
-
-    /** A picture from a worker's Thread by the id its entry carries; null when the office no longer has it. */
-    suspend fun threadImage(base: String, auth: OfficeAuth, floor: String, worker: String, image: String): ByteArray? =
-        fetchBytes(request(base, "api/thread/image", auth, "floor" to floor, "worker" to worker, "image" to image).get().build())
-
-    /** A picture on the office's machine a reply's Markdown names by its path (GET /api/thread/file?raw=image); null when the office won't show it. */
-    suspend fun threadFileImage(base: String, auth: OfficeAuth, floor: String, worker: String, path: String): ByteArray? =
-        fetchBytes(request(base, "api/thread/file", auth, "floor" to floor, "worker" to worker, "path" to path, "raw" to "image").get().build())
-
-    /** A picture on the web a reply's Markdown shows, fetched by the office (GET /api/image) as its wall pictures are; null when it can't be. */
-    suspend fun webImage(base: String, auth: OfficeAuth, url: String): ByteArray? =
-        fetchBytes(request(base, "api/image", auth, "url" to url).get().build())
-
-    private suspend fun fetchBytes(req: Request): ByteArray? = withContext(Dispatchers.IO) {
-        try {
-            client.newCall(req).await().use { res -> if (res.isSuccessful) res.body.bytes() else null }
-        } catch (_: IOException) {
-            null
-        }
-    }
-
-    /**
-     * A card's latest image as PNG bytes (GET /api/whiteboard/render): its grid thumbnail, or one tile
-     * of the full page. [version] is the render's time, so a newer render is never served from a cache.
-     */
-    suspend fun boardImage(base: String, auth: OfficeAuth, floor: String, card: String, thumb: Boolean, tile: Int, version: Long): ByteArray? = withContext(Dispatchers.IO) {
-        val req = request(
-            base, "api/whiteboard/render", auth,
-            "floor" to floor, "card" to card, "size" to if (thumb) "thumb" else "full", "tile" to "$tile", "v" to "$version",
-        ).get().build()
-        try {
-            client.newCall(req).await().use { res -> if (res.isSuccessful) res.body.bytes() else null }
-        } catch (_: IOException) {
-            null
-        }
-    }
-
-    /**
-     * A card's file for the live card page (GET /whiteboard/c/<cap>/<path>, [path] still
-     * percent-encoded). The capability is its only credential, so no auth goes with it. Blocking: the
-     * WebView asks on its own thread.
-     */
-    fun cardFile(base: String, cap: String, path: String): WbFetched? {
-        val url = base.toHttpUrl().newBuilder().addPathSegments("whiteboard/c").addPathSegment(cap).apply { if (path.isNotEmpty()) addEncodedPathSegments(path) }.build()
-        return fetch(Request.Builder().url(url).get().build())
-    }
-
-    /** A picture a card holds, by hash (GET /api/whiteboard/file), with the office's auth. Blocking. */
-    fun boardFile(base: String, auth: OfficeAuth, floor: String, card: String, hash: String): WbFetched? =
-        fetch(request(base, "api/whiteboard/file", auth, "floor" to floor, "card" to card, "hash" to hash).get().build())
-
-    /** Uploads a picture for a batch that puts it on the board (POST /api/whiteboard/blob): its FileRef, or why not. */
-    suspend fun boardBlob(base: String, auth: OfficeAuth, floor: String, mime: String, bytes: ByteArray): Result<WbFileRef> = withContext(Dispatchers.IO) {
-        val req = request(base, "api/whiteboard/blob", auth, "floor" to floor, "mime" to mime).post(bytes.toRequestBody(mime.toMediaType())).build()
-        try {
-            client.newCall(req).await().use { res ->
-                val text = res.body.string()
-                val ref = if (res.isSuccessful) runCatching { OfficeJson.decodeFromString<WbFileRef>(text) }.getOrNull()?.takeIf { it.hash.isNotEmpty() } else null
-                val error = runCatching { (OfficeJson.parseToJsonElement(text) as? kotlinx.serialization.json.JsonObject)?.get("error") as? kotlinx.serialization.json.JsonPrimitive }.getOrNull()?.content
-                if (ref != null) Result.success(ref) else Result.failure(IOException(error ?: "The office answered ${res.code}"))
-            }
-        } catch (e: IOException) {
-            Result.failure(e)
-        }
-    }
-
-    /**
-     * One of the client bundle's files the office serves openly (`/props/` models and `/fonts/`,
-     * which carry no office data), for the overview page. [path] is still percent-encoded. Blocking.
-     */
-    fun publicFile(base: String, path: String): WbFetched? {
-        val url = base.toHttpUrl().newBuilder().encodedPath(path).build()
-        return fetch(Request.Builder().url(url).header("Origin", base).get().build())
-    }
-
-    private fun fetch(req: Request): WbFetched? = try {
-        client.newCall(req).execute().use { res ->
-            val headers = res.headers.names().associate { it.lowercase() to res.headers[it].orEmpty() }
-            WbFetched(res.code, res.header("Content-Type"), headers, res.body.bytes())
-        }
-    } catch (_: IOException) {
-        null
-    }
-
-    fun socket(base: String, auth: OfficeAuth, floor: String?, name: String, listener: WebSocketListener): WebSocket {
-        val http = base.toHttpUrl().newBuilder().addPathSegment("ws").apply {
-            if (!floor.isNullOrBlank()) addQueryParameter("floor", floor)
-            addQueryParameter("name", name.take(24))
-            if (auth is OfficeAuth.Lan) addQueryParameter("t", auth.token)
-        }.build()
-        val builder = Request.Builder().url(http).header("Origin", base)
-        if (auth is OfficeAuth.Device) builder.header("Authorization", "Bearer ${auth.token}")
-        return client.newWebSocket(builder.build(), listener)
-    }
-
-    private fun request(base: String, path: String, auth: OfficeAuth, vararg query: Pair<String, String>): Request.Builder {
-        val url: HttpUrl = base.toHttpUrl().newBuilder().addPathSegments(path).apply {
-            for ((k, v) in query) addQueryParameter(k, v)
-            if (auth is OfficeAuth.Lan) addQueryParameter("t", auth.token)
-        }.build()
-        return Request.Builder().url(url).header("Origin", base).apply {
-            if (auth is OfficeAuth.Device) header("Authorization", "Bearer ${auth.token}")
-        }
-    }
+private val WbFetched.ok get() = code in 200..299
+private inline fun <reified T> WbFetched.decode(): T? = runCatching { OfficeJson.decodeFromString<T>(body.decodeToString()) }.getOrNull()
+private fun WbFetched.field(key: String): String? = (decode<JsonObject>()?.get(key) as? JsonPrimitive)?.content
+private fun WbFetched.requireOk(fallback: String = "The office answered $code"): WbFetched = apply {
+    if (!ok) error(field("error") ?: fallback)
 }
 
-internal suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
-    cont.invokeOnCancellation { cancel() }
-    enqueue(object : Callback {
-        override fun onFailure(call: Call, e: IOException) {
-            if (cont.isActive) cont.resumeWithException(e)
+private fun params(vararg pairs: Pair<String, String?>) = pairs.mapNotNull { (k, v) -> v?.let { k to it } }
+private fun jsonBody(vararg fields: Pair<String, String?>) = buildJsonObject {
+    for ((k, v) in fields) if (v != null) put(k, v)
+}.toString().encodeToByteArray()
+
+/** The phone's API contract. Only the HTTP engine, socket and route policy vary by platform. */
+class OfficeApi internal constructor(private val transport: OfficeTransport) {
+    fun pairingOrigins(bases: List<String>) = transport.pairingOrigins(bases)
+
+    private suspend fun call(request: OfficeRequest): Result<WbFetched> = try {
+        Result.success(transport.execute(request))
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        // Native errors may include a URL containing the LAN token or card capability.
+        Result.failure(IllegalStateException("Couldn't reach the office"))
+    }
+
+    suspend fun pair(base: String, lan: OfficeAuth.Lan, device: String): PairResult {
+        val req = OfficeRequest(base, "api/mobile/pair", lan, method = "POST", body = jsonBody("device" to device), contentType = "application/json")
+        val res = call(req).getOrElse { return PairResult.Failed("Couldn't reach the office") }
+        return when (res.code) {
+            200, 201 -> res.decode<PairResponse>()?.takeIf { it.token.isNotBlank() && it.deviceId.isNotBlank() }?.let(PairResult::Paired)
+                ?: PairResult.Failed("The office sent an answer the app can't read")
+            404, 405 -> PairResult.Unsupported
+            401, 403 -> PairResult.Refused
+            else -> PairResult.Failed("The office answered ${res.code}")
+        }
+    }
+
+    suspend fun hello(base: String, auth: OfficeAuth): Probe {
+        // Older LAN-token offices only have /api/health.
+        val path = if (auth is OfficeAuth.Device) "api/mobile/hello" else "api/health"
+        val res = call(OfficeRequest(base, path, auth, probe = true)).getOrElse { return Probe.Failed("Couldn't reach the office") }
+        return when (res.code) {
+            200 -> if (auth is OfficeAuth.Lan) Probe.Ok() else {
+                val hello = res.decode<HelloResponse>()?.takeIf { it.ok } ?: return Probe.Failed("Invalid hello from the office")
+                if (auth is OfficeAuth.Device && auth.deviceId != null && hello.deviceId != auth.deviceId) Probe.Failed("The office didn't confirm this device")
+                else Probe.Ok(hello.office.name.ifBlank { null }, hello.office.version.ifBlank { null })
+            }
+            401, 403 -> Probe.Unauthorized
+            else -> Probe.Failed("HTTP ${res.code}")
+        }
+    }
+
+    suspend fun unpair(base: String, auth: OfficeAuth.Device): Boolean =
+        call(OfficeRequest(base, "api/mobile/pair", auth, method = "DELETE")).getOrNull()?.let { it.ok || it.code == 401 } == true
+
+    private suspend fun read(req: OfficeRequest) = call(req).getOrNull()?.takeIf { it.ok }
+
+    suspend fun models(base: String, auth: OfficeAuth): ModelCatalogue? =
+        read(OfficeRequest(base, "api/agents/droid/models", auth))?.decode<ModelCatalogue>()
+
+    suspend fun slashCommands(base: String, auth: OfficeAuth, workerId: String? = null, floorId: String? = null): List<DroidCommand>? {
+        val query = when {
+            workerId != null -> listOf("worker" to workerId)
+            floorId != null -> listOf("floor" to floorId)
+            else -> return null
+        }
+        return read(OfficeRequest(base, "api/agents/droid/commands", auth, query))?.decode<DroidCommands>()?.commands
+    }
+
+    suspend fun appRelease(base: String, auth: OfficeAuth): Result<String> =
+        call(OfficeRequest(base, "api/mobile/app-release", auth, noStore = true)).mapCatching {
+            if (it.code == 404) error("Update the office on your Mac to check for app updates.")
+            it.requireOk().body.decodeToString()
         }
 
-        override fun onResponse(call: Call, response: Response) {
-            if (cont.isActive) cont.resume(response) else response.close()
+    suspend fun hostUpdate(base: String, auth: OfficeAuth, action: HostUpdateAction? = null, version: String? = null): Result<HostUpdateState> {
+        val path = "api/host/update"
+        val req = if (action == null) OfficeRequest(base, path, auth) else
+            OfficeRequest(base, path, auth, method = "POST", body = jsonBody("action" to action.wire, "version" to version), contentType = "application/json")
+        return call(req).mapCatching {
+            if (it.code == 404) error("This office is too old for remote host updates. Update it on the Mac first.")
+            it.requireOk().decode<HostUpdateState>() ?: error("The host sent an update status this app can't read.")
         }
-    })
+    }
+
+    suspend fun factoryOverage(base: String, auth: OfficeAuth, preference: String): Result<Unit> {
+        if (preference !in setOf("droidCore", "extraUsage")) return Result.failure(IllegalArgumentException("Unknown overage preference"))
+        val req = OfficeRequest(base, "api/factory/limits/overage", auth, method = "POST", body = jsonBody("overagePreference" to preference), contentType = "application/json")
+        val res = call(req).getOrElse { return Result.failure(IllegalStateException("Couldn't confirm the overage preference. Check the office's current mode before trying again.")) }
+        return if (res.ok) Result.success(Unit) else Result.failure(IllegalStateException(
+            res.field("error") ?: "The office answered ${res.code}. Overage preference was not confirmed.",
+        ))
+    }
+
+    suspend fun stageImage(base: String, auth: OfficeAuth, floor: String?, name: String, type: String, bytes: ByteArray, worker: String? = null): Result<String> =
+        call(OfficeRequest(base, "api/prompt/image", auth, params("floor" to floor, "worker" to worker, "name" to name), "POST", bytes, type)).mapCatching {
+            it.requireOk().field("id") ?: error("The office didn't return an image ID")
+        }
+
+    suspend fun unstageImage(base: String, auth: OfficeAuth, floor: String?, id: String, worker: String? = null) {
+        call(OfficeRequest(base, "api/prompt/image", auth, params("floor" to floor, "worker" to worker, "id" to id), "DELETE"))
+    }
+
+    suspend fun boardRenderStatus(base: String, auth: OfficeAuth, floor: String, card: String): WbRenderStatus? =
+        read(OfficeRequest(base, "api/whiteboard/render/status", auth, params("floor" to floor, "card" to card)))?.decode<WbRenderStatus>()
+
+    suspend fun threadFiles(base: String, auth: OfficeAuth, floor: String?, worker: String?, query: String): ThreadFiles? =
+        read(OfficeRequest(base, "api/thread/files", auth, params("floor" to floor, "worker" to worker, "q" to query.ifEmpty { null }), noStore = true))?.decode<ThreadFiles>()
+
+    suspend fun threadFile(base: String, auth: OfficeAuth, floor: String?, worker: String, path: String): Result<Pair<Int, String>> =
+        call(OfficeRequest(base, "api/thread/file", auth, params("floor" to floor, "worker" to worker, "path" to path))).map { it.code to it.body.decodeToString() }
+
+    suspend fun threadImage(base: String, auth: OfficeAuth, floor: String, worker: String, image: String): ByteArray? =
+        read(OfficeRequest(base, "api/thread/image", auth, params("floor" to floor, "worker" to worker, "image" to image)))?.body
+
+    suspend fun threadFileImage(base: String, auth: OfficeAuth, floor: String, worker: String, path: String): ByteArray? =
+        read(OfficeRequest(base, "api/thread/file", auth, params("floor" to floor, "worker" to worker, "path" to path, "raw" to "image")))?.body
+
+    suspend fun webImage(base: String, auth: OfficeAuth, url: String): ByteArray? =
+        read(OfficeRequest(base, "api/image", auth, params("url" to url)))?.body
+
+    suspend fun boardImage(base: String, auth: OfficeAuth, floor: String, card: String, thumb: Boolean, tile: Int, version: Long): ByteArray? =
+        read(OfficeRequest(base, "api/whiteboard/render", auth, params("floor" to floor, "card" to card, "size" to if (thumb) "thumb" else "full", "tile" to "$tile", "v" to "$version")))?.body
+
+    /** These resource handlers are blocking, and the card capability is its only credential. */
+    fun cardFile(base: String, cap: String, path: String): WbFetched? =
+        fetch(OfficeRequest(base, "whiteboard/c/${urlPart(cap)}" + if (path.isEmpty()) "" else "/$path"))
+
+    fun boardFile(base: String, auth: OfficeAuth, floor: String, card: String, hash: String): WbFetched? =
+        fetch(OfficeRequest(base, "api/whiteboard/file", auth, params("floor" to floor, "card" to card, "hash" to hash)))
+
+    fun publicFile(base: String, path: String): WbFetched? = fetch(OfficeRequest(base, path.removePrefix("/")))
+
+    private fun fetch(req: OfficeRequest) = runCatching { transport.fetch(req) }.getOrNull()
+
+    suspend fun boardBlob(base: String, auth: OfficeAuth, floor: String, mime: String, bytes: ByteArray): Result<WbFileRef> =
+        call(OfficeRequest(base, "api/whiteboard/blob", auth, params("floor" to floor, "mime" to mime), "POST", bytes, mime)).mapCatching { res ->
+            res.requireOk().decode<WbFileRef>()?.takeIf { it.hash.isNotEmpty() } ?: error("The office didn't return a file reference")
+        }
+
+    fun socket(base: String, auth: OfficeAuth, floor: String?, name: String, listener: OfficeSocketListener): OfficeSocket =
+        transport.socket(OfficeRequest(base, "ws", auth, params("floor" to floor?.ifBlank { null }, "name" to name.take(24))), listener)
 }

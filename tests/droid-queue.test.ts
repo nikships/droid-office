@@ -5,7 +5,7 @@ import { type DroidQueued, readDroidQueue, showsAs } from '../src/shared/droid-q
 import { ThreadQueue } from '../src/shared/thread-queue.js';
 
 // Screens copied from a worker's real terminal on the owner's office, shared with the Android app's DroidQueueTest.
-const fixture = JSON.parse(readFileSync(new URL('../android/app/src/test/resources/droid-queue-golden.json', import.meta.url), 'utf8')) as {
+const fixture = JSON.parse(readFileSync(new URL('../android/core/src/androidHostTest/resources/droid-queue-golden.json', import.meta.url), 'utf8')) as {
   cases: { name: string; rows: string[]; expected: DroidQueued[] | null }[];
   matches: { row: DroidQueued; text: string; shows: boolean }[];
 };

@@ -1,5 +1,6 @@
 package ai.factory.droidoffice.ui.asks
 
+import androidx.collection.LruCache
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -52,7 +53,6 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -77,6 +77,8 @@ import ai.factory.droidoffice.ui.components.SecondaryButton
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.ThreadPalette
 import ai.factory.droidoffice.ui.worker.ToolIcons
+import ai.factory.droidoffice.ui.worker.workerDialogProperties
+import ai.factory.droidoffice.ui.worker.workerNowMillis
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
@@ -203,7 +205,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, initial: Menu, entries: List<Thr
         }
         if (!visible) return@LaunchedEffect
         while (isActive) {
-            val now = System.currentTimeMillis()
+            val now = workerNowMillis()
             feed.latest(now)?.let { request ->
                 if (!connection.send(ClientMsg.threadRead(worker.id, request))) feed.unsent(request)
             }
@@ -218,7 +220,10 @@ private fun AnswerWorkspace(worker: WorkerInfo, initial: Menu, entries: List<Thr
     var advancing by rememberSaveable(identity) { mutableStateOf(false) }
     // Saveable fields cover recreation; the bounded process cache also covers dismissal and other views.
     val draftKey = OfficeJson.encodeToString(Menu.serializer(), shown.copy(pointer = null, choices = shown.choices.map { it.copy(selected = null) }))
-    val draft = remember(identity, draftKey) { answerDrafts.getOrPut(identity to draftKey) { AnswerDraft(shown.choices.filter { it.selected == true }.map { it.number }) } }
+    val draft = remember(identity, draftKey) {
+        val key = identity to draftKey
+        answerDrafts[key] ?: AnswerDraft(shown.choices.filter { it.selected == true }.map { it.number }).also { answerDrafts.put(key, it) }
+    }
     var selected by rememberSaveable(identity, draftKey) { mutableStateOf(ArrayList(draft.selected)) }
     var text by rememberSaveable(identity, draftKey) { mutableStateOf(draft.text) }
     var typed by rememberSaveable(identity, draftKey) { mutableStateOf(draft.typed) }
@@ -286,7 +291,7 @@ private fun AnswerWorkspace(worker: WorkerInfo, initial: Menu, entries: List<Thr
         keep()
         onDismiss()
     }
-    Dialog(onDismissRequest = { if (!delivering) dismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    Dialog(onDismissRequest = { if (!delivering) dismiss() }, properties = workerDialogProperties()) {
         Column(
             Modifier.fillMaxSize().background(ThreadPalette.Bg).windowInsetsPadding(WindowInsets.safeDrawing).imePadding().tagged(Tags.Answer.WORKSPACE),
         ) {
@@ -506,6 +511,4 @@ private fun ReviewSummary(summary: List<String>) {
 
 /** Process-local drafts survive dialog dismissal and switching between Asks and a worker. */
 private class AnswerDraft(var selected: List<Int>, var text: String = "", var typed: Boolean = false, var touched: Boolean = false)
-private val answerDrafts = object : LinkedHashMap<Pair<String, String>, AnswerDraft>(16, 0.75f, true) {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<String, String>, AnswerDraft>?): Boolean = size > 32
-}
+private val answerDrafts = LruCache<Pair<String, String>, AnswerDraft>(32)

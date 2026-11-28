@@ -33,7 +33,7 @@ import ai.factory.droidoffice.ui.LocalGraph
 import ai.factory.droidoffice.ui.LocalSnackbar
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.Palette
-import java.util.UUID
+import kotlin.uuid.Uuid
 import kotlinx.coroutines.launch
 
 @Composable
@@ -99,7 +99,7 @@ fun ForkWorkerDialog(worker: WorkerInfo, onDismiss: () -> Unit) {
                     pending = true
                     error = null
                     scope.launch {
-                        val id = UUID.randomUUID().toString()
+                        val id = Uuid.random().toString()
                         val result = WorkerActions.confirm(onFinished = { pending = false }) {
                             connection.actionConfirmed(id, ClientMsg.fork(worker.id, prompt, id, floor))
                         }

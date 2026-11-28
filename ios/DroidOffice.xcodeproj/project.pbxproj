@@ -1,0 +1,468 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0C3C7178588C366D3C303EE8 /* DroidOfficeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 627D9F968F8E6939E1A2D80E /* DroidOfficeApp.swift */; };
+		0D749F5FA5B3ADBF28D89F52 /* drawable-nodpi in Resources */ = {isa = PBXBuildFile; fileRef = 640567668EA3939ACF189129 /* drawable-nodpi */; };
+		1AFAF374B5AAE440A64ABF82 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A745FD86517F221651220257 /* Assets.xcassets */; };
+		25E246697FD87F61C478922C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A198BCF8885CA3C1FFE8F2F8 /* PrivacyInfo.xcprivacy */; };
+		2B065FDAE0D454E2A63B7744 /* PairingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94424C003FAB0E73808F2451 /* PairingTests.swift */; };
+		701E40873A25A1DD94C9A6CE /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 7EF04E99223788803ECABEF5 /* assets */; };
+		E4ED2949E59D2623C2FB209C /* font in Resources */ = {isa = PBXBuildFile; fileRef = 4CFDC743B310AC6795BCC60D /* font */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		CCCECD56B8816A0476C5FFA1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 94EF4E90972A4A5D3CEBCED3 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 9F33D43FA7EE23459773B9B5;
+			remoteInfo = DroidOffice;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		2D495B4802CAF0E18AC5D7BD /* DroidOfficeUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = DroidOfficeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		353855439C331836DA84CDE5 /* DroidOffice.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DroidOffice.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4CFDC743B310AC6795BCC60D /* font */ = {isa = PBXFileReference; lastKnownFileType = folder; name = font; path = ../android/app/src/main/res/font; sourceTree = SOURCE_ROOT; };
+		627D9F968F8E6939E1A2D80E /* DroidOfficeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DroidOfficeApp.swift; sourceTree = "<group>"; };
+		640567668EA3939ACF189129 /* drawable-nodpi */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "drawable-nodpi"; path = "../android/app/src/main/res/drawable-nodpi"; sourceTree = SOURCE_ROOT; };
+		7EF04E99223788803ECABEF5 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; name = assets; path = ../android/app/src/main/assets; sourceTree = SOURCE_ROOT; };
+		94424C003FAB0E73808F2451 /* PairingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingTests.swift; sourceTree = "<group>"; };
+		A198BCF8885CA3C1FFE8F2F8 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A745FD86517F221651220257 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		EEA8322F5B7CA62EE0047F98 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		00B2648CD5D5A3ACDCD5881F = {
+			isa = PBXGroup;
+			children = (
+				7EF04E99223788803ECABEF5 /* assets */,
+				640567668EA3939ACF189129 /* drawable-nodpi */,
+				4CFDC743B310AC6795BCC60D /* font */,
+				89339850F8730116F36F245D /* DroidOffice */,
+				066AF4960992B157FC872F12 /* DroidOfficeUITests */,
+				BABEACE9F0688CC34CFE0D8A /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		066AF4960992B157FC872F12 /* DroidOfficeUITests */ = {
+			isa = PBXGroup;
+			children = (
+				94424C003FAB0E73808F2451 /* PairingTests.swift */,
+			);
+			path = DroidOfficeUITests;
+			sourceTree = "<group>";
+		};
+		89339850F8730116F36F245D /* DroidOffice */ = {
+			isa = PBXGroup;
+			children = (
+				A745FD86517F221651220257 /* Assets.xcassets */,
+				627D9F968F8E6939E1A2D80E /* DroidOfficeApp.swift */,
+				EEA8322F5B7CA62EE0047F98 /* Info.plist */,
+				A198BCF8885CA3C1FFE8F2F8 /* PrivacyInfo.xcprivacy */,
+			);
+			path = DroidOffice;
+			sourceTree = "<group>";
+		};
+		BABEACE9F0688CC34CFE0D8A /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				353855439C331836DA84CDE5 /* DroidOffice.app */,
+				2D495B4802CAF0E18AC5D7BD /* DroidOfficeUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4B1B9AD0DF133174CF900B57 /* DroidOfficeUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B5FCBAC1177E95BFABFCB0B3 /* Build configuration list for PBXNativeTarget "DroidOfficeUITests" */;
+			buildPhases = (
+				9C3B603C24055045A3C84BB2 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7AD2FB862BB860E075FB3D3D /* PBXTargetDependency */,
+			);
+			name = DroidOfficeUITests;
+			packageProductDependencies = (
+			);
+			productName = DroidOfficeUITests;
+			productReference = 2D495B4802CAF0E18AC5D7BD /* DroidOfficeUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		9F33D43FA7EE23459773B9B5 /* DroidOffice */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FD6F7342BA24362DFD2C0443 /* Build configuration list for PBXNativeTarget "DroidOffice" */;
+			buildPhases = (
+				940F14EACF4704B4DDB99355 /* Build shared mobile app */,
+				5214D7357361C34F9EBC51FB /* Sources */,
+				10EEB2F380DE091A6A7C41AA /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DroidOffice;
+			packageProductDependencies = (
+			);
+			productName = DroidOffice;
+			productReference = 353855439C331836DA84CDE5 /* DroidOffice.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		94EF4E90972A4A5D3CEBCED3 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					4B1B9AD0DF133174CF900B57 = {
+						TestTargetID = 9F33D43FA7EE23459773B9B5;
+					};
+				};
+			};
+			buildConfigurationList = 497EEF8C04ACA7109BDBBA27 /* Build configuration list for PBXProject "DroidOffice" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 00B2648CD5D5A3ACDCD5881F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = BABEACE9F0688CC34CFE0D8A /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				9F33D43FA7EE23459773B9B5 /* DroidOffice */,
+				4B1B9AD0DF133174CF900B57 /* DroidOfficeUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		10EEB2F380DE091A6A7C41AA /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1AFAF374B5AAE440A64ABF82 /* Assets.xcassets in Resources */,
+				25E246697FD87F61C478922C /* PrivacyInfo.xcprivacy in Resources */,
+				701E40873A25A1DD94C9A6CE /* assets in Resources */,
+				0D749F5FA5B3ADBF28D89F52 /* drawable-nodpi in Resources */,
+				E4ED2949E59D2623C2FB209C /* font in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		940F14EACF4704B4DDB99355 /* Build shared mobile app */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build shared mobile app";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nif [ -z \"${JAVA_HOME:-}\" ]; then\n  JAVA_HOME=$(/usr/libexec/java_home -v 21 2>/dev/null || echo /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home)\n  export JAVA_HOME\nfi\nexport ANDROID_HOME=\"${ANDROID_HOME:-$HOME/Library/Android/sdk}\"\nexec \"$SRCROOT/../android/gradlew\" -p \"$SRCROOT/../android\" :mobile:embedAndSignAppleFrameworkForXcode\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5214D7357361C34F9EBC51FB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0C3C7178588C366D3C303EE8 /* DroidOfficeApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9C3B603C24055045A3C84BB2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2B065FDAE0D454E2A63B7744 /* PairingTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		7AD2FB862BB860E075FB3D3D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 9F33D43FA7EE23459773B9B5 /* DroidOffice */;
+			targetProxy = CCCECD56B8816A0476C5FFA1 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		455BA164BFEB6E8A4054F5F6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.nikships.droid-office.ios.uitests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = DroidOffice;
+			};
+			name = Release;
+		};
+		69D0DA8D744245F9187ABC51 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		70D2CE89AA7B882DE7915E9B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = "$(inherited) \"$(SRCROOT)/../android/mobile/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)\"";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DroidOffice/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Droid Office";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "$(inherited) -framework OfficeMobile -lc++";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.nikships.droid-office.ios";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		7FDC1762D344B1C5AD26CA30 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		ADFB231709AA9F7DC971A8DF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "com.nikships.droid-office.ios.uitests";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = DroidOffice;
+			};
+			name = Debug;
+		};
+		D57CB057312CAB2AD44DA22C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = "$(inherited) \"$(SRCROOT)/../android/mobile/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)\"";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = DroidOffice/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Droid Office";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "$(inherited) -framework OfficeMobile -lc++";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.nikships.droid-office.ios";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		497EEF8C04ACA7109BDBBA27 /* Build configuration list for PBXProject "DroidOffice" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				69D0DA8D744245F9187ABC51 /* Debug */,
+				7FDC1762D344B1C5AD26CA30 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		B5FCBAC1177E95BFABFCB0B3 /* Build configuration list for PBXNativeTarget "DroidOfficeUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ADFB231709AA9F7DC971A8DF /* Debug */,
+				455BA164BFEB6E8A4054F5F6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FD6F7342BA24362DFD2C0443 /* Build configuration list for PBXNativeTarget "DroidOffice" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D57CB057312CAB2AD44DA22C /* Debug */,
+				70D2CE89AA7B882DE7915E9B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 94EF4E90972A4A5D3CEBCED3 /* Project object */;
+}

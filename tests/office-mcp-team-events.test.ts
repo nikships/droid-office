@@ -370,7 +370,7 @@ test('terminal questions are listed like the Asks inbox and answered only while 
 test('MCP lists captured AskUser review answers and submits only the unchanged review', async (t) => {
   const r = await rig(t);
   await r.hire();
-  const lines = readFileSync(new URL('../android/app/src/test/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n');
+  const lines = readFileSync(new URL('../android/core/src/androidHostTest/resources/askuser-1.7.1-review.txt', import.meta.url), 'utf8').split('\n');
   r.screens.set('sub1', lines);
   r.set('sub1', 'needs_input', { ask: { kind: 'question', questions: [] } });
   const [review] = (await r.call(r.lead, 'questions_list')).body.questions;

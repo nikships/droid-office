@@ -1,21 +1,21 @@
 package ai.factory.droidoffice.ui.theme.artwork
 
-import androidx.annotation.DrawableRes
+import ai.factory.droidoffice.ui.theme.DrawableId
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 
 data class TerminalInk(val foreground: String, val cursor: String, val background: String, val selection: String)
 
 /** Cover alignment as fractions: 0 is left/top, .5 is centered, 1 is right/bottom. */
-data class PortraitArt(@DrawableRes val image: Int, val focalX: Float, val focalY: Float)
+data class PortraitArt(val image: DrawableId, val focalX: Float, val focalY: Float)
 
 /** The stage gets theme-scaled seconds. Draw over the image, beneath the dim and elliptical veil. */
 data class Artwork(
     val id: String,
     val name: String,
     val blurb: String,
-    @DrawableRes val image: Int,
-    @DrawableRes val preview: Int,
+    val image: DrawableId,
+    val preview: DrawableId,
     val x: Float, val y: Float,
     val bg: Color, val tint: Color, val text: Color, val muted: Color,
     val accent: Color, val accent2: Color, val line: Color, val glass: Float,

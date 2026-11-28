@@ -76,7 +76,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalContext
+import kotlin.time.Clock
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
@@ -135,10 +135,10 @@ import kotlinx.coroutines.launch
 /** A clock for durations on cards, ticking once a second while the screen is up. */
 @Composable
 fun rememberNow(periodMs: Long = 1_000): Long {
-    val now by produceState(System.currentTimeMillis()) {
+    val now by produceState(Clock.System.now().toEpochMilliseconds()) {
         while (true) {
             delay(periodMs)
-            value = System.currentTimeMillis()
+            value = Clock.System.now().toEpochMilliseconds()
         }
     }
     return now
@@ -473,11 +473,11 @@ internal fun FloorChips(data: OfficeData, onFloor: (String) -> Unit, highlight: 
         val last = onScreen.lastOrNull() ?: return null
         return order.drop(order.indexOf(last) + 1).firstOrNull { it != id }
     }
-    val context = LocalContext.current
-    var showHint by remember(context) { mutableStateOf(FloorOrderHint.shown(context)) }
+    val hint = rememberFloorOrderHint()
+    var showHint by remember(hint) { mutableStateOf(hint.shown()) }
     fun learned() {
         showHint = false
-        FloorOrderHint.learned(context)
+        hint.learned()
     }
     fun move(id: String, step: Int): Boolean {
         if (!live) return false
@@ -744,7 +744,8 @@ private fun meta(w: WorkerInfo, now: Long): String {
     val parts = mutableListOf<String>()
     val worked = Workers.workedMs(w, now)
     if (worked >= 1_000) parts += Workers.duration(worked)
-    if ((w.state == WorkerStatus.NeedsInput || (w.state == WorkerStatus.Done && !w.acked)) && w.waitingSince != null) parts += Workers.ago(w.waitingSince, now)
+    val waitingSince = w.waitingSince
+    if ((w.state == WorkerStatus.NeedsInput || (w.state == WorkerStatus.Done && !w.acked)) && waitingSince != null) parts += Workers.ago(waitingSince, now)
     return parts.joinToString(" · ").uppercase()
 }
 

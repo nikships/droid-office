@@ -8,19 +8,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/** The phone's default network, as far as reaching an office goes. */
-data class NetState(
-    val available: Boolean,
-    /** Changes whenever the default network does (Wi-Fi to mobile data, another Wi-Fi): a cue to race the routes again. */
-    val networkKey: String?,
-    val wifi: Boolean,
-    val vpn: Boolean,
-)
-
-class NetworkMonitor(context: Context) {
+class NetworkMonitor(context: Context) : OfficeNetwork {
     private val cm = context.getSystemService(ConnectivityManager::class.java)
     private val _state = MutableStateFlow(read(cm.activeNetwork))
-    val state: StateFlow<NetState> = _state.asStateFlow()
+    override val state: StateFlow<NetState> = _state.asStateFlow()
 
     init {
         cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {

@@ -12,7 +12,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HostUpdateApiTest {
-    private val auth = OfficeAuth.Device("test-device")
+    private fun auth(base: String) = OfficeAuth.Device("test-device", listOf(base))
 
     @Test
     fun readsTheCheckoutHostsActualUnsupportedResponse() = runBlocking {
@@ -22,7 +22,7 @@ class HostUpdateApiTest {
             exchange.sendResponseHeaders(200, body.size.toLong())
             exchange.responseBody.use { it.write(body) }
         }) { base ->
-            val state = OfficeApi().hostUpdate(base, auth).getOrThrow()
+            val state = OfficeApi().hostUpdate(base, auth(base)).getOrThrow()
             assertFalse(state.supported)
             assertFalse(state.canInstall)
         }
@@ -39,7 +39,7 @@ class HostUpdateApiTest {
             exchange.sendResponseHeaders(503, -1)
             exchange.close()
         }) { base ->
-            assertTrue(OfficeApi().hostUpdate(base, auth, HostUpdateAction.INSTALL, "0.1.1").isFailure)
+            assertTrue(OfficeApi().hostUpdate(base, auth(base), HostUpdateAction.INSTALL, "0.1.1").isFailure)
             assertEquals(1, calls.get())
         }
     }
@@ -57,7 +57,7 @@ class HostUpdateApiTest {
                 }
                 exchange.close()
             }) { base ->
-                assertTrue(OfficeApi().hostUpdate(base, auth, HostUpdateAction.INSTALL, "0.1.1").isFailure)
+                assertTrue(OfficeApi().hostUpdate(base, auth(base), HostUpdateAction.INSTALL, "0.1.1").isFailure)
                 assertEquals(1, calls.get())
             }
         }

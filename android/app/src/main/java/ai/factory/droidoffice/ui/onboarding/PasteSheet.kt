@@ -98,8 +98,7 @@ fun PasteSheet(onDismiss: () -> Unit, onInvite: (PairingInvite) -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SecondaryButton("From clipboard", {
                     scope.launch {
-                        val clip = clipboard.getClipEntry()?.clipData
-                        val pasted = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString().orEmpty()
+                        val pasted = clipboard.joinLinkText()
                         if (pasted.isNotBlank()) {
                             text = pasted
                             submit()

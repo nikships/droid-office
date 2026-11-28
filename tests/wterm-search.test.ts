@@ -182,7 +182,8 @@ test('native terminal search, working directory and read-only snapshots in Chrom
     await t.test(`${overlay ? 'overlay' : 'classic'} thumb and mouse-tracking history wheel supersede queued Find steps`, async (t) => {
       const pane = overlay
         ? await (async () => {
-            const b = await chromium.launch({ executablePath: browserStatus().executable, chromiumSandbox: true, ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--enable-features=OverlayScrollbar'] });
+            // Enabling this feature without a mode follows the host's scrollbar preference.
+            const b = await chromium.launch({ executablePath: browserStatus().executable, chromiumSandbox: true, ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--enable-features=OverlayScrollbar:mode/overlay'] });
             t.after(() => b.close());
             const p = await b.newPage();
             await p.route('**/overlay', (r) => r.fulfill({ contentType: 'text/html', body: '<!doctype html><link rel="stylesheet" href="/style.css">' }));

@@ -6,7 +6,6 @@ import ai.factory.droidoffice.core.TermPage
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.OfficeIcons
 import ai.factory.droidoffice.ui.theme.Palette
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
@@ -96,7 +95,7 @@ internal fun TerminalNavActions(nav: TerminalNavigation) {
 
 @Composable
 internal fun TerminalFindBar(nav: TerminalNavigation) {
-    BackHandler(onBack = nav::close)
+    WorkerBackHandler(nav::close)
     val matches = nav.matches
     ThreadSearchBar(
         query = nav.query, active = matches.active, count = matches.count, onQuery = nav::find,

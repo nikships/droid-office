@@ -4,18 +4,8 @@ import ai.factory.droidoffice.core.BackdropMotion
 import ai.factory.droidoffice.core.Glass
 import ai.factory.droidoffice.core.WallpaperSource
 import ai.factory.droidoffice.ui.theme.Palette
-import android.content.res.Configuration
-import android.graphics.BitmapFactory
-import androidx.annotation.DrawableRes
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
+import ai.factory.droidoffice.ui.theme.officePainter
 import androidx.compose.ui.graphics.toArgb
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import android.database.ContentObserver
-import android.os.Handler
-import android.os.Looper
-import android.provider.Settings
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -27,15 +17,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.BiasAbsoluteAlignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.drawWithCache
@@ -44,59 +27,17 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
-
-private val grays = mutableMapOf<Int, Int>()
-
-/** The artwork's bright gray (the web's `brightGray`), measured once per process off the main thread. */
-@Composable
-private fun artworkGray(@DrawableRes image: Int): Int? {
-    val resources = LocalContext.current.resources
-    // Keyed on the image: switching theme or orientation must not keep the previous picture's gray.
-    var gray by remember(image) { mutableStateOf(grays[image]) }
-    LaunchedEffect(image) {
-        if (gray != null) return@LaunchedEffect
-        gray = withContext(Dispatchers.Default) {
-            val options = BitmapFactory.Options().apply { inSampleSize = 16 }
-            val bitmap = BitmapFactory.decodeResource(resources, image, options) ?: return@withContext null
-            val pixels = IntArray(bitmap.width * bitmap.height)
-            bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-            bitmap.recycle()
-            Glass.brightGray(pixels)
-        }?.also { grays[image] = it }
-    }
-    return gray
-}
 
 internal fun artworkAnimates(systemScale: Float, composeScale: Float) = systemScale > 0f && composeScale > 0f
 
 @Composable
-internal fun artworkMotionEnabled(): Boolean {
-    val resolver = LocalContext.current.contentResolver
-    val key = Settings.Global.ANIMATOR_DURATION_SCALE
-    fun readScale() = Settings.Global.getFloat(resolver, key, 1f)
-    var systemScale by remember(resolver) { mutableFloatStateOf(readScale()) }
-    DisposableEffect(resolver) {
-        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) { systemScale = readScale() }
-        }
-        resolver.registerContentObserver(Settings.Global.getUriFor(key), false, observer)
-        systemScale = readScale()
-        onDispose { resolver.unregisterContentObserver(observer) }
-    }
-    val composeScale = rememberCoroutineScope().coroutineContext[MotionDurationScale]?.scaleFactor ?: 1f
-    return artworkAnimates(systemScale, composeScale)
-}
-
-@Composable
-fun ArtworkBackdrop(theme: Artwork) {
+fun ArtworkBackdrop(theme: Artwork) = ArtworkLayer {
     val look = Palette.look
     val full = Modifier.fillMaxSize()
-    val config = LocalConfiguration.current
-    val portrait = theme.phoneArt(config.orientation == Configuration.ORIENTATION_PORTRAIT, config.smallestScreenWidthDp)
+    val window = LocalWindowInfo.current.containerDpSize
+    val portrait = theme.phoneArt(window.height > window.width, minOf(window.width, window.height).value.toInt())
     val chrome = Glass.chrome(theme.glass, look.glass)
     val picture = look.wallpaper == WallpaperSource.Artwork
     val image = portrait?.image ?: theme.image
@@ -106,7 +47,7 @@ fun ArtworkBackdrop(theme: Artwork) {
     val shade = if (picture) maxOf(theme.shade, look.dim.alpha, readable) else theme.shade
     Box(full.background(theme.bg)) {
         if (picture) Image(
-            painterResource(image), null,
+            officePainter(image), null,
             if (look.blur.radiusDp > 0) full.blur(look.blur.radiusDp.dp, BlurredEdgeTreatment.Rectangle) else full,
             BiasAbsoluteAlignment((portrait?.focalX ?: theme.x) * 2 - 1, (portrait?.focalY ?: theme.y) * 2 - 1),
             ContentScale.Crop,

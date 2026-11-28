@@ -50,7 +50,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
-import java.util.UUID
+import kotlin.uuid.Uuid
 
 /** What deleting the worktree would lose, as the office's own send-home dialog words it (src/client/ui/prompt.ts). */
 fun describeWorktree(s: WorktreeState, branch: String): Pair<List<String>, Boolean> {
@@ -180,7 +180,7 @@ fun SendHomeDialog(w: WorkerInfo, onDismiss: () -> Unit, onSent: () -> Unit) {
                 pending = true
                 error = null
                 scope.launch {
-                    val id = UUID.randomUUID().toString()
+                    val id = Uuid.random().toString()
                     val result = WorkerActions.confirm(onFinished = { pending = false }) {
                         graph.connection.actionConfirmed(id, ClientMsg.kill(w.id, if (wt != null) cleanup else null, deleteSession = w.isCloud && deleteSession, requestId = id, floor = floor))
                     }

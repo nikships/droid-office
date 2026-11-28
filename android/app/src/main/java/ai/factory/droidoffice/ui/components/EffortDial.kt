@@ -28,7 +28,7 @@ fun EffortDialMark(effort: Effort, modifier: Modifier = Modifier, height: Dp = 1
         val u = size.height / 12.5f
         val c = Offset(11f * u, 11f * u)
         fun along(deg: Float, r: Float): Offset {
-            val a = Math.toRadians(deg.toDouble())
+            val a = deg * (kotlin.math.PI / 180.0)
             return Offset(c.x + r * u * cos(a).toFloat(), c.y + r * u * sin(a).toFloat())
         }
         for (k in 0..5) drawLine(Color.White.copy(alpha = 0.28f), along(180f + k * 36f, 9.6f), along(180f + k * 36f, 10.6f), strokeWidth = 0.7f * u)

@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -142,11 +141,11 @@ internal fun ThinkingBlock(
     redacted: Boolean = false,
 ) {
     val reveal = rememberReveal()
-    val seen = remember(id) { System.currentTimeMillis() }
-    var now by remember(id) { mutableLongStateOf(System.currentTimeMillis()) }
+    val seen = remember(id) { workerNowMillis() }
+    var now by remember(id) { mutableLongStateOf(workerNowMillis()) }
     LaunchedEffect(id, live) {
         while (live) {
-            now = System.currentTimeMillis()
+            now = workerNowMillis()
             delay(1_000)
         }
     }
@@ -200,7 +199,7 @@ internal fun ThinkingBlock(
         }
         AnimatedVisibility(open, enter = ThreadMotion.open, exit = ThreadMotion.close) {
             Box(Modifier.fillMaxWidth().heightIn(max = 300.dp).verticalScroll(rememberScrollState()).padding(start = 12.dp, top = 2.dp, bottom = 4.dp)) {
-                SelectionContainer {
+                ThreadSelection {
                     Text(text, style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.8.sp, color = ThreadPalette.TextTertiary))
                 }
             }
