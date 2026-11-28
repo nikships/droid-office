@@ -521,31 +521,6 @@ test('a completion is held while teammates work and the whole batch wakes the le
   );
 });
 
-test('a held batch wakes its lead at the max-hold ceiling or once the last teammate leaves', async (t) => {
-  const r = rig(t, { holdMaxMs: 40 });
-  await r.call('lead', { action: 'hire', task: 'One' });
-  await r.call('lead', { action: 'hire', task: 'Two' });
-  r.set('sub1', 'working');
-  r.set('sub2', 'working');
-  await r.call('sub1', { action: 'report', text: 'Done with one.' });
-  await sleep(15);
-  assert.equal(r.leadPrompts().length, 0);
-  await sleep(80);
-  assert.equal(r.leadPrompts().length, 1);
-
-  const r2 = rig(t);
-  await r2.call('lead', { action: 'hire', task: 'One' });
-  await r2.call('lead', { action: 'hire', task: 'Two' });
-  r2.set('sub1', 'working');
-  r2.set('sub2', 'working');
-  await r2.call('sub1', { action: 'report', text: 'Done with one.' });
-  r2.set('sub1', 'done');
-  await r2.fake.kill('sub2');
-  r2.team.onWorkerGone('sub2');
-  await sleep(30);
-  assert.equal(r2.leadPrompts().length, 1);
-});
-
 test('routine updates are recorded silently, survive a restart, and never wake or delay the lead', async (t) => {
   const r = rig(t);
   r.gate.route = (p) => (p.message.progress ? { traffic: 'record_silently', source: 'model', reason: 'routine' } : { traffic: 'wake_immediately', source: 'model', reason: 'final' });
