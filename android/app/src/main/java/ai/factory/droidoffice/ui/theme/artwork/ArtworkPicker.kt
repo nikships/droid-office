@@ -55,10 +55,14 @@ fun ArtworkPickerButton() {
                     }
                     TextButton({ open = false }, Modifier.tagged(Tags.Artwork.CLOSE)) { Text("Done") }
                 }
-                Text("Choose a look for this companion.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp, bottom = 6.dp))
+                Text(if (active == null) "Choose a look for this companion." else "Choose a look for this companion. Glass, wallpaper and motion are below the themes.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp, bottom = 6.dp))
             }
             items(listOf(null) + Artworks.all, key = { it?.id ?: "default" }) { theme ->
                 ArtworkChoice(theme, theme == active) { scope.launch { store.settings { it.copy(artworkId = theme?.id) } } }
+            }
+            // Original has no backdrop or glass, so its options stay hidden rather than disabled.
+            if (active != null) item(key = "options") {
+                AppearanceOptions(active, Palette.look) { look -> scope.launch { store.settings { it.copy(look = look) } } }
             }
         }
     }

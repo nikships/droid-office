@@ -73,6 +73,9 @@ class AppGraph(val app: Application) {
         scope.launch {
             store.snapshot.map { it.settings.artworkId }.distinctUntilChanged().collect { Palette.artwork = Artworks.find(it) }
         }
+        scope.launch {
+            store.snapshot.map { it.settings.look }.distinctUntilChanged().collect { Palette.look = it }
+        }
         // The office answers the release check, so it waits until the app is on screen and connected.
         scope.launch {
             combine(visibility.foreground, connection.link) { shown, link -> shown && link.phase == Phase.Connected }

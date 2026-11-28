@@ -34,7 +34,13 @@ object Tags {
         const val OPEN = "artwork.open"
         const val PICKER = "artwork.picker"
         const val CLOSE = "artwork.close"
+        const val RESET = "artwork.reset"
         fun choice(id: String) = "artwork.choice/$id"
+        fun glass(id: String) = "artwork.glass/$id"
+        fun wallpaper(id: String) = "artwork.wallpaper/$id"
+        fun dim(id: String) = "artwork.dim/$id"
+        fun blur(id: String) = "artwork.blur/$id"
+        fun motion(id: String) = "artwork.motion/$id"
     }
 
     /** The bottom tabs. */

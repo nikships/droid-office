@@ -1,6 +1,6 @@
 # Companion themes
 
-**Settings → Appearance** styles `/dashboard` in a browser or the Mac companion. Android has its own native look; the 3D office is not themed by this registry.
+**Settings → Appearance** styles `/dashboard` in a browser or the Mac companion. Android has its own native look; the 3D office is not themed by this registry. Android's **Appearance** sheet ports the eight artworks and the Glass levels (the same `glassAlpha`, `chromeAlpha` and `pictureShade` math in `core/Appearance.kt`), Wallpaper (artwork or none, with Dim and Blur) and Motion; it has no custom picture, and its glass changes opacity only, without a backdrop blur.
 
 ## Signature themes
 

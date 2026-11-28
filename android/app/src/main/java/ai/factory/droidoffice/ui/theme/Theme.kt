@@ -25,6 +25,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import ai.factory.droidoffice.R
+import ai.factory.droidoffice.core.AppearanceLook
+import ai.factory.droidoffice.core.Glass
 import ai.factory.droidoffice.ui.theme.artwork.Artwork
 
 // The office's own palette (src/client/style.css :root): near-black ground, hairline borders,
@@ -33,8 +35,11 @@ object Palette {
     // One device-wide appearance, also observed by draw-phase readers and non-composable helpers.
     var artwork: Artwork? by mutableStateOf(null)
         internal set
+    /** Glass, wallpaper and motion options, read only while [artwork] is set. */
+    var look: AppearanceLook by mutableStateOf(AppearanceLook())
+        internal set
     // Alpha compositing this pane over the backdrop's chrome must recover the web pane's opacity.
-    val Pane get() = artwork?.let { it.tint.copy(alpha = .1f / (1f - it.glass + .1f)) } ?: Surface
+    val Pane get() = artwork?.let { it.tint.copy(alpha = Glass.paneOverChrome(it.glass, look.glass)) } ?: Surface
     val Screen get() = if (artwork == null) Bg else Color.Transparent
     val Bg get() = artwork?.bg ?: Color(0xFF020202)
     val Surface get() = artwork?.let { it.text.copy(alpha = .035f).compositeOver(it.bg) } ?: Color(0xFF0A0A0A)

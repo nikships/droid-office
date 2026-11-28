@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import ai.factory.droidoffice.core.AppearanceLook
 import ai.factory.droidoffice.core.OfficeJson
 import ai.factory.droidoffice.core.QuickKeys
 import ai.factory.droidoffice.core.Receipts
@@ -92,6 +93,7 @@ data class AppSettings(
     /** The owner last picked Thread over Raw TTY on a worker, so workers open on their thread. */
     val threadView: Boolean = false,
     val artworkId: String? = null,
+    val look: AppearanceLook = AppearanceLook(),
 )
 
 data class StoreSnapshot(
@@ -131,6 +133,7 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
                 quickKeys = QuickKeys.decode(p[QUICK_KEYS]),
                 threadView = p[THREAD_VIEW] ?: false,
                 artworkId = p[ArtworkPreference.key],
+                look = AppearancePreference.read(p),
             ),
             loaded = true,
         )
@@ -205,6 +208,7 @@ class OfficeStore(context: Context, scope: CoroutineScope, private val vault: To
             s.quickKeys?.let { p[QUICK_KEYS] = QuickKeys.encode(it) } ?: p.remove(QUICK_KEYS)
             p[THREAD_VIEW] = s.threadView
             ArtworkPreference.write(p, s.artworkId)
+            AppearancePreference.write(p, s.look)
         }
     }
 
