@@ -1,6 +1,9 @@
 import type { WTermAdapter } from '../term-engine/wterm';
 import { h, toast } from './dom';
 
+// Match wterm 0.6.0's synchronized-output fallback so a held update can paint the resize.
+const SYNC_OUTPUT_WAIT_MS = 1000;
+
 /** Observe every box, but never reflow the shared program through a gesture's
  * intermediate boxes. Input bytes don't wait for the queued ownership claim. */
 export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: (claim: boolean, dimensions: () => WTermAdapter['observedDimensions']) => void, workspace?: Element | null) {
@@ -55,27 +58,26 @@ export function followTerminalFit(term: WTermAdapter, changed: () => void, fit: 
     }
     return false;
   };
+  const waitForSyncGap = () => {
+    if (!term.core?.synchronizedOutput()) return false;
+    const now = performance.now();
+    syncDeadline ??= now + SYNC_OUTPUT_WAIT_MS;
+    if (now >= syncDeadline) return false;
+    settling = false;
+    term.setFitPending(false);
+    task = window.setTimeout(commit, Math.ceil(syncDeadline - now));
+    frame = requestAnimationFrame(() => {
+      clearTimeout(task);
+      task = window.setTimeout(commit, 0);
+    });
+    return true;
+  };
   const commit = () => {
     cancel();
     if (dragging || document.hidden) return;
     if ((settling || fontSize !== undefined) && movingBox()) return settle();
     if (fontSize !== undefined && fontSize !== term.options.fontSize) {
-      // Take the first gap in synchronized output, but don't let a stream of
-      // new blocks keep a queued step waiting beyond its original deadline.
-      if (term.core?.synchronizedOutput()) {
-        const now = performance.now();
-        syncDeadline ??= now + 250;
-        if (now < syncDeadline) {
-          settling = false;
-          term.setFitPending(false);
-          task = window.setTimeout(commit, Math.ceil(syncDeadline - now));
-          frame = requestAnimationFrame(() => {
-            clearTimeout(task);
-            task = window.setTimeout(commit, 0);
-          });
-          return;
-        }
-      }
+      if (waitForSyncGap()) return;
       const root = term.native!.element;
       const box = fontBox;
       if (!box || !cellWidth || !term.observedDimensions || layout(root) !== box.layout) {

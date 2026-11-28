@@ -120,12 +120,12 @@ test('inline terminals follow pane geometry without focus or stale size rollback
           if (mode === 'thread') localStorage.setItem('droid-office.desk-thread-view:pixel', 'raw');
           else worker.kind = 'shell';
           openTerminal(w.net, worker.id);
-        } else w.handle = openTerminal(w.net, worker.id, undefined, undefined, { mount, focus: false });
+        } else w.handle = openTerminal(w.net, worker.id, undefined, undefined, { mount, focus: false, readOnly: mode === 'read-only' });
       },
       { shared, delaySnapshot, hidden, mode, pageHidden },
     );
     await page.waitForFunction(() => !!(window as any).term?.native?.element);
-    if (!delaySnapshot && !pageHidden) await page.waitForFunction(() => !(window as any).term.options.disableStdin);
+    if (!delaySnapshot && !pageHidden && mode !== 'read-only') await page.waitForFunction(() => !(window as any).term.options.disableStdin);
     await page.evaluate(() => (window as any).frames());
     return page;
   };
@@ -996,6 +996,89 @@ test('inline terminals follow pane geometry without focus or stale size rollback
     });
   }
 
+  for (const scenario of ['wheel', 'read-only', 'clamped', 'never closes'] as const) {
+    await t.test(`a font step preserves the reader through an already open screen update: ${scenario}`, async () => {
+      const page = await rig(scenario === 'read-only', false, false, scenario === 'read-only' ? 'read-only' : 'inline');
+      const initial = await page.evaluate(async (scenario) => {
+        const w = window as any;
+        const term = w.term;
+        const root: HTMLElement = term.native.element;
+        if (scenario === 'clamped') {
+          w.resize(140, 85);
+          await w.frames();
+        }
+        term.write(Array.from({ length: 320 }, (_, i) => `line ${i}`).join('\r\n'));
+        await w.frames();
+        const pitch = parseFloat(root.style.getPropertyValue('--term-row-height'));
+        root.scrollTop = 150.5 * pitch + parseFloat(getComputedStyle(root).paddingTop);
+        await w.frames();
+        const sample = () => {
+          const y = root.getBoundingClientRect().top + 2;
+          const row = [...root.querySelectorAll('.term-row')].find((el) => {
+            const box = el.getBoundingClientRect();
+            return box.top <= y && box.bottom > y;
+          });
+          return row?.textContent.trim() ?? null;
+        };
+        const before = sample();
+        const paints: (string | null)[] = [];
+        const stop = w.eachPaint(() => paints.push(sample()));
+        w.readerPaints = () => paints.splice(0);
+        w.readerState = () => ({
+          line: sample(),
+          font: getComputedStyle(root.querySelector('.term-row')!).fontSize,
+          painted: [term.native.renderer.cols, root.querySelectorAll('.term-row:not(.term-scrollback-row)').length],
+          grid: [term.cols, term.rows],
+          open: term.core.synchronizedOutput(),
+        });
+        w.stopReaderPaints = stop;
+        const grid = [term.cols, term.rows];
+        term.write('\x1b[?2026h');
+        w.TerminalUI.setTermFontSize(16);
+        await new Promise((r) => setTimeout(r, 410));
+        return { before, grid, held: w.readerState(), paints: w.readerPaints() };
+      }, scenario);
+      assert.equal(initial.before, 'line 150');
+      if (scenario === 'read-only') assert.deepEqual(initial.grid, [120, 40]);
+      if (scenario === 'clamped') assert.deepEqual(initial.grid, [20, 5]);
+      assert.equal(initial.held.open, true);
+      assert.deepEqual([...new Set(initial.paints)], ['line 150']);
+      if (scenario === 'wheel') {
+        await page.locator('.office-wterm').hover();
+        await page.mouse.wheel(0, 57);
+        await page.evaluate(() => (window as any).frames());
+        assert.equal(await page.evaluate(() => (window as any).readerState().line), 'line 153');
+        await page.evaluate(() => (window as any).readerPaints());
+      }
+      if (scenario === 'never closes') {
+        await page.waitForFunction(
+          () => {
+            const w = window as any;
+            const s = w.readerState();
+            return s.font === '16px' && s.grid[0] === s.painted[0] && s.grid[1] === s.painted[1];
+          },
+          undefined,
+          { timeout: 2500 },
+        );
+      } else {
+        await page.evaluate(() => (window as any).term.write('\x1b[?2026l'));
+      }
+      const result = await page.evaluate(async () => {
+        const w = window as any;
+        await w.frames();
+        w.stopReaderPaints();
+        return { ...w.readerState(), paints: w.readerPaints() };
+      });
+      assert.equal(result.font, '16px');
+      assert.equal(result.open, scenario === 'never closes');
+      assert.deepEqual(result.painted, result.grid);
+      assert.equal(result.line, scenario === 'wheel' ? 'line 153' : 'line 150');
+      assert.deepEqual(initial.held.grid, initial.grid, 'do not resize during the initial 410 ms hold');
+      assert.deepEqual([...new Set(result.paints)], [result.line]);
+      if (scenario === 'never closes') assert.notDeepEqual(result.grid, initial.grid);
+    });
+  }
+
   for (const stream of ['reopen every third frame', 'remain open', 'replace every third frame'] as const) {
     await t.test(`a queued font step has one synchronized-output deadline: ${stream}`, async () => {
       const page = await rig(false);
@@ -1020,7 +1103,7 @@ test('inline terminals follow pane geometry without focus or stale size rollback
           w.aroundNextFitTask(() => (start = performance.now()), resolve);
           w.TerminalUI.setTermFontSize(16);
         });
-        while (frame < 9 || (elapsed === 0 && performance.now() - start < 600)) {
+        while (frame < 9 || (elapsed === 0 && performance.now() - start < 1500)) {
           await new Promise(requestAnimationFrame);
           frame++;
           if (stream === 'reopen every third frame' && frame % 3 === 1) term.write('\x1b[?2026l');
@@ -1035,12 +1118,12 @@ test('inline terminals follow pane geometry without focus or stale size rollback
       }, stream);
       assert.equal(result.sizes, 1);
       assert.equal(result.output, true);
-      assert.ok(result.elapsed > 0 && result.elapsed < 300, `commit after ${result.elapsed} ms`);
+      assert.ok(result.elapsed > 0 && result.elapsed < 1050, `commit after ${result.elapsed} ms`);
       if (stream === 'reopen every third frame') {
         assert.equal(result.committedFrame, 1, 'use the first frame between blocks');
         assert.equal(result.committedOpen, false);
       } else {
-        assert.ok(result.elapsed >= 249, `held for ${result.elapsed} ms`);
+        assert.ok(result.elapsed >= 999, `held for ${result.elapsed} ms`);
         assert.equal(result.committedOpen, true);
         assert.equal(result.open, true, 'the font commit does not flush the program’s block');
       }
