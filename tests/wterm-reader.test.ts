@@ -83,6 +83,51 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
         continue;
       }
       if (dpr === 1) {
+        await t.test('column changes keep the first visible passage and its partial row at the same height', async () => {
+          const page = await pane();
+          try {
+            const result = await page.evaluate(async () => {
+              const { term } = window as any;
+              const el = term.native.element;
+              const paint = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+              term.reset();
+              term.write(Array.from({ length: 150 }, (_, n) => `Fact ${n}: ${'some detailed text '.repeat(4)}\r\n`).join(''));
+              await paint();
+              const pitch = parseFloat(el.style.getPropertyValue('--term-row-height'));
+              const inset = parseFloat(getComputedStyle(el).paddingTop);
+              el.scrollTop = 160 * pitch + inset + 7;
+              await paint();
+              const current = () => {
+                const row = Math.floor((el.scrollTop - inset) / pitch);
+                const offset = term.core.getScrollbackCount() - row - 1;
+                const str = Array.from({ length: 10 }, (_, i) => String.fromCodePoint(term.core.getScrollbackCell(offset, i).char || 32)).join('');
+                return [str, (el.scrollTop - inset) % pitch];
+              };
+              const before = current();
+              term.setFitPending(true);
+              term.resize(28, 15);
+              term.setFitPending(false);
+              await paint();
+              const narrow = current();
+              term.resize(60, 32);
+              await paint();
+              const wide = current();
+              // A TUI can then erase scrollback and print explicit line breaks at
+              // its new width. There is no native cell identity across that clear.
+              term.write('\x1b[?2026h\x1b[2J\x1b[3J\x1b[H');
+              term.write(Array.from({ length: 150 }, (_, n) => `Fact ${n}: some detailed text\r\n${'some detailed text \r\n'.repeat(3)}`).join(''));
+              term.write('\x1b[?2026l');
+              await paint();
+              return [before, narrow, wide, current()];
+            });
+            assert.match(String(result[0][0]), /Fact 80:/);
+            assert.deepEqual(result[1], result[0]);
+            assert.deepEqual(result[2], result[0]);
+            assert.deepEqual(result[3], result[0]);
+          } finally {
+            await page.close();
+          }
+        });
         for (const surface of ['window', 'dashboard'])
           await t.test(`Tab, click, paste and text insertion leave ${surface} at its visible tail`, async () => {
             const page = await pane(surface);

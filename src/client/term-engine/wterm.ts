@@ -90,6 +90,18 @@ export class WTermAdapter {
       this.writeNative(`\x1bc${widths}`);
       return true;
     });
+    this.parser.registerCsiHandler({ final: 'J' }, ([mode]) => {
+      // Some programs respond to SIGWINCH by erasing and reprinting their entire
+      // history in a synchronized update. That destroys even a tracked core pin.
+      if (mode === 3 && !this.replay && !this.afterSnapshotPaint && this.core?.synchronizedOutput()) {
+        const reader = this.saveReader({ redraw: true });
+        if (reader && this.root) {
+          this.afterSnapshotPaint = reader;
+          this.pendingRestore = { appliedTop: this.root.scrollTop };
+        }
+      }
+      return false;
+    });
   }
   get cols() {
     return this.native?.cols ?? 80;
@@ -158,14 +170,15 @@ export class WTermAdapter {
   }
   /** A fresh attach resets core pins. Save a physical row plus its text and verify
    * the row after replay (find the nearest matching row if history was trimmed). */
-  saveReader({ explicit = false, pending }: { explicit?: boolean; pending?: SavedReader } = {}): SavedReader | undefined {
+  saveReader({ explicit = false, pending, redraw = false }: { explicit?: boolean; pending?: SavedReader; redraw?: boolean } = {}): SavedReader | undefined {
     const { baseY, viewportY } = this.buffer.active;
     if (pending?.revision === this.readerRevision) return pending;
     const c = this.core;
     const el = this.root;
     if (!c || !el || (!this.paintPending && viewportY >= baseY)) return;
     const savedRevision = this.readerRevision;
-    const position = this.paintPending ? el.scrollTop / this.rowHeight : viewportY + ((this.readerRow ?? 0) % 1);
+    const inset = redraw ? parseFloat(getComputedStyle(el).paddingTop) / this.rowHeight : 0;
+    const position = Math.max(0, (this.paintPending ? el.scrollTop / this.rowHeight : viewportY + ((this.readerRow ?? 0) % 1)) - inset);
     const startRow = Math.floor(position);
     const fraction = position % 1;
     const rowText = (row: number, base: number, expected?: string) => {
@@ -182,6 +195,7 @@ export class WTermAdapter {
     };
     let label: string | undefined;
     let next: string | undefined;
+    let context: string[] = [];
     if (this.paintPending) {
       // The parsed core may be a different grid. Only its retained DOM rows were visible.
       const origin = el.querySelector<HTMLElement>('.term-scrollback-spacer')?.offsetTop;
@@ -191,9 +205,13 @@ export class WTermAdapter {
       label = painted.textContent.trimEnd();
       const sibling = painted.nextElementSibling;
       if (sibling?.classList.contains('term-scrollback-row')) next = sibling.textContent.trimEnd();
+      if (redraw) {
+        for (let p: Element | null = painted; p?.classList.contains('term-scrollback-row') && context.length < 6; p = p.nextElementSibling) context.push(p.textContent);
+      }
     } else {
       label = rowText(startRow, baseY);
       if (startRow + 1 < baseY) next = rowText(startRow + 1, baseY);
+      if (redraw) context = Array.from({ length: Math.min(6, baseY - startRow) }, (_, i) => rowText(startRow + i, baseY) ?? '');
     }
     const restore = () => {
       // Closing Find explicitly requests the pre-search position, even after stepping through matches.
@@ -203,19 +221,49 @@ export class WTermAdapter {
       const base = c.getScrollbackCount();
       const start = Math.min(startRow, base - 1);
       let row: number | undefined;
-      search: for (let d = 0; d < base; d++) {
-        for (const candidate of d ? [start - d, start + d] : [start]) {
-          if (candidate < 0 || candidate >= base || rowText(candidate, base, label) !== label) continue;
-          row ??= candidate;
-          if (next === undefined || (candidate + 1 < base && rowText(candidate + 1, base, next) === next)) {
-            row = candidate;
-            break search;
+      if (redraw) {
+        // The program may hard-wrap at word boundaries where the core used
+        // soft wraps. Find a short piece of the passage across the new rows.
+        const compact = (s: string) => s.replace(/\s/g, '');
+        const skip = context.findIndex((line) => compact(line));
+        const needle = compact(context.join('')).slice(0, 64);
+        if (!needle) return;
+        const cache = new Map<number, string>();
+        const line = (i: number) => {
+          const text = cache.get(i) ?? compact(rowText(i, base) ?? '');
+          cache.set(i, text);
+          return text;
+        };
+        const estimate = Math.max(0, Math.min(start + skip, base - 1));
+        search: for (let d = 0; d < base; d++) {
+          for (const i of d ? [estimate - d, estimate + d] : [estimate]) {
+            if (i < 0 || i >= base) continue;
+            let part = line(i);
+            const end = part.length;
+            if (!part.includes(needle[0])) continue;
+            for (let j = i + 1; part.length < end + needle.length - 1 && j < base; j++) part += line(j);
+            const at = part.indexOf(needle);
+            if (at >= 0 && at < end) {
+              row = Math.max(0, i - skip);
+              break search;
+            }
           }
         }
-      }
+        if (row === undefined) return;
+      } else
+        search: for (let d = 0; d < base; d++) {
+          for (const candidate of d ? [start - d, start + d] : [start]) {
+            if (candidate < 0 || candidate >= base || rowText(candidate, base, label) !== label) continue;
+            row ??= candidate;
+            if (next === undefined || (candidate + 1 < base && rowText(candidate + 1, base, next) === next)) {
+              row = candidate;
+              break search;
+            }
+          }
+        }
       const target = row ?? start;
       const apply = () => {
-        if (this.root === el && revision === this.readerRevision && el.clientHeight && target >= 0) el.scrollTop = (target + fraction) * this.rowHeight;
+        if (this.root === el && revision === this.readerRevision && el.clientHeight && target >= 0) el.scrollTop = (target + fraction + inset) * this.rowHeight;
       };
       // Find may close before the next native paint. Reattach calls us after
       // paint, so apply now rather than racing a superseding snapshot next frame.
@@ -628,7 +676,21 @@ export class WTermAdapter {
     if (this.replay === 'painted') this.replay = 'parsed';
     const oldCols = t.cols,
       oldRows = t.rows;
-    t.resize(cols, rows);
+    const c = this.core;
+    if (cols !== oldCols && !this.replay) this.sampleReader();
+    const position = cols !== oldCols && !this.replay && this.readerRow !== undefined && c ? this.readerRow - c.getScrollbackDiscardedCount() : undefined;
+    const row = position !== undefined && this.root ? Math.max(0, Math.floor(position - parseFloat(getComputedStyle(this.root).paddingTop) / this.rowHeight)) : 0;
+    const pin = position !== undefined ? c?.trackPosition({ row, col: 0 }) : undefined;
+    try {
+      t.resize(cols, rows);
+      const mapped = pin?.resolve();
+      if (mapped && c && position !== undefined) {
+        this.readerRow = c.getScrollbackDiscardedCount() + mapped.row + (position - row);
+        this.pendingRestore = { appliedTop: this.root?.scrollTop };
+      }
+    } finally {
+      pin?.dispose();
+    }
     if (oldCols !== t.cols || oldRows !== t.rows) this.resized.fire({ cols: t.cols, rows: t.rows });
   }
   focus() {
