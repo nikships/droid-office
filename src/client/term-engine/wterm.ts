@@ -427,14 +427,14 @@ export class WTermAdapter {
       if (previousHeight !== this.rowHeight) {
         const restore = (this.pendingRestore = { appliedTop: el.scrollTop });
         if (this.readerRow !== undefined) {
-          const top = Math.max(0, this.readerRow - this.paintedDiscarded) * this.rowHeight;
+          const readerRow = this.readerRow;
           const { cols, rows } = this;
           // A font fit resizes synchronously. Let its mapped viewport replace
           // this restore rather than scrolling rows that still have the old pitch.
           const scroll = () => {
             if (this.pendingRestore !== restore || el.scrollTop !== restore.appliedTop) return;
-            if ((cols !== this.cols || rows !== this.rows) && this.scheduleViewport(top)) return;
-            el.scrollTop = top;
+            if ((cols !== this.cols || rows !== this.rows) && this.core && this.scheduleViewport(Math.max(0, readerRow - this.core.getScrollbackDiscardedCount()) * this.rowHeight)) return;
+            el.scrollTop = Math.max(0, readerRow - this.paintedDiscarded) * this.rowHeight;
             restore.appliedTop = el.scrollTop;
           };
           if (this.fittingFont) queueMicrotask(scroll);

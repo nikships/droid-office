@@ -150,6 +150,53 @@ test('browser focus, fit and reading in the terminal scrollport', { skip: !statu
               await page.close();
             }
           });
+        await t.test('a rows-only font fit mounts the reader on the first paint after paused output evicts history', async () => {
+          const page = await pane();
+          try {
+            const result = await page.evaluate(async () => {
+              const { term } = window as any;
+              const el = term.native.element;
+              const next = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+              const visible = () => {
+                const y = el.getBoundingClientRect().top + 2;
+                return [...el.querySelectorAll('.term-row')]
+                  .find((row) => {
+                    const box = row.getBoundingClientRect();
+                    return box.top <= y && box.bottom > y;
+                  })
+                  ?.textContent.trim();
+              };
+              term.reset();
+              term.resize(20, 16);
+              const lines = (start: number, length: number) => Array.from({ length }, (_, i) => `line ${start + i}\r\n`).join('');
+              term.write(lines(0, 900));
+              await next();
+              const pitch = Number.parseFloat(el.style.getPropertyValue('--term-row-height'));
+              el.scrollTop = 260.5 * pitch + Number.parseFloat(getComputedStyle(el).paddingTop);
+              await next();
+              await next();
+              const before = visible();
+              const base = term.core.getScrollbackDiscardedCount();
+              term.setFitPending(true);
+              term.write(lines(900, 120));
+              term.setFontForFit(16);
+              term.resize(20, 12);
+              await Promise.resolve();
+              term.setFitPending(false);
+              await next();
+              const first = visible();
+              await next();
+              await next();
+              return { before, first, settled: visible(), evicted: term.core.getScrollbackDiscardedCount() - base };
+            });
+            assert.match(result.before ?? '', /^line \d+$/);
+            assert.ok(result.evicted >= 120);
+            assert.equal(result.settled, result.before);
+            assert.equal(result.first, result.before, 'the remapped passage must already be mounted on the first paint');
+          } finally {
+            await page.close();
+          }
+        });
         await t.test('native history mounts the passage on the first resize and the first completed-reprint frame', async () => {
           const page = await pane();
           try {
