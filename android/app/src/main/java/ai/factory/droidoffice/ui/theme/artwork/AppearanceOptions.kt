@@ -11,6 +11,7 @@ import ai.factory.droidoffice.core.WallpaperSource
 import ai.factory.droidoffice.ui.components.Eyebrow
 import ai.factory.droidoffice.ui.components.tagged
 import ai.factory.droidoffice.ui.theme.Palette
+import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -58,9 +59,12 @@ internal fun motionNote(motion: BackdropMotion, systemAnimates: Boolean) = when 
     else -> "The backdrop’s light moves."
 }
 
-/** Glass, wallpaper and motion options for the active artwork, below the theme list. */
+/**
+ * Glass, wallpaper and motion options for the active artwork, below the theme list. [change] edits
+ * the stored look, so quick taps on different options never undo each other.
+ */
 @Composable
-internal fun AppearanceOptions(theme: Artwork, look: AppearanceLook, change: (AppearanceLook) -> Unit) {
+internal fun AppearanceOptions(theme: Artwork, look: AppearanceLook, change: ((AppearanceLook) -> AppearanceLook) -> Unit) {
     Column(Modifier.fillMaxWidth().padding(top = 14.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Section("Glass", glassNote(look.glass)) {
             val scroll = rememberScrollState()
@@ -71,22 +75,25 @@ internal fun AppearanceOptions(theme: Artwork, look: AppearanceLook, change: (Ap
                 Modifier.fillMaxWidth().horizontalScroll(scroll).selectableGroup(),
                 horizontalArrangement = Arrangement.spacedBy(GlassCardGap),
             ) {
-                for (level in GlassLevel.entries) GlassCard(theme, level, level == look.glass) { change(look.copy(glass = level)) }
+                for (level in GlassLevel.entries) GlassCard(theme, level, level == look.glass) { change { it.copy(glass = level) } }
             }
         }
         Section("Wallpaper", wallpaperNote(look.wallpaper)) {
-            Segments(WallpaperSource.entries, look.wallpaper, { it.label }, { Tags.Artwork.wallpaper(it.id) }) { change(look.copy(wallpaper = it)) }
+            Segments(WallpaperSource.entries, look.wallpaper, { it.label }, { Tags.Artwork.wallpaper(it.id) }) { picked -> change { it.copy(wallpaper = picked) } }
             if (look.wallpaper == WallpaperSource.Artwork) {
                 SubLabel("Dim", "Darkens the picture behind the glass.")
-                Segments(WallpaperDim.entries, look.dim, { it.label }, { Tags.Artwork.dim(it.id) }) { change(look.copy(dim = it)) }
-                SubLabel("Blur", "Softens the picture behind the glass.")
-                Segments(WallpaperBlur.entries, look.blur, { it.label }, { Tags.Artwork.blur(it.id) }) { change(look.copy(blur = it)) }
+                Segments(WallpaperDim.entries, look.dim, { it.label }, { Tags.Artwork.dim(it.id) }) { picked -> change { it.copy(dim = picked) } }
+                // Compose's blur needs Android 12; below it the option would save but change nothing.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    SubLabel("Blur", "Softens the picture behind the glass.")
+                    Segments(WallpaperBlur.entries, look.blur, { it.label }, { Tags.Artwork.blur(it.id) }) { picked -> change { it.copy(blur = picked) } }
+                }
             }
         }
         Section("Motion", motionNote(look.motion, artworkMotionEnabled())) {
-            Segments(BackdropMotion.entries, look.motion, { it.label }, { Tags.Artwork.motion(it.id) }) { change(look.copy(motion = it)) }
+            Segments(BackdropMotion.entries, look.motion, { it.label }, { Tags.Artwork.motion(it.id) }) { picked -> change { it.copy(motion = picked) } }
         }
-        TextButton({ change(AppearanceLook()) }, Modifier.tagged(Tags.Artwork.RESET), enabled = !look.isDefault) {
+        TextButton({ change { AppearanceLook() } }, Modifier.tagged(Tags.Artwork.RESET), enabled = !look.isDefault) {
             Text("Restore default options", color = if (look.isDefault) Palette.TextTertiary else Palette.Text)
         }
     }

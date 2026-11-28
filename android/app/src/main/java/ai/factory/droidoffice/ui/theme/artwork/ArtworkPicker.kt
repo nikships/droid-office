@@ -62,7 +62,7 @@ fun ArtworkPickerButton() {
             }
             // Original has no backdrop or glass, so its options stay hidden rather than disabled.
             if (active != null) item(key = "options") {
-                AppearanceOptions(active, Palette.look) { look -> scope.launch { store.settings { it.copy(look = look) } } }
+                AppearanceOptions(active, Palette.look) { edit -> scope.launch { store.settings { it.copy(look = edit(it.look)) } } }
             }
         }
     }

@@ -1,6 +1,5 @@
 package ai.factory.droidoffice.ui.theme.artwork
 
-import ai.factory.droidoffice.core.AppearanceLook
 import ai.factory.droidoffice.core.BackdropMotion
 import ai.factory.droidoffice.core.Glass
 import ai.factory.droidoffice.core.WallpaperSource
@@ -93,7 +92,8 @@ internal fun artworkMotionEnabled(): Boolean {
 }
 
 @Composable
-fun ArtworkBackdrop(theme: Artwork, look: AppearanceLook = Palette.look) {
+fun ArtworkBackdrop(theme: Artwork) {
+    val look = Palette.look
     val full = Modifier.fillMaxSize()
     val config = LocalConfiguration.current
     val portrait = theme.phoneArt(config.orientation == Configuration.ORIENTATION_PORTRAIT, config.smallestScreenWidthDp)
